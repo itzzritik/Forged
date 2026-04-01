@@ -3,6 +3,7 @@ module github.com/forgedkeys/forged/cli
 go 1.25.4
 
 require (
+	github.com/google/uuid v1.6.0
 	github.com/spf13/cobra v1.10.2
 	golang.org/x/crypto v0.49.0
 )
