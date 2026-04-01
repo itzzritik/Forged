@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"syscall"
 
+	forgedagent "github.com/forgedkeys/forged/cli/internal/agent"
 	"github.com/forgedkeys/forged/cli/internal/config"
 	"github.com/forgedkeys/forged/cli/internal/ipc"
 	"github.com/forgedkeys/forged/cli/internal/platform"
@@ -18,12 +19,14 @@ import (
 )
 
 type Daemon struct {
-	paths     config.Paths
-	vault     *vault.Vault
-	keyStore  *vault.KeyStore
-	ipcServer *ipc.Server
-	logger    *slog.Logger
-	stop      chan struct{}
+	paths       config.Paths
+	vault       *vault.Vault
+	keyStore    *vault.KeyStore
+	agent       *forgedagent.ForgedAgent
+	agentServer *forgedagent.Server
+	ipcServer   *ipc.Server
+	logger      *slog.Logger
+	stop        chan struct{}
 }
 
 func New(paths config.Paths) *Daemon {
@@ -54,6 +57,10 @@ func (d *Daemon) Run(password []byte) error {
 	}
 
 	if err := d.startIPC(); err != nil {
+		return err
+	}
+
+	if err := d.startAgent(); err != nil {
 		return err
 	}
 
@@ -169,6 +176,22 @@ func (d *Daemon) startIPC() error {
 	return nil
 }
 
+func (d *Daemon) startAgent() error {
+	agentPath := d.paths.AgentSocket()
+	if err := os.MkdirAll(filepath.Dir(agentPath), 0700); err != nil {
+		return fmt.Errorf("creating socket directory: %w", err)
+	}
+
+	d.agent = forgedagent.New(d.keyStore)
+	d.agentServer = forgedagent.NewServer(agentPath, d.agent, d.logger)
+	if err := d.agentServer.Start(); err != nil {
+		return fmt.Errorf("starting agent server: %w", err)
+	}
+
+	d.logger.Info("ssh agent started", "socket", agentPath)
+	return nil
+}
+
 func (d *Daemon) waitForSignal() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -183,6 +206,10 @@ func (d *Daemon) waitForSignal() {
 
 func (d *Daemon) shutdown() {
 	d.logger.Info("shutting down")
+
+	if d.agentServer != nil {
+		d.agentServer.Stop()
+	}
 
 	if d.ipcServer != nil {
 		d.ipcServer.Stop()

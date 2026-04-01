@@ -200,6 +200,18 @@ func (ks *KeyStore) Export(name string) (string, error) {
 	return "", fmt.Errorf("key %q not found", name)
 }
 
+func (ks *KeyStore) RecordUsage(name string) {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	idx := ks.indexOf(name)
+	if idx < 0 {
+		return
+	}
+	now := time.Now().UTC()
+	ks.vault.Data.Keys[idx].LastUsedAt = &now
+}
+
 func (ks *KeyStore) nameExists(name string) bool {
 	return ks.indexOf(name) >= 0
 }
