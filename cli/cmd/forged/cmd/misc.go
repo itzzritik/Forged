@@ -2,7 +2,10 @@ package cmd
 
 import (
 	"fmt"
+	"os"
+	"syscall"
 
+	"github.com/forgedkeys/forged/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 
@@ -16,19 +19,20 @@ var signCmd = &cobra.Command{
 var logsCmd = &cobra.Command{
 	Use:   "logs",
 	Short: "Tail daemon logs",
-	RunE:  notImplemented("logs"),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		paths := config.DefaultPaths()
+		logPath := paths.LogFile()
+		if _, err := os.Stat(logPath); os.IsNotExist(err) {
+			return fmt.Errorf("no log file found at %s", logPath)
+		}
+		return syscall.Exec("/usr/bin/tail", []string{"tail", "-f", logPath}, os.Environ())
+	},
 }
 
 var benchmarkCmd = &cobra.Command{
 	Use:   "benchmark",
 	Short: "Test Argon2id speed and recommend parameters",
 	RunE:  notImplemented("benchmark"),
-}
-
-var setupCmd = &cobra.Command{
-	Use:   "setup",
-	Short: "First-time setup wizard",
-	RunE:  notImplemented("setup"),
 }
 
 var versionCmd = &cobra.Command{
