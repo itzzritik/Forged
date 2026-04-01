@@ -1,0 +1,78 @@
+version: 2
+
+project_name: forged
+
+builds:
+  - id: forged
+    main: ./cli/cmd/forged
+    binary: forged
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+      - -X github.com/forgedkeys/forged/cli/cmd/forged/cmd.version={{.Version}}
+      - -X github.com/forgedkeys/forged/cli/cmd/forged/cmd.commit={{.Commit}}
+
+  - id: forged-sign
+    main: ./cli/cmd/forged-sign
+    binary: forged-sign
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ldflags:
+      - -s -w
+
+archives:
+  - format: tar.gz
+    format_overrides:
+      - goos: windows
+        format: zip
+
+brews:
+  - repository:
+      owner: forgedkeys
+      name: homebrew-tap
+    homepage: https://forged.dev
+    description: "SSH key management — forge your keys, take them anywhere"
+    install: |
+      bin.install "forged"
+      bin.install "forged-sign"
+
+nfpms:
+  - package_name: forged
+    vendor: Forged
+    homepage: https://forged.dev
+    maintainer: Ritik Srivastava
+    description: "SSH key management"
+    formats:
+      - deb
+      - rpm
+
+scoops:
+  - repository:
+      owner: forgedkeys
+      name: scoop-bucket
+    homepage: https://forged.dev
+    description: "SSH key management"
+
+checksum:
+  name_template: "checksums.txt"
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"

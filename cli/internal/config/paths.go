@@ -1,0 +1,69 @@
+package config
+
+import (
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
+)
+
+type Paths struct {
+	ConfigDir  string
+	DataDir    string
+	RuntimeDir string
+	StateDir   string
+}
+
+func (p Paths) ConfigFile() string  { return filepath.Join(p.ConfigDir, "config.toml") }
+func (p Paths) VaultFile() string   { return filepath.Join(p.DataDir, "vault.forged") }
+func (p Paths) AgentSocket() string { return filepath.Join(p.RuntimeDir, "agent.sock") }
+func (p Paths) CtlSocket() string   { return filepath.Join(p.RuntimeDir, "ctl.sock") }
+func (p Paths) PIDFile() string     { return filepath.Join(p.RuntimeDir, "daemon.pid") }
+func (p Paths) LogFile() string     { return filepath.Join(p.StateDir, "logs", "forged.log") }
+
+func DefaultPaths() Paths {
+	switch runtime.GOOS {
+	case "linux":
+		return linuxPaths()
+	default:
+		return darwinPaths()
+	}
+}
+
+func darwinPaths() Paths {
+	home, _ := os.UserHomeDir()
+	base := filepath.Join(home, ".forged")
+	return Paths{
+		ConfigDir:  base,
+		DataDir:    base,
+		RuntimeDir: base,
+		StateDir:   base,
+	}
+}
+
+func linuxPaths() Paths {
+	home, _ := os.UserHomeDir()
+
+	configDir := envOrDefault("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+	dataDir := envOrDefault("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
+	runtimeDir := envOrDefault("XDG_RUNTIME_DIR", filepath.Join("/run", "user", uidStr()))
+	stateDir := envOrDefault("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
+
+	return Paths{
+		ConfigDir:  filepath.Join(configDir, "forged"),
+		DataDir:    filepath.Join(dataDir, "forged"),
+		RuntimeDir: filepath.Join(runtimeDir, "forged"),
+		StateDir:   filepath.Join(stateDir, "forged"),
+	}
+}
+
+func envOrDefault(key, fallback string) string {
+	if v := os.Getenv(key); v != "" {
+		return v
+	}
+	return fallback
+}
+
+func uidStr() string {
+	return fmt.Sprintf("%d", os.Getuid())
+}
