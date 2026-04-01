@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"github.com/forgedkeys/forged/cli/internal/config"
@@ -15,21 +16,48 @@ var statusCmd = &cobra.Command{
 		paths := config.DefaultPaths()
 		pid, running := daemon.IsRunning(paths)
 
-		if jsonOutput {
-			return printOutput(map[string]any{
-				"running": running,
-				"pid":     pid,
-				"socket":  paths.AgentSocket(),
-			})
-		}
-
 		if !running {
+			if jsonOutput {
+				return printOutput(map[string]any{
+					"running": false,
+					"socket":  paths.AgentSocket(),
+				})
+			}
 			fmt.Println("Daemon: not running")
 			fmt.Printf("Socket: %s\n", paths.AgentSocket())
 			return nil
 		}
 
-		fmt.Printf("Daemon: running (PID %d)\n", pid)
+		resp, err := ctlClient().Call("status", nil)
+		if err != nil {
+			if jsonOutput {
+				return printOutput(map[string]any{
+					"running": true,
+					"pid":     pid,
+					"socket":  paths.AgentSocket(),
+				})
+			}
+			fmt.Printf("Daemon: running (PID %d)\n", pid)
+			fmt.Printf("Socket: %s\n", paths.AgentSocket())
+			return nil
+		}
+
+		if jsonOutput {
+			var data map[string]any
+			json.Unmarshal(resp.Data, &data)
+			data["running"] = true
+			data["socket"] = paths.AgentSocket()
+			return printOutput(data)
+		}
+
+		var data struct {
+			PID      int `json:"pid"`
+			KeyCount int `json:"key_count"`
+		}
+		json.Unmarshal(resp.Data, &data)
+
+		fmt.Printf("Daemon: running (PID %d)\n", data.PID)
+		fmt.Printf("Keys:   %d loaded\n", data.KeyCount)
 		fmt.Printf("Socket: %s\n", paths.AgentSocket())
 		return nil
 	},

@@ -11,17 +11,19 @@ import (
 	"syscall"
 
 	"github.com/forgedkeys/forged/cli/internal/config"
+	"github.com/forgedkeys/forged/cli/internal/ipc"
 	"github.com/forgedkeys/forged/cli/internal/platform"
 	"github.com/forgedkeys/forged/cli/internal/vault"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type Daemon struct {
-	paths    config.Paths
-	vault    *vault.Vault
-	keyStore *vault.KeyStore
-	logger   *slog.Logger
-	stop     chan struct{}
+	paths     config.Paths
+	vault     *vault.Vault
+	keyStore  *vault.KeyStore
+	ipcServer *ipc.Server
+	logger    *slog.Logger
+	stop      chan struct{}
 }
 
 func New(paths config.Paths) *Daemon {
@@ -48,6 +50,10 @@ func (d *Daemon) Run(password []byte) error {
 	defer d.shutdown()
 
 	if err := d.writePID(); err != nil {
+		return err
+	}
+
+	if err := d.startIPC(); err != nil {
 		return err
 	}
 
@@ -148,6 +154,21 @@ func (d *Daemon) writePID() error {
 	return os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0600)
 }
 
+func (d *Daemon) startIPC() error {
+	ctlPath := d.paths.CtlSocket()
+	if err := os.MkdirAll(filepath.Dir(ctlPath), 0700); err != nil {
+		return fmt.Errorf("creating socket directory: %w", err)
+	}
+
+	d.ipcServer = ipc.NewServer(ctlPath, d.keyStore, d.logger)
+	if err := d.ipcServer.Start(); err != nil {
+		return fmt.Errorf("starting ipc server: %w", err)
+	}
+
+	d.logger.Info("ipc server started", "socket", ctlPath)
+	return nil
+}
+
 func (d *Daemon) waitForSignal() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -162,6 +183,10 @@ func (d *Daemon) waitForSignal() {
 
 func (d *Daemon) shutdown() {
 	d.logger.Info("shutting down")
+
+	if d.ipcServer != nil {
+		d.ipcServer.Stop()
+	}
 
 	if d.vault != nil {
 		for _, key := range d.vault.Data.Keys {
