@@ -65,11 +65,10 @@ Forged runs as a background daemon. It speaks the standard SSH agent protocol, s
 
 ```
 forged daemon
-|
-|-- SSH Agent        standard protocol, ssh-add works
-|-- Encrypted Vault  Argon2id + XChaCha20-Poly1305
-|-- Host Matcher     right key for each host, automatically
-+-- Key Store        in-memory, mlock'd, zeroed on shutdown
+├── SSH Agent          standard protocol, ssh-add works
+├── Encrypted Vault    Argon2id + XChaCha20-Poly1305
+├── Host Matcher       right key for each host, automatically
+└── Key Store          in-memory, mlock'd, zeroed on shutdown
 ```
 
 No browser. No Electron. No local web server. Just a Unix socket and a CLI.
