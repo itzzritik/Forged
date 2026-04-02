@@ -5,8 +5,9 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"syscall"
 	"time"
+
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 type Vault struct {
@@ -230,9 +231,9 @@ func (v *Vault) acquireLock() error {
 		return fmt.Errorf("opening lock file: %w", err)
 	}
 
-	if err := syscall.Flock(int(f.Fd()), syscall.LOCK_EX|syscall.LOCK_NB); err != nil {
+	if err := platform.LockFile(f); err != nil {
 		f.Close()
-		return fmt.Errorf("vault is locked by another process (could not acquire flock)")
+		return fmt.Errorf("vault is locked by another process")
 	}
 
 	v.lockFile = f
@@ -243,7 +244,7 @@ func (v *Vault) releaseLock() {
 	if v.lockFile == nil {
 		return
 	}
-	syscall.Flock(int(v.lockFile.Fd()), syscall.LOCK_UN)
+	platform.UnlockFile(v.lockFile)
 	name := v.lockFile.Name()
 	v.lockFile.Close()
 	os.Remove(name)

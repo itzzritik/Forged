@@ -1631,14 +1631,16 @@ forged/
 
 **Goal**: Windows support and polish.
 
-- [ ] Windows named pipe SSH agent (OpenSSH protocol only, no Pageant)
-- [ ] Windows named pipe ACLs (owner-only)
-- [ ] `VirtualLock` for memory locking on Windows
-- [ ] `LockFileEx` for vault file locking on Windows
-- [ ] Windows Task Scheduler integration
+- [x] Windows named pipe SSH agent (OpenSSH protocol, owner-only ACL)
+- [x] `VirtualLock`/`VirtualUnlock` for memory locking on Windows
+- [x] `LockFileEx`/`UnlockFileEx` for vault file locking on Windows
+- [x] Windows Task Scheduler integration
+- [x] Linux systemd user service integration
+- [x] Platform-abstracted file locking (`platform.LockFile`/`UnlockFile`)
+- [x] Cross-compilation verified (darwin/amd64, darwin/arm64, linux/amd64, linux/arm64, windows/amd64, windows/arm64)
 - [ ] Windows installer (MSI via WiX or go-msi)
 - [ ] Scoop package
-- [ ] Cross-platform CI matrix (macOS arm64, macOS amd64, Linux amd64, Linux arm64, Windows amd64)
+- [ ] Cross-platform CI matrix in GitHub Actions
 - [x] `forged doctor` - diagnose common issues per platform
 - [x] `forged migrate` - import from 1Password, Bitwarden, plain ssh-agent
 - [x] `forged benchmark` - test Argon2id speed, recommend parameters

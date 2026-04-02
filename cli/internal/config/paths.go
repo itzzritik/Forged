@@ -16,8 +16,19 @@ type Paths struct {
 
 func (p Paths) ConfigFile() string  { return filepath.Join(p.ConfigDir, "config.toml") }
 func (p Paths) VaultFile() string   { return filepath.Join(p.DataDir, "vault.forged") }
-func (p Paths) AgentSocket() string { return filepath.Join(p.RuntimeDir, "agent.sock") }
-func (p Paths) CtlSocket() string   { return filepath.Join(p.RuntimeDir, "ctl.sock") }
+func (p Paths) AgentSocket() string {
+	if runtime.GOOS == "windows" {
+		return `\\.\pipe\forged-agent`
+	}
+	return filepath.Join(p.RuntimeDir, "agent.sock")
+}
+
+func (p Paths) CtlSocket() string {
+	if runtime.GOOS == "windows" {
+		return `\\.\pipe\forged-ctl`
+	}
+	return filepath.Join(p.RuntimeDir, "ctl.sock")
+}
 func (p Paths) PIDFile() string     { return filepath.Join(p.RuntimeDir, "daemon.pid") }
 func (p Paths) LogFile() string     { return filepath.Join(p.StateDir, "logs", "forged.log") }
 
@@ -25,8 +36,21 @@ func DefaultPaths() Paths {
 	switch runtime.GOOS {
 	case "linux":
 		return linuxPaths()
+	case "windows":
+		return windowsPaths()
 	default:
 		return darwinPaths()
+	}
+}
+
+func windowsPaths() Paths {
+	appData := envOrDefault("APPDATA", filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming"))
+	base := filepath.Join(appData, "forged")
+	return Paths{
+		ConfigDir:  base,
+		DataDir:    base,
+		RuntimeDir: base,
+		StateDir:   base,
 	}
 }
 
@@ -65,5 +89,8 @@ func envOrDefault(key, fallback string) string {
 }
 
 func uidStr() string {
+	if runtime.GOOS == "windows" {
+		return "0"
+	}
 	return fmt.Sprintf("%d", os.Getuid())
 }
