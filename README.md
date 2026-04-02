@@ -1,149 +1,121 @@
 # Forged
 
-SSH key manager that replaces 1Password's SSH agent. Zero-knowledge encrypted vault, intelligent host matching, Git commit signing — single binary, works offline, open source.
+> Forge your keys. Take them anywhere.
 
-Keys sit encrypted at rest with Argon2id + XChaCha20-Poly1305. The daemon holds them decrypted in locked memory, serves them over the standard SSH agent protocol, and zeroes everything on shutdown. No browser, no Electron, no subscriptions.
+Your SSH keys deserve better than sitting unencrypted in `~/.ssh/`. Forged is a standalone SSH key manager that encrypts your keys, syncs them across machines, and automatically picks the right key for each host.
+
+Open-source replacement for 1Password and Bitwarden's SSH agent.
+
+<!-- TODO: Add demo GIF here -->
+<!-- ![demo](https://forged.dev/demo.gif) -->
+
+## Why
+
+- Your keys sit unencrypted on disk. Anyone with access to your laptop has them.
+- You copy key files between machines manually. Or you don't, and each machine has different keys.
+- SSH tries every key until one works. You've hit "too many authentication failures" before.
+- Git commit signing is a separate, painful setup nobody finishes.
+- 1Password and Bitwarden work, but they bundle an entire password manager for one feature.
+
+Forged fixes all of this in a single binary.
 
 ## Install
 
 ```
-brew install forgedkeys/tap/forged
+brew install forged
 ```
 
-Or download from [releases](https://github.com/forgedkeys/forged/releases), or:
+## Quick start
 
-```
-curl -fsSL https://get.forged.dev | sh
-```
-
-## Setup
-
-```
+```bash
+# One-time setup: creates encrypted vault, imports your ~/.ssh/ keys
 forged setup
+
+# Start the daemon
+forged daemon
+
+# That's it. SSH and Git just work now.
+ssh myserver                     # right key, automatically
+git push origin main             # commits signed, automatically
 ```
 
-Creates an encrypted vault, imports your existing `~/.ssh/` keys, installs the daemon, and configures `~/.ssh/config` to use the Forged agent. One command.
+## Key management
 
-## Usage
-
-Once the daemon is running, SSH and Git just work — no interaction needed:
-
-```
-ssh oracle                       # right key, automatically
-git push origin main             # signed commit, automatically
-```
-
-Manage keys when you need to:
-
-```
-forged generate staging-server
-forged add prod-key --file ~/.ssh/deploy_ed25519
-forged list
-forged export staging-server     # public key to stdout
-forged remove old-key
+```bash
+forged generate my-key                          # new Ed25519 key
+forged add work-key --file ~/.ssh/id_ed25519    # import existing
+forged list                                     # show all keys
+forged export my-key                            # public key to stdout
+forged remove old-key                           # delete a key
 ```
 
-Map keys to hosts:
+## Host matching
 
-```
-forged host github-personal "github.com" "*.github.com"
-forged host prod-deploy "*.prod.company.com" "10.0.*"
-forged hosts
-```
+Tell Forged which key to use for which host. No more trial-and-error.
 
-Everything supports `--json` for scripting:
-
-```
-forged list --json
-forged status --json
+```bash
+forged host my-key "github.com" "*.github.com"
+forged host deploy "*.prod.company.com" "10.0.*"
+forged hosts                                    # list all mappings
 ```
 
 ## How it works
 
+Forged runs as a background daemon. It speaks the standard SSH agent protocol, so every SSH client already supports it. Your keys are encrypted at rest and only decrypted in locked memory while the daemon runs.
+
 ```
-forged daemon (background process)
-│
-├─ SSH Agent        Unix socket, standard protocol
-│                   ssh-add -l works, any SSH client works
-│
-├─ IPC Server       CLI talks to daemon over a control socket
-│                   single writer to vault, no corruption
-│
-├─ Vault            Argon2id key derivation → XChaCha20-Poly1305
-│                   atomic writes (tmp + fsync + rename)
-│                   flock, 0600 permissions
-│
-└─ Key Store        in-memory, mlock'd, zeroed on shutdown
+forged daemon
+|
+|-- SSH Agent        standard protocol, ssh-add works
+|-- Encrypted Vault  Argon2id + XChaCha20-Poly1305
+|-- Host Matcher     right key for each host, automatically
++-- Key Store        in-memory, mlock'd, zeroed on shutdown
 ```
 
-The vault is a single encrypted file. The daemon is the only process that reads or writes it. CLI commands go through IPC. There is no local HTTP server, no React dashboard, no WebSocket — just a Unix socket speaking the SSH agent protocol and a control socket for management.
+No browser. No Electron. No local web server. Just a Unix socket and a CLI.
 
-## Security model
+## Security
 
-- **Vault encryption**: Argon2id (64MB, 3 iterations) derives a 256-bit key. XChaCha20-Poly1305 encrypts the payload. 24-byte random nonce per write eliminates reuse risk.
-- **Memory**: Private keys held in `mlock`'d pages. Zeroed on shutdown and lock.
-- **Disk**: Atomic writes prevent corruption. File lock prevents concurrent access. Vault file is `0600`.
-- **Agent socket**: `0600` permissions. Only the owning user can connect.
-- **No network required**: Works entirely offline. Sync is opt-in and zero-knowledge (server stores opaque blobs).
+Keys are encrypted with Argon2id (64MB memory-hard KDF) and XChaCha20-Poly1305. The vault file is written atomically to prevent corruption and locked to prevent concurrent access. Private keys live in mlock'd memory pages and are explicitly zeroed on shutdown.
 
-What the server never sees: your master password, your vault encryption key, your private keys. The same dual-derivation approach used by 1Password and Bitwarden.
+The daemon is the only process that touches the vault. CLI commands talk to it over a control socket. The agent socket is 0600, owner-only.
+
+Cloud sync (coming soon) is zero-knowledge. The server stores opaque encrypted blobs. It never sees your master password, encryption key, or private keys.
 
 ## Comparison
 
-| | Forged | 1Password | Secretive | ssh-agent |
-|---|---|---|---|---|
-| Cross-platform | Mac/Linux/Win | Mac/Linux/Win | Mac only | Mac/Linux |
-| Key sync | Yes | Yes (bundled) | No | No |
-| Host matching | Smart | Basic | No | No |
-| Git signing | Built-in | Yes | Yes | Manual |
-| Auth model | Login once | Touch ID per use | Touch ID per use | Per session |
-| Cost | Free | $36/yr | Free | Free |
-| Open source | Yes | No | Yes | Yes |
-| Standalone | Yes | No | Yes | Yes |
+| | Forged | 1Password | Bitwarden | Secretive | ssh-agent |
+|---|---|---|---|---|---|
+| Standalone | Yes | No | No | Yes | Yes |
+| Cross-platform | Mac/Linux/Win | Mac/Linux/Win | Mac/Linux/Win | Mac only | Mac/Linux |
+| Key sync | Yes | Bundled | Bundled | No | No |
+| Host matching | Smart | Basic | No | No | No |
+| Git signing | Built-in | Yes | No | Yes | Manual |
+| Auth model | Login once | Per use | Per use | Per use | Per session |
+| Open source | Yes | No | Yes | Yes | Yes |
 
-## Commands
+## All commands
 
 ```
 forged setup                     first-time wizard
 forged daemon                    start in foreground
-forged start / stop              manage system service
+forged start / stop              manage via system service
 forged status                    daemon info + key count
 
 forged generate <name>           new Ed25519 key pair
 forged add <name> --file <path>  import existing key
-forged list                      show all keys
+forged list                      all keys in vault
 forged remove <name>             delete a key
-forged export <name>             print public key
+forged export <name>             public key to stdout
 forged rename <old> <new>        rename a key
 
 forged host <key> <patterns>     map key to hosts
-forged hosts                     list mappings
-forged unhost <key> <pattern>    remove mapping
+forged hosts                     list all mappings
+forged unhost <key> <pattern>    remove a mapping
 
 forged lock / unlock             clear or restore keys in memory
 forged logs                      tail daemon logs
 forged config                    manage configuration
 ```
 
-## Project structure
-
-```
-forged/
-├── cli/                Go binary (daemon + CLI)
-│   ├── cmd/forged/     entry point + cobra commands
-│   └── internal/
-│       ├── agent/      SSH agent protocol (ExtendedAgent)
-│       ├── vault/      encrypted vault + key store
-│       ├── ipc/        CLI ↔ daemon communication
-│       ├── daemon/     lifecycle, signals, PID management
-│       ├── hostmatch/  SSH config parser + key discovery
-│       ├── config/     paths (XDG on Linux, ~/.forged/ on macOS)
-│       └── platform/   mlock, socket helpers
-├── server/             Next.js cloud sync (Vercel + Neon)
-├── proto/              vault format + IPC protocol specs
-└── justfile            build / lint orchestration
-```
-
-## License
-
-MIT
+All commands support `--json` for scripting.
