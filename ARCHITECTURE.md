@@ -1638,9 +1638,9 @@ forged/
 - [x] Linux systemd user service integration
 - [x] Platform-abstracted file locking (`platform.LockFile`/`UnlockFile`)
 - [x] Cross-compilation verified (darwin/amd64, darwin/arm64, linux/amd64, linux/arm64, windows/amd64, windows/arm64)
-- [ ] Windows installer (MSI via WiX or go-msi)
-- [ ] Scoop package
-- [ ] Cross-platform CI matrix in GitHub Actions
+- [x] Windows installer (MSI via WiX, built in CI)
+- [x] Scoop package manifest
+- [x] Cross-platform CI matrix (macOS, macOS-13, Ubuntu, Windows + 6 cross-compile targets)
 - [x] `forged doctor` - diagnose common issues per platform
 - [x] `forged migrate` - import from 1Password, Bitwarden, plain ssh-agent
 - [x] `forged benchmark` - test Argon2id speed, recommend parameters

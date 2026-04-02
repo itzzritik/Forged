@@ -1,0 +1,49 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+  <Package
+    Name="Forged"
+    Manufacturer="Ritik Srivastava"
+    Version="!(bind.fileVersion.ForgedExe)"
+    UpgradeCode="6F4E8C2A-1B3D-4F5E-A7C9-2D8E0F1A3B5C">
+
+    <MajorUpgrade
+      DowngradeErrorMessage="A newer version of Forged is already installed." />
+
+    <MediaTemplate EmbedCab="yes" />
+
+    <Feature Id="Main" Title="Forged SSH Key Manager" Level="1">
+      <ComponentGroupRef Id="ProductComponents" />
+      <ComponentGroupRef Id="PathEntry" />
+    </Feature>
+  </Package>
+
+  <Fragment>
+    <StandardDirectory Id="ProgramFiles64Folder">
+      <Directory Id="INSTALLFOLDER" Name="Forged" />
+    </StandardDirectory>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="ProductComponents" Directory="INSTALLFOLDER">
+      <Component Id="ForgedExeComponent">
+        <File Id="ForgedExe" Source="forged.exe" KeyPath="yes" />
+      </Component>
+      <Component Id="ForgedSignComponent">
+        <File Id="ForgedSignExe" Source="forged-sign.exe" />
+      </Component>
+    </ComponentGroup>
+
+    <ComponentGroup Id="PathEntry" Directory="INSTALLFOLDER">
+      <Component Id="PathComponent">
+        <Environment
+          Id="PATH"
+          Name="PATH"
+          Value="[INSTALLFOLDER]"
+          Permanent="no"
+          Part="last"
+          Action="set"
+          System="yes" />
+      </Component>
+    </ComponentGroup>
+  </Fragment>
+</Wix>

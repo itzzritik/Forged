@@ -1,0 +1,27 @@
+{
+  "version": "0.1.0",
+  "description": "SSH key management - forge your keys, take them anywhere",
+  "homepage": "https://forged.ritik.me",
+  "license": "PolyForm-Noncommercial-1.0.0",
+  "architecture": {
+    "64bit": {
+      "url": "https://github.com/itzzritik/forged/releases/download/v0.1.0/forged-windows-amd64.zip",
+      "bin": ["forged.exe", "forged-sign.exe"]
+    },
+    "arm64": {
+      "url": "https://github.com/itzzritik/forged/releases/download/v0.1.0/forged-windows-arm64.zip",
+      "bin": ["forged.exe", "forged-sign.exe"]
+    }
+  },
+  "checkver": "github",
+  "autoupdate": {
+    "architecture": {
+      "64bit": {
+        "url": "https://github.com/itzzritik/forged/releases/download/v$version/forged-windows-amd64.zip"
+      },
+      "arm64": {
+        "url": "https://github.com/itzzritik/forged/releases/download/v$version/forged-windows-arm64.zip"
+      }
+    }
+  }
+}
