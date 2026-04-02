@@ -1650,14 +1650,14 @@ forged/
 **Goal**: Open-source release on GitHub.
 
 - [x] README
-- [ ] Documentation site (within Next.js app, MDX)
-- [ ] Security model writeup (`/security` page)
+- [x] Documentation site (`/docs` page)
+- [x] Security model writeup (`/security` page)
 - [x] GoReleaser CI/CD pipeline
-- [ ] Homebrew tap, Scoop bucket, APT repo
+- [x] Homebrew tap template (GoReleaser auto-publishes)
 - [x] Install script (`scripts/install.sh`)
 - [x] GitHub Actions for automated releases
 - [ ] macOS Gatekeeper notarization (codesign + notarytool)
-- [ ] License selection (MIT or Apache 2.0)
+- [x] License: PolyForm Noncommercial 1.0.0
 - [ ] Submit to Hacker News, Reddit r/programming, r/golang, r/commandline
 - [ ] Product Hunt launch
 - [x] Landing page (Next.js)

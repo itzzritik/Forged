@@ -39,6 +39,18 @@ function Nav() {
           </span>
         </div>
         <div className="flex items-center gap-6">
+          <Link
+            href="/docs"
+            className="text-sm text-muted hover:text-foreground transition-colors"
+          >
+            Docs
+          </Link>
+          <Link
+            href="/security"
+            className="text-sm text-muted hover:text-foreground transition-colors"
+          >
+            Security
+          </Link>
           <a
             href="https://github.com/itzzritik/forged"
             className="text-sm text-muted hover:text-foreground transition-colors"
