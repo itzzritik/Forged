@@ -3,8 +3,8 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
@@ -18,7 +18,7 @@ var daemonCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
 
-		password, err := readPassword("Master password: ")
+		password, err := getPassword()
 		if err != nil {
 			return err
 		}
@@ -30,8 +30,32 @@ var daemonCmd = &cobra.Command{
 
 var startCmd = &cobra.Command{
 	Use:   "start",
-	Short: "Start daemon via system service",
-	RunE:  notImplemented("start"),
+	Short: "Start daemon as background service",
+	RunE: func(cmd *cobra.Command, args []string) error {
+		paths := config.DefaultPaths()
+
+		if _, running := daemon.IsRunning(paths); running {
+			fmt.Println("Daemon is already running")
+			return nil
+		}
+
+		if !daemon.ServiceInstalled() {
+			return fmt.Errorf("service not installed. Run: forged setup")
+		}
+
+		if err := daemon.StartService(); err != nil {
+			return fmt.Errorf("starting service: %w", err)
+		}
+
+		time.Sleep(2 * time.Second)
+
+		if pid, running := daemon.IsRunning(paths); running {
+			fmt.Printf("Daemon started (PID %d)\n", pid)
+		} else {
+			fmt.Println("Service started. Check: forged logs")
+		}
+		return nil
+	},
 }
 
 var stopCmd = &cobra.Command{
@@ -39,6 +63,15 @@ var stopCmd = &cobra.Command{
 	Short: "Stop daemon",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
+
+		if daemon.ServiceInstalled() {
+			if err := daemon.StopService(); err != nil {
+				return fmt.Errorf("stopping service: %w", err)
+			}
+			fmt.Println("Daemon stopped")
+			return nil
+		}
+
 		pid, running := daemon.IsRunning(paths)
 		if !running {
 			return fmt.Errorf("daemon is not running")
@@ -53,15 +86,19 @@ var stopCmd = &cobra.Command{
 			return fmt.Errorf("sending signal: %w", err)
 		}
 
-		fmt.Printf("Sent stop signal to daemon (PID %d)\n", pid)
+		fmt.Printf("Daemon stopped (PID %d)\n", pid)
 		return nil
 	},
 }
 
-func readPassword(prompt string) ([]byte, error) {
+func getPassword() ([]byte, error) {
+	if env := os.Getenv("FORGED_MASTER_PASSWORD"); env != "" {
+		return []byte(env), nil
+	}
+
 	fd := int(os.Stdin.Fd())
 	if term.IsTerminal(fd) {
-		fmt.Fprint(os.Stderr, prompt)
+		fmt.Fprint(os.Stderr, "Master password: ")
 		password, err := term.ReadPassword(fd)
 		fmt.Fprintln(os.Stderr)
 		if err != nil {
@@ -81,12 +118,4 @@ func readPassword(prompt string) ([]byte, error) {
 		password = password[:len(password)-1]
 	}
 	return password, nil
-}
-
-func readPID(paths config.Paths) (int, error) {
-	data, err := os.ReadFile(paths.PIDFile())
-	if err != nil {
-		return 0, err
-	}
-	return strconv.Atoi(string(data))
 }

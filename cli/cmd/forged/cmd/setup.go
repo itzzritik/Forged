@@ -7,8 +7,10 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/hostmatch"
 	"github.com/itzzritik/forged/cli/internal/vault"
 	"github.com/spf13/cobra"
@@ -71,13 +73,27 @@ var setupCmd = &cobra.Command{
 			}
 		}
 
+		fmt.Println("\nInstalling daemon service...")
+		if err := daemon.InstallService(paths, string(password)); err != nil {
+			fmt.Printf("Warning: could not install service: %v\n", err)
+			fmt.Println("You can start manually with: forged daemon")
+		} else {
+			if err := daemon.StartService(); err != nil {
+				fmt.Printf("Warning: could not start service: %v\n", err)
+				fmt.Println("Start manually with: forged start")
+			} else {
+				time.Sleep(2 * time.Second)
+				if pid, running := daemon.IsRunning(paths); running {
+					fmt.Printf("Daemon running (PID %d)\n", pid)
+				}
+			}
+		}
+
 		fmt.Println()
 		fmt.Println("Setup complete!")
 		fmt.Printf("  Vault:  %s\n", paths.VaultFile())
 		fmt.Printf("  Config: %s\n", paths.ConfigFile())
 		fmt.Printf("  Socket: %s\n", paths.AgentSocket())
-		fmt.Println()
-		fmt.Println("Start the daemon with: forged daemon")
 		return nil
 	},
 }
