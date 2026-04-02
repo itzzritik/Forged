@@ -8,22 +8,25 @@ import (
 	"os"
 	"sync"
 
+	"github.com/forgedkeys/forged/cli/internal/activity"
 	"github.com/forgedkeys/forged/cli/internal/vault"
 )
 
 type Server struct {
-	socketPath string
-	keyStore   *vault.KeyStore
-	listener   net.Listener
-	logger     *slog.Logger
-	wg         sync.WaitGroup
+	socketPath  string
+	keyStore    *vault.KeyStore
+	activityLog *activity.ActivityLog
+	listener    net.Listener
+	logger      *slog.Logger
+	wg          sync.WaitGroup
 }
 
-func NewServer(socketPath string, ks *vault.KeyStore, logger *slog.Logger) *Server {
+func NewServer(socketPath string, ks *vault.KeyStore, al *activity.ActivityLog, logger *slog.Logger) *Server {
 	return &Server{
-		socketPath: socketPath,
-		keyStore:   ks,
-		logger:     logger,
+		socketPath:  socketPath,
+		keyStore:    ks,
+		activityLog: al,
+		logger:      logger,
 	}
 }
 
@@ -99,6 +102,14 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleRename(req.Args)
 	case "export":
 		return s.handleExport(req.Args)
+	case "host":
+		return s.handleHost(req.Args)
+	case "unhost":
+		return s.handleUnhost(req.Args)
+	case "hosts":
+		return s.handleHosts()
+	case "activity":
+		return s.handleActivity(req.Args)
 	case "status":
 		return s.handleStatus()
 	default:
@@ -211,6 +222,71 @@ func (s *Server) handleExport(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 	return OkResponse(map[string]string{"public_key": pub})
+}
+
+type hostArgs struct {
+	KeyName  string   `json:"key_name"`
+	Patterns []string `json:"patterns"`
+}
+
+func (s *Server) handleHost(raw json.RawMessage) Response {
+	var a hostArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+	for _, p := range a.Patterns {
+		if err := s.keyStore.AddHostRule(a.KeyName, p); err != nil {
+			return ErrorResponse(err)
+		}
+	}
+	return OkResponse(nil)
+}
+
+type unhostArgs struct {
+	KeyName string `json:"key_name"`
+	Pattern string `json:"pattern"`
+}
+
+func (s *Server) handleUnhost(raw json.RawMessage) Response {
+	var a unhostArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+	if err := s.keyStore.RemoveHostRule(a.KeyName, a.Pattern); err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(nil)
+}
+
+func (s *Server) handleHosts() Response {
+	keys := s.keyStore.List()
+	type mapping struct {
+		KeyName  string           `json:"key_name"`
+		Rules    []vault.HostRule `json:"rules"`
+	}
+	var mappings []mapping
+	for _, k := range keys {
+		if len(k.HostRules) > 0 {
+			mappings = append(mappings, mapping{KeyName: k.Name, Rules: k.HostRules})
+		}
+	}
+	return OkResponse(map[string]any{"mappings": mappings})
+}
+
+type activityArgs struct {
+	Limit int `json:"limit"`
+}
+
+func (s *Server) handleActivity(raw json.RawMessage) Response {
+	var a activityArgs
+	if raw != nil {
+		json.Unmarshal(raw, &a)
+	}
+	if a.Limit <= 0 {
+		a.Limit = 50
+	}
+	events := s.activityLog.Recent(a.Limit)
+	return OkResponse(map[string]any{"events": events})
 }
 
 func (s *Server) handleStatus() Response {

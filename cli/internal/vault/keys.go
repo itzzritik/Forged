@@ -212,6 +212,106 @@ func (ks *KeyStore) RecordUsage(name string) {
 	ks.vault.Data.Keys[idx].LastUsedAt = &now
 }
 
+func (ks *KeyStore) AddHostRule(keyName, pattern string) error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	idx := ks.indexOf(keyName)
+	if idx < 0 {
+		return fmt.Errorf("key %q not found", keyName)
+	}
+
+	patternType := classifyPattern(pattern)
+
+	for _, r := range ks.vault.Data.Keys[idx].HostRules {
+		if r.Match == pattern {
+			return fmt.Errorf("pattern %q already mapped to %q", pattern, keyName)
+		}
+	}
+
+	ks.vault.Data.Keys[idx].HostRules = append(ks.vault.Data.Keys[idx].HostRules, HostRule{
+		Match: pattern,
+		Type:  patternType,
+	})
+	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
+	ks.vault.Data.Keys[idx].Version++
+
+	return ks.vault.Save()
+}
+
+func (ks *KeyStore) RemoveHostRule(keyName, pattern string) error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	idx := ks.indexOf(keyName)
+	if idx < 0 {
+		return fmt.Errorf("key %q not found", keyName)
+	}
+
+	rules := ks.vault.Data.Keys[idx].HostRules
+	found := false
+	for i, r := range rules {
+		if r.Match == pattern {
+			ks.vault.Data.Keys[idx].HostRules = append(rules[:i], rules[i+1:]...)
+			found = true
+			break
+		}
+	}
+
+	if !found {
+		return fmt.Errorf("pattern %q not found on key %q", pattern, keyName)
+	}
+
+	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
+	ks.vault.Data.Keys[idx].Version++
+
+	return ks.vault.Save()
+}
+
+func (ks *KeyStore) SetGitSigning(keyName string, enabled bool) error {
+	ks.mu.Lock()
+	defer ks.mu.Unlock()
+
+	idx := ks.indexOf(keyName)
+	if idx < 0 {
+		return fmt.Errorf("key %q not found", keyName)
+	}
+
+	if enabled {
+		for i := range ks.vault.Data.Keys {
+			ks.vault.Data.Keys[i].GitSigning = false
+		}
+	}
+
+	ks.vault.Data.Keys[idx].GitSigning = enabled
+	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
+	ks.vault.Data.Keys[idx].Version++
+
+	return ks.vault.Save()
+}
+
+func (ks *KeyStore) GetGitSigningKey() (Key, bool) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	for _, k := range ks.vault.Data.Keys {
+		if k.GitSigning {
+			return k, true
+		}
+	}
+	return Key{}, false
+}
+
+func classifyPattern(pattern string) string {
+	if strings.HasPrefix(pattern, "~") {
+		return "regex"
+	}
+	if strings.Contains(pattern, "*") {
+		return "wildcard"
+	}
+	return "exact"
+}
+
 func (ks *KeyStore) nameExists(name string) bool {
 	return ks.indexOf(name) >= 0
 }

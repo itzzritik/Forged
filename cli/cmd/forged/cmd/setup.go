@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 
@@ -58,6 +59,16 @@ var setupCmd = &cobra.Command{
 
 		if err := injectSSHConfig(paths); err != nil {
 			fmt.Printf("Warning: could not update ~/.ssh/config: %v\n", err)
+		}
+
+		keys := ks.List()
+		if len(keys) > 0 {
+			fmt.Print("\nSet up Git commit signing? [Y/n] ")
+			if confirm() {
+				if err := configureGitSigning(ks, keys[0].Name); err != nil {
+					fmt.Printf("Warning: could not configure git signing: %v\n", err)
+				}
+			}
 		}
 
 		fmt.Println()
@@ -181,5 +192,86 @@ func injectSSHConfig(paths config.Paths) error {
 	defer f.Close()
 
 	_, err = fmt.Fprintf(f, "\n%s\n%s", marker, directive)
+	return err
+}
+
+func configureGitSigning(ks *vault.KeyStore, keyName string) error {
+	key, ok := ks.Get(keyName)
+	if !ok {
+		return fmt.Errorf("key %q not found", keyName)
+	}
+
+	if err := ks.SetGitSigning(keyName, true); err != nil {
+		return err
+	}
+
+	signPath, err := findForgedSign()
+	if err != nil {
+		return err
+	}
+
+	cmds := [][]string{
+		{"git", "config", "--global", "user.signingkey", key.PublicKey},
+		{"git", "config", "--global", "gpg.format", "ssh"},
+		{"git", "config", "--global", "gpg.ssh.program", signPath},
+		{"git", "config", "--global", "commit.gpgsign", "true"},
+	}
+
+	for _, args := range cmds {
+		cmd := exec.Command(args[0], args[1:]...)
+		if out, err := cmd.CombinedOutput(); err != nil {
+			return fmt.Errorf("running %v: %s: %w", args, string(out), err)
+		}
+	}
+
+	if err := writeAllowedSigners(key.PublicKey); err != nil {
+		return err
+	}
+
+	fmt.Printf("  Git signing configured with %s\n", keyName)
+	return nil
+}
+
+func findForgedSign() (string, error) {
+	path, err := exec.LookPath("forged-sign")
+	if err == nil {
+		return path, nil
+	}
+	self, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("cannot find forged-sign binary")
+	}
+	candidate := filepath.Join(filepath.Dir(self), "forged-sign")
+	if _, err := os.Stat(candidate); err == nil {
+		return candidate, nil
+	}
+	return "", fmt.Errorf("forged-sign not found in PATH or next to forged binary")
+}
+
+func writeAllowedSigners(publicKey string) error {
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return err
+	}
+
+	signerFile := filepath.Join(home, ".ssh", "allowed_signers")
+
+	if data, err := os.ReadFile(signerFile); err == nil {
+		if strings.Contains(string(data), publicKey) {
+			return nil
+		}
+	}
+
+	if err := os.MkdirAll(filepath.Dir(signerFile), 0700); err != nil {
+		return err
+	}
+
+	f, err := os.OpenFile(signerFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+
+	_, err = fmt.Fprintf(f, "* %s\n", publicKey)
 	return err
 }

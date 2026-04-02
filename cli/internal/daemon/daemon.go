@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"syscall"
 
+	"github.com/forgedkeys/forged/cli/internal/activity"
 	forgedagent "github.com/forgedkeys/forged/cli/internal/agent"
 	"github.com/forgedkeys/forged/cli/internal/config"
 	"github.com/forgedkeys/forged/cli/internal/ipc"
@@ -22,6 +23,7 @@ type Daemon struct {
 	paths       config.Paths
 	vault       *vault.Vault
 	keyStore    *vault.KeyStore
+	activityLog *activity.ActivityLog
 	agent       *forgedagent.ForgedAgent
 	agentServer *forgedagent.Server
 	ipcServer   *ipc.Server
@@ -55,6 +57,8 @@ func (d *Daemon) Run(password []byte) error {
 	if err := d.writePID(); err != nil {
 		return err
 	}
+
+	d.activityLog = activity.NewActivityLog(1000)
 
 	if err := d.startIPC(); err != nil {
 		return err
@@ -167,7 +171,7 @@ func (d *Daemon) startIPC() error {
 		return fmt.Errorf("creating socket directory: %w", err)
 	}
 
-	d.ipcServer = ipc.NewServer(ctlPath, d.keyStore, d.logger)
+	d.ipcServer = ipc.NewServer(ctlPath, d.keyStore, d.activityLog, d.logger)
 	if err := d.ipcServer.Start(); err != nil {
 		return fmt.Errorf("starting ipc server: %w", err)
 	}
