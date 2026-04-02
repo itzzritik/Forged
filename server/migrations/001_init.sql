@@ -3,10 +3,13 @@ CREATE EXTENSION IF NOT EXISTS "pgcrypto";
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
-    auth_hash TEXT NOT NULL,
+    name TEXT,
+    provider TEXT NOT NULL,
+    provider_id TEXT,
     key_generation INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ DEFAULT now(),
-    updated_at TIMESTAMPTZ DEFAULT now()
+    updated_at TIMESTAMPTZ DEFAULT now(),
+    UNIQUE(provider, provider_id)
 );
 
 CREATE TABLE vaults (

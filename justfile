@@ -9,6 +9,9 @@ build-cli:
 build-server:
     cd server && go build -o ../bin/forged-server ./cmd/forged-server
 
+build-web:
+    cd web && npm run build
+
 build: build-cli build-server
 
 # Lint
@@ -18,6 +21,9 @@ lint-cli:
 lint-server:
     cd server && golangci-lint run ./...
 
+lint-web:
+    cd web && npm run lint
+
 lint: lint-cli lint-server
 
 # Run
@@ -26,6 +32,9 @@ dev:
 
 dev-server:
     cd server && go run ./cmd/forged-server
+
+dev-web:
+    cd web && npm run dev
 
 # Clean
 clean:

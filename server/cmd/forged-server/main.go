@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/server/internal/api"
+	"github.com/itzzritik/forged/server/internal/auth"
 	"github.com/itzzritik/forged/server/internal/db"
 	"github.com/itzzritik/forged/server/internal/middleware"
 )
@@ -35,6 +36,13 @@ func main() {
 	srv := &api.Server{
 		DB:     database,
 		Secret: jwtSecret,
+		OAuth: auth.OAuthConfig{
+			GoogleClientID:     envDefault("GOOGLE_CLIENT_ID", ""),
+			GoogleClientSecret: envDefault("GOOGLE_CLIENT_SECRET", ""),
+			GitHubClientID:     envDefault("GITHUB_CLIENT_ID", ""),
+			GitHubClientSecret: envDefault("GITHUB_CLIENT_SECRET", ""),
+			RedirectBaseURL:    envDefault("REDIRECT_BASE_URL", "https://forged-api.ritik.me"),
+		},
 	}
 
 	handler := middleware.CORS(middleware.Logger(logger, srv.Routes()))

@@ -98,7 +98,9 @@ Key decisions made during planning, with rationale:
 |----------|--------|-----------|
 | **UI** | CLI-only, no web dashboard | Target users live in the terminal. Eliminates React/Vite/embed complexity. REST API and dashboard can be added later if needed. |
 | **Local HTTP server** | None | No dashboard means no consumer. CLI talks to daemon via Unix socket IPC. Eliminates unnecessary attack surface. |
-| **Cloud server** | Go on Fly.io | Same language as client, one ecosystem. Flat pricing suits daemon polling. Landing page on Cloudflare Pages separately. |
+| **Sync API** | Go on Fly.io (`forged-api.ritik.me`) | Same language as client. Flat pricing suits daemon polling. API only, no HTML. |
+| **Web app** | Next.js on Vercel (`forged.ritik.me`) | Landing page, login (OAuth), dashboard, docs, pricing. |
+| **Cloud auth** | Google/GitHub OAuth | Passwordless. Login page on Next.js, token exchange on Go API. |
 | **Repo structure** | Mono repo, no Turborepo | Go and Next.js have independent build systems with no shared dependency graph. Turborepo adds complexity for zero benefit. A `justfile` + path-filtered CI is sufficient. |
 | **CLI ↔ Daemon IPC** | Custom protocol over Unix socket | CLI commands never touch the vault file directly. Single-writer architecture prevents corruption. |
 | **Vault writes** | Atomic (write-tmp + fsync + rename) | Prevents corruption on crash. Standard approach used by SQLite, etcd, etc. |
@@ -857,22 +859,76 @@ $ forged list --json
 
 ---
 
-## Cloud Server
+## Cloud Infrastructure
 
-### Tech Stack
+Two separate deployments:
 
-| Component | Technology | Rationale |
-|-----------|-----------|-----------|
-| Language | Go | Same language as client. One ecosystem. |
-| HTTP | stdlib `net/http` | 4 routes. No framework needed. |
-| Database | PostgreSQL | Relational data (users, devices, audit logs) |
-| DB driver | `pgx` | High-performance, pure Go Postgres driver |
-| Auth | bcrypt + JWT | Simple, no third-party auth library needed |
-| Hosting | Fly.io | Free tier (3 VMs + Postgres). Flat pricing, no per-invocation costs. |
-| Landing page | Static site (Cloudflare Pages) | Decoupled from API. Free, unlimited bandwidth. |
-| Payments | Stripe Go SDK | Mature, well-documented |
+### Sync API (`forged-api.ritik.me`) - Go on Fly.io
 
-**Why Go instead of Next.js**: The sync server stores and returns opaque encrypted blobs. 4 API routes, ~300 lines of Go. Adding Next.js, TypeScript, Drizzle, NextAuth, React, and npm for this is overkill. The polling pattern (daemon hits server every 5 min per device) punishes serverless pricing models. A $5 VPS handles 10K+ users with flat costs.
+API only, no HTML. Handles sync, device management, OAuth token exchange.
+
+| Component | Technology |
+|-----------|-----------|
+| Language | Go (stdlib `net/http`) |
+| Database | PostgreSQL (`pgx`) |
+| Auth | Google/GitHub OAuth + JWT |
+| Hosting | Fly.io |
+
+**API Routes** (all under `/api/v1/`):
+
+```
+GET    /api/v1/auth/google            Redirect to Google OAuth
+GET    /api/v1/auth/google/callback   Exchange code, redirect to CLI with token
+GET    /api/v1/auth/github            Redirect to GitHub OAuth
+GET    /api/v1/auth/github/callback   Exchange code, redirect to CLI with token
+POST   /api/v1/sync/push              Upload encrypted vault blob
+GET    /api/v1/sync/pull              Download encrypted vault blob
+GET    /api/v1/sync/status            Sync metadata
+GET    /api/v1/devices                List registered devices
+POST   /api/v1/devices                Register a new device
+DELETE /api/v1/devices/:id            Deauthorize a device
+POST   /api/v1/devices/:id/approve    Approve a pending device
+GET    /api/v1/account                Account info
+POST   /api/v1/account/delete         Delete account + all data
+GET    /health                        Health check
+```
+
+### Web App (`forged.ritik.me`) - Next.js on Vercel
+
+Everything users see in a browser.
+
+| Component | Technology |
+|-----------|-----------|
+| Framework | Next.js (App Router) |
+| Styling | Tailwind CSS |
+| Hosting | Vercel |
+
+**Pages**:
+
+- `/` - Landing page (hero, features, comparison, CTA)
+- `/login` - OAuth login page (Google/GitHub buttons), redirects CLI callback with token
+- `/pricing` - Free (local) / Pro (cloud sync) / Team (per user)
+- `/docs` - Installation, setup, configuration guides
+- `/security` - Security model explanation
+- `/dashboard` - Manage devices, billing, plan (future)
+
+### Auth Flow
+
+```
+$ forged login
+  1. CLI starts localhost:RANDOM/callback listener
+  2. Opens browser to forged.ritik.me/login?callback=http://localhost:RANDOM/callback
+  3. User sees login page with Google/GitHub buttons
+  4. User clicks GitHub
+  5. Next.js redirects to forged-api.ritik.me/api/v1/auth/github?callback=...
+  6. Go server redirects to GitHub OAuth
+  7. User authorizes on GitHub
+  8. GitHub redirects back to Go server with code
+  9. Go server exchanges code for user info, creates/upserts user, generates JWT
+  10. Go server redirects to localhost:RANDOM/callback?token=...&email=...
+  11. CLI receives token, saves to credentials.json
+  12. Done
+```
 
 ### Database Schema
 
@@ -880,7 +936,9 @@ $ forged list --json
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
-    auth_hash TEXT NOT NULL,
+    name TEXT,
+    provider TEXT NOT NULL,
+    provider_id TEXT,
     key_generation INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
@@ -917,33 +975,6 @@ CREATE TABLE audit_log (
     created_at TIMESTAMPTZ DEFAULT now()
 );
 ```
-
-### API Routes
-
-All routes versioned under `/api/v1/`.
-
-```
-POST   /api/v1/auth/register       Create account
-POST   /api/v1/auth/login           Authenticate, return JWT
-POST   /api/v1/sync/push            Upload encrypted vault blob
-GET    /api/v1/sync/pull             Download encrypted vault blob
-GET    /api/v1/sync/status           Sync metadata (version, last update)
-GET    /api/v1/devices               List registered devices
-POST   /api/v1/devices               Register a new device
-DELETE /api/v1/devices/:id           Deauthorize a device
-POST   /api/v1/devices/:id/approve   Approve a pending device
-GET    /api/v1/account               Account info
-POST   /api/v1/account/delete        Delete account + all data
-```
-
-### Landing Page
-
-Static site, deployed separately on Cloudflare Pages:
-
-- **/** - Hero, features, comparison table, CTA
-- **/docs** - Installation, setup, configuration guides
-- **/pricing** - Free (local-only) / Pro (cloud sync) / Team (per user)
-- **/security** - Security model explanation
 
 ---
 
@@ -1446,16 +1477,23 @@ forged/
 │   │       └── pipe_windows.go       # Windows named pipe
 │   ├── go.mod
 │   └── go.sum
-├── server/                           # Go sync server
+├── server/                           # Go sync API (forged-api.ritik.me)
 │   ├── cmd/forged-server/main.go     # Entry point
 │   ├── internal/
 │   │   ├── api/                      # HTTP handlers
-│   │   ├── auth/                     # bcrypt + JWT
+│   │   ├── auth/                     # OAuth + JWT
 │   │   ├── db/                       # PostgreSQL queries
 │   │   └── middleware/               # Auth, logging, CORS
 │   ├── migrations/                   # SQL migration files
 │   ├── go.mod
 │   └── Dockerfile
+├── web/                              # Next.js web app (forged.ritik.me)
+│   ├── src/app/
+│   │   ├── page.tsx                  # Landing page
+│   │   ├── login/                    # OAuth login page
+│   │   ├── pricing/                  # Pricing page
+│   │   └── docs/                     # Documentation
+│   └── package.json
 ├── proto/                            # Shared contract specifications
 │   ├── vault-format.md               # Binary vault format spec (versioned)
 │   ├── sync-api.md                   # Cloud sync HTTP API contract

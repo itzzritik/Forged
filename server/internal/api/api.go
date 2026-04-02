@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 
+	"github.com/itzzritik/forged/server/internal/auth"
 	"github.com/itzzritik/forged/server/internal/db"
 	"github.com/itzzritik/forged/server/internal/middleware"
 )
@@ -11,13 +12,16 @@ import (
 type Server struct {
 	DB     *db.DB
 	Secret string
+	OAuth  auth.OAuthConfig
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
-	mux.HandleFunc("POST /api/v1/auth/register", s.handleRegister)
-	mux.HandleFunc("POST /api/v1/auth/login", s.handleLogin)
+	mux.HandleFunc("GET /api/v1/auth/google", s.handleGoogleRedirect)
+	mux.HandleFunc("GET /api/v1/auth/google/callback", s.handleGoogleCallback)
+	mux.HandleFunc("GET /api/v1/auth/github", s.handleGitHubRedirect)
+	mux.HandleFunc("GET /api/v1/auth/github/callback", s.handleGitHubCallback)
 
 	authed := http.NewServeMux()
 	authed.HandleFunc("POST /api/v1/sync/push", s.handleSyncPush)

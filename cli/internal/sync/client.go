@@ -127,39 +127,3 @@ func (c *Client) Status() (StatusResult, error) {
 	return result, nil
 }
 
-type AuthResult struct {
-	Token  string `json:"token"`
-	UserID string `json:"user_id"`
-}
-
-func Register(serverURL, email, password string) (AuthResult, error) {
-	return authRequest(serverURL+"/api/v1/auth/register", email, password)
-}
-
-func Login(serverURL, email, password string) (AuthResult, error) {
-	return authRequest(serverURL+"/api/v1/auth/login", email, password)
-}
-
-func authRequest(url, email, password string) (AuthResult, error) {
-	body, _ := json.Marshal(map[string]string{"email": email, "password": password})
-
-	resp, err := http.Post(url, "application/json", bytes.NewReader(body))
-	if err != nil {
-		return AuthResult{}, fmt.Errorf("request failed: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK && resp.StatusCode != http.StatusCreated {
-		var errResp map[string]string
-		json.NewDecoder(resp.Body).Decode(&errResp)
-		msg := errResp["error"]
-		if msg == "" {
-			msg = fmt.Sprintf("request failed with status %d", resp.StatusCode)
-		}
-		return AuthResult{}, fmt.Errorf("%s", msg)
-	}
-
-	var result AuthResult
-	json.NewDecoder(resp.Body).Decode(&result)
-	return result, nil
-}
