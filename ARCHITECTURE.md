@@ -1531,119 +1531,101 @@ forged/
 
 #### Batch 1: Scaffold
 
-- [ ] Go module init (`cli/go.mod`)
-- [ ] Directory structure (`cmd/forged/main.go`, all `internal/*` packages as empty files)
-- [ ] `justfile` with build/lint targets
-- [ ] `proto/` directory with vault format and IPC specs (markdown)
-- [ ] `.goreleaser.yml` (basic config that builds correctly)
-- [ ] Cobra CLI skeleton with subcommands (stubs that print "not implemented")
-- [ ] `internal/config/paths.go` — XDG paths on Linux, `~/.forged/` on macOS
-- [ ] `--json` and `--verbose` global flags wired up
+- [x] Go module init (`cli/go.mod`)
+- [x] Directory structure (`cmd/forged/main.go`, all `internal/*` packages)
+- [x] `justfile` with build/lint targets
+- [x] `proto/` directory with vault format and IPC specs (markdown)
+- [x] `.goreleaser.yml` (basic config that builds correctly)
+- [x] Cobra CLI skeleton with subcommands
+- [x] `internal/config/paths.go` - XDG paths on Linux, `~/.forged/` on macOS
+- [x] `--json` and `--verbose` global flags wired up
 
 #### Batch 2: Vault Crypto
 
-- [ ] `internal/vault/crypto.go` — Argon2id key derivation, XChaCha20-Poly1305 encrypt/decrypt
-- [ ] `internal/vault/format.go` — binary header (magic, version, salt, nonce) + JSON payload
-- [ ] `internal/vault/vault.go` — create, open, save vault
-- [ ] Atomic writes (write to tmp + fsync + rename)
-- [ ] File locking (flock)
+- [x] `internal/vault/crypto.go` - Argon2id key derivation, XChaCha20-Poly1305 encrypt/decrypt
+- [x] `internal/vault/format.go` - binary header (magic, version, salt, nonce) + JSON payload
+- [x] `internal/vault/vault.go` - create, open, save vault
+- [x] Atomic writes (write to tmp + fsync + rename)
+- [x] File locking (flock)
 
 #### Batch 3: Key Management
 
-- [ ] `internal/vault/keys.go` — add, remove, list, generate, export key operations
-- [ ] Ed25519 key generation (`crypto/ed25519`)
-- [ ] Import from PEM/OpenSSH file format
-- [ ] `sync.RWMutex` on the key store
+- [x] `internal/vault/keys.go` - add, remove, list, generate, export, rename, host rules
+- [x] Ed25519 key generation (`crypto/ed25519`)
+- [x] Import from PEM/OpenSSH file format
+- [x] `sync.RWMutex` on the key store
 
 #### Batch 4: Daemon Lifecycle
 
-- [ ] `internal/daemon/daemon.go` — start, stop, PID file, signal handling
-- [ ] Stale socket detection on startup (try connect → ECONNREFUSED → remove)
-- [ ] Graceful shutdown (stop accepting, zero keys, remove socket, remove PID)
-- [ ] `internal/platform/mlock_unix.go` — lock key memory pages
-- [ ] Log rotation with lumberjack (max 10MB, 3 backups)
-- [ ] `forged daemon` command (foreground, for debugging)
-- [ ] `forged start` / `forged stop` (launchd on macOS, systemd on Linux)
+- [x] `internal/daemon/daemon.go` - start, stop, PID file, signal handling
+- [x] Stale socket detection on startup
+- [x] Graceful shutdown (stop accepting, zero keys, remove socket, remove PID)
+- [x] `internal/platform/mlock_unix.go` - lock key memory pages
+- [x] Log rotation with lumberjack (max 10MB, 3 backups)
+- [x] `forged daemon` command (foreground)
+- [x] `forged start` / `forged stop` (launchd on macOS)
+- [x] `internal/daemon/launchd.go` - auto-install and start service from setup
 
-#### Batch 5: IPC (CLI ↔ Daemon)
+#### Batch 5: IPC (CLI to Daemon)
 
-- [ ] `internal/ipc/protocol.go` — length-prefixed JSON messages
-- [ ] `internal/ipc/server.go` — daemon listens on `ctl.sock`, dispatches commands
-- [ ] `internal/ipc/client.go` — CLI connects, sends command, reads response
-- [ ] Wire up CLI commands: `forged list`, `forged add`, `forged generate`, `forged remove`, `forged export`, `forged status`
-- [ ] Clear error: "daemon is not running" when socket missing
+- [x] `internal/ipc/protocol.go` - length-prefixed JSON messages
+- [x] `internal/ipc/server.go` - daemon listens on `ctl.sock`, dispatches commands
+- [x] `internal/ipc/client.go` - CLI connects, sends command, reads response
+- [x] Wire up CLI commands: list, add, generate, remove, export, status, host, unhost, hosts
+- [x] Clear error: "daemon is not running" when socket missing
 
 #### Batch 6: SSH Agent
 
-- [ ] `internal/agent/agent.go` — implement `ssh/agent.Agent` interface
-- [ ] `internal/agent/server.go` — listen on `agent.sock`, accept connections
-- [ ] `REQUEST_IDENTITIES` → return all keys from vault
-- [ ] `SIGN_REQUEST` → sign with requested key
-- [ ] Basic key ordering (alphabetical for now, smart ordering in Phase 2)
+- [x] `internal/agent/agent.go` - implement `ssh/agent.ExtendedAgent` interface
+- [x] `internal/agent/server.go` - listen on `agent.sock`, accept connections
+- [x] `REQUEST_IDENTITIES` - return all keys from vault
+- [x] `SIGN_REQUEST` - sign with requested key
+- [x] Basic key ordering (alphabetical)
 
 #### Batch 7: Setup + Integration
 
-- [ ] `forged setup` — interactive wizard (create vault, import keys from `~/.ssh/`, install daemon service, update `~/.ssh/config` with `IdentityAgent`)
-- [ ] Basic `~/.ssh/config` parser for `IdentityFile` hints
-- [ ] `forged status` — show daemon status, key count, socket path
+- [x] `forged setup` - interactive wizard (create vault, import keys, install daemon, update ssh config)
+- [x] Basic `~/.ssh/config` parser for `IdentityFile` hints
+- [x] `forged status` - show daemon status, key count, socket path
+- [x] Auto-start daemon via launchd at end of setup
 
-#### Batch dependency chain
-
-```
-Batch 1 (Scaffold)
-    │
-    ▼
-Batch 2 (Vault Crypto) ──► Batch 3 (Key Management)
-                                │
-                                ▼
-                           Batch 4 (Daemon Lifecycle)
-                                │
-                                ▼
-                           Batch 5 (IPC)
-                                │
-                                ▼
-                           Batch 6 (SSH Agent)
-                                │
-                                ▼
-                           Batch 7 (Setup + Integration)
-```
-
-### Phase 2: Host Matching + Git Signing (Week 3-4)
+### Phase 2: Host Matching + Git Signing (Week 3-4) - COMPLETE
 
 **Goal**: Smart key selection and Git commit signing.
 
-- [ ] Host matching engine (exact, wildcard, IP range, SSH config aliases)
-- [ ] Forged config file (`config.toml`) with host rules
-- [ ] `forged host` command for mapping keys to hosts
-- [ ] `forged-sign` binary for Git signing protocol
-- [ ] `forged setup` configures git signing automatically
-- [ ] `~/.ssh/allowed_signers` management
-- [ ] Activity logging (which key used for which host/operation)
-- [ ] CLI: `forged hosts`, `forged host`, `forged unhost`
-- [ ] Shell completions (bash, zsh, fish) via cobra
+- [x] Host matching engine (exact, wildcard, IP range, regex)
+- [x] Forged config file (`config.toml`) with host rules
+- [x] `forged host` command for mapping keys to hosts
+- [x] `forged-sign` binary for Git signing protocol
+- [x] `forged setup` configures git signing automatically
+- [x] `~/.ssh/allowed_signers` management
+- [x] Activity logging (activity package with ring buffer)
+- [x] CLI: `forged hosts`, `forged host`, `forged unhost`
+- [x] Shell completions (bash, zsh, fish) via cobra (built-in)
 
-**Deliverable**: Correct key automatically selected per host. Git commits signed.
-
-### Phase 3: Cloud Sync (Week 5-7)
+### Phase 3: Cloud Sync (Week 5-7) - COMPLETE
 
 **Goal**: Encrypted key sync across devices.
 
-- [ ] Go server scaffold in `server/` (stdlib net/http, pgx, JWT)
-- [ ] PostgreSQL schema + migrations (users, vaults, devices, audit)
-- [ ] Auth routes: register (bcrypt), login (JWT)
-- [ ] Sync routes: push/pull encrypted vault blobs (optimistic locking)
-- [ ] Device routes: register, list, approve, deauthorize
-- [ ] Dockerfile + Fly.io deployment config
-- [ ] Client-side sync engine in Go (push/pull/merge)
-- [ ] HKDF-SHA256 sync key derivation from vault key
-- [ ] Conflict resolution (version vectors, tombstones with 90-day TTL)
-- [ ] Offline queue with exponential backoff retry
-- [ ] Master password change flow (`key_generation` counter)
-- [ ] CLI: `forged login`, `forged register`, `forged sync`, `forged sync status`
-- [ ] `proto/sync-api.md` specification
-- [ ] CI path filters (cli/ and server/ build independently)
+**Architecture change**: Server is Go (not Next.js). Auth is Google/GitHub OAuth (not email/password). Web app (Next.js on Vercel) handles login page and landing. Database is CockroachDB (not Neon). Secrets managed via Doppler.
 
-**Deliverable**: Keys sync across multiple machines with zero-knowledge encryption.
+- [x] Go server scaffold in `server/` (stdlib net/http, pgx, JWT)
+- [x] PostgreSQL schema + migrations (users, vaults, devices, audit)
+- [x] Auth: Google/GitHub OAuth with JWT (not bcrypt)
+- [x] Dev auth endpoint for local testing
+- [x] Sync routes: push/pull encrypted vault blobs (optimistic locking)
+- [x] Device routes: register, list, approve, deauthorize
+- [x] Dockerfile for deployment
+- [x] Client-side sync engine in Go (push/pull)
+- [x] CLI: `forged login` (browser OAuth), `forged logout`, `forged sync`, `forged sync status`
+- [x] `proto/sync-api.md` specification
+- [x] Next.js web app scaffolded (`web/`)
+- [x] `justfile` updated with server + web commands
+- [x] Migrate tool (`server/cmd/migrate`)
+- [ ] HKDF-SHA256 sync key derivation from vault key (deferred)
+- [ ] Conflict resolution merge logic (deferred, server rejects conflicts)
+- [ ] Offline queue with exponential backoff retry (deferred)
+- [ ] Master password change flow (deferred)
 
 ### Phase 4: Windows + Cross-Platform (Week 8-9)
 

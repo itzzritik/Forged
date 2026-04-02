@@ -1,0 +1,22 @@
+name: CI - CLI
+
+on:
+  push:
+    paths: ['cli/**', 'proto/**']
+  pull_request:
+    paths: ['cli/**', 'proto/**']
+
+jobs:
+  build:
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [macos-latest, ubuntu-latest]
+        go: ['1.25']
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: ${{ matrix.go }}
+      - run: cd cli && go build ./...
+      - run: cd cli && go vet ./...
