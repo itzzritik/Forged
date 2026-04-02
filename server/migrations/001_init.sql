@@ -18,7 +18,7 @@ CREATE TABLE vaults (
     encrypted_blob BYTEA NOT NULL,
     version BIGINT NOT NULL DEFAULT 1,
     updated_at TIMESTAMPTZ DEFAULT now(),
-    updated_by_device UUID,
+    updated_by_device TEXT,
     UNIQUE(user_id)
 );
 

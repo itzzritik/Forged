@@ -34,8 +34,9 @@ func main() {
 	defer database.Close()
 
 	srv := &api.Server{
-		DB:     database,
-		Secret: jwtSecret,
+		DB:      database,
+		Secret:  jwtSecret,
+		DevMode: os.Getenv("REDIRECT_BASE_URL") == "",
 		OAuth: auth.OAuthConfig{
 			GoogleClientID:     envDefault("GOOGLE_CLIENT_ID", ""),
 			GoogleClientSecret: envDefault("GOOGLE_CLIENT_SECRET", ""),

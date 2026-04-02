@@ -30,6 +30,10 @@ func (d *DB) GetVault(ctx context.Context, userID string) (Vault, error) {
 
 func (d *DB) PushVault(ctx context.Context, userID string, blob []byte, expectedVersion int64, deviceID string) (int64, error) {
 	var newVersion int64
+	var devID *string
+	if deviceID != "" {
+		devID = &deviceID
+	}
 
 	if expectedVersion == 0 {
 		err := d.Pool.QueryRow(ctx,
@@ -42,7 +46,7 @@ func (d *DB) PushVault(ctx context.Context, userID string, blob []byte, expected
 			   updated_by_device = EXCLUDED.updated_by_device
 			 WHERE vaults.version = 0
 			 RETURNING version`,
-			userID, blob, deviceID,
+			userID, blob, devID,
 		).Scan(&newVersion)
 		if err != nil {
 			return 0, fmt.Errorf("creating vault: %w", err)
@@ -58,7 +62,7 @@ func (d *DB) PushVault(ctx context.Context, userID string, blob []byte, expected
 		   updated_by_device = $2
 		 WHERE user_id = $3 AND version = $4
 		 RETURNING version`,
-		blob, deviceID, userID, expectedVersion,
+		blob, devID, userID, expectedVersion,
 	).Scan(&newVersion)
 	if err != nil {
 		return 0, fmt.Errorf("version conflict: vault has been updated by another device")

@@ -10,7 +10,7 @@ build-server:
     cd server && go build -o ../bin/forged-server ./cmd/forged-server
 
 build-web:
-    cd web && npm run build
+    cd web && pnpm build
 
 build: build-cli build-server
 
@@ -22,7 +22,7 @@ lint-server:
     cd server && golangci-lint run ./...
 
 lint-web:
-    cd web && npm run lint
+    cd web && pnpm lint
 
 lint: lint-cli lint-server
 
@@ -31,10 +31,17 @@ dev:
     cd cli && go run ./cmd/forged daemon
 
 dev-server:
-    cd server && go run ./cmd/forged-server
+    cd server && doppler run -- go run ./cmd/forged-server
 
 dev-web:
-    cd web && npm run dev
+    cd web && pnpm dev
+
+# Database
+migrate:
+    cd server && doppler run -- go run ./cmd/migrate
+
+migrate-reset:
+    cd server && doppler run -- go run ./cmd/migrate reset
 
 # Clean
 clean:

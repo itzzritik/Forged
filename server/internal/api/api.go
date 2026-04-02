@@ -10,14 +10,18 @@ import (
 )
 
 type Server struct {
-	DB     *db.DB
-	Secret string
-	OAuth  auth.OAuthConfig
+	DB      *db.DB
+	Secret  string
+	OAuth   auth.OAuthConfig
+	DevMode bool
 }
 
 func (s *Server) Routes() http.Handler {
 	mux := http.NewServeMux()
 
+	if s.DevMode {
+		mux.HandleFunc("POST /api/v1/auth/dev", s.handleDevAuth)
+	}
 	mux.HandleFunc("GET /api/v1/auth/google", s.handleGoogleRedirect)
 	mux.HandleFunc("GET /api/v1/auth/google/callback", s.handleGoogleCallback)
 	mux.HandleFunc("GET /api/v1/auth/github", s.handleGitHubRedirect)

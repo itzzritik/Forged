@@ -9,6 +9,34 @@ import (
 )
 
 
+func (s *Server) handleDevAuth(w http.ResponseWriter, r *http.Request) {
+	var req struct {
+		Email string `json:"email"`
+	}
+	if err := readJSON(r, &req); err != nil || req.Email == "" {
+		writeError(w, http.StatusBadRequest, "email required")
+		return
+	}
+
+	user, err := s.DB.UpsertOAuthUser(r.Context(), req.Email, "Dev User", "dev", "dev")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not create user")
+		return
+	}
+
+	token, err := serverauth.GenerateToken(user.ID, s.Secret)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not generate token")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"token":   token,
+		"user_id": user.ID,
+		"email":   user.Email,
+	})
+}
+
 func (s *Server) handleGoogleRedirect(w http.ResponseWriter, r *http.Request) {
 	callbackURL := r.URL.Query().Get("callback")
 	state := url.QueryEscape(callbackURL)
