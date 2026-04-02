@@ -5,7 +5,7 @@ import (
 	"os"
 	"syscall"
 
-	"github.com/forgedkeys/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/spf13/cobra"
 )
 

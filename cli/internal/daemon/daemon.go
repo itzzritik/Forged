@@ -10,12 +10,12 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/forgedkeys/forged/cli/internal/activity"
-	forgedagent "github.com/forgedkeys/forged/cli/internal/agent"
-	"github.com/forgedkeys/forged/cli/internal/config"
-	"github.com/forgedkeys/forged/cli/internal/ipc"
-	"github.com/forgedkeys/forged/cli/internal/platform"
-	"github.com/forgedkeys/forged/cli/internal/vault"
+	"github.com/itzzritik/forged/cli/internal/activity"
+	forgedagent "github.com/itzzritik/forged/cli/internal/agent"
+	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/platform"
+	"github.com/itzzritik/forged/cli/internal/vault"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 

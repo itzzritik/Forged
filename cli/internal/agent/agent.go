@@ -8,7 +8,7 @@ import (
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
-	"github.com/forgedkeys/forged/cli/internal/vault"
+	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
 type ForgedAgent struct {

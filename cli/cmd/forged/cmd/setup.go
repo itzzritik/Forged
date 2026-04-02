@@ -8,9 +8,9 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/forgedkeys/forged/cli/internal/config"
-	"github.com/forgedkeys/forged/cli/internal/hostmatch"
-	"github.com/forgedkeys/forged/cli/internal/vault"
+	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/hostmatch"
+	"github.com/itzzritik/forged/cli/internal/vault"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

@@ -7,7 +7,7 @@ Your SSH keys deserve better than sitting unencrypted in `~/.ssh/`. Forged is a 
 Open-source replacement for 1Password and Bitwarden's SSH agent.
 
 <!-- TODO: Add demo GIF here -->
-<!-- ![demo](https://forged.dev/demo.gif) -->
+<!-- ![demo](https://forged.ritik.me/demo.gif) -->
 
 ## Why
 

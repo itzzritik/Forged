@@ -1,4 +1,4 @@
-module github.com/forgedkeys/forged/cli
+module github.com/itzzritik/forged/cli
 
 go 1.25.4
 

@@ -4,7 +4,7 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/forgedkeys/forged/cli/internal/vault"
+	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
 func Match(pattern string, host string) bool {

@@ -8,8 +8,8 @@ import (
 	"os"
 	"sync"
 
-	"github.com/forgedkeys/forged/cli/internal/activity"
-	"github.com/forgedkeys/forged/cli/internal/vault"
+	"github.com/itzzritik/forged/cli/internal/activity"
+	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
 type Server struct {

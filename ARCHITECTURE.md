@@ -98,7 +98,7 @@ Key decisions made during planning, with rationale:
 |----------|--------|-----------|
 | **UI** | CLI-only, no web dashboard | Target users live in the terminal. Eliminates React/Vite/embed complexity. REST API and dashboard can be added later if needed. |
 | **Local HTTP server** | None | No dashboard means no consumer. CLI talks to daemon via Unix socket IPC. Eliminates unnecessary attack surface. |
-| **Cloud server** | Next.js on Vercel | Free deployment, built-in auth libraries, landing page SSR + API in one project. The server is a thin blob store — Next.js is the right tool for fast shipping. |
+| **Cloud server** | Go on Fly.io | Same language as client, one ecosystem. Flat pricing suits daemon polling. Landing page on Cloudflare Pages separately. |
 | **Repo structure** | Mono repo, no Turborepo | Go and Next.js have independent build systems with no shared dependency graph. Turborepo adds complexity for zero benefit. A `justfile` + path-filtered CI is sufficient. |
 | **CLI ↔ Daemon IPC** | Custom protocol over Unix socket | CLI commands never touch the vault file directly. Single-writer architecture prevents corruption. |
 | **Vault writes** | Atomic (write-tmp + fsync + rename) | Prevents corruption on crash. Standard approach used by SQLite, etcd, etc. |
@@ -786,7 +786,7 @@ forged migrate                      # Import from 1Password / ssh-agent (Phase 5
 
 **First time setup**:
 ```bash
-$ brew install forgedkeys/tap/forged
+$ brew install itzzritik/tap/forged
 $ forged setup
 
 Welcome to Forged! Let's set up your SSH key manager.
@@ -819,7 +819,7 @@ Setting up daemon...
   Updated ~/.ssh/config (added IdentityAgent)
 
 Would you like to set up cloud sync? (y/n) y
-  → Visit https://forged.dev/register or run: forged register
+  → Visit https://forged.ritik.me/register or run: forged register
 
 Setup complete! Your SSH agent is running.
   Socket: ~/.forged/agent.sock
@@ -863,99 +863,87 @@ $ forged list --json
 
 | Component | Technology | Rationale |
 |-----------|-----------|-----------|
-| Framework | Next.js 15 (App Router) | Landing page SSR + API routes in one project |
+| Language | Go | Same language as client. One ecosystem. |
+| HTTP | stdlib `net/http` | 4 routes. No framework needed. |
 | Database | PostgreSQL | Relational data (users, devices, audit logs) |
-| ORM | Drizzle | Type-safe, lightweight, great DX |
-| Auth | NextAuth.js / Lucia | Session management, OAuth providers |
-| Hosting | Vercel (app) + Neon (DB) | Free tier generous, scales easily |
-| Storage | Postgres BYTEA | Encrypted vault blobs (small, <100KB) |
-| Email | Resend | Transactional email (verification, alerts) |
+| DB driver | `pgx` | High-performance, pure Go Postgres driver |
+| Auth | bcrypt + JWT | Simple, no third-party auth library needed |
+| Hosting | Fly.io | Free tier (3 VMs + Postgres). Flat pricing, no per-invocation costs. |
+| Landing page | Static site (Cloudflare Pages) | Decoupled from API. Free, unlimited bandwidth. |
+| Payments | Stripe Go SDK | Mature, well-documented |
+
+**Why Go instead of Next.js**: The sync server stores and returns opaque encrypted blobs. 4 API routes, ~300 lines of Go. Adding Next.js, TypeScript, Drizzle, NextAuth, React, and npm for this is overkill. The polling pattern (daemon hits server every 5 min per device) punishes serverless pricing models. A $5 VPS handles 10K+ users with flat costs.
 
 ### Database Schema
 
 ```sql
--- Users
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
-    auth_hash TEXT NOT NULL,              -- bcrypt of auth-derived key
-    key_generation INT NOT NULL DEFAULT 1,-- Bumped on password change
+    auth_hash TEXT NOT NULL,
+    key_generation INT NOT NULL DEFAULT 1,
     created_at TIMESTAMPTZ DEFAULT now(),
     updated_at TIMESTAMPTZ DEFAULT now()
 );
 
--- Encrypted vault blobs (one per user, updated on sync)
 CREATE TABLE vaults (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    encrypted_blob BYTEA NOT NULL,        -- Opaque encrypted vault
-    version BIGINT NOT NULL DEFAULT 1,    -- Optimistic locking
+    encrypted_blob BYTEA NOT NULL,
+    version BIGINT NOT NULL DEFAULT 1,
     updated_at TIMESTAMPTZ DEFAULT now(),
-    updated_by_device UUID,               -- Which device pushed this
+    updated_by_device UUID,
     UNIQUE(user_id)
 );
 
--- Registered devices
 CREATE TABLE devices (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
-    name TEXT NOT NULL,                   -- "MacBook Pro"
-    platform TEXT NOT NULL,               -- "darwin/arm64"
+    name TEXT NOT NULL,
+    platform TEXT NOT NULL,
     hostname TEXT,
-    device_public_key TEXT NOT NULL,       -- For device verification
+    device_public_key TEXT NOT NULL,
     registered_at TIMESTAMPTZ DEFAULT now(),
     last_seen_at TIMESTAMPTZ DEFAULT now(),
-    approved BOOLEAN DEFAULT false         -- Requires approval from existing device
+    approved BOOLEAN DEFAULT false
 );
 
--- Audit log
 CREATE TABLE audit_log (
     id BIGSERIAL PRIMARY KEY,
     user_id UUID REFERENCES users(id),
     device_id UUID REFERENCES devices(id),
-    action TEXT NOT NULL,                 -- "sync_push", "sync_pull", "device_register"
+    action TEXT NOT NULL,
     ip_address INET,
     created_at TIMESTAMPTZ DEFAULT now()
 );
 ```
 
-### API Routes (Next.js App Router)
+### API Routes
 
-All API routes are versioned under `/api/v1/`.
+All routes versioned under `/api/v1/`.
 
 ```
-app/
-├── page.tsx                           # Landing page
-├── pricing/page.tsx                   # Pricing page
-├── docs/                              # Documentation (MDX)
-├── security/page.tsx                  # Security model explanation
-├── api/v1/
-│   ├── auth/
-│   │   ├── register/route.ts          # POST: Create account
-│   │   ├── login/route.ts             # POST: Authenticate
-│   │   └── logout/route.ts            # POST: End session
-│   ├── sync/
-│   │   ├── push/route.ts              # POST: Upload encrypted vault
-│   │   ├── pull/route.ts              # GET: Download encrypted vault
-│   │   └── status/route.ts            # GET: Sync metadata
-│   ├── devices/
-│   │   ├── route.ts                   # GET: List, POST: Register
-│   │   ├── [id]/route.ts             # DELETE: Deauthorize
-│   │   └── [id]/approve/route.ts     # POST: Approve new device
-│   └── account/
-│       ├── route.ts                   # GET: Account info
-│       └── delete/route.ts            # POST: Delete account + all data (GDPR)
+POST   /api/v1/auth/register       Create account
+POST   /api/v1/auth/login           Authenticate, return JWT
+POST   /api/v1/sync/push            Upload encrypted vault blob
+GET    /api/v1/sync/pull             Download encrypted vault blob
+GET    /api/v1/sync/status           Sync metadata (version, last update)
+GET    /api/v1/devices               List registered devices
+POST   /api/v1/devices               Register a new device
+DELETE /api/v1/devices/:id           Deauthorize a device
+POST   /api/v1/devices/:id/approve   Approve a pending device
+GET    /api/v1/account               Account info
+POST   /api/v1/account/delete        Delete account + all data
 ```
 
 ### Landing Page
 
-The Next.js app doubles as the marketing site:
+Static site, deployed separately on Cloudflare Pages:
 
-- **/** — Hero, features, comparison table, CTA
-- **/docs** — Installation, setup, configuration guides
-- **/pricing** — Free (local-only) / Pro ($3/mo cloud sync) / Team ($5/user/mo)
-- **/blog** — Security deep dives, release notes
-- **/security** — Security model explanation, audit reports
+- **/** - Hero, features, comparison table, CTA
+- **/docs** - Installation, setup, configuration guides
+- **/pricing** - Free (local-only) / Pro (cloud sync) / Team (per user)
+- **/security** - Security model explanation
 
 ---
 
@@ -1009,7 +997,7 @@ socket = "~/.forged/agent.sock"     # Unix socket path
 log_level = "info"
 
 [sync]
-server = "https://api.forged.dev"   # Cloud sync endpoint
+server = "https://forged-api.ritik.me"   # Cloud sync endpoint
 interval = "5m"                      # Sync interval
 enabled = true
 
@@ -1091,7 +1079,7 @@ Forged provides a `forged-sign` binary that implements the SSH signing protocol,
 
 ```
 Installation:
-  brew install forgedkeys/tap/forged
+  brew install itzzritik/tap/forged
 
 Daemon management:
   ~/Library/LaunchAgents/dev.forged.agent.plist
@@ -1140,9 +1128,9 @@ Notes:
 
 ```
 Installation:
-  curl -fsSL https://get.forged.dev | sh
+  curl -fsSL https://get.forged.ritik.me | sh
   # or: apt install forged (from our repo)
-  # or: brew install forgedkeys/tap/forged
+  # or: brew install itzzritik/tap/forged
 
 Daemon management:
   ~/.config/systemd/user/forged.service
@@ -1180,9 +1168,9 @@ Notes:
 
 ```
 Installation:
-  scoop bucket add forgedkeys https://github.com/forgedkeys/scoop-bucket
+  scoop bucket add itzzritik https://github.com/itzzritik/scoop-bucket
   scoop install forged
-  # or: winget install forgedkeys.forged
+  # or: winget install itzzritik.forged
   # or: download MSI from GitHub releases
 
 Daemon management:
@@ -1255,9 +1243,9 @@ archives:
 
 brews:
   - repository:
-      owner: forgedkeys
+      owner: itzzritik
       name: homebrew-tap
-    homepage: https://forged.dev
+    homepage: https://forged.ritik.me
     description: "SSH key management — forge your keys, take them anywhere"
     install: |
       bin.install "forged"
@@ -1266,7 +1254,7 @@ brews:
 nfpms:
   - package_name: forged
     vendor: Forged
-    homepage: https://forged.dev
+    homepage: https://forged.ritik.me
     maintainer: Ritik Srivastava
     description: "SSH key management"
     formats:
@@ -1275,9 +1263,9 @@ nfpms:
 
 scoops:
   - repository:
-      owner: forgedkeys
+      owner: itzzritik
       name: scoop-bucket
-    homepage: https://forged.dev
+    homepage: https://forged.ritik.me
     description: "SSH key management"
 
 checksum:
@@ -1314,13 +1302,13 @@ GitHub Actions triggered
     └─ Publishes to APT repo (GitHub Pages or S3)
 ```
 
-### Install script (`get.forged.dev`)
+### Install script (`get.forged.ritik.me`)
 
 ```bash
 #!/bin/sh
 set -e
 
-REPO="forgedkeys/forged"
+REPO="itzzritik/forged"
 LATEST=$(curl -fsSL "https://api.github.com/repos/$REPO/releases/latest" | grep tag_name | cut -d '"' -f 4)
 
 OS=$(uname -s | tr '[:upper:]' '[:lower:]')
@@ -1378,7 +1366,7 @@ build-cli:
     cd cli && go build -o bin/forged-sign ./cmd/forged-sign
 
 build-server:
-    cd server && npm run build
+    cd server && go build -o ../bin/forged-server ./cmd/forged-server
 
 build: build-cli build-server
 
@@ -1387,7 +1375,7 @@ lint-cli:
     cd cli && golangci-lint run
 
 lint-server:
-    cd server && npm run lint
+    cd server && golangci-lint run
 
 lint: lint-cli lint-server
 ```
@@ -1458,22 +1446,16 @@ forged/
 │   │       └── pipe_windows.go       # Windows named pipe
 │   ├── go.mod
 │   └── go.sum
-├── server/                           # Next.js app (cloud sync + landing page)
-│   ├── src/app/
-│   │   ├── page.tsx                  # Landing page
-│   │   ├── pricing/
-│   │   ├── docs/
-│   │   ├── security/
-│   │   └── api/v1/                   # Versioned API routes
-│   │       ├── auth/
-│   │       ├── sync/
-│   │       ├── devices/
-│   │       └── account/
-│   ├── src/db/
-│   │   ├── schema.ts                 # Drizzle schema
-│   │   └── index.ts
-│   ├── package.json
-│   └── next.config.ts
+├── server/                           # Go sync server
+│   ├── cmd/forged-server/main.go     # Entry point
+│   ├── internal/
+│   │   ├── api/                      # HTTP handlers
+│   │   ├── auth/                     # bcrypt + JWT
+│   │   ├── db/                       # PostgreSQL queries
+│   │   └── middleware/               # Auth, logging, CORS
+│   ├── migrations/                   # SQL migration files
+│   ├── go.mod
+│   └── Dockerfile
 ├── proto/                            # Shared contract specifications
 │   ├── vault-format.md               # Binary vault format spec (versioned)
 │   ├── sync-api.md                   # Cloud sync HTTP API contract
@@ -1608,17 +1590,18 @@ Batch 2 (Vault Crypto) ──► Batch 3 (Key Management)
 
 **Goal**: Encrypted key sync across devices.
 
-- [ ] Next.js cloud app scaffold in `server/`
-- [ ] PostgreSQL schema (users, vaults, devices, audit)
-- [ ] Account registration and authentication
-- [ ] Zero-knowledge vault upload/download API (`/api/v1/sync/push`, `/api/v1/sync/pull`)
+- [ ] Go server scaffold in `server/` (stdlib net/http, pgx, JWT)
+- [ ] PostgreSQL schema + migrations (users, vaults, devices, audit)
+- [ ] Auth routes: register (bcrypt), login (JWT)
+- [ ] Sync routes: push/pull encrypted vault blobs (optimistic locking)
+- [ ] Device routes: register, list, approve, deauthorize
+- [ ] Dockerfile + Fly.io deployment config
 - [ ] Client-side sync engine in Go (push/pull/merge)
-- [ ] Device registration and approval flow
+- [ ] HKDF-SHA256 sync key derivation from vault key
 - [ ] Conflict resolution (version vectors, tombstones with 90-day TTL)
 - [ ] Offline queue with exponential backoff retry
 - [ ] Master password change flow (`key_generation` counter)
 - [ ] CLI: `forged login`, `forged register`, `forged sync`, `forged sync status`
-- [ ] Landing page (Next.js)
 - [ ] `proto/sync-api.md` specification
 - [ ] CI path filters (cli/ and server/ build independently)
 
@@ -1651,7 +1634,7 @@ Batch 2 (Vault Crypto) ──► Batch 3 (Key Management)
 - [ ] Security model writeup (`/security` page)
 - [ ] GoReleaser CI/CD pipeline
 - [ ] Homebrew tap, Scoop bucket, APT repo
-- [ ] Install script (`get.forged.dev`)
+- [ ] Install script (`get.forged.ritik.me`)
 - [ ] GitHub Actions for automated releases
 - [ ] macOS Gatekeeper notarization (codesign + notarytool)
 - [ ] License selection (MIT or Apache 2.0)
@@ -1680,16 +1663,16 @@ Batch 2 (Vault Crypto) ──► Batch 3 (Key Management)
 | `net` (stdlib) | Unix socket / named pipe |
 | `encoding/json` (stdlib) | IPC protocol serialization |
 
-### Cloud Server (Next.js)
+### Cloud Server (Go)
 
 | Dependency | Purpose |
 |-----------|---------|
-| Next.js 15 | App framework (SSR + API) |
-| Drizzle ORM | Database queries |
-| PostgreSQL (Neon) | Database |
-| Lucia / NextAuth | Authentication |
-| Vercel | Hosting |
-| Resend | Transactional email (verification, alerts) |
+| `net/http` (stdlib) | HTTP server |
+| `github.com/jackc/pgx/v5` | PostgreSQL driver |
+| `golang.org/x/crypto/bcrypt` | Password hashing |
+| `github.com/golang-jwt/jwt/v5` | JWT authentication |
+| Fly.io | Hosting |
+| PostgreSQL (Fly Postgres) | Database |
 
 ### Build & Release
 

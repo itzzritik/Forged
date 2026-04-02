@@ -17,8 +17,8 @@ builds:
       - arm64
     ldflags:
       - -s -w
-      - -X github.com/forgedkeys/forged/cli/cmd/forged/cmd.version={{.Version}}
-      - -X github.com/forgedkeys/forged/cli/cmd/forged/cmd.commit={{.Commit}}
+      - -X github.com/itzzritik/forged/cli/cmd/forged/cmd.version={{.Version}}
+      - -X github.com/itzzritik/forged/cli/cmd/forged/cmd.commit={{.Commit}}
 
   - id: forged-sign
     main: ./cli/cmd/forged-sign
@@ -43,9 +43,9 @@ archives:
 
 brews:
   - repository:
-      owner: forgedkeys
+      owner: itzzritik
       name: homebrew-tap
-    homepage: https://forged.dev
+    homepage: https://forged.ritik.me
     description: "SSH key management — forge your keys, take them anywhere"
     install: |
       bin.install "forged"
@@ -54,7 +54,7 @@ brews:
 nfpms:
   - package_name: forged
     vendor: Forged
-    homepage: https://forged.dev
+    homepage: https://forged.ritik.me
     maintainer: Ritik Srivastava
     description: "SSH key management"
     formats:
@@ -63,9 +63,9 @@ nfpms:
 
 scoops:
   - repository:
-      owner: forgedkeys
+      owner: itzzritik
       name: scoop-bucket
-    homepage: https://forged.dev
+    homepage: https://forged.ritik.me
     description: "SSH key management"
 
 checksum:

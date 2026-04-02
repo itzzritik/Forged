@@ -6,8 +6,8 @@ import (
 	"strconv"
 	"syscall"
 
-	"github.com/forgedkeys/forged/cli/internal/config"
-	"github.com/forgedkeys/forged/cli/internal/daemon"
+	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )

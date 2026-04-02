@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/forgedkeys/forged/cli/internal/config"
-	"github.com/forgedkeys/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/spf13/cobra"
 )
 
