@@ -165,6 +165,31 @@ func (v *Vault) Path() string {
 	return v.path
 }
 
+func (v *Vault) Key() []byte {
+	return v.key
+}
+
+func (v *Vault) ExportForSync() ([]byte, error) {
+	plaintext, err := json.Marshal(v.Data)
+	if err != nil {
+		return nil, fmt.Errorf("serializing vault: %w", err)
+	}
+	return EncryptForSync(v.key, plaintext)
+}
+
+func (v *Vault) ImportFromSync(data []byte) error {
+	plaintext, err := DecryptFromSync(v.key, data)
+	if err != nil {
+		return err
+	}
+	var vd VaultData
+	if err := json.Unmarshal(plaintext, &vd); err != nil {
+		return fmt.Errorf("parsing synced vault: %w", err)
+	}
+	v.Data = vd
+	return v.Save()
+}
+
 func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".vault-*.tmp")

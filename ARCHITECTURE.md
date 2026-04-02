@@ -1622,10 +1622,10 @@ forged/
 - [x] Next.js web app scaffolded (`web/`)
 - [x] `justfile` updated with server + web commands
 - [x] Migrate tool (`server/cmd/migrate`)
-- [ ] HKDF-SHA256 sync key derivation from vault key (deferred)
-- [ ] Conflict resolution merge logic (deferred, server rejects conflicts)
-- [ ] Offline queue with exponential backoff retry (deferred)
-- [ ] Master password change flow (deferred)
+- [x] HKDF-SHA256 sync key derivation from vault key
+- [x] Conflict resolution merge logic (union adds, tombstone deletes, last-writer-wins)
+- [x] Offline queue with exponential backoff retry
+- [x] Master password change flow (key_generation counter)
 
 ### Phase 4: Windows + Cross-Platform (Week 8-9)
 
@@ -1639,9 +1639,9 @@ forged/
 - [ ] Windows installer (MSI via WiX or go-msi)
 - [ ] Scoop package
 - [ ] Cross-platform CI matrix (macOS arm64, macOS amd64, Linux amd64, Linux arm64, Windows amd64)
-- [ ] `forged doctor` — diagnose common issues per platform
-- [ ] `forged migrate` — import from 1Password, Bitwarden, plain ssh-agent
-- [ ] `forged benchmark` — test Argon2id speed, recommend parameters
+- [x] `forged doctor` - diagnose common issues per platform
+- [x] `forged migrate` - import from 1Password, Bitwarden, plain ssh-agent
+- [x] `forged benchmark` - test Argon2id speed, recommend parameters
 
 **Deliverable**: Works on all three major platforms.
 
@@ -1649,17 +1649,19 @@ forged/
 
 **Goal**: Open-source release on GitHub.
 
-- [ ] README with demo GIF/video
+- [x] README
 - [ ] Documentation site (within Next.js app, MDX)
 - [ ] Security model writeup (`/security` page)
-- [ ] GoReleaser CI/CD pipeline
+- [x] GoReleaser CI/CD pipeline
 - [ ] Homebrew tap, Scoop bucket, APT repo
-- [ ] Install script (`get.forged.ritik.me`)
-- [ ] GitHub Actions for automated releases
+- [x] Install script (`scripts/install.sh`)
+- [x] GitHub Actions for automated releases
 - [ ] macOS Gatekeeper notarization (codesign + notarytool)
 - [ ] License selection (MIT or Apache 2.0)
 - [ ] Submit to Hacker News, Reddit r/programming, r/golang, r/commandline
 - [ ] Product Hunt launch
+- [x] Landing page (Next.js)
+- [x] Login page (Next.js, OAuth flow)
 
 **Deliverable**: Public, installable, documented open-source release.
 
