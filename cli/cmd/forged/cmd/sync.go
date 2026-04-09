@@ -101,19 +101,26 @@ var syncCmd = &cobra.Command{
 			return err
 		}
 
-		resp, ipcErr := ctlClient().Call("sync-trigger", map[string]string{
+		fmt.Println("Syncing vault...")
+		resp, err := ctlClient().Call("sync-trigger", map[string]string{
 			"server_url": creds.ServerURL,
 			"token":      creds.Token,
 		})
-		if ipcErr != nil {
-			return ipcErr
+		if err != nil {
+			return err
 		}
 
 		if jsonOutput {
 			return printOutput(json.RawMessage(resp.Data))
 		}
 
-		fmt.Println("Sync complete")
+		var result struct {
+			Version int64 `json:"version"`
+		}
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return fmt.Errorf("parsing sync response: %w", err)
+		}
+		fmt.Printf("Sync complete (version %d)\n", result.Version)
 		return nil
 	},
 }
@@ -213,13 +220,19 @@ code{background:#18181b;padding:2px 6px;border-radius:4px;font-size:0.75rem;colo
 }
 
 func openBrowser(url string) {
+	var cmd *exec.Cmd
 	switch runtime.GOOS {
 	case "darwin":
-		exec.Command("open", url).Start()
+		cmd = exec.Command("open", url)
 	case "linux":
-		exec.Command("xdg-open", url).Start()
+		cmd = exec.Command("xdg-open", url)
 	case "windows":
-		exec.Command("rundll32", "url.dll,FileProtocolHandler", url).Start()
+		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
+	default:
+		return
+	}
+	if err := cmd.Start(); err == nil {
+		go cmd.Wait()
 	}
 }
 

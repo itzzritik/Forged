@@ -7,13 +7,16 @@ import (
 	"net"
 	"os"
 	"sync"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/activity"
+	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
 type Server struct {
 	socketPath  string
+	vault       *vault.Vault
 	keyStore    *vault.KeyStore
 	activityLog *activity.ActivityLog
 	listener    net.Listener
@@ -21,9 +24,10 @@ type Server struct {
 	wg          sync.WaitGroup
 }
 
-func NewServer(socketPath string, ks *vault.KeyStore, al *activity.ActivityLog, logger *slog.Logger) *Server {
+func NewServer(socketPath string, v *vault.Vault, ks *vault.KeyStore, al *activity.ActivityLog, logger *slog.Logger) *Server {
 	return &Server{
 		socketPath:  socketPath,
+		vault:       v,
 		keyStore:    ks,
 		activityLog: al,
 		logger:      logger,
@@ -77,6 +81,8 @@ func (s *Server) acceptLoop() {
 }
 
 func (s *Server) handleConn(conn net.Conn) {
+	conn.SetDeadline(time.Now().Add(60 * time.Second))
+
 	var req Request
 	if err := ReadMessage(conn, &req); err != nil {
 		return
@@ -110,6 +116,8 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleHosts()
 	case "activity":
 		return s.handleActivity(req.Args)
+	case "sync-trigger":
+		return s.handleSyncTrigger(req.Args)
 	case "status":
 		return s.handleStatus()
 	default:
@@ -287,6 +295,35 @@ func (s *Server) handleActivity(raw json.RawMessage) Response {
 	}
 	events := s.activityLog.Recent(a.Limit)
 	return OkResponse(map[string]any{"events": events})
+}
+
+type syncTriggerArgs struct {
+	ServerURL string `json:"server_url"`
+	Token     string `json:"token"`
+}
+
+func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
+	var a syncTriggerArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+
+	if a.ServerURL == "" || a.Token == "" {
+		return ErrorResponse(fmt.Errorf("server_url and token required"))
+	}
+
+	vaultData, err := os.ReadFile(s.vault.Path())
+	if err != nil {
+		return ErrorResponse(fmt.Errorf("reading vault: %w", err))
+	}
+
+	client := forgedsync.NewClient(a.ServerURL, a.Token, "")
+	result, err := client.Push(vaultData, 0)
+	if err != nil {
+		return ErrorResponse(fmt.Errorf("sync push: %w", err))
+	}
+
+	return OkResponse(map[string]any{"version": result.Version})
 }
 
 func (s *Server) handleStatus() Response {

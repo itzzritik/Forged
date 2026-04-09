@@ -171,7 +171,7 @@ func (d *Daemon) startIPC() error {
 		return fmt.Errorf("creating socket directory: %w", err)
 	}
 
-	d.ipcServer = ipc.NewServer(ctlPath, d.keyStore, d.activityLog, d.logger)
+	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
 	if err := d.ipcServer.Start(); err != nil {
 		return fmt.Errorf("starting ipc server: %w", err)
 	}
