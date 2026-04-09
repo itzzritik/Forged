@@ -318,7 +318,18 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 	}
 
 	client := forgedsync.NewClient(a.ServerURL, a.Token, "")
-	result, err := client.Push(vaultData, 0)
+
+	status, err := client.Status()
+	if err != nil {
+		return ErrorResponse(fmt.Errorf("checking sync status: %w", err))
+	}
+
+	var expectedVersion int64
+	if status.HasVault {
+		expectedVersion = status.Version
+	}
+
+	result, err := client.Push(vaultData, expectedVersion)
 	if err != nil {
 		return ErrorResponse(fmt.Errorf("sync push: %w", err))
 	}
