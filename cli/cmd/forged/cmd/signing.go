@@ -99,7 +99,7 @@ var signingCmd = &cobra.Command{
 }
 
 func listKeysWithPublicKeys(client *ipc.Client) ([]keyInfo, error) {
-	resp, err := client.Call("list", nil)
+	resp, err := client.Call(ipc.CmdList, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -113,7 +113,7 @@ func listKeysWithPublicKeys(client *ipc.Client) ([]keyInfo, error) {
 
 	for i, k := range result.Keys {
 		if k.PublicKey == "" {
-			exportResp, err := client.Call("export", map[string]string{"name": k.Name})
+			exportResp, err := client.Call(ipc.CmdExport, map[string]string{"name": k.Name})
 			if err == nil {
 				var exp map[string]string
 				json.Unmarshal(exportResp.Data, &exp)
@@ -126,7 +126,7 @@ func listKeysWithPublicKeys(client *ipc.Client) ([]keyInfo, error) {
 }
 
 func enableSigning(client *ipc.Client, keyName string) error {
-	resp, err := client.Call("export", map[string]string{"name": keyName})
+	resp, err := client.Call(ipc.CmdExport, map[string]string{"name": keyName})
 	if err != nil {
 		return err
 	}

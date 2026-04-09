@@ -96,27 +96,27 @@ func (s *Server) handleConn(conn net.Conn) {
 
 func (s *Server) dispatch(req Request) Response {
 	switch req.Command {
-	case "list":
+	case CmdList:
 		return s.handleList()
-	case "add":
+	case CmdAdd:
 		return s.handleAdd(req.Args)
-	case "generate":
+	case CmdGenerate:
 		return s.handleGenerate(req.Args)
-	case "remove":
+	case CmdRemove:
 		return s.handleRemove(req.Args)
-	case "rename":
+	case CmdRename:
 		return s.handleRename(req.Args)
-	case "export":
+	case CmdExport:
 		return s.handleExport(req.Args)
-	case "host":
+	case CmdHost:
 		return s.handleHost(req.Args)
-	case "unhost":
+	case CmdUnhost:
 		return s.handleUnhost(req.Args)
-	case "hosts":
+	case CmdHosts:
 		return s.handleHosts()
-	case "activity":
+	case CmdActivity:
 		return s.handleActivity(req.Args)
-	case "sync-trigger":
+	case CmdSyncTrigger:
 		return s.handleSyncTrigger(req.Args)
 	case "status":
 		return s.handleStatus()

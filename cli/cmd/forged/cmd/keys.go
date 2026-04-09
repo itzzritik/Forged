@@ -31,7 +31,7 @@ var addCmd = &cobra.Command{
 		}
 		comment, _ := cmd.Flags().GetString("comment")
 
-		resp, err := ctlClient().Call("add", map[string]string{
+		resp, err := ctlClient().Call(ipc.CmdAdd, map[string]string{
 			"name":        args[0],
 			"private_key": string(data),
 			"comment":     comment,
@@ -84,7 +84,7 @@ var generateCmd = &cobra.Command{
 			return fmt.Errorf("key name is required")
 		}
 
-		resp, err := ctlClient().Call("generate", map[string]string{
+		resp, err := ctlClient().Call(ipc.CmdGenerate, map[string]string{
 			"name":    name,
 			"comment": comment,
 		})
@@ -124,7 +124,7 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all keys",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		resp, err := ctlClient().Call("list", nil)
+		resp, err := ctlClient().Call(ipc.CmdList, nil)
 		if err != nil {
 			return err
 		}
@@ -155,7 +155,7 @@ var listCmd = &cobra.Command{
 
 		for _, k := range result.Keys {
 			r := row{name: k.Name, keyType: k.Type, fingerprint: k.Fingerprint}
-			exportResp, _ := ctlClient().Call("export", map[string]string{"name": k.Name})
+			exportResp, _ := ctlClient().Call(ipc.CmdExport, map[string]string{"name": k.Name})
 			if exportResp.Data != nil {
 				var exp map[string]string
 				json.Unmarshal(exportResp.Data, &exp)
@@ -186,7 +186,7 @@ var removeCmd = &cobra.Command{
 	Short: "Remove a key",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := ctlClient().Call("remove", map[string]string{"name": args[0]})
+		_, err := ctlClient().Call(ipc.CmdRemove, map[string]string{"name": args[0]})
 		if err != nil {
 			return err
 		}
@@ -200,7 +200,7 @@ var exportCmd = &cobra.Command{
 	Short: "Export public key to stdout",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		resp, err := ctlClient().Call("export", map[string]string{"name": args[0]})
+		resp, err := ctlClient().Call(ipc.CmdExport, map[string]string{"name": args[0]})
 		if err != nil {
 			return err
 		}
@@ -219,7 +219,7 @@ var renameCmd = &cobra.Command{
 	Short: "Rename a key",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := ctlClient().Call("rename", map[string]string{
+		_, err := ctlClient().Call(ipc.CmdRename, map[string]string{
 			"old_name": args[0],
 			"new_name": args[1],
 		})

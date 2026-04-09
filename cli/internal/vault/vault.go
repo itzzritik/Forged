@@ -31,7 +31,7 @@ type Key struct {
 	Name         string     `json:"name"`
 	Type         string     `json:"type"`
 	PublicKey    string     `json:"public_key"`
-	PrivateKey   string     `json:"private_key"`
+	PrivateKey   []byte     `json:"private_key"`
 	Comment      string     `json:"comment"`
 	Fingerprint  string     `json:"fingerprint"`
 	CreatedAt    time.Time  `json:"created_at"`

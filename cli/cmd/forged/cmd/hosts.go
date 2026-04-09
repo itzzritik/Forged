@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 
+	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/spf13/cobra"
 )
 
@@ -12,7 +13,7 @@ var hostCmd = &cobra.Command{
 	Short: "Map a key to host patterns",
 	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := ctlClient().Call("host", map[string]any{
+		_, err := ctlClient().Call(ipc.CmdHost, map[string]any{
 			"key_name": args[0],
 			"patterns": args[1:],
 		})
@@ -28,7 +29,7 @@ var hostsCmd = &cobra.Command{
 	Use:   "hosts",
 	Short: "List all host-key mappings",
 	RunE: func(cmd *cobra.Command, args []string) error {
-		resp, err := ctlClient().Call("hosts", nil)
+		resp, err := ctlClient().Call(ipc.CmdHosts, nil)
 		if err != nil {
 			return err
 		}
@@ -64,7 +65,7 @@ var unhostCmd = &cobra.Command{
 	Short: "Remove a host mapping",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := ctlClient().Call("unhost", map[string]string{
+		_, err := ctlClient().Call(ipc.CmdUnhost, map[string]string{
 			"key_name": args[0],
 			"pattern":  args[1],
 		})

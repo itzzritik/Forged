@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/hostmatch"
+	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/spf13/cobra"
 )
 
@@ -61,7 +62,7 @@ func migrateFromSSH() error {
 			continue
 		}
 
-		_, err = client.Call("add", map[string]string{
+		_, err = client.Call(ipc.CmdAdd, map[string]string{
 			"name":        name,
 			"private_key": string(data),
 			"comment":     "",
@@ -118,7 +119,7 @@ func migrateFrom1Password() error {
 		}
 
 		name := sanitizeName(item.Title)
-		_, err = client.Call("add", map[string]string{
+		_, err = client.Call(ipc.CmdAdd, map[string]string{
 			"name":        name,
 			"private_key": string(privKey),
 			"comment":     "imported from 1Password",

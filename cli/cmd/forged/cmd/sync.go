@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/ipc"
 	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
 	"github.com/spf13/cobra"
 )
@@ -102,7 +103,7 @@ var syncCmd = &cobra.Command{
 		}
 
 		fmt.Println("Syncing vault...")
-		resp, err := ctlClient().Call("sync-trigger", map[string]string{
+		resp, err := ctlClient().Call(ipc.CmdSyncTrigger, map[string]string{
 			"server_url": creds.ServerURL,
 			"token":      creds.Token,
 		})
@@ -164,7 +165,7 @@ func oauthLogin(server string) (oauthResult, error) {
 	go srv.Serve(listener)
 	defer srv.Close()
 
-	authURL := fmt.Sprintf("https://forged.ritik.me/login?callback=http://localhost:%d/callback", port)
+	authURL := fmt.Sprintf(ipc.DefaultWebApp + "/login?callback=http://localhost:%d/callback", port)
 
 	fmt.Println("Opening browser to login...")
 	openBrowser(authURL)
@@ -237,7 +238,7 @@ func openBrowser(url string) {
 }
 
 func init() {
-	defaultServer := "https://forged-api.ritik.me"
+	defaultServer := ipc.DefaultAPIServer
 
 	loginCmd.Flags().String("server", defaultServer, "sync server URL")
 	registerCmd.Flags().String("server", defaultServer, "sync server URL")

@@ -6,6 +6,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
+	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/spf13/cobra"
 )
 
@@ -28,7 +29,7 @@ var statusCmd = &cobra.Command{
 			return nil
 		}
 
-		resp, err := ctlClient().Call("status", nil)
+		resp, err := ctlClient().Call(ipc.CmdStatus, nil)
 		if err != nil {
 			if jsonOutput {
 				return printOutput(map[string]any{

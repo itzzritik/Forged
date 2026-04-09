@@ -151,7 +151,7 @@ func (d *Daemon) openVault(password []byte) error {
 	d.keyStore = vault.NewKeyStore(v)
 
 	for _, key := range v.Data.Keys {
-		platform.Mlock([]byte(key.PrivateKey))
+		platform.Mlock(key.PrivateKey)
 	}
 
 	return nil
@@ -221,11 +221,10 @@ func (d *Daemon) shutdown() {
 
 	if d.vault != nil {
 		for _, key := range d.vault.Data.Keys {
-			privBytes := []byte(key.PrivateKey)
-			for i := range privBytes {
-				privBytes[i] = 0
+			for i := range key.PrivateKey {
+				key.PrivateKey[i] = 0
 			}
-			platform.Munlock(privBytes)
+			platform.Munlock(key.PrivateKey)
 		}
 		d.vault.Close()
 	}

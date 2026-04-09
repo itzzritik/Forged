@@ -141,7 +141,7 @@ func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
 	keys := a.keyStore.List()
 	var signers []ssh.Signer
 	for _, k := range keys {
-		signer, err := ssh.ParsePrivateKey([]byte(k.PrivateKey))
+		signer, err := ssh.ParsePrivateKey(k.PrivateKey)
 		if err != nil {
 			continue
 		}
@@ -162,7 +162,7 @@ func (a *ForgedAgent) findSigner(pub ssh.PublicKey) (ssh.Signer, string, error) 
 			continue
 		}
 		if bytes.Equal(parsed.Marshal(), wanted) {
-			signer, err := ssh.ParsePrivateKey([]byte(k.PrivateKey))
+			signer, err := ssh.ParsePrivateKey(k.PrivateKey)
 			if err != nil {
 				return nil, "", fmt.Errorf("parsing private key for %s: %w", k.Name, err)
 			}
