@@ -13,76 +13,73 @@ import (
 
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
-	Short: "Diagnose common issues",
+	Short: "Diagnose and fix common issues",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
-		ok := true
+		fix, _ := cmd.Flags().GetBool("fix")
+		issues := 0
 
 		fmt.Println("Forged Doctor")
 		fmt.Println()
 
-		// Vault
 		if _, err := os.Stat(paths.VaultFile()); err == nil {
 			pass("Vault exists", paths.VaultFile())
 		} else {
 			fail("Vault not found", "Run: forged setup")
-			ok = false
+			issues++
 		}
 
-		// Config
 		if _, err := os.Stat(paths.ConfigFile()); err == nil {
 			pass("Config exists", paths.ConfigFile())
 		} else {
 			warn("Config not found", "Run: forged setup")
 		}
 
-		// Daemon
 		if pid, running := daemon.IsRunning(paths); running {
 			pass("Daemon running", fmt.Sprintf("PID %d", pid))
 		} else {
 			fail("Daemon not running", "Run: forged start")
-			ok = false
+			issues++
 		}
 
-		// Agent socket
 		if conn, err := net.DialTimeout("unix", paths.AgentSocket(), time.Second); err == nil {
 			conn.Close()
 			pass("Agent socket", paths.AgentSocket())
 		} else {
 			fail("Agent socket not responding", paths.AgentSocket())
-			ok = false
+			issues++
 		}
 
-		// IPC socket
 		if conn, err := net.DialTimeout("unix", paths.CtlSocket(), time.Second); err == nil {
 			conn.Close()
 			pass("IPC socket", paths.CtlSocket())
 		} else {
 			fail("IPC socket not responding", paths.CtlSocket())
-			ok = false
+			issues++
 		}
 
-		// SSH config
-		home, _ := os.UserHomeDir()
-		sshConfig := home + "/.ssh/config"
-		if data, err := os.ReadFile(sshConfig); err == nil {
-			if contains(string(data), "forged") {
-				pass("SSH config", "IdentityAgent configured")
+		if config.IsSSHAgentEnabled(paths) {
+			pass("SSH agent", "IdentityAgent pointing to Forged")
+		} else {
+			if fix {
+				if err := config.EnableSSHAgent(paths); err == nil {
+					fixed("SSH agent", "IdentityAgent configured for Forged")
+				} else {
+					fail("SSH agent", fmt.Sprintf("could not fix: %v", err))
+					issues++
+				}
 			} else {
-				warn("SSH config", "IdentityAgent not pointing to Forged")
+				fail("SSH agent", "IdentityAgent not pointing to Forged. Run: forged doctor --fix")
+				issues++
 			}
-		} else {
-			warn("SSH config", "~/.ssh/config not found")
 		}
 
-		// Service
 		if daemon.ServiceInstalled() {
-			pass("Launchd service", "installed")
+			pass("System service", "installed")
 		} else {
-			warn("Launchd service", "not installed (daemon won't auto-start)")
+			warn("System service", "not installed (daemon won't auto-start)")
 		}
 
-		// Credentials
 		if _, err := os.Stat(credentialsPath()); err == nil {
 			pass("Cloud credentials", "logged in")
 		} else {
@@ -90,40 +87,34 @@ var doctorCmd = &cobra.Command{
 		}
 
 		fmt.Println()
-		if ok {
+		if issues == 0 {
 			fmt.Println("Everything looks good.")
+		} else if fix {
+			fmt.Println("Some issues were fixed. Run forged doctor again to verify.")
 		} else {
-			fmt.Println("Issues found. Fix the items marked with [FAIL] above.")
+			fmt.Printf("%d issue(s) found. Run: forged doctor --fix\n", issues)
 		}
 		return nil
 	},
 }
 
 func init() {
+	doctorCmd.Flags().Bool("fix", false, "auto-fix issues where possible")
 	rootCmd.AddCommand(doctorCmd)
 }
 
 func pass(label, detail string) {
-	fmt.Printf("  [PASS] %-25s %s\n", label, detail)
+	fmt.Printf("  [PASS]  %-25s %s\n", label, detail)
 }
 
 func fail(label, detail string) {
-	fmt.Printf("  [FAIL] %-25s %s\n", label, detail)
+	fmt.Printf("  [FAIL]  %-25s %s\n", label, detail)
 }
 
 func warn(label, detail string) {
-	fmt.Printf("  [WARN] %-25s %s\n", label, detail)
+	fmt.Printf("  [WARN]  %-25s %s\n", label, detail)
 }
 
-func contains(s, substr string) bool {
-	return len(s) > 0 && len(substr) > 0 && findSubstring(s, substr)
-}
-
-func findSubstring(s, sub string) bool {
-	for i := 0; i <= len(s)-len(sub); i++ {
-		if s[i:i+len(sub)] == sub {
-			return true
-		}
-	}
-	return false
+func fixed(label, detail string) {
+	fmt.Printf("  [FIXED] %-25s %s\n", label, detail)
 }

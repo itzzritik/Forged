@@ -140,13 +140,15 @@ func oauthLogin(server string) (oauthResult, error) {
 		email := r.URL.Query().Get("email")
 		errMsg := r.URL.Query().Get("error")
 
+		w.Header().Set("Content-Type", "text/html")
+
 		if errMsg != "" {
-			w.Write([]byte("Authentication failed: " + errMsg + "\nYou can close this tab."))
+			fmt.Fprintf(w, callbackPage("Authentication Failed", errMsg, true))
 			errCh <- fmt.Errorf("auth failed: %s", errMsg)
 			return
 		}
 
-		w.Write([]byte("Logged in as " + email + "\nYou can close this tab."))
+		fmt.Fprintf(w, callbackPage("Welcome to Forged", email, false))
 		resultCh <- oauthResult{Token: token, UserID: userID, Email: email}
 	})
 
@@ -167,6 +169,44 @@ func oauthLogin(server string) (oauthResult, error) {
 	case err := <-errCh:
 		return oauthResult{}, err
 	}
+}
+
+func callbackPage(title, detail string, isError bool) string {
+	icon := `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`
+	color := "#f59e0b"
+	subtitle := "Signed in as"
+	note := "You can close this tab and return to your terminal."
+
+	if isError {
+		icon = `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
+		color = "#ef4444"
+		subtitle = "Error"
+		note = "Try running <code>forged login</code> again."
+	}
+
+	return fmt.Sprintf(`<!DOCTYPE html>
+<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>%s - Forged</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#08080a;color:#e4e4e7;font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
+.card{text-align:center;max-width:400px;padding:48px 32px}
+.icon{margin-bottom:24px}
+h1{font-size:1.5rem;font-weight:500;margin-bottom:8px;letter-spacing:-0.02em}
+.detail{color:%s;font-size:0.95rem;margin-bottom:8px}
+.subtitle{color:#71717a;font-size:0.8rem;margin-bottom:4px}
+.note{color:#52525b;font-size:0.8rem;margin-top:24px;line-height:1.5}
+code{background:#18181b;padding:2px 6px;border-radius:4px;font-size:0.75rem;color:#a1a1aa}
+.brand{color:#71717a;font-size:0.75rem;margin-top:32px;font-family:ui-monospace,monospace;letter-spacing:0.05em}
+</style></head>
+<body><div class="card">
+<div class="icon">%s</div>
+<h1>%s</h1>
+<p class="subtitle">%s</p>
+<p class="detail">%s</p>
+<p class="note">%s</p>
+<p class="brand">forged</p>
+</div></body></html>`, title, color, icon, title, subtitle, detail, note)
 }
 
 func openBrowser(url string) {

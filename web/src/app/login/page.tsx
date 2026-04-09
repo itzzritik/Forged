@@ -203,3 +203,158 @@ export default function LoginPage() {
     </Suspense>
   );
 }
+          fill="none"
+          stroke="currentColor"
+          strokeWidth="1.5"
+          strokeLinecap="round"
+          strokeLinejoin="round"
+          className="text-amber-400"
+        >
+          <path d="M15 3h6v6" />
+          <path d="M10 14L21 3" />
+          <path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />
+        </svg>
+      </div>
+    </div>
+  );
+}
+
+function LoginContent() {
+  const searchParams = useSearchParams();
+  const callback = searchParams.get("callback") || "";
+  const error = searchParams.get("error");
+
+  const githubUrl = `${API_URL}/api/v1/auth/github?callback=${encodeURIComponent(callback)}`;
+  const googleUrl = `${API_URL}/api/v1/auth/google?callback=${encodeURIComponent(callback)}`;
+
+  return (
+    <div className="flex-1 flex items-center justify-center px-6 relative overflow-hidden">
+      {/* Background texture */}
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(245,158,11,0.03)_0%,_transparent_50%)]" />
+      <div
+        className="absolute top-0 left-1/2 -translate-x-1/2 w-[600px] h-[1px]"
+        style={{
+          background:
+            "linear-gradient(90deg, transparent, rgba(245,158,11,0.15), transparent)",
+        }}
+      />
+
+      <div
+        className="relative w-full max-w-[360px]"
+        style={{ animation: "fade-in 0.6s ease-out" }}
+      >
+        {/* Logo */}
+        <div className="flex flex-col items-center mb-10">
+          <ForgedMark />
+          <h1
+            className="mt-5 text-xl font-medium tracking-tight text-foreground"
+            style={{ fontFamily: "var(--font-mono)" }}
+          >
+            forged
+          </h1>
+          <p className="mt-2 text-sm text-muted">
+            Sign in to sync your SSH keys
+          </p>
+        </div>
+
+        {/* Error */}
+        {error && (
+          <div className="mb-6 p-3 rounded-lg bg-red-500/10 border border-red-500/20 text-red-400 text-sm text-center">
+            {decodeURIComponent(error)}
+          </div>
+        )}
+
+        {/* OAuth buttons */}
+        <div className="space-y-3">
+          <a
+            href={githubUrl}
+            className="group flex items-center justify-center gap-3 w-full h-12 rounded-lg bg-white text-zinc-900 text-sm font-medium transition-all duration-200 hover:bg-zinc-100 hover:scale-[1.01] active:scale-[0.99]"
+          >
+            <GitHubIcon />
+            Continue with GitHub
+          </a>
+
+          <a
+            href={googleUrl}
+            className="group flex items-center justify-center gap-3 w-full h-12 rounded-lg bg-surface border border-border text-foreground text-sm font-medium transition-all duration-200 hover:bg-surface-hover hover:border-border-hover hover:scale-[1.01] active:scale-[0.99]"
+          >
+            <GoogleIcon />
+            Continue with Google
+          </a>
+        </div>
+
+        {/* Divider */}
+        <div className="mt-8 flex items-center gap-3">
+          <div className="flex-1 h-px bg-border" />
+          <span
+            className="text-xs text-muted uppercase tracking-widest"
+            style={{ fontFamily: "var(--font-mono)" }}
+          >
+            or
+          </span>
+          <div className="flex-1 h-px bg-border" />
+        </div>
+
+        {/* CLI hint */}
+        <div className="mt-6 p-4 rounded-lg bg-surface border border-border">
+          <p className="text-xs text-muted mb-2">
+            Opened from the CLI? Sign in above and you&apos;ll be redirected
+            back automatically.
+          </p>
+          <div
+            className="flex items-center gap-2 text-xs text-muted"
+            style={{ fontFamily: "var(--font-mono)" }}
+          >
+            <span className="text-accent-dim">$</span>
+            <span className="text-zinc-400">forged login</span>
+          </div>
+        </div>
+
+        {/* Footer */}
+        <p className="mt-8 text-center text-xs text-muted">
+          By signing in, you agree to our{" "}
+          <a href="/terms" className="text-zinc-400 hover:text-foreground transition-colors">
+            Terms
+          </a>{" "}
+          and{" "}
+          <a href="/privacy" className="text-zinc-400 hover:text-foreground transition-colors">
+            Privacy Policy
+          </a>
+        </p>
+
+        {/* Security note */}
+        <div className="mt-4 flex items-center justify-center gap-1.5 text-xs text-muted">
+          <svg
+            width="12"
+            height="12"
+            viewBox="0 0 24 24"
+            fill="none"
+            stroke="currentColor"
+            strokeWidth="2"
+            strokeLinecap="round"
+            strokeLinejoin="round"
+            className="text-accent-dim"
+          >
+            <rect width="18" height="11" x="3" y="11" rx="2" ry="2" />
+            <path d="M7 11V7a5 5 0 0 1 10 0v4" />
+          </svg>
+          Zero-knowledge encryption. We never see your keys.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense
+      fallback={
+        <div className="flex-1 flex items-center justify-center">
+          <div className="w-6 h-6 border-2 border-accent/30 border-t-accent rounded-full animate-spin" />
+        </div>
+      }
+    >
+      <LoginContent />
+    </Suspense>
+  );
+}

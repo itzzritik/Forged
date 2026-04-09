@@ -31,6 +31,17 @@ func (a *ForgedAgent) List() ([]*agent.Key, error) {
 
 	keys := a.keyStore.List()
 	sort.Slice(keys, func(i, j int) bool {
+		iUsed := keys[i].LastUsedAt
+		jUsed := keys[j].LastUsedAt
+		if iUsed != nil && jUsed != nil {
+			return iUsed.After(*jUsed)
+		}
+		if iUsed != nil {
+			return true
+		}
+		if jUsed != nil {
+			return false
+		}
 		return keys[i].Name < keys[j].Name
 	})
 

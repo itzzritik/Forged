@@ -1,9 +1,11 @@
 package cmd
 
 import (
+	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
+	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
@@ -48,14 +50,42 @@ var addCmd = &cobra.Command{
 }
 
 var generateCmd = &cobra.Command{
-	Use:   "generate <name>",
+	Use:   "generate [name]",
 	Short: "Generate a new Ed25519 key pair",
-	Args:  cobra.ExactArgs(1),
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		name := ""
+		if len(args) > 0 {
+			name = args[0]
+		}
+
 		comment, _ := cmd.Flags().GetString("comment")
 
+		if name == "" && !jsonOutput {
+			reader := bufio.NewReader(os.Stdin)
+			fmt.Println("  A short name to identify this key (e.g. github, work, prod-server)")
+			fmt.Print("  Name: ")
+			line, _ := reader.ReadString('\n')
+			name = strings.TrimSpace(line)
+			if name == "" {
+				return fmt.Errorf("key name is required")
+			}
+
+			if comment == "" {
+				fmt.Println()
+				fmt.Println("  A label attached to the public key (e.g. your email or username)")
+				fmt.Print("  Label: ")
+				line, _ = reader.ReadString('\n')
+				comment = strings.TrimSpace(line)
+			}
+		}
+
+		if name == "" {
+			return fmt.Errorf("key name is required")
+		}
+
 		resp, err := ctlClient().Call("generate", map[string]string{
-			"name":    args[0],
+			"name":    name,
 			"comment": comment,
 		})
 		if err != nil {
@@ -66,7 +96,26 @@ var generateCmd = &cobra.Command{
 		}
 		var result map[string]string
 		json.Unmarshal(resp.Data, &result)
-		fmt.Printf("Generated %s (%s)\n  %s\n  %s\n", result["name"], result["type"], result["fingerprint"], result["public_key"])
+
+		pub := result["public_key"]
+		if comment != "" {
+			pub = pub + " " + comment
+		}
+
+		fmt.Println()
+		fmt.Printf("  Key:         %s\n", result["name"])
+		fmt.Printf("  Type:        %s\n", result["type"])
+		fmt.Printf("  Fingerprint: %s\n", result["fingerprint"])
+		fmt.Println()
+		fmt.Println("  Public key (add this to GitHub/GitLab/server):")
+		fmt.Println()
+		fmt.Printf("    %s\n", pub)
+		fmt.Println()
+
+		fmt.Println("  Add this public key to:")
+		fmt.Println("    GitHub:  Settings > SSH Keys > New SSH Key")
+		fmt.Println("    GitLab:  Preferences > SSH Keys > Add new key")
+		fmt.Println("    Server:  ssh-copy-id or append to ~/.ssh/authorized_keys")
 		return nil
 	},
 }

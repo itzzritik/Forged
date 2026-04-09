@@ -1,31 +1,97 @@
 package main
 
 import (
+	"bytes"
 	"fmt"
-	"io"
 	"net"
 	"os"
+	"path/filepath"
+	"runtime"
+	"strings"
 	"time"
 
+	"github.com/hiddeco/sshsig"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
 
 func main() {
-	if len(os.Args) < 2 {
-		fmt.Fprintln(os.Stderr, "usage: forged-sign <namespace>")
+	args := os.Args[1:]
+
+	if len(args) == 0 {
+		fmt.Fprintln(os.Stderr, "forged-sign: no arguments provided")
 		os.Exit(1)
 	}
 
-	socketPath := os.Getenv("SSH_AUTH_SOCK")
-	if socketPath == "" {
-		socketPath = defaultSocketPath()
+	var operation, namespace, keyFile, bufferFile string
+
+	for i := 0; i < len(args); i++ {
+		switch args[i] {
+		case "-Y":
+			if i+1 < len(args) {
+				operation = args[i+1]
+				i++
+			}
+		case "-n":
+			if i+1 < len(args) {
+				namespace = args[i+1]
+				i++
+			}
+		case "-f":
+			if i+1 < len(args) {
+				keyFile = args[i+1]
+				i++
+			}
+		case "-U":
+			// Agent mode, ignored since we always use agent
+		default:
+			if !strings.HasPrefix(args[i], "-") {
+				bufferFile = args[i]
+			}
+		}
 	}
 
-	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
+	if operation == "sign" {
+		if err := signFile(keyFile, bufferFile, namespace); err != nil {
+			fmt.Fprintf(os.Stderr, "forged-sign: %v\n", err)
+			os.Exit(1)
+		}
+		os.Exit(0)
+	}
+
+	fmt.Fprintf(os.Stderr, "forged-sign: unsupported operation: %s\n", operation)
+	os.Exit(1)
+}
+
+func signFile(keyFile, bufferFile, namespace string) error {
+	if bufferFile == "" {
+		return fmt.Errorf("no buffer file specified")
+	}
+	if namespace == "" {
+		namespace = "git"
+	}
+
+	data, err := os.ReadFile(bufferFile)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "forged-sign: cannot connect to agent at %s: %v\n", socketPath, err)
-		os.Exit(1)
+		return fmt.Errorf("reading buffer file: %w", err)
+	}
+
+	var signingPubKey ssh.PublicKey
+	if keyFile != "" {
+		keyData, err := os.ReadFile(keyFile)
+		if err != nil {
+			return fmt.Errorf("reading key file: %w", err)
+		}
+		pub, _, _, _, err := ssh.ParseAuthorizedKey(keyData)
+		if err != nil {
+			return fmt.Errorf("parsing public key: %w", err)
+		}
+		signingPubKey = pub
+	}
+
+	conn, err := net.DialTimeout("unix", forgedSocketPath(), 2*time.Second)
+	if err != nil {
+		return fmt.Errorf("cannot connect to forged agent: %w", err)
 	}
 	defer conn.Close()
 
@@ -33,36 +99,53 @@ func main() {
 
 	signers, err := agentClient.Signers()
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "forged-sign: getting signers: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("getting signers: %w", err)
 	}
 
-	if len(signers) == 0 {
-		fmt.Fprintln(os.Stderr, "forged-sign: no keys available in agent")
-		os.Exit(1)
+	var signer ssh.Signer
+	if signingPubKey != nil {
+		wantBlob := signingPubKey.Marshal()
+		for _, s := range signers {
+			if bytes.Equal(s.PublicKey().Marshal(), wantBlob) {
+				signer = s
+				break
+			}
+		}
+		if signer == nil {
+			return fmt.Errorf("signing key not found in agent")
+		}
+	} else {
+		if len(signers) == 0 {
+			return fmt.Errorf("no keys available in agent")
+		}
+		signer = signers[0]
 	}
 
-	// Find the signing key (first one, or the one matching git's requested key)
-	signer := signers[0]
-
-	data, err := io.ReadAll(os.Stdin)
+	sig, err := sshsig.Sign(bytes.NewReader(data), signer, sshsig.HashSHA512, namespace)
 	if err != nil {
-		fmt.Fprintf(os.Stderr, "forged-sign: reading stdin: %v\n", err)
-		os.Exit(1)
+		return fmt.Errorf("signing: %w", err)
 	}
 
-	sig, err := signer.Sign(nil, data)
-	if err != nil {
-		fmt.Fprintf(os.Stderr, "forged-sign: signing: %v\n", err)
-		os.Exit(1)
+	armored := sshsig.Armor(sig)
+
+	sigFile := bufferFile + ".sig"
+	if err := os.WriteFile(sigFile, armored, 0600); err != nil {
+		return fmt.Errorf("writing signature file: %w", err)
 	}
 
-	// Output in SSH signature format
-	serialized := ssh.Marshal(sig)
-	os.Stdout.Write(serialized)
+	return nil
 }
 
-func defaultSocketPath() string {
-	home, _ := os.UserHomeDir()
-	return home + "/.forged/agent.sock"
+func forgedSocketPath() string {
+	switch runtime.GOOS {
+	case "linux":
+		if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
+			return filepath.Join(xdg, "forged", "agent.sock")
+		}
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, ".local", "state", "forged", "agent.sock")
+	default:
+		home, _ := os.UserHomeDir()
+		return filepath.Join(home, ".forged", "agent.sock")
+	}
 }

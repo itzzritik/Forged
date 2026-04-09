@@ -168,3 +168,112 @@ export default function SecurityPage() {
     </>
   );
 }
+          </div>
+          <p className="text-sm text-muted leading-relaxed">
+            Your master password is processed through Argon2id, a memory-hard key derivation function
+            that resists GPU and ASIC attacks. The derived 256-bit key encrypts the vault using
+            XChaCha20-Poly1305, the same AEAD cipher used by WireGuard and age. The 24-byte nonce
+            is randomly generated on every write, eliminating nonce-reuse risk even across synced devices.
+          </p>
+        </Section>
+
+        <Section title="Key Hierarchy">
+          <div className="p-5 rounded-xl bg-surface border border-border text-sm leading-8" style={{ fontFamily: "var(--font-mono)" }}>
+            <div className="text-zinc-400">Master Password</div>
+            <div className="text-zinc-500 ml-4">|</div>
+            <div className="ml-4">
+              <span className="text-accent-dim">Argon2id</span>
+              <span className="text-zinc-500"> (salt_A)</span>
+            </div>
+            <div className="text-zinc-500 ml-4">|</div>
+            <div className="ml-4 text-zinc-300">Vault Key (256-bit)</div>
+            <div className="text-zinc-500 ml-8">|-- Encrypts local vault file</div>
+            <div className="text-zinc-500 ml-8">|</div>
+            <div className="ml-8">
+              <span className="text-accent-dim">HKDF-SHA256</span>
+              <span className="text-zinc-500"> (context: &quot;forged-sync&quot;)</span>
+            </div>
+            <div className="text-zinc-500 ml-12">|</div>
+            <div className="ml-12 text-zinc-300">Sync Key</div>
+            <div className="text-zinc-500 ml-16">+-- Encrypts vault blob for cloud upload</div>
+          </div>
+          <p className="text-sm text-muted mt-4 leading-relaxed">
+            The server authenticates you via OAuth (Google/GitHub) but has no access to the vault key.
+            Authentication and encryption are completely separate concerns.
+          </p>
+        </Section>
+
+        <Section title="What the Server Sees">
+          <div className="space-y-3">
+            {[
+              { label: "Your email", value: "Yes, for account identity (via OAuth)" },
+              { label: "Your encrypted vault", value: "Yes, as an opaque blob it cannot decrypt" },
+              { label: "Your master password", value: "Never. It never leaves your machine." },
+              { label: "Your vault encryption key", value: "Never. Derived locally from master password." },
+              { label: "Your private SSH keys", value: "Never. Encrypted inside the vault blob." },
+            ].map((item) => (
+              <div key={item.label} className="flex items-start gap-4 p-4 rounded-xl bg-surface border border-border">
+                <div className="text-sm font-medium w-48 shrink-0">{item.label}</div>
+                <div className="text-sm text-muted">{item.value}</div>
+              </div>
+            ))}
+          </div>
+        </Section>
+
+        <Section title="Threat Model">
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr>
+                  <th className="pb-3 text-left font-medium w-48">Threat</th>
+                  <th className="pb-3 text-left font-medium text-muted">Mitigation</th>
+                </tr>
+              </thead>
+              <tbody>
+                <ThreatRow threat="Disk theft / lost laptop" mitigation="Vault encrypted with Argon2id + XChaCha20-Poly1305. Without master password, vault is opaque bytes." />
+                <ThreatRow threat="Server compromise" mitigation="Zero-knowledge. Server stores only encrypted blobs. No plaintext keys ever leave the client." />
+                <ThreatRow threat="Memory dump / swap" mitigation="Key memory pages locked with mlock(). Daemon zeroes key material on shutdown." />
+                <ThreatRow threat="Agent socket snooping" mitigation="Socket file permissions set to 0600. Only the owning user can connect." />
+                <ThreatRow threat="MITM on sync" mitigation="TLS for transport. Vault payload independently encrypted with client-side key. Double encryption." />
+                <ThreatRow threat="Master password brute force" mitigation="Argon2id with high parameters (64MB memory, 3 iterations). Rate limiting on cloud login." />
+                <ThreatRow threat="Rogue device" mitigation="New device registration requires approval from an existing device." />
+                <ThreatRow threat="Vault corruption" mitigation="Atomic writes (tmp + fsync + rename). File locking prevents concurrent access." />
+              </tbody>
+            </table>
+          </div>
+        </Section>
+
+        <Section title="Memory Safety">
+          <p className="text-sm text-muted leading-relaxed mb-4">
+            Private keys are held in memory pages locked with <code className="text-zinc-400">mlock()</code> to
+            prevent swapping to disk. On shutdown, all key material is explicitly zeroed.
+          </p>
+          <p className="text-sm text-muted leading-relaxed">
+            <strong className="text-zinc-300">Known limitation:</strong> Go&apos;s garbage collector may copy heap objects
+            before they are zeroed. We mitigate with mlock and best-effort zeroing. For production-grade
+            mitigation, memguard or mmap-based allocation outside the Go heap is planned for a future release.
+          </p>
+        </Section>
+
+        <Section title="Open Source">
+          <p className="text-sm text-muted leading-relaxed">
+            Forged is source-available. Every line of code is auditable.
+            The encryption implementation uses well-established Go standard library and{" "}
+            <code className="text-zinc-400">golang.org/x/crypto</code> packages, not custom cryptography.
+          </p>
+          <div className="mt-4">
+            <a
+              href="https://github.com/itzzritik/forged"
+              className="inline-flex items-center gap-2 text-sm text-accent hover:text-amber-400 transition-colors"
+            >
+              View source on GitHub
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M7 17l9.2-9.2M17 17V7H7" />
+              </svg>
+            </a>
+          </div>
+        </Section>
+      </main>
+    </>
+  );
+}

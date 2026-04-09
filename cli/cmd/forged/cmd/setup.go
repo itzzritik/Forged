@@ -59,7 +59,7 @@ var setupCmd = &cobra.Command{
 			fmt.Printf("Warning: could not write config: %v\n", err)
 		}
 
-		if err := injectSSHConfig(paths); err != nil {
+		if err := config.EnableSSHAgent(paths); err != nil {
 			fmt.Printf("Warning: could not update ~/.ssh/config: %v\n", err)
 		}
 
@@ -176,39 +176,6 @@ enabled = false
 `, paths.AgentSocket())
 
 	return os.WriteFile(paths.ConfigFile(), []byte(content), 0600)
-}
-
-func injectSSHConfig(paths config.Paths) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	sshConfigPath := filepath.Join(home, ".ssh", "config")
-	marker := "# Added by Forged"
-	directive := fmt.Sprintf("Host *\n    IdentityAgent %q\n", paths.AgentSocket())
-
-	if data, err := os.ReadFile(sshConfigPath); err == nil {
-		if strings.Contains(string(data), "IdentityAgent") && strings.Contains(string(data), "forged") {
-			return nil
-		}
-		if strings.Contains(string(data), marker) {
-			return nil
-		}
-	}
-
-	if err := os.MkdirAll(filepath.Dir(sshConfigPath), 0700); err != nil {
-		return err
-	}
-
-	f, err := os.OpenFile(sshConfigPath, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	_, err = fmt.Fprintf(f, "\n%s\n%s", marker, directive)
-	return err
 }
 
 func configureGitSigning(ks *vault.KeyStore, keyName string) error {
