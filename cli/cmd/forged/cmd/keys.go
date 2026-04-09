@@ -43,7 +43,7 @@ var addCmd = &cobra.Command{
 			return printOutput(json.RawMessage(resp.Data))
 		}
 		var result map[string]string
-		json.Unmarshal(resp.Data, &result)
+		if err := json.Unmarshal(resp.Data, &result); err != nil { return fmt.Errorf("parsing response: %w", err) }
 		fmt.Printf("Added %s (%s)\n  %s\n", result["name"], result["type"], result["fingerprint"])
 		return nil
 	},
@@ -95,7 +95,7 @@ var generateCmd = &cobra.Command{
 			return printOutput(json.RawMessage(resp.Data))
 		}
 		var result map[string]string
-		json.Unmarshal(resp.Data, &result)
+		if err := json.Unmarshal(resp.Data, &result); err != nil { return fmt.Errorf("parsing response: %w", err) }
 
 		pub := result["public_key"]
 		if comment != "" {
@@ -107,7 +107,7 @@ var generateCmd = &cobra.Command{
 		fmt.Printf("  Type:        %s\n", result["type"])
 		fmt.Printf("  Fingerprint: %s\n", result["fingerprint"])
 		fmt.Println()
-		fmt.Println("  Public key (add this to GitHub/GitLab/server):")
+		fmt.Println("  Public key (add this to GitHub/GitLab/Server):")
 		fmt.Println()
 		fmt.Printf("    %s\n", pub)
 		fmt.Println()
@@ -138,14 +138,44 @@ var listCmd = &cobra.Command{
 				Fingerprint string `json:"fingerprint"`
 			} `json:"keys"`
 		}
-		json.Unmarshal(resp.Data, &result)
+		if err := json.Unmarshal(resp.Data, &result); err != nil { return fmt.Errorf("parsing response: %w", err) }
 
 		if len(result.Keys) == 0 {
 			fmt.Println("No keys in vault")
 			return nil
 		}
+
+		signingKey := getCurrentSigningKey()
+
+		type row struct {
+			name, keyType, fingerprint, signing string
+		}
+		var rows []row
+		colW := [4]int{4, 4, 11, 7} // NAME, TYPE, FINGERPRINT, SIGNING
+
 		for _, k := range result.Keys {
-			fmt.Printf("  %s\t%s\t%s\n", k.Name, k.Type, k.Fingerprint)
+			r := row{name: k.Name, keyType: k.Type, fingerprint: k.Fingerprint}
+			exportResp, _ := ctlClient().Call("export", map[string]string{"name": k.Name})
+			if exportResp.Data != nil {
+				var exp map[string]string
+				json.Unmarshal(exportResp.Data, &exp)
+				if strings.TrimSpace(exp["public_key"]) == strings.TrimSpace(signingKey) {
+					r.signing = "yes"
+				}
+			}
+			rows = append(rows, r)
+			if len(r.name) > colW[0] { colW[0] = len(r.name) }
+			if len(r.keyType) > colW[1] { colW[1] = len(r.keyType) }
+			if len(r.fingerprint) > colW[2] { colW[2] = len(r.fingerprint) }
+		}
+
+		header := fmt.Sprintf("  %-*s  %-*s  %-*s  %s", colW[0], "NAME", colW[1], "TYPE", colW[2], "FINGERPRINT", "SIGNING")
+		divider := "  " + strings.Repeat("-", colW[0]) + "  " + strings.Repeat("-", colW[1]) + "  " + strings.Repeat("-", colW[2]) + "  " + strings.Repeat("-", 7)
+
+		fmt.Println(header)
+		fmt.Println(divider)
+		for _, r := range rows {
+			fmt.Printf("  %-*s  %-*s  %-*s  %s\n", colW[0], r.name, colW[1], r.keyType, colW[2], r.fingerprint, r.signing)
 		}
 		return nil
 	},
@@ -178,7 +208,7 @@ var exportCmd = &cobra.Command{
 			return printOutput(json.RawMessage(resp.Data))
 		}
 		var result map[string]string
-		json.Unmarshal(resp.Data, &result)
+		if err := json.Unmarshal(resp.Data, &result); err != nil { return fmt.Errorf("parsing response: %w", err) }
 		fmt.Println(result["public_key"])
 		return nil
 	},

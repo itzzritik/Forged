@@ -53,7 +53,7 @@ func migrateFromSSH() error {
 
 	imported := 0
 	for _, keyPath := range keys {
-		name := deriveKeyNameFromPath(keyPath)
+		name := deriveKeyName(keyPath)
 
 		data, err := os.ReadFile(keyPath)
 		if err != nil {
@@ -164,16 +164,6 @@ func migrateFromAgent() error {
 	fmt.Println("\nTo import these keys, use: forged migrate --from ssh")
 	fmt.Println("(The agent protocol only exposes public keys, not private keys)")
 	return nil
-}
-
-func deriveKeyNameFromPath(path string) string {
-	name := filepath.Base(path)
-	name = strings.TrimSuffix(name, ".pem")
-	name = strings.TrimPrefix(name, "id_")
-	if name == "" {
-		name = "default"
-	}
-	return name
 }
 
 func sanitizeName(name string) string {

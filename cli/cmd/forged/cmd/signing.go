@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -14,8 +13,15 @@ import (
 	"github.com/spf13/cobra"
 )
 
+type keyInfo struct {
+	Name      string `json:"name"`
+	Type      string `json:"type"`
+	Fingerprint string `json:"fingerprint"`
+	PublicKey string `json:"public_key,omitempty"`
+}
+
 var signingCmd = &cobra.Command{
-	Use:   "signing [key-name | off]",
+	Use:   "signing [key-name]",
 	Short: "Configure Git commit signing",
 	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -30,68 +36,41 @@ var signingCmd = &cobra.Command{
 			return enableSigning(client, args[0])
 		}
 
-		resp, err := client.Call("list", nil)
+		keys, err := listKeysWithPublicKeys(client)
 		if err != nil {
 			return err
 		}
 
-		var result struct {
-			Keys []struct {
-				Name        string `json:"name"`
-				Type        string `json:"type"`
-				Fingerprint string `json:"fingerprint"`
-			} `json:"keys"`
-		}
-		json.Unmarshal(resp.Data, &result)
-
-		if len(result.Keys) == 0 {
+		if len(keys) == 0 {
 			return fmt.Errorf("no keys in vault. Run: forged generate")
 		}
 
 		currentKey := getCurrentSigningKey()
+		currentKeyName := ""
 
 		if currentKey != "" {
-			matched := false
-			for _, k := range result.Keys {
-				pub := strings.Fields(k.Fingerprint)
-				_ = pub
-				// Match by checking if the current signing key contains any of our key fingerprints
-				exportResp, _ := client.Call("export", map[string]string{"name": k.Name})
-				if exportResp.Data != nil {
-					var exp map[string]string
-					json.Unmarshal(exportResp.Data, &exp)
-					if strings.TrimSpace(exp["public_key"]) == strings.TrimSpace(currentKey) {
-						fmt.Printf("  Current signing key: %s (%s)\n", k.Name, k.Fingerprint)
-						matched = true
-						break
-					}
+			for _, k := range keys {
+				if strings.TrimSpace(k.PublicKey) == strings.TrimSpace(currentKey) {
+					currentKeyName = k.Name
+					fmt.Printf("  Current signing key: %s (%s)\n", k.Name, k.Fingerprint)
+					break
 				}
 			}
-			if !matched {
+			if currentKeyName == "" {
 				fmt.Printf("  Current signing key: external (not managed by Forged)\n")
 				fmt.Printf("    %s\n", currentKey)
 			}
 			fmt.Println()
 		} else {
-			fmt.Println("  No signing key configured.\n")
+			fmt.Println("  No signing key configured.")
+			fmt.Println()
 		}
 
-		// Filter out the current signing key
-		var available []struct {
-			Name        string `json:"name"`
-			Type        string `json:"type"`
-			Fingerprint string `json:"fingerprint"`
-		}
-		for _, k := range result.Keys {
-			exportResp, _ := client.Call("export", map[string]string{"name": k.Name})
-			if exportResp.Data != nil {
-				var exp map[string]string
-				json.Unmarshal(exportResp.Data, &exp)
-				if strings.TrimSpace(exp["public_key"]) == strings.TrimSpace(currentKey) {
-					continue
-				}
+		var available []keyInfo
+		for _, k := range keys {
+			if k.Name != currentKeyName {
+				available = append(available, k)
 			}
-			available = append(available, k)
 		}
 
 		if len(available) == 0 {
@@ -119,6 +98,33 @@ var signingCmd = &cobra.Command{
 	},
 }
 
+func listKeysWithPublicKeys(client *ipc.Client) ([]keyInfo, error) {
+	resp, err := client.Call("list", nil)
+	if err != nil {
+		return nil, err
+	}
+
+	var result struct {
+		Keys []keyInfo `json:"keys"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return nil, fmt.Errorf("parsing key list: %w", err)
+	}
+
+	for i, k := range result.Keys {
+		if k.PublicKey == "" {
+			exportResp, err := client.Call("export", map[string]string{"name": k.Name})
+			if err == nil {
+				var exp map[string]string
+				json.Unmarshal(exportResp.Data, &exp)
+				result.Keys[i].PublicKey = exp["public_key"]
+			}
+		}
+	}
+
+	return result.Keys, nil
+}
+
 func enableSigning(client *ipc.Client, keyName string) error {
 	resp, err := client.Call("export", map[string]string{"name": keyName})
 	if err != nil {
@@ -126,7 +132,9 @@ func enableSigning(client *ipc.Client, keyName string) error {
 	}
 
 	var result map[string]string
-	json.Unmarshal(resp.Data, &result)
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return fmt.Errorf("parsing export response: %w", err)
+	}
 	publicKey := result["public_key"]
 
 	signPath, err := findSignBinary()
@@ -134,21 +142,11 @@ func enableSigning(client *ipc.Client, keyName string) error {
 		return err
 	}
 
-	cmds := [][]string{
-		{"git", "config", "--global", "user.signingkey", publicKey},
-		{"git", "config", "--global", "gpg.format", "ssh"},
-		{"git", "config", "--global", "gpg.ssh.program", signPath},
-		{"git", "config", "--global", "commit.gpgsign", "true"},
+	if err := applyGitSigningConfig(publicKey, signPath); err != nil {
+		return err
 	}
 
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("running %v: %s: %w", args, string(out), err)
-		}
-	}
-
-	writeAllowedSignersFile(publicKey)
+	writeAllowedSigners(publicKey)
 
 	fmt.Printf("\n  Git signing enabled with key: %s\n", keyName)
 	fmt.Println("  All future commits will be signed automatically.")
@@ -162,11 +160,9 @@ func disableSigning() error {
 		{"git", "config", "--global", "--unset", "gpg.ssh.program"},
 		{"git", "config", "--global", "--unset", "commit.gpgsign"},
 	}
-
 	for _, args := range cmds {
 		exec.Command(args[0], args[1:]...).Run()
 	}
-
 	fmt.Println("  Git signing disabled.")
 	return nil
 }
@@ -177,45 +173,6 @@ func getCurrentSigningKey() string {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
-}
-
-func findSignBinary() (string, error) {
-	path, err := exec.LookPath("forged-sign")
-	if err == nil {
-		return path, nil
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("cannot find forged-sign binary")
-	}
-	candidate := filepath.Join(filepath.Dir(self), "forged-sign")
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate, nil
-	}
-	return "", fmt.Errorf("forged-sign not found in PATH or next to forged binary")
-}
-
-func writeAllowedSignersFile(publicKey string) {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return
-	}
-
-	signerFile := filepath.Join(home, ".ssh", "allowed_signers")
-
-	if data, err := os.ReadFile(signerFile); err == nil {
-		if strings.Contains(string(data), publicKey) {
-			return
-		}
-	}
-
-	os.MkdirAll(filepath.Dir(signerFile), 0700)
-	f, err := os.OpenFile(signerFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	fmt.Fprintf(f, "* %s\n", publicKey)
 }
 
 func init() {

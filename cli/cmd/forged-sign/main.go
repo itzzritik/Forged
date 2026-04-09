@@ -5,12 +5,11 @@ import (
 	"fmt"
 	"net"
 	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
 	"github.com/hiddeco/sshsig"
+	"github.com/itzzritik/forged/cli/internal/config"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -43,7 +42,6 @@ func main() {
 				i++
 			}
 		case "-U":
-			// Agent mode, ignored since we always use agent
 		default:
 			if !strings.HasPrefix(args[i], "-") {
 				bufferFile = args[i]
@@ -51,16 +49,15 @@ func main() {
 		}
 	}
 
-	if operation == "sign" {
-		if err := signFile(keyFile, bufferFile, namespace); err != nil {
-			fmt.Fprintf(os.Stderr, "forged-sign: %v\n", err)
-			os.Exit(1)
-		}
-		os.Exit(0)
+	if operation != "sign" {
+		fmt.Fprintf(os.Stderr, "forged-sign: unsupported operation: %s\n", operation)
+		os.Exit(1)
 	}
 
-	fmt.Fprintf(os.Stderr, "forged-sign: unsupported operation: %s\n", operation)
-	os.Exit(1)
+	if err := signFile(keyFile, bufferFile, namespace); err != nil {
+		fmt.Fprintf(os.Stderr, "forged-sign: %v\n", err)
+		os.Exit(1)
+	}
 }
 
 func signFile(keyFile, bufferFile, namespace string) error {
@@ -89,9 +86,10 @@ func signFile(keyFile, bufferFile, namespace string) error {
 		signingPubKey = pub
 	}
 
-	conn, err := net.DialTimeout("unix", forgedSocketPath(), 2*time.Second)
+	socketPath := config.DefaultPaths().AgentSocket()
+	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 	if err != nil {
-		return fmt.Errorf("cannot connect to forged agent: %w", err)
+		return fmt.Errorf("cannot connect to forged agent at %s: %w", socketPath, err)
 	}
 	defer conn.Close()
 
@@ -126,26 +124,6 @@ func signFile(keyFile, bufferFile, namespace string) error {
 		return fmt.Errorf("signing: %w", err)
 	}
 
-	armored := sshsig.Armor(sig)
-
 	sigFile := bufferFile + ".sig"
-	if err := os.WriteFile(sigFile, armored, 0600); err != nil {
-		return fmt.Errorf("writing signature file: %w", err)
-	}
-
-	return nil
-}
-
-func forgedSocketPath() string {
-	switch runtime.GOOS {
-	case "linux":
-		if xdg := os.Getenv("XDG_RUNTIME_DIR"); xdg != "" {
-			return filepath.Join(xdg, "forged", "agent.sock")
-		}
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".local", "state", "forged", "agent.sock")
-	default:
-		home, _ := os.UserHomeDir()
-		return filepath.Join(home, ".forged", "agent.sock")
-	}
+	return os.WriteFile(sigFile, sshsig.Armor(sig), 0600)
 }

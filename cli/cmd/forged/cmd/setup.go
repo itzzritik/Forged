@@ -4,7 +4,6 @@ import (
 	"bufio"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strings"
 	"time"
@@ -104,29 +103,33 @@ func createPassword() ([]byte, error) {
 		return nil, fmt.Errorf("setup requires an interactive terminal")
 	}
 
-	fmt.Print("Create a master password: ")
-	pass1, err := term.ReadPassword(fd)
-	fmt.Println()
-	if err != nil {
-		return nil, err
-	}
+	for {
+		fmt.Print("Create a master password: ")
+		pass1, err := term.ReadPassword(fd)
+		fmt.Println()
+		if err != nil {
+			return nil, err
+		}
 
-	if len(pass1) < 8 {
-		return nil, fmt.Errorf("password must be at least 8 characters")
-	}
+		if len(pass1) < 8 {
+			fmt.Println("  Password must be at least 8 characters. Try again.\n")
+			continue
+		}
 
-	fmt.Print("Confirm: ")
-	pass2, err := term.ReadPassword(fd)
-	fmt.Println()
-	if err != nil {
-		return nil, err
-	}
+		fmt.Print("Confirm: ")
+		pass2, err := term.ReadPassword(fd)
+		fmt.Println()
+		if err != nil {
+			return nil, err
+		}
 
-	if string(pass1) != string(pass2) {
-		return nil, fmt.Errorf("passwords do not match")
-	}
+		if string(pass1) != string(pass2) {
+			fmt.Println("  Passwords do not match. Try again.\n")
+			continue
+		}
 
-	return pass1, nil
+		return pass1, nil
+	}
 }
 
 func confirm() bool {
@@ -146,16 +149,6 @@ func importKeys(ks *vault.KeyStore, paths []string) {
 		}
 		fmt.Printf("  Imported %s as %q\n", filepath.Base(p), name)
 	}
-}
-
-func deriveKeyName(path string) string {
-	name := filepath.Base(path)
-	name = strings.TrimSuffix(name, ".pem")
-	name = strings.TrimPrefix(name, "id_")
-	if name == "" {
-		name = "default"
-	}
-	return name
 }
 
 func writeDefaultConfig(paths config.Paths) error {
@@ -188,23 +181,13 @@ func configureGitSigning(ks *vault.KeyStore, keyName string) error {
 		return err
 	}
 
-	signPath, err := findForgedSign()
+	signPath, err := findSignBinary()
 	if err != nil {
 		return err
 	}
 
-	cmds := [][]string{
-		{"git", "config", "--global", "user.signingkey", key.PublicKey},
-		{"git", "config", "--global", "gpg.format", "ssh"},
-		{"git", "config", "--global", "gpg.ssh.program", signPath},
-		{"git", "config", "--global", "commit.gpgsign", "true"},
-	}
-
-	for _, args := range cmds {
-		cmd := exec.Command(args[0], args[1:]...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("running %v: %s: %w", args, string(out), err)
-		}
+	if err := applyGitSigningConfig(key.PublicKey, signPath); err != nil {
+		return err
 	}
 
 	if err := writeAllowedSigners(key.PublicKey); err != nil {
@@ -213,48 +196,4 @@ func configureGitSigning(ks *vault.KeyStore, keyName string) error {
 
 	fmt.Printf("  Git signing configured with %s\n", keyName)
 	return nil
-}
-
-func findForgedSign() (string, error) {
-	path, err := exec.LookPath("forged-sign")
-	if err == nil {
-		return path, nil
-	}
-	self, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("cannot find forged-sign binary")
-	}
-	candidate := filepath.Join(filepath.Dir(self), "forged-sign")
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate, nil
-	}
-	return "", fmt.Errorf("forged-sign not found in PATH or next to forged binary")
-}
-
-func writeAllowedSigners(publicKey string) error {
-	home, err := os.UserHomeDir()
-	if err != nil {
-		return err
-	}
-
-	signerFile := filepath.Join(home, ".ssh", "allowed_signers")
-
-	if data, err := os.ReadFile(signerFile); err == nil {
-		if strings.Contains(string(data), publicKey) {
-			return nil
-		}
-	}
-
-	if err := os.MkdirAll(filepath.Dir(signerFile), 0700); err != nil {
-		return err
-	}
-
-	f, err := os.OpenFile(signerFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-
-	_, err = fmt.Fprintf(f, "* %s\n", publicKey)
-	return err
 }

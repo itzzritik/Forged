@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"fmt"
 	"sort"
 	"sync"
@@ -160,7 +161,7 @@ func (a *ForgedAgent) findSigner(pub ssh.PublicKey) (ssh.Signer, string, error) 
 		if err != nil {
 			continue
 		}
-		if bytesEqual(parsed.Marshal(), wanted) {
+		if bytes.Equal(parsed.Marshal(), wanted) {
 			signer, err := ssh.ParsePrivateKey([]byte(k.PrivateKey))
 			if err != nil {
 				return nil, "", fmt.Errorf("parsing private key for %s: %w", k.Name, err)
@@ -179,16 +180,5 @@ func parsePublicKey(authorizedKey string) (ssh.PublicKey, error) {
 	return pub, nil
 }
 
-func bytesEqual(a, b []byte) bool {
-	if len(a) != len(b) {
-		return false
-	}
-	for i := range a {
-		if a[i] != b[i] {
-			return false
-		}
-	}
-	return true
-}
 
 var _ agent.ExtendedAgent = (*ForgedAgent)(nil)

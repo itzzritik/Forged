@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
@@ -168,6 +169,8 @@ func oauthLogin(server string) (oauthResult, error) {
 		return result, nil
 	case err := <-errCh:
 		return oauthResult{}, err
+	case <-time.After(5 * time.Minute):
+		return oauthResult{}, fmt.Errorf("login timed out after 5 minutes")
 	}
 }
 

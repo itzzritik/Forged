@@ -4,7 +4,7 @@ import (
 	"crypto/rand"
 	"fmt"
 	"os"
-	"syscall"
+	"os/exec"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -28,7 +28,10 @@ var logsCmd = &cobra.Command{
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
 			return fmt.Errorf("no log file found at %s", logPath)
 		}
-		return syscall.Exec("/usr/bin/tail", []string{"tail", "-f", logPath}, os.Environ())
+		tailCmd := exec.Command("tail", "-f", logPath)
+		tailCmd.Stdout = os.Stdout
+		tailCmd.Stderr = os.Stderr
+		return tailCmd.Run()
 	},
 }
 
