@@ -5,7 +5,7 @@
   --foreground: #ffffff;
   --muted: #a1a1aa;
   --muted-dark: #27272a;
-  --accent: #ffffff;
+  --accent: #FF6B00;
   --accent-dim: #71717a;
   --surface: #0a0a0a;
   --surface-hover: #171717;
@@ -28,12 +28,36 @@
   --font-mono: var(--font-geist-mono);
 }
 
+html {
+  scroll-behavior: smooth;
+}
+
 body {
   background: var(--background);
   color: var(--foreground);
   font-family: var(--font-sans);
 }
 
+/* Custom scrollbar for dark theme */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #333;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #444;
+}
+
+/* Animations */
 @keyframes fade-in {
   from { opacity: 0; transform: translateY(8px); }
   to { opacity: 1; transform: translateY(0); }
@@ -48,4 +72,25 @@ body {
   0% { opacity: 0; transform: scale(0.8); }
   50% { opacity: 1; transform: scale(1); }
   100% { opacity: 0; transform: scale(0.8); }
+}
+
+@keyframes typing {
+  from { width: 0; }
+  to { width: 100%; }
+}
+
+@keyframes blink {
+  0%, 50% { opacity: 1; }
+  51%, 100% { opacity: 0; }
+}
+
+@keyframes float {
+  0%, 100% { transform: translateY(0); }
+  50% { transform: translateY(-10px); }
+}
+
+/* Terminal typing effect */
+.typing-cursor::after {
+  content: '|';
+  animation: blink 1s infinite;
 }
