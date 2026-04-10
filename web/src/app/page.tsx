@@ -1,11 +1,9 @@
 import Link from "next/link";
 import {
   ScrollReveal,
-  StaggerGrid,
-  StaggerItem,
-  SpotlightCard,
   GlitchButton,
   AnimatedTerminalGrid,
+  AnimatedBigTerminal,
 } from "@/components/client";
 import type { TerminalCardDef } from "@/components/client";
 
@@ -432,94 +430,27 @@ function GridFeatures() {
 
 function TerminalSection() {
   return (
-    <section className="py-32 px-6 border-b border-[#27272a] bg-black relative">
-      <div className="absolute inset-0 mesh-texture opacity-30 pointer-events-none" />
+    <section className="relative py-36 px-5 lg:px-16 bg-black border-t border-white/10 overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
 
-      <div className="max-w-7xl mx-auto flex flex-col lg:flex-row gap-20 items-center relative z-10">
-        <ScrollReveal className="flex-1 w-full">
-          <div className="text-[10px] text-[#ea580c] uppercase tracking-widest font-mono mb-4 px-2 py-1 border border-[#ea580c]/20 bg-[#ea580c]/5 inline-block">
-            Background Daemon
+      <div className="relative z-10 max-w-7xl mx-auto flex flex-col items-center">
+        <ScrollReveal className="text-center w-full max-w-3xl mb-16 flex flex-col items-center">
+          <div className="mb-6 flex items-center justify-center gap-2.5">
+            <span className="h-2 w-2 bg-[#ea580c] animate-pulse" />
+            <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Background Daemon</span>
           </div>
-          <h2 className="text-4xl md:text-6xl font-bold tracking-tighter text-white mb-6 leading-none">
+          <h2 className="text-4xl sm:text-5xl lg:text-7xl xl:text-8xl font-bold tracking-tighter leading-[0.95] text-white text-pretty mb-8">
             Execute in Parallel.
           </h2>
-          <p className="text-[#a1a1aa] mb-8 max-w-lg leading-relaxed text-lg">
+          <p className="text-base lg:text-xl text-[#a1a1aa] max-w-2xl mx-auto leading-relaxed">
             A single 15MB binary controls a robust daemon service. Configure
             patterns, sync to the cloud, and orchestrate instances instantly
             without modifying ~/.ssh.
           </p>
-          <ul className="space-y-5 font-mono text-[13px]">
-            {[
-              "Completely sandboxed execution",
-              "Pure Go Socket Agent emulator",
-              "Pattern matched host binding",
-            ].map((item) => (
-              <li key={item} className="flex items-center text-[#a1a1aa] gap-4 group">
-                <span className="w-2 h-2 bg-[#27272a] group-hover:bg-[#ea580c] group-hover:animate-pulse transition-colors" />
-                <span className="group-hover:text-white transition-colors">{item}</span>
-              </li>
-            ))}
-          </ul>
         </ScrollReveal>
 
-        <ScrollReveal delay={0.2} className="flex-[1.2] w-full">
-          <div className="border border-[#27272a] bg-black overflow-hidden shadow-2xl relative group">
-            <div className="flex items-center justify-between px-4 h-11 border-b border-[#27272a] bg-[#09090b]">
-              <div className="flex items-center gap-6">
-                <div className="flex gap-2">
-                  <div className="w-3 h-3 rounded-full bg-[#27272a] group-hover:bg-[#FF5F56] transition-colors duration-300" />
-                  <div className="w-3 h-3 rounded-full bg-[#27272a] group-hover:bg-[#FFBD2E] transition-colors duration-300" />
-                  <div className="w-3 h-3 rounded-full bg-[#27272a] group-hover:bg-[#27C93F] transition-colors duration-300" />
-                </div>
-                <div className="flex items-center gap-4 text-xs font-mono text-[#a1a1aa]">
-                  <span className="text-white border-b border-[#ea580c] pb-2.5 translate-y-[6px]">config.toml</span>
-                  <span className="hover:text-white transition-colors cursor-pointer">daemon.go</span>
-                </div>
-              </div>
-              <span className="text-[10px] text-[#27272a] uppercase tracking-widest font-mono select-none">
-                Unix Socket
-              </span>
-            </div>
-
-            <div className="p-6 overflow-x-auto relative min-h-[300px]">
-              <div className="absolute left-0 top-0 bottom-0 w-12 border-r border-[#27272a]/50 bg-black/50 flex flex-col items-center py-6 text-[10px] text-[#27272a] font-mono select-none">
-                {Array.from({ length: 12 }).map((_, i) => (
-                  <span key={i} className="leading-7">{i + 1}</span>
-                ))}
-              </div>
-
-              <div className="ml-8 font-mono text-[13px] leading-7">
-                <div className="text-[#a1a1aa]"># Forged Infrastructure</div>
-                <div>
-                  <span className="text-[#ea580c]">[[</span>
-                  <span className="text-white">hosts</span>
-                  <span className="text-[#ea580c]">]]</span>
-                </div>
-                <div>
-                  <span className="text-[#00bcd4]">name</span>{" "}
-                  <span className="text-[#a1a1aa]">=</span>{" "}
-                  <span className="text-emerald-500">&quot;Production AWS&quot;</span>
-                </div>
-                <div>
-                  <span className="text-[#00bcd4]">match</span>{" "}
-                  <span className="text-[#a1a1aa]">=</span>{" "}
-                  <span className="text-white">[&quot;*.prod.company.com&quot;, &quot;10.0.*&quot;]</span>
-                </div>
-                <div>
-                  <span className="text-[#00bcd4]">key</span>{" "}
-                  <span className="text-[#a1a1aa]">=</span>{" "}
-                  <span className="text-emerald-500">&quot;deploy_key_ed25519&quot;</span>
-                </div>
-                <div className="h-7" />
-                <div className="text-[#a1a1aa]"># Run the daemon</div>
-                <div className="flex items-center gap-3 bg-[#09090b] border border-[#27272a] p-3 group-hover:border-[#ea580c]/40 transition-colors w-max mt-2">
-                  <span className="text-[#27272a]">$</span>
-                  <span className="text-white">forged start --background</span>
-                </div>
-              </div>
-              <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none" />
-            </div>
-          </div>
+        <ScrollReveal delay={0.2} className="w-full">
+           <AnimatedBigTerminal cards={TERMINAL_CARDS} />
         </ScrollReveal>
       </div>
     </section>
@@ -546,35 +477,53 @@ function Architecture() {
   ];
 
   return (
-    <section className="py-32 px-6 border-b border-[#27272a] bg-black">
-      <div className="max-w-7xl mx-auto">
-        <ScrollReveal className="text-center mb-20">
-          <h2 className="text-4xl md:text-6xl font-bold tracking-tighter text-white mb-6 leading-none">
+    <section className="relative py-36 px-5 lg:px-16 bg-black border-t border-white/10 overflow-hidden">
+      <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
+
+      <div className="relative z-10 max-w-7xl mx-auto">
+        <ScrollReveal className="mb-4">
+          <div className="flex items-center gap-2.5">
+            <span className="h-2 w-2 bg-[#ea580c]" />
+            <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Architecture</span>
+          </div>
+        </ScrollReveal>
+
+        <ScrollReveal>
+          <h2 className="text-4xl sm:text-5xl lg:text-7xl xl:text-8xl font-bold tracking-tighter leading-[0.95] text-white text-pretty mb-6">
             Architecture
           </h2>
-          <p className="text-[#a1a1aa] max-w-2xl mx-auto text-lg">
+          <p className="text-base lg:text-lg text-[#a1a1aa] max-w-2xl leading-relaxed mb-16">
             No Electron. No bloated browser extensions. Strictly terminal and background daemons written in modern Go.
           </p>
         </ScrollReveal>
 
-        <StaggerGrid className="grid md:grid-cols-3 gap-px bg-[#27272a]" stagger={0.12}>
-          {items.map((item) => (
-            <StaggerItem key={item.name} className="bg-[#09090b]">
-              <SpotlightCard className="h-full group hover:bg-[#18181b] transition-colors duration-300">
-                <div className="h-px bg-[#ea580c] scale-x-0 group-hover:scale-x-100 transition-transform origin-left duration-500 ease-out" />
-                <div className="p-8">
-                  <div className="text-[10px] text-[#a1a1aa] uppercase tracking-widest font-mono mb-4">
-                    {item.label}
+        <ScrollReveal>
+          <div className="relative z-10 border-t border-l border-white/10 grid grid-cols-1 md:grid-cols-3">
+            {items.map((item) => (
+              <article
+                key={item.name}
+                className="group relative flex flex-col border-r border-b border-white/10 bg-white/[0.03] transition-colors duration-300 hover:border-[#ea580c]/20 p-8 cursor-pointer"
+              >
+                <div className="absolute inset-0 bg-[#ea580c]/[0.07] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
+                
+                <div className="relative">
+                  <div className="flex items-center gap-2.5 mb-6">
+                    <span className="h-1.5 w-1.5 bg-white/20 group-hover:bg-[#ea580c] transition-colors duration-300" />
+                    <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase group-hover:text-[#ea580c] transition-colors duration-300">
+                      {item.label}
+                    </span>
                   </div>
-                  <h3 className="text-lg font-bold text-white mb-3 tracking-tight group-hover:text-[#ea580c] transition-colors">
+                  <h3 className="text-xl font-bold text-white tracking-tight group-hover:text-orange-400 transition-colors duration-300 mb-3">
                     {item.name}
                   </h3>
-                  <p className="text-sm text-[#a1a1aa] leading-relaxed">{item.desc}</p>
+                  <p className="text-sm leading-relaxed text-[#a1a1aa] group-hover:text-orange-300 transition-colors duration-300">
+                    {item.desc}
+                  </p>
                 </div>
-              </SpotlightCard>
-            </StaggerItem>
-          ))}
-        </StaggerGrid>
+              </article>
+            ))}
+          </div>
+        </ScrollReveal>
       </div>
     </section>
   );
@@ -582,13 +531,18 @@ function Architecture() {
 
 function SecurityCTA() {
   return (
-    <section className="py-32 px-6 border-b border-[#27272a] bg-black text-center relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(255,255,255,0.03)_0%,_transparent_50%)] pointer-events-none" />
-      <ScrollReveal className="max-w-2xl mx-auto relative z-10">
-        <h2 className="text-4xl md:text-6xl font-bold tracking-tighter text-white mb-8 leading-none">
+    <section className="relative py-36 px-5 lg:px-16 bg-black border-t border-white/10 overflow-hidden text-center flex flex-col items-center justify-center">
+      <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
+      
+      <ScrollReveal className="relative z-10 max-w-3xl flex flex-col items-center">
+        <div className="flex items-center gap-2.5 mb-6 justify-center">
+          <span className="h-2 w-2 bg-[#ea580c]" />
+          <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Enterprise Security</span>
+        </div>
+        <h2 className="text-4xl sm:text-5xl lg:text-7xl xl:text-8xl font-bold tracking-tighter leading-[0.95] text-white text-pretty mb-8">
           Enterprise Security.
         </h2>
-        <p className="text-[#a1a1aa] text-lg md:text-xl leading-relaxed mb-12">
+        <p className="text-base lg:text-xl text-[#a1a1aa] leading-relaxed mb-12">
           Your keys never leave your machine decrypted. End-to-end atomic vault encryption synced directly between your clients. Fully auditable open-source core.
         </p>
         <GlitchButton href="/security" variant="secondary" className="h-12 px-10">Read Security Paper</GlitchButton>
@@ -599,21 +553,24 @@ function SecurityCTA() {
 
 function CTA() {
   return (
-    <section className="py-32 px-6 border-b border-[#27272a] bg-black text-center relative overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(234,88,12,0.06)_0%,_transparent_60%)] pointer-events-none" />
-      <div className="absolute inset-0 dot-grid opacity-20 pointer-events-none" />
+    <section className="relative py-36 px-5 lg:px-16 bg-black border-t border-white/10 overflow-hidden text-center flex flex-col items-center justify-center">
+      <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(234,88,12,0.06)_0%,_transparent_60%)]" />
+      <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
 
-      <ScrollReveal className="max-w-3xl mx-auto relative z-10">
-        <h2 className="text-5xl md:text-7xl font-bold tracking-tighter text-white mb-8 leading-none">
-          Start building with <br /> FORGED.
+      <ScrollReveal className="relative z-10 max-w-4xl flex flex-col items-center">
+        <div className="flex items-center gap-2.5 mb-6 justify-center">
+          <span className="h-2 w-2 bg-[#ea580c] animate-pulse" />
+          <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Get Started</span>
+        </div>
+        <h2 className="text-5xl sm:text-7xl lg:text-8xl xl:text-[100px] font-bold tracking-tighter leading-[0.9] text-white text-pretty mb-8">
+          Start building with <br /> <span className="uppercase text-white">FORGED.</span>
         </h2>
-        <p className="text-[#a1a1aa] text-lg md:text-xl leading-relaxed mb-12">
-          A purely local, cryptographically secure enclave handling all your SSH
-          connections.
+        <p className="text-base lg:text-xl text-[#a1a1aa] leading-relaxed mb-12 max-w-2xl">
+          A purely local, cryptographically secure enclave handling all your SSH connections.
         </p>
-        <div className="flex items-center justify-center gap-6">
-          <GlitchButton href="/login" className="h-12 px-10">Create Account</GlitchButton>
-          <GlitchButton href="/docs" variant="secondary" className="h-12 px-10">Read Docs</GlitchButton>
+        <div className="flex flex-col flex-wrap sm:flex-row items-center justify-center gap-6">
+          <GlitchButton href="/login" className="h-14 px-12 text-sm max-w-full">Create Account</GlitchButton>
+          <GlitchButton href="/docs" variant="secondary" className="h-14 px-12 text-sm max-w-full">Read Docs</GlitchButton>
         </div>
       </ScrollReveal>
     </section>

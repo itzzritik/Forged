@@ -411,3 +411,127 @@ export function GlitchButton({
     </button>
   );
 }
+
+export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
+  const [lines, setLines] = useState<{ id: string; text: string; isCommand: boolean }[]>([]);
+  const [typingCommand, setTypingCommand] = useState("");
+  const [showCursor, setShowCursor] = useState(true);
+  const containerRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const int = setInterval(() => setShowCursor(c => !c), 500);
+    return () => clearInterval(int);
+  }, []);
+
+  useEffect(() => {
+    let active = true;
+    let cardIndex = 0;
+
+    const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+
+    async function run() {
+      await wait(1000);
+      
+      while (active) {
+        const card = cards[cardIndex];
+        const rawCmd = card.lines[0];
+        const cmd = rawCmd.startsWith("> ") ? rawCmd.slice(2) : rawCmd;
+        const output = card.lines.slice(1);
+
+        let currentCmd = "";
+        for (let i = 0; i < cmd.length; i++) {
+          if (!active) return;
+          currentCmd += cmd[i];
+          setTypingCommand(currentCmd);
+          if (containerRef.current) {
+            containerRef.current.scrollTop = containerRef.current.scrollHeight;
+          }
+          await wait(30 + Math.random() * 40);
+        }
+
+        if (!active) return;
+        setLines(prev => {
+           const next = [...prev, { id: Math.random().toString(), text: cmd, isCommand: true }];
+           return next.slice(-60);
+        });
+        setTypingCommand("");
+        
+        await wait(200);
+
+        for (const outLine of output) {
+          if (!active) return;
+          setLines(prev => {
+             const next = [...prev, { id: Math.random().toString(), text: outLine, isCommand: false }];
+             return next.slice(-60);
+          });
+          if (containerRef.current) {
+            containerRef.current.scrollTop = containerRef.current.scrollHeight;
+          }
+          await wait(50 + Math.random() * 80);
+        }
+
+        await wait(3000);
+        
+        cardIndex = (cardIndex + 1) % cards.length;
+      }
+    }
+
+    run();
+
+    return () => { active = false; };
+  }, [cards]);
+
+  const getLineColor = (lineText: string) => {
+    if (lineText.includes("[WARN]")) return "#f59e0b";
+    if (lineText.includes("[ERR]") || lineText.match(/\[error\]/i)) return "#ef4444";
+    if (lineText.match(/\[OK\]| ok | success/i)) return "#10b981";
+    if (lineText.match(/\[INFO\]|^\[[A-Z]+\]/)) return "#0ea5e9";
+    if (lineText.startsWith("{") || lineText.startsWith("}") || lineText.includes(`"`)) return "#eab308";
+    return "#a1a1aa";
+  };
+
+  return (
+    <div className="w-full h-[400px] sm:h-[500px] md:h-[600px] bg-black border border-white/10 relative group overflow-hidden flex flex-col shadow-2xl">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(234,88,12,0.08)_0%,_transparent_60%)] pointer-events-none" />
+      
+      <div className="flex items-center justify-between px-6 h-12 border-b border-white/10 bg-white/[0.02] shrink-0 relative z-10">
+        <div className="flex items-center gap-4">
+          <div className="w-2 h-2 bg-white/20 group-hover:bg-[#ea580c] transition-colors" />
+          <span className="text-[#a1a1aa] font-mono text-[11px] tracking-widest uppercase">forged-daemon — root</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <span className="text-[10px] text-[#ea580c] font-mono border border-[#ea580c]/20 px-2 py-0.5 bg-[#ea580c]/5 hidden md:block">
+            PROCESS: ACTIVE
+          </span>
+        </div>
+      </div>
+      
+      <div ref={containerRef} className="p-6 md:p-8 flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden relative z-10 font-mono text-xs md:text-[13px]">
+        {lines.map((line) => (
+          <div key={line.id} className="leading-[1.8] whitespace-pre-wrap break-all mb-1">
+            {line.isCommand ? (
+              <div className="flex items-start">
+                <span className="text-[#ea580c] mr-3 select-none flex-shrink-0">root@forged:~$</span>
+                <span className="text-white font-medium">{line.text}</span>
+              </div>
+            ) : (
+              <div className="pl-4 md:pl-0 flex items-start">
+                 <span className="text-transparent mr-3 select-none hidden md:inline flex-shrink-0">root@forged:~$</span>
+                 <span style={{ color: getLineColor(line.text) }}>{line.text}</span>
+              </div>
+            )}
+          </div>
+        ))}
+        
+        <div className="leading-[1.8] whitespace-pre-wrap break-all mt-1 flex items-start">
+          <span className="text-[#ea580c] mr-3 select-none flex-shrink-0">root@forged:~$</span>
+          <span className="text-white font-medium">{typingCommand}</span>
+          <span className={`inline-block w-2 md:w-2.5 h-4 md:h-4 ml-1 bg-white align-middle translate-y-[2px] ${showCursor ? 'opacity-100' : 'opacity-0'}`} />
+        </div>
+        <div className="h-12" />
+      </div>
+
+      <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none z-10" />
+    </div>
+  );
+}
