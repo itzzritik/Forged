@@ -591,24 +591,99 @@ function Architecture() {
   );
 }
 
-function SecurityCTA() {
+function EnterpriseSecurity() {
+  const specs = [
+    {
+      id: "01",
+      title: "CipherSuite",
+      value: "XChaCha20",
+      desc: "All vault data is encrypted using XChaCha20-Poly1305 AEAD. Extremely fast, deeply secure, and completely immune to timing attacks."
+    },
+    {
+      id: "02",
+      title: "Derivation",
+      value: "Argon2id",
+      desc: "Master keys are mathematically generated through Argon2id, the winner of the Password Hashing Competition. Highly ASIC resistant."
+    },
+    {
+      id: "03",
+      title: "Isolation",
+      value: "M-Lock",
+      desc: "The agent daemon uses unix.Mlock() to pin all decrypted memory pages, ensuring host OS swap-to-disk leaks are physically impossible."
+    },
+    {
+      id: "04",
+      title: "Auditability",
+      value: "Open Core",
+      desc: "The entire core daemon and CLI is 100% open source under MIT. No proprietary telemetry, no blackbox cryptographic implementations."
+    }
+  ];
+
   return (
-    <section className="relative py-36 bg-black border-t border-white/10 overflow-hidden text-center flex flex-col items-center justify-center">
-      <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
-      
-      <ScrollReveal className="relative z-10 w-full px-6 lg:px-16 max-w-3xl flex flex-col items-center">
-        <div className="flex items-center gap-2.5 mb-6 justify-center">
-          <span className="h-2 w-2 bg-[#ea580c]" />
-          <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Enterprise Security</span>
+    <section className="relative py-24 lg:py-40 bg-black border-t border-white/10 overflow-hidden">
+      {/* Brutalist Grid Background overlay */}
+      <div className="absolute inset-0 opacity-[0.02]" style={{ backgroundImage: "linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)", backgroundSize: "64px 64px" }} />
+
+      <div className="relative z-10 w-full max-w-[1400px] mx-auto px-6 lg:px-16">
+        
+        {/* Deep industrial header */}
+        <ScrollReveal className="flex flex-col xl:flex-row xl:items-end justify-between gap-10 mb-24 border-b border-[#27272a] pb-12">
+          <div>
+             <div className="flex items-center gap-2.5 mb-6">
+               <span className="h-2 w-2 bg-[#ea580c] animate-pulse shadow-[0_0_10px_#ea580c]" />
+               <span className="text-[10px] font-mono tracking-[0.2em] text-[#ea580c] font-bold uppercase">Enterprise Security</span>
+             </div>
+             <h2 className="text-[clamp(3rem,8vw,8rem)] font-bold tracking-tighter text-white leading-[0.9]">
+                Zero<br/>Knowledge.
+             </h2>
+          </div>
+          <div className="max-w-xl xl:pl-10 xl:border-l xl:border-[#27272a] pb-2">
+             <p className="text-base sm:text-lg text-[#a1a1aa] leading-relaxed">
+                We believe security through obscurity is no security at all. Forged is built entirely on open, mathematically auditable cryptographic standards. Your private keys never touch a disk unencrypted, and never leave your machine physically.
+             </p>
+          </div>
+        </ScrollReveal>
+
+        {/* The Specs Grid (Data-dense, purely typographical, massive impact) */}
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-px bg-[#27272a]">
+           {specs.map((spec, i) => (
+             <ScrollReveal key={spec.id} delay={i * 0.1} className="flex flex-col bg-black p-8 group relative overflow-hidden">
+                 {/* Internal hover glow */}
+                 <div className="absolute inset-0 bg-gradient-to-br from-[#ea580c]/5 to-transparent opacity-0 group-hover:opacity-100 transition-opacity duration-500 pointer-events-none" />
+                 
+                 <div className="flex items-center justify-between mb-8">
+                     <span className="text-[#a1a1aa] font-mono text-xs tracking-widest uppercase">Spec // {spec.id}</span>
+                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" className="text-[#3f3f46] group-hover:text-[#ea580c] transition-colors duration-500">
+                        <path d="M5 12h14" />
+                        <path d="M12 5l7 7-7 7" />
+                     </svg>
+                 </div>
+                 <span className="text-sm font-mono tracking-widest uppercase text-[#ea580c] mb-1 opacity-80">{spec.title}</span>
+                 <span className="text-3xl sm:text-4xl text-white font-bold tracking-tight mb-6">{spec.value}</span>
+                 <p className="text-[#a1a1aa] text-sm leading-relaxed mt-auto relative z-10">
+                   {spec.desc}
+                 </p>
+             </ScrollReveal>
+           ))}
         </div>
-        <h2 className="text-4xl sm:text-5xl lg:text-7xl xl:text-8xl font-bold tracking-tighter leading-[0.95] text-white text-pretty mb-8">
-          Enterprise Security.
-        </h2>
-        <p className="text-base lg:text-xl text-[#a1a1aa] leading-relaxed mb-12">
-          Your keys never leave your machine decrypted. End-to-end atomic vault encryption synced directly between your clients. Fully auditable open-source core.
-        </p>
-        <GlitchButton href="/security" variant="secondary" className="h-12 px-10">Read Security Paper</GlitchButton>
-      </ScrollReveal>
+
+        {/* Audit Badges / Trust center */}
+        <ScrollReveal delay={0.2} className="mt-8 flex flex-col md:flex-row items-center justify-between border border-[#27272a] bg-[#020202] p-8 md:p-12 gap-8 relative overflow-hidden">
+           {/* Scanline effect */}
+           <div className="absolute inset-0 w-full h-[1px] bg-gradient-to-r from-transparent via-[#ea580c]/20 to-transparent animate-scan pointer-events-none" />
+           
+           <div className="flex-1 relative z-10">
+             <h3 className="text-2xl md:text-3xl text-white font-bold mb-3 tracking-tight">Enterprise Ready. Fully Auditable.</h3>
+             <p className="text-sm md:text-base text-[#a1a1aa] max-w-2xl">Read the complete cryptographic breakdown of our vault structure in the security whitepaper, or dive directly into the repository to audit the Go implementation yourself.</p>
+           </div>
+           
+           <div className="flex flex-col sm:flex-row gap-4 w-full sm:w-auto relative z-10">
+             <GlitchButton href="/security" className="h-14 px-8 border-[#ea580c] text-sm">Read Security Paper</GlitchButton>
+             <GlitchButton href="https://github.com/itzzritik/forged" variant="secondary" className="h-14 px-8 text-sm">Audit Source Code</GlitchButton>
+           </div>
+        </ScrollReveal>
+
+      </div>
     </section>
   );
 }
@@ -625,10 +700,10 @@ function CTA() {
           <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Get Started</span>
         </div>
         <h2 className="text-5xl sm:text-7xl lg:text-8xl xl:text-[100px] font-bold tracking-tighter leading-[0.9] text-white text-pretty mb-8">
-          Start building with <br /> <span className="uppercase text-white">FORGED.</span>
+          Secure your keys<br />Ship everything else
         </h2>
         <p className="text-base lg:text-xl text-[#a1a1aa] leading-relaxed mb-12 max-w-2xl">
-          A purely local, cryptographically secure enclave handling all your SSH connections.
+          Install Forged. Never think about SSH key management again.
         </p>
         <div className="flex flex-col flex-wrap sm:flex-row items-center justify-center gap-6">
           <GlitchButton href="/login" className="h-14 px-12 text-sm max-w-full">Create Account</GlitchButton>
@@ -679,7 +754,7 @@ export default function Home() {
       <GridFeatures />
       <TerminalSection />
       <Architecture />
-      <SecurityCTA />
+      <EnterpriseSecurity />
       <CTA />
       <Footer />
     </div>

@@ -520,7 +520,7 @@ export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
     <div className="w-full h-full bg-transparent relative flex flex-col overflow-hidden">
       <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(234,88,12,0.05)_0%,_transparent_60%)] pointer-events-none" />
       
-      <div ref={containerRef} className="p-4 md:p-6 flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden relative z-10 font-mono text-[11px] md:text-xs pb-24">
+      <div ref={containerRef} className="p-4 md:p-6 flex-1 overflow-hidden [&::-webkit-scrollbar]:hidden relative z-10 font-mono text-[11px] md:text-xs pb-24">
         <AnimatePresence initial={false}>
           {lines.map((line) => (
             <motion.div
