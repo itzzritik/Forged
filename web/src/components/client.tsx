@@ -1,6 +1,6 @@
 "use client";
 
-import { motion, useInView } from "framer-motion";
+import { motion, useInView, AnimatePresence } from "framer-motion";
 import Link from "next/link";
 import {
   useRef,
@@ -133,7 +133,7 @@ export type TerminalCardDef = {
   title: string;
   status: "ok" | "warn" | "error";
   brightness: number;
-  pace: "fast" | "normal" | "slow";
+  pace: "fast" | "normal" | "slow" | "aggressive";
   lines: string[];
 };
 
@@ -413,7 +413,7 @@ export function GlitchButton({
 }
 
 export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
-  const [lines, setLines] = useState<{ id: string; text: string; isCommand: boolean }[]>([]);
+  const [lines, setLines] = useState<{ id: string; text: string; isCommand: boolean; timestamp: string }[]>([]);
   const [typingCommand, setTypingCommand] = useState("");
   const [showCursor, setShowCursor] = useState(true);
   const containerRef = useRef<HTMLDivElement>(null);
@@ -427,6 +427,11 @@ export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
     let active = true;
     let cardIndex = 0;
 
+    const generateTimestamp = () => {
+      const now = new Date();
+      return `[${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${Math.floor(Math.random() * 99).toString().padStart(2, '0')}]`;
+    };
+
     const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
 
     async function run() {
@@ -438,21 +443,33 @@ export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
         const cmd = rawCmd.startsWith("> ") ? rawCmd.slice(2) : rawCmd;
         const output = card.lines.slice(1);
 
+        let charDelay = 30;
+        let lineDelay = 150;
+        if (card.pace === "fast") {
+          charDelay = 15;
+          lineDelay = 50;
+        } else if (card.pace === "slow") {
+          charDelay = 50;
+          lineDelay = 300;
+        } else if (card.pace === "aggressive") {
+          charDelay = 10;
+          lineDelay = 100;
+        }
+
         let currentCmd = "";
         for (let i = 0; i < cmd.length; i++) {
           if (!active) return;
           currentCmd += cmd[i];
           setTypingCommand(currentCmd);
-          if (containerRef.current) {
-            containerRef.current.scrollTop = containerRef.current.scrollHeight;
+          if (charDelay > 0) {
+            await wait(charDelay + Math.random() * (charDelay / 2));
           }
-          await wait(30 + Math.random() * 40);
         }
 
         if (!active) return;
         setLines(prev => {
-           const next = [...prev, { id: Math.random().toString(), text: cmd, isCommand: true }];
-           return next.slice(-60);
+           const next = [...prev, { id: Math.random().toString(), text: cmd, isCommand: true, timestamp: generateTimestamp() }];
+           return next.slice(-40);
         });
         setTypingCommand("");
         
@@ -461,13 +478,12 @@ export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
         for (const outLine of output) {
           if (!active) return;
           setLines(prev => {
-             const next = [...prev, { id: Math.random().toString(), text: outLine, isCommand: false }];
-             return next.slice(-60);
+             const next = [...prev, { id: Math.random().toString(), text: outLine, isCommand: false, timestamp: generateTimestamp() }];
+             return next.slice(-40);
           });
-          if (containerRef.current) {
-            containerRef.current.scrollTop = containerRef.current.scrollHeight;
+          if (lineDelay > 0) {
+            await wait(lineDelay + Math.random() * (lineDelay / 2));
           }
-          await wait(50 + Math.random() * 80);
         }
 
         await wait(3000);
@@ -481,57 +497,76 @@ export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
     return () => { active = false; };
   }, [cards]);
 
+  // Smooth synchronized scrolling via effect
+  useEffect(() => {
+    if (containerRef.current) {
+      containerRef.current.scrollTo({
+        top: containerRef.current.scrollHeight,
+        behavior: 'smooth'
+      });
+    }
+  }, [lines, typingCommand]);
+
   const getLineColor = (lineText: string) => {
-    if (lineText.includes("[WARN]")) return "#f59e0b";
-    if (lineText.includes("[ERR]") || lineText.match(/\[error\]/i)) return "#ef4444";
-    if (lineText.match(/\[OK\]| ok | success/i)) return "#10b981";
-    if (lineText.match(/\[INFO\]|^\[[A-Z]+\]/)) return "#0ea5e9";
-    if (lineText.startsWith("{") || lineText.startsWith("}") || lineText.includes(`"`)) return "#eab308";
+    if (lineText.includes("[WARN]") || lineText.includes("⚠️")) return "#f59e0b";
+    if (lineText.includes("[ERR]") || lineText.match(/\[error\]/i) || lineText.includes("failed on channel")) return "#ef4444";
+    if (lineText.match(/\[\+\]|\[OK\]| ok | success/i)) return "#10b981"; // success
+    if (lineText.match(/\[\~\]|\[INFO\]|^\[[A-Z]+\]/)) return "#0ea5e9";
+    if (lineText.startsWith("forged:")) return "#a1a1aa";
     return "#a1a1aa";
   };
 
   return (
-    <div className="w-full h-[400px] sm:h-[500px] md:h-[600px] bg-black border border-white/10 relative group overflow-hidden flex flex-col shadow-2xl">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(234,88,12,0.08)_0%,_transparent_60%)] pointer-events-none" />
+    <div className="w-full h-full bg-transparent relative flex flex-col overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(234,88,12,0.05)_0%,_transparent_60%)] pointer-events-none" />
       
-      <div className="flex items-center justify-between px-6 h-12 border-b border-white/10 bg-white/[0.02] shrink-0 relative z-10">
-        <div className="flex items-center gap-4">
-          <div className="w-2 h-2 bg-white/20 group-hover:bg-[#ea580c] transition-colors" />
-          <span className="text-[#a1a1aa] font-mono text-[11px] tracking-widest uppercase">forged-daemon — root</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <span className="text-[10px] text-[#ea580c] font-mono border border-[#ea580c]/20 px-2 py-0.5 bg-[#ea580c]/5 hidden md:block">
-            PROCESS: ACTIVE
-          </span>
-        </div>
-      </div>
-      
-      <div ref={containerRef} className="p-6 md:p-8 flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden relative z-10 font-mono text-xs md:text-[13px]">
-        {lines.map((line) => (
-          <div key={line.id} className="leading-[1.8] whitespace-pre-wrap break-all mb-1">
-            {line.isCommand ? (
-              <div className="flex items-start">
-                <span className="text-[#ea580c] mr-3 select-none flex-shrink-0">root@forged:~$</span>
-                <span className="text-white font-medium">{line.text}</span>
-              </div>
-            ) : (
-              <div className="pl-4 md:pl-0 flex items-start">
-                 <span className="text-transparent mr-3 select-none hidden md:inline flex-shrink-0">root@forged:~$</span>
-                 <span style={{ color: getLineColor(line.text) }}>{line.text}</span>
-              </div>
-            )}
-          </div>
-        ))}
+      <div ref={containerRef} className="p-4 md:p-6 flex-1 overflow-y-auto [&::-webkit-scrollbar]:hidden relative z-10 font-mono text-[11px] md:text-xs pb-24">
+        <AnimatePresence initial={false}>
+          {lines.map((line) => (
+            <motion.div
+              initial={{ opacity: 0, y: 10 }}
+              animate={{ opacity: 1, y: 0 }}
+              transition={{ duration: 0.2, ease: "easeOut" }}
+              key={line.id} 
+              className="leading-[1.7] whitespace-pre-wrap break-all mb-1.5 flex items-start group"
+            >
+              {/* Timestamp Gutter */}
+              <span className="text-[#3f3f46] mr-4 select-none shrink-0">{line.timestamp}</span>
+
+              {line.isCommand ? (
+                <div className="flex items-start">
+                  <span className="text-[#ea580c] mr-3 select-none flex-shrink-0">root@forged:~$</span>
+                  <span className="text-white font-medium">{line.text}</span>
+                </div>
+              ) : (
+                <div className="flex items-start">
+                   <span className="text-transparent mr-3 select-none hidden md:inline flex-shrink-0">root@forged:~$</span>
+                   <span style={{ color: getLineColor(line.text) }}>
+                     {line.text.startsWith('forged:') ? (
+                       <>
+                         <span className="text-[#ea580c] font-bold">forged:</span>
+                         <span className="text-white ml-2">{line.text.replace('forged:', '')}</span>
+                       </>
+                     ) : (
+                       line.text
+                     )}
+                   </span>
+                </div>
+              )}
+            </motion.div>
+          ))}
+        </AnimatePresence>
         
-        <div className="leading-[1.8] whitespace-pre-wrap break-all mt-1 flex items-start">
+        <div className="leading-[1.7] whitespace-pre-wrap break-all mt-1.5 flex items-start">
+          <span className="text-[#3f3f46] mr-4 select-none shrink-0 opacity-0">[00:00:00.00]</span>
           <span className="text-[#ea580c] mr-3 select-none flex-shrink-0">root@forged:~$</span>
           <span className="text-white font-medium">{typingCommand}</span>
-          <span className={`inline-block w-2 md:w-2.5 h-4 md:h-4 ml-1 bg-white align-middle translate-y-[2px] ${showCursor ? 'opacity-100' : 'opacity-0'}`} />
+          <span className={`inline-block w-2.5 h-3.5 ml-1 bg-[#ea580c] align-middle translate-y-[2px] shadow-[0_0_8px_rgba(234,88,12,0.6)] ${showCursor ? 'opacity-100' : 'opacity-0'}`} />
         </div>
-        <div className="h-12" />
+        <div className="h-32" />
       </div>
 
-      <div className="absolute bottom-0 left-0 right-0 h-24 bg-gradient-to-t from-black via-black/80 to-transparent pointer-events-none z-10" />
+      <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#050505] via-[#050505]/90 to-transparent pointer-events-none w-full z-10" />
     </div>
   );
 }

@@ -10,7 +10,7 @@ import type { TerminalCardDef } from "@/components/client";
 function Nav() {
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-[#27272a] bg-black/80 backdrop-blur-xl">
-      <div className="max-w-7xl mx-auto px-6 h-14 flex items-center justify-between">
+      <div className="w-full px-6 lg:px-16 h-14 flex items-center justify-between">
         <Link href="/" className="flex items-center gap-3 group">
           <div className="w-7 h-7 bg-black border border-[#27272a] flex items-center justify-center group-hover:border-[#ea580c] transition-colors">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" className="text-white group-hover:text-[#ea580c] transition-colors">
@@ -224,6 +224,44 @@ const TERMINAL_CARDS: TerminalCardDef[] = [
   ]},
 ];
 
+const INDUSTRIAL_TERMINAL_SEQUENCE: TerminalCardDef[] = [
+  { 
+    title: "",
+    status: "ok",
+    brightness: 1.0,
+    pace: "aggressive",
+    lines: [
+      "> forged status",
+      "[+] Daemon attached: unix:///tmp/forged.sock",
+      "[+] Secure enclave:  ACTIVE (Memory Guard verified)",
+    ]
+  },
+  {
+    title: "",
+    status: "ok",
+    brightness: 1.1,
+    pace: "aggressive",
+    lines: [
+      "> forged rule add --eval=\"*production*\" --key=\"vault-01\"",
+      "[+] Rule injected. Traffic to *production* strictly bound to vault-01.",
+    ]
+  },
+  {
+    title: "",
+    status: "ok",
+    brightness: 1.2,
+    pace: "aggressive",
+    lines: [
+      "> ssh root@10.vpc.production.internal",
+      "[~] forged: connection intercepted",
+      "[~] forged: enforcing rule match -> vault-01",
+      "[+] forged: ephemeral key injected into ssh-agent memory space",
+      "Last login: Fri Apr 10 14:02 from 192.168.1.1",
+      "root@production:~#"
+    ]
+  }
+];
+
 function Hero() {
   return (
     <section className="relative h-dvh flex flex-col border-b border-[#27272a]">
@@ -347,10 +385,10 @@ function GridFeatures() {
   ];
 
   return (
-    <section className="relative py-36 px-5 lg:px-16 bg-black border-t border-white/10 overflow-hidden">
+    <section className="relative py-36 px-6 lg:px-16 bg-black border-t border-white/10 overflow-hidden">
       <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
 
-      <div className="relative z-10 max-w-7xl mx-auto">
+      <div className="relative z-10 w-full">
         <ScrollReveal className="mb-4">
           <div className="flex items-center gap-2.5">
             <span className="h-2 w-2 bg-[#ea580c]" />
@@ -366,7 +404,7 @@ function GridFeatures() {
 
         <ScrollReveal className="mt-6">
           <p className="text-base lg:text-lg text-[#a1a1aa] max-w-2xl leading-relaxed">
-            One binary, six capabilities. Generate, encrypt, sync, bind, sign, and migrate your SSH keys from a single daemon -- while you focus on shipping.
+            One binary, six capabilities. Generate, encrypt, sync, bind, sign, and migrate your SSH keys from a single daemon - while you focus on shipping.
           </p>
         </ScrollReveal>
 
@@ -430,27 +468,74 @@ function GridFeatures() {
 
 function TerminalSection() {
   return (
-    <section className="relative py-36 px-5 lg:px-16 bg-black border-t border-white/10 overflow-hidden">
-      <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
-
-      <div className="relative z-10 max-w-7xl mx-auto flex flex-col items-center">
-        <ScrollReveal className="text-center w-full max-w-3xl mb-16 flex flex-col items-center">
-          <div className="mb-6 flex items-center justify-center gap-2.5">
-            <span className="h-2 w-2 bg-[#ea580c] animate-pulse" />
-            <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Background Daemon</span>
+    <section className="relative py-24 lg:py-36 bg-black border-t border-white/10 overflow-hidden">
+      <div className="relative z-10 w-full px-6 lg:px-16 flex flex-col">
+        {/* TOP COMPONENT - Chairman LLM Header Style */}
+        <ScrollReveal className="w-full max-w-3xl mb-12 flex flex-col items-start text-left">
+          <div className="mb-4 flex items-center gap-2.5">
+             <span className="h-2 w-2 bg-[#ea580c]" />
+             <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Pattern Matching</span>
           </div>
-          <h2 className="text-4xl sm:text-5xl lg:text-7xl xl:text-8xl font-bold tracking-tighter leading-[0.95] text-white text-pretty mb-8">
-            Execute in Parallel.
+          <h2 className="text-5xl sm:text-6xl lg:text-7xl font-bold tracking-tighter leading-[0.95] text-white mb-6">
+            Context Aware Routing.
           </h2>
-          <p className="text-base lg:text-xl text-[#a1a1aa] max-w-2xl mx-auto leading-relaxed">
-            A single 15MB binary controls a robust daemon service. Configure
-            patterns, sync to the cloud, and orchestrate instances instantly
-            without modifying ~/.ssh.
+          <p className="text-lg lg:text-xl text-[#a1a1aa] leading-relaxed mb-10 max-w-2xl">
+            Never write another ~/.ssh/config file again. Forged uses wildcard and regex patterns to instantly route the correct cryptographic key to the right server, automatically.
           </p>
+          <div className="flex flex-wrap items-center gap-4">
+             <GlitchButton href="/docs" className="h-12 px-8 text-sm">Configure Patterns</GlitchButton>
+             <GlitchButton href="/docs" variant="secondary" className="h-12 px-8 text-sm">View Docs</GlitchButton>
+          </div>
         </ScrollReveal>
 
+        {/* BOTTOM COMPONENT - Brutalist Data-Grid Terminal */}
         <ScrollReveal delay={0.2} className="w-full">
-           <AnimatedBigTerminal cards={TERMINAL_CARDS} />
+          <div className="border border-[#27272a] bg-[#050505] p-2 flex flex-col relative h-[500px] md:h-[600px] shadow-2xl overflow-hidden group">
+            {/* Inner Screen Bezel */}
+            <div className="border border-[#18181b] bg-black flex flex-col w-full h-full relative">
+              {/* Mac-Style Header & Tab */}
+              <div className="h-12 border-b border-[#18181b] bg-[#030303] flex items-center justify-between px-4 shrink-0 z-20">
+                 <div className="flex items-center gap-4">
+                   <div className="flex gap-2">
+                     <div className="w-3 h-3 rounded-full bg-white/10 group-hover:bg-red-500/80 transition-colors" />
+                     <div className="w-3 h-3 rounded-full bg-white/10 group-hover:bg-amber-500/80 transition-colors" />
+                     <div className="w-3 h-3 rounded-full bg-white/10 group-hover:bg-emerald-500/80 transition-colors" />
+                   </div>
+                   
+                   {/* Simple Path */}
+                   <div className="h-4 w-px bg-[#27272a] mx-2" />
+                   <span className="text-[#a1a1aa] font-mono text-[11px] tracking-widest uppercase mt-0.5">root@forged: ~</span>
+                 </div>
+                 
+                 <div className="flex items-center gap-4">
+                   <div className="flex items-center gap-2 border border-[#10b981]/30 bg-[#10b981]/10 px-2 py-1">
+                     <span className="w-1.5 h-1.5 bg-[#10b981] animate-pulse" />
+                     <span className="text-[9px] text-[#10b981] font-mono tracking-widest uppercase">ACTIVE</span>
+                   </div>
+                 </div>
+              </div>
+              
+              {/* Terminal Body content */}
+              <div className="flex-1 relative bg-black overflow-hidden">
+                 <AnimatedBigTerminal cards={INDUSTRIAL_TERMINAL_SEQUENCE} />
+              </div>
+              
+              {/* Data-Dense Footer */}
+              <div className="h-8 border-t border-[#18181b] bg-[#050505] shrink-0 z-20 flex items-center justify-between px-4">
+                 <div className="flex items-center gap-3">
+                   <span className="text-[#a1a1aa] font-mono text-[9px] uppercase tracking-widest">MEM: 14.2MB</span>
+                   <span className="text-[#a1a1aa] font-mono text-[9px] uppercase tracking-widest hidden sm:inline">| CPU: 0.1%</span>
+                 </div>
+                 <div className="flex items-center gap-1">
+                   <span className="w-1.5 h-3 bg-[#ea580c]" />
+                   <span className="w-1.5 h-3 bg-[#ea580c]" />
+                   <span className="w-1.5 h-3 bg-[#ea580c]" />
+                   <span className="w-1.5 h-3 bg-[#ea580c]/30" />
+                   <span className="w-1.5 h-3 bg-[#ea580c]/30" />
+                 </div>
+              </div>
+            </div>
+          </div>
         </ScrollReveal>
       </div>
     </section>
@@ -477,10 +562,10 @@ function Architecture() {
   ];
 
   return (
-    <section className="relative py-36 px-5 lg:px-16 bg-black border-t border-white/10 overflow-hidden">
+    <section className="relative py-36 bg-black border-t border-white/10 overflow-hidden">
       <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
 
-      <div className="relative z-10 max-w-7xl mx-auto">
+      <div className="relative z-10 w-full px-6 lg:px-16">
         <ScrollReveal className="mb-4">
           <div className="flex items-center gap-2.5">
             <span className="h-2 w-2 bg-[#ea580c]" />
@@ -531,10 +616,10 @@ function Architecture() {
 
 function SecurityCTA() {
   return (
-    <section className="relative py-36 px-5 lg:px-16 bg-black border-t border-white/10 overflow-hidden text-center flex flex-col items-center justify-center">
+    <section className="relative py-36 bg-black border-t border-white/10 overflow-hidden text-center flex flex-col items-center justify-center">
       <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
       
-      <ScrollReveal className="relative z-10 max-w-3xl flex flex-col items-center">
+      <ScrollReveal className="relative z-10 w-full px-6 lg:px-16 max-w-3xl flex flex-col items-center">
         <div className="flex items-center gap-2.5 mb-6 justify-center">
           <span className="h-2 w-2 bg-[#ea580c]" />
           <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Enterprise Security</span>
@@ -553,11 +638,11 @@ function SecurityCTA() {
 
 function CTA() {
   return (
-    <section className="relative py-36 px-5 lg:px-16 bg-black border-t border-white/10 overflow-hidden text-center flex flex-col items-center justify-center">
+    <section className="relative py-36 bg-black border-t border-white/10 overflow-hidden text-center flex flex-col items-center justify-center">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(234,88,12,0.06)_0%,_transparent_60%)]" />
       <div className="pointer-events-none absolute inset-0 opacity-[0.04]" style={{ background: "repeating-linear-gradient(135deg,transparent,transparent 4px,rgba(255,255,255,0.5) 4px,rgba(255,255,255,0.5) 5px)" }} />
 
-      <ScrollReveal className="relative z-10 max-w-4xl flex flex-col items-center">
+      <ScrollReveal className="relative z-10 w-full px-6 lg:px-16 max-w-4xl flex flex-col items-center">
         <div className="flex items-center gap-2.5 mb-6 justify-center">
           <span className="h-2 w-2 bg-[#ea580c] animate-pulse" />
           <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Get Started</span>
@@ -579,8 +664,8 @@ function CTA() {
 
 function Footer() {
   return (
-    <footer className="py-16 px-6 bg-black border-t border-[#27272a]">
-      <div className="max-w-7xl mx-auto flex flex-col sm:flex-row items-center justify-between gap-6">
+    <footer className="py-16 bg-black border-t border-[#27272a]">
+      <div className="w-full px-6 lg:px-16 flex flex-col sm:flex-row items-center justify-between gap-6">
         <div className="flex items-center gap-3">
           <div className="w-6 h-6 bg-black border border-[#27272a] flex items-center justify-center">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" className="text-white">
