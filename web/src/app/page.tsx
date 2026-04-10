@@ -4,6 +4,7 @@ import {
   GlitchButton,
   AnimatedTerminalGrid,
   AnimatedBigTerminal,
+  TopologyVisualizer,
 } from "@/components/client";
 import type { TerminalCardDef } from "@/components/client";
 
@@ -583,31 +584,7 @@ function Architecture() {
         </ScrollReveal>
 
         <ScrollReveal>
-          <div className="relative z-10 border-t border-l border-white/10 grid grid-cols-1 md:grid-cols-3">
-            {items.map((item) => (
-              <article
-                key={item.name}
-                className="group relative flex flex-col border-r border-b border-white/10 bg-white/[0.03] transition-colors duration-300 hover:border-[#ea580c]/20 p-8 cursor-pointer"
-              >
-                <div className="absolute inset-0 bg-[#ea580c]/[0.07] pointer-events-none opacity-0 group-hover:opacity-100 transition-opacity duration-300" />
-                
-                <div className="relative">
-                  <div className="flex items-center gap-2.5 mb-6">
-                    <span className="h-1.5 w-1.5 bg-white/20 group-hover:bg-[#ea580c] transition-colors duration-300" />
-                    <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase group-hover:text-[#ea580c] transition-colors duration-300">
-                      {item.label}
-                    </span>
-                  </div>
-                  <h3 className="text-xl font-bold text-white tracking-tight group-hover:text-orange-400 transition-colors duration-300 mb-3">
-                    {item.name}
-                  </h3>
-                  <p className="text-sm leading-relaxed text-[#a1a1aa] group-hover:text-orange-300 transition-colors duration-300">
-                    {item.desc}
-                  </p>
-                </div>
-              </article>
-            ))}
-          </div>
+          <TopologyVisualizer />
         </ScrollReveal>
       </div>
     </section>

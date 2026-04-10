@@ -570,3 +570,175 @@ export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
     </div>
   );
 }
+
+// --- Topology Blueprint (Architecture) ---
+
+export function TopologyVisualizer() {
+  return (
+    <div className="relative w-full mt-16 md:mt-24">
+      {/* Abstract Background SVG Pattern */}
+      <div className="absolute inset-0 opacity-[0.03] pointer-events-none" style={{ backgroundImage: "radial-gradient(#ea580c 1px, transparent 1px)", backgroundSize: "32px 32px" }} />
+
+      {/* Grid Layout */}
+      <div className="grid grid-cols-1 md:grid-cols-12 gap-8 relative z-10 w-full mb-8 md:mb-12">
+        {/* Node 01: UNIX SOCKET (Small) */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          className="md:col-span-5 relative border border-[#27272a] bg-[#050505] p-6 shadow-2xl flex flex-col group hover:border-[#10b981]/30 transition-colors h-[280px] w-full"
+        >
+          <div className="border-b border-[#27272a] pb-4 mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-[#a1a1aa] font-mono text-[10px] tracking-[0.2em]">01 //</span>
+              <span className="text-white font-mono text-[11px] tracking-widest uppercase font-bold">Ingress Socket</span>
+            </div>
+            <div className="w-1.5 h-1.5 bg-[#10b981] shadow-[0_0_8px_#10b981] animate-pulse rounded-full" />
+          </div>
+          <p className="text-sm text-[#a1a1aa] leading-relaxed mb-6 flex-1">
+            Replaces the standard ssh-agent. Exposes a native UNIX socket locally, dropping perfectly into your existing ecosystem without requiring custom clients.
+          </p>
+          <div className="h-16 bg-black border border-[#18181b] flex items-center justify-between px-4 mt-auto shrink-0 w-full overflow-hidden">
+            <span className="text-[#10b981] font-mono text-[10px] tracking-widest flex items-center gap-2 truncate shrink-0">
+              <span className="w-1.5 h-1.5 bg-[#10b981] shadow-[0_0_8px_#10b981] rounded-full animate-pulse shrink-0" />
+              <span className="hidden sm:inline font-bold">LISTENING</span>
+            </span>
+            <span className="text-[#a1a1aa] font-mono text-[10px] tracking-widest opacity-60 truncate ml-4 shrink-0">/tmp/forged.sock</span>
+          </div>
+        </motion.div>
+
+        {/* Node 02: SYNC NODE (Big) */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.1 }}
+          className="md:col-span-7 relative border border-[#27272a] bg-[#050505] p-6 shadow-2xl flex flex-col group hover:border-[#ea580c]/30 transition-colors h-[280px] w-full"
+        >
+          <div className="border-b border-[#27272a] pb-4 mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-[#a1a1aa] font-mono text-[10px] tracking-[0.2em]">02 //</span>
+              <span className="text-white font-mono text-[11px] tracking-widest uppercase font-bold">E2E Sync Node</span>
+            </div>
+            <div className="w-1.5 h-1.5 bg-[#ea580c] shadow-[0_0_8px_#ea580c] animate-pulse rounded-full" />
+          </div>
+          <p className="text-sm text-[#a1a1aa] leading-relaxed mb-6 flex-1">
+            Before ever leaving your machine, the vault is heavily encrypted. The central server only routes opaque, impenetrable binary blobs across your devices.
+          </p>
+          <div className="h-16 bg-black border border-[#18181b] flex items-center justify-between px-4 overflow-hidden mt-auto shrink-0 w-full">
+            <span className="text-[#a1a1aa] font-mono text-[10px] tracking-widest z-10 shrink-0 truncate">wss://forged.dev</span>
+            
+            {/* Single Segmented Uplink Array */}
+            <div className="flex-1 flex gap-1 lg:gap-1.5 mx-4 md:mx-6 justify-center">
+               {Array.from({ length: 24 }).map((_, i) => (
+                  <motion.div 
+                    key={`sync-${i}`}
+                    animate={{ opacity: [0.15, 1, 0.15] }}
+                    transition={{ repeat: Infinity, duration: 1.5, delay: i * 0.05, ease: "linear" }}
+                    className="flex-1 h-[2px] bg-[#ea580c] rounded-full shadow-[0_0_5px_rgba(234,88,12,0.5)]"
+                  />
+               ))}
+            </div>
+            
+            <span className="text-[#ea580c] font-mono text-[10px] tracking-widest z-10 shrink-0 uppercase font-bold">12 KB/S</span>
+          </div>
+        </motion.div> 
+      {/* Node 03: PATTERN ROUTER (Big) */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.2 }}
+          className="md:col-span-7 relative border border-[#27272a] bg-[#050505] p-6 shadow-2xl flex flex-col group hover:border-[#10b981]/30 transition-colors h-[280px] w-full"
+        >
+          <div className="border-b border-[#27272a] pb-4 mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-[#a1a1aa] font-mono text-[10px] tracking-[0.2em]">03 //</span>
+              <span className="text-white font-mono text-[11px] tracking-widest uppercase font-bold">Pattern Engine</span>
+            </div>
+            <div className="w-1.5 h-1.5 bg-[#10b981] shadow-[0_0_8px_#10b981] animate-pulse rounded-full" />
+          </div>
+          <p className="text-sm text-[#a1a1aa] leading-relaxed mb-6 flex-1">
+            Intercepts the raw SSH connection challenge before injection. Evaluates destination masks via PCRE regex and routes to the exact corresponding ethnographic identity.
+          </p>
+
+          <div className="h-16 bg-black border border-[#18181b] flex items-center justify-between px-4 mt-auto shrink-0 w-full overflow-hidden">
+             {/* Left: Target */}
+             <span className="text-[#a1a1aa] font-mono text-[10px] tracking-widest shrink-0 truncate max-w-[80px] sm:max-w-none">prod.aws</span>
+               
+             {/* Center: Animated Horizontal Pipeline */}
+             <div className="flex-1 flex items-center mx-4 min-w-0">
+               <div className="flex-1 h-[2px] bg-[#27272a] relative overflow-hidden rounded-l-full isolate">
+                 <motion.div 
+                   initial={{ left: "-100%" }}
+                   animate={{ left: "200%" }}
+                   transition={{ repeat: Infinity, duration: 1.5, ease: "linear" }}
+                   className="absolute inset-y-0 w-12 bg-gradient-to-r from-transparent via-[#10b981] to-transparent" 
+                 />
+               </div>
+                 
+               <div className="shrink-0 bg-[#10b981]/10 px-2 py-0.5 mx-2 flex items-center gap-1.5 shadow-[0_0_10px_rgba(16,185,129,0.1)]">
+                 <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse" />
+                 <span className="text-[#10b981] font-mono text-[9px] tracking-widest font-bold hidden sm:block">MATCH</span>
+               </div>
+
+               <div className="flex-1 h-[2px] bg-[#27272a] relative overflow-hidden rounded-r-full isolate">
+                 <motion.div 
+                   initial={{ left: "-100%" }}
+                   animate={{ left: "200%" }}
+                   transition={{ repeat: Infinity, duration: 1.5, ease: "linear", delay: 0.75 }}
+                   className="absolute inset-y-0 w-12 bg-gradient-to-r from-transparent via-[#ea580c] to-transparent" 
+                 />
+               </div>
+             </div>
+
+             {/* Right: Key */}
+             <span className="text-[#ea580c] font-mono text-[10px] tracking-widest shrink-0 truncate max-w-[80px] sm:max-w-none font-bold text-right">aws-yubikey</span>
+          </div>
+        </motion.div>
+
+        {/* Node 04: VAULT (Small) */}
+        <motion.div 
+          initial={{ opacity: 0, y: 20 }}
+          whileInView={{ opacity: 1, y: 0 }}
+          viewport={{ once: true }}
+          transition={{ delay: 0.3 }}
+          className="md:col-span-5 relative border border-[#27272a] bg-[#050505] p-6 shadow-2xl flex flex-col group hover:border-[#ea580c]/30 transition-colors h-[280px] w-full"
+        >
+          <div className="border-b border-[#27272a] pb-4 mb-6 flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <span className="text-[#a1a1aa] font-mono text-[10px] tracking-[0.2em]">04 //</span>
+              <span className="text-white font-mono text-[11px] tracking-widest uppercase font-bold">Memory Vault</span>
+            </div>
+            <div className="w-1.5 h-1.5 bg-[#ea580c] shadow-[0_0_8px_#ea580c] animate-pulse rounded-full" />
+          </div>
+          
+          <p className="text-sm text-[#a1a1aa] leading-relaxed mb-6 flex-1">
+            Keys sit encrypted at-rest using military-grade AEAD standard ciphers, explicitly decrypted only ephemerally in RAM upon strict pattern match.
+          </p>
+
+          <div className="h-16 bg-black border border-[#18181b] flex items-center justify-between px-4 mt-auto shrink-0 w-full overflow-hidden">
+             <span className="text-[#ea580c] font-mono text-[10px] tracking-widest flex items-center gap-2 shrink-0 truncate">
+                <span className="w-1.5 h-1.5 bg-[#ea580c] shadow-[0_0_8px_#ea580c] animate-pulse rounded-full shrink-0" />
+                <span className="hidden sm:inline font-bold">0xVAULT</span>
+             </span>
+             
+             {/* Horizontal Right-to-Left hex scroller */}
+             <div className="flex-1 overflow-hidden ml-4 pl-4 text-right h-full flex flex-col justify-center isolate" style={{ WebkitMaskImage: 'linear-gradient(to right, transparent 0%, black 20%)', maskImage: 'linear-gradient(to right, transparent 0%, black 20%)' }}>
+               <motion.div 
+                  animate={{ x: ["0%", "-50%"] }}
+                  transition={{ repeat: Infinity, duration: 25, ease: "linear" }}
+                  className="whitespace-nowrap font-mono text-[10px] tracking-widest text-[#3f3f46] inline-flex gap-4"
+               >
+                 <span>e3b0c44298fc1c149afbf4c8996fd41d8cd98f00b204e9800998ecf80a4d55a8</span>
+                 <span>e3b0c44298fc1c149afbf4c8996fd41d8cd98f00b204e9800998ecf80a4d55a8</span>
+                 <span>e3b0c44298fc1c149afbf4c8996fd41d8cd98f00b204e9800998ecf80a4d55a8</span>
+                 <span>e3b0c44298fc1c149afbf4c8996fd41d8cd98f00b204e9800998ecf80a4d55a8</span>
+               </motion.div>
+             </div>
+          </div>
+        </motion.div>
+      </div>
+    </div>
+  );
+}
