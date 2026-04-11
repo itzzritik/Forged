@@ -562,6 +562,8 @@ Tombstones are pruned after 90 days. Devices that haven't synced in 90 days do a
 | **Vault corruption (crash mid-write)** | Atomic writes: write to tmp, fsync, rename. Never partial writes to the vault file. |
 | **Concurrent vault access** | Daemon holds exclusive flock. CLI never touches vault directly. |
 | **Go GC copies key material** | Mitigated with mlock (prevents swap). Best-effort zeroing. Documented limitation. |
+| **OAuth authorization code interception** | Currently mitigated by localhost redirect (requires local access to intercept). **Future hardening**: Adopt OAuth 2.0 PKCE (Proof Key for Code Exchange) so intercepted authorization codes are useless without the CLI's `code_verifier`. Requires moving token exchange to the CLI (public client) instead of the Go server. |
+| **Web session token theft** | JWT encrypted with server-side `AUTH_SECRET` (JWE) before storing in HttpOnly cookie. Stolen cookie is opaque without the secret. Cookie flags: HttpOnly, Secure, SameSite=Lax. **Future hardening**: Short-lived access tokens (15 min) + rotating refresh tokens. Requires new Go server `/api/v1/auth/refresh` endpoint, single-use refresh token rotation, and dual-cookie storage. Limits damage window from 30 days to 15 minutes if access token leaks. |
 
 ### Key Hierarchy
 
@@ -914,8 +916,10 @@ Everything users see in a browser.
 
 ### Auth Flow
 
+All login paths route through `forged.ritik.me/api/auth/callback` to set an encrypted browser session cookie (JWE). The JWT is encrypted with `AUTH_SECRET` (separate from Go server's `JWT_SECRET`) before storing in an HttpOnly/Secure/SameSite=Lax cookie named `forged_session`.
+
+**CLI Login** (`forged login`):
 ```
-$ forged login
   1. CLI starts localhost:RANDOM/callback listener
   2. Opens browser to forged.ritik.me/login?callback=http://localhost:RANDOM/callback
   3. User sees login page with Google/GitHub buttons
@@ -925,10 +929,26 @@ $ forged login
   7. User authorizes on GitHub
   8. GitHub redirects back to Go server with code
   9. Go server exchanges code for user info, creates/upserts user, generates JWT
-  10. Go server redirects to localhost:RANDOM/callback?token=...&email=...
-  11. CLI receives token, saves to credentials.json
-  12. Done
+  10. Go server redirects to forged.ritik.me/api/auth/callback?token=...&email=...&callback=...
+  11. Next.js encrypts JWT, sets browser cookie, redirects to localhost:RANDOM/callback?token=...&email=...
+  12. CLI receives token, saves to credentials.json
+  13. Browser session persisted for future /dashboard visits
 ```
+
+**Direct Browser Login** (user visits `/login` directly):
+```
+  1. User clicks "Sign in" on landing page, navigates to /login
+  2. User clicks GitHub
+  3. Next.js redirects to forged-api.ritik.me/api/v1/auth/github (no callback)
+  4. Go server redirects to GitHub OAuth
+  5. User authorizes on GitHub
+  6. GitHub redirects back to Go server with code
+  7. Go server exchanges code for user info, creates/upserts user, generates JWT
+  8. Go server redirects to forged.ritik.me/api/auth/callback?token=...&email=...
+  9. Next.js encrypts JWT, sets browser cookie, redirects to /dashboard
+```
+
+**Logout**: CLI and web sessions are independent. `forged logout` clears `credentials.json`. Web logout (`/api/auth/logout`) clears browser cookie. One does not affect the other.
 
 ### Database Schema
 

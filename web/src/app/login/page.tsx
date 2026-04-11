@@ -52,8 +52,9 @@ function LoginContent() {
   const callback = searchParams.get("callback") || "";
   const error = searchParams.get("error");
 
-  const githubUrl = `${API_URL}/api/v1/auth/github?callback=${encodeURIComponent(callback)}`;
-  const googleUrl = `${API_URL}/api/v1/auth/google?callback=${encodeURIComponent(callback)}`;
+  const callbackParam = callback ? `?callback=${encodeURIComponent(callback)}` : "";
+  const githubUrl = `${API_URL}/api/v1/auth/github${callbackParam}`;
+  const googleUrl = `${API_URL}/api/v1/auth/google${callbackParam}`;
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-6 relative overflow-hidden bg-black">

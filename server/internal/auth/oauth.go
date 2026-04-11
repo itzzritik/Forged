@@ -16,6 +16,7 @@ type OAuthConfig struct {
 	GitHubClientID     string
 	GitHubClientSecret string
 	RedirectBaseURL    string
+	WebAppURL          string
 }
 
 type OAuthUser struct {

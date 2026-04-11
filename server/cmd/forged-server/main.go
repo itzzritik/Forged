@@ -43,6 +43,7 @@ func main() {
 			GitHubClientID:     envDefault("GITHUB_CLIENT_ID", ""),
 			GitHubClientSecret: envDefault("GITHUB_CLIENT_SECRET", ""),
 			RedirectBaseURL:    envDefault("REDIRECT_BASE_URL", "https://forged-api.ritik.me"),
+			WebAppURL:          envDefault("WEBAPP_URL", "https://forged.ritik.me"),
 		},
 	}
 
