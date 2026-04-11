@@ -183,16 +183,22 @@ func oauthLogin(server string) (oauthResult, error) {
 }
 
 func callbackPage(title, detail string, isError bool) string {
-	icon := `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`
-	color := "#f59e0b"
-	subtitle := "Signed in as"
+	accent := "#ea580c"
+	accentGlow := "rgba(234,88,12,0.15)"
+	dotColor := "#10b981"
+	icon := `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`
+	headerLabel := "Session // Authenticated"
+	headerRight := "CLI"
 	note := "You can close this tab and return to your terminal."
 
 	if isError {
-		icon = `<svg width="48" height="48" viewBox="0 0 24 24" fill="none" stroke="#ef4444" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
-		color = "#ef4444"
-		subtitle = "Error"
-		note = "Try running <code>forged login</code> again."
+		accent = "#ef4444"
+		accentGlow = "rgba(239,68,68,0.15)"
+		dotColor = "#ef4444"
+		icon = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
+		headerLabel = "Session // Error"
+		headerRight = "Failed"
+		note = `Try running <span style="background:#000;border:1px solid #27272a;padding:3px 10px;font-size:11px;color:#ea580c">forged login</span> again.`
 	}
 
 	return fmt.Sprintf(`<!DOCTYPE html>
@@ -200,24 +206,54 @@ func callbackPage(title, detail string, isError bool) string {
 <title>%s - Forged</title>
 <style>
 *{margin:0;padding:0;box-sizing:border-box}
-body{background:#08080a;color:#e4e4e7;font-family:system-ui,-apple-system,sans-serif;min-height:100vh;display:flex;align-items:center;justify-content:center}
-.card{text-align:center;max-width:400px;padding:48px 32px}
-.icon{margin-bottom:24px}
-h1{font-size:1.5rem;font-weight:500;margin-bottom:8px;letter-spacing:-0.02em}
-.detail{color:%s;font-size:0.95rem;margin-bottom:8px}
-.subtitle{color:#71717a;font-size:0.8rem;margin-bottom:4px}
-.note{color:#52525b;font-size:0.8rem;margin-top:24px;line-height:1.5}
-code{background:#18181b;padding:2px 6px;border-radius:4px;font-size:0.75rem;color:#a1a1aa}
-.brand{color:#71717a;font-size:0.75rem;margin-top:32px;font-family:ui-monospace,monospace;letter-spacing:0.05em}
+body{background:#000;color:#e4e4e7;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
+.wrap{width:100%%;max-width:440px}
+.glow{position:relative;display:flex;justify-content:center;margin-bottom:32px}
+.glow::before{content:'';position:absolute;inset:0;background:%s;filter:blur(24px);transform:scale(1.5)}
+.icon-box{position:relative;width:56px;height:56px;background:#000;border:1px solid #27272a;display:flex;align-items:center;justify-content:center}
+h1{font-size:1.75rem;font-weight:700;letter-spacing:-0.03em;text-align:center;margin-bottom:8px}
+.sub{text-align:center;font-size:13px;color:#a1a1aa;letter-spacing:0.04em;margin-bottom:32px}
+.card{border:1px solid #27272a;background:#050505;overflow:hidden}
+.card-header{border-bottom:1px solid #27272a;background:#030303;padding:0 24px;height:40px;display:flex;align-items:center;justify-content:space-between}
+.card-header .left{display:flex;align-items:center;gap:12px}
+.card-header .dot{width:6px;height:6px;border-radius:50%%;background:%s;box-shadow:0 0 8px %s;animation:pulse 2s infinite}
+.card-header .label{font-size:10px;letter-spacing:0.15em;color:#a1a1aa;text-transform:uppercase}
+.card-header .right{font-size:9px;letter-spacing:0.15em;color:#3f3f46;text-transform:uppercase}
+@keyframes pulse{0%%,100%%{opacity:1}50%%{opacity:0.4}}
+.card-body{padding:32px 24px;text-align:center}
+.email{color:%s;font-size:14px;font-weight:600;margin-bottom:24px}
+.sep{display:flex;align-items:center;gap:16px;margin-bottom:24px}
+.sep .line{flex:1;height:1px;background:#27272a}
+.sep .text{font-size:9px;color:#3f3f46;text-transform:uppercase;letter-spacing:0.15em}
+.note{color:#3f3f46;font-size:11px;line-height:1.8}
+.badges{display:flex;align-items:center;justify-content:center;gap:24px;margin-top:32px}
+.badges span{font-size:9px;letter-spacing:0.15em;color:#27272a;text-transform:uppercase}
+.badges .dot{width:4px;height:4px;background:#27272a}
 </style></head>
-<body><div class="card">
-<div class="icon">%s</div>
+<body>
+<div class="wrap">
+<div class="glow"><div class="icon-box">%s</div></div>
 <h1>%s</h1>
-<p class="subtitle">%s</p>
-<p class="detail">%s</p>
+<p class="sub">%s</p>
+<div class="card">
+<div class="card-header">
+<div class="left"><span class="dot"></span><span class="label">%s</span></div>
+<span class="right">%s</span>
+</div>
+<div class="card-body">
+<p class="email">%s</p>
+<div class="sep"><div class="line"></div><span class="text">info</span><div class="line"></div></div>
 <p class="note">%s</p>
-<p class="brand">forged</p>
-</div></body></html>`, title, color, icon, title, subtitle, detail, note)
+</div>
+</div>
+<div class="badges">
+<span>E2E Encrypted</span><span class="dot"></span>
+<span>Zero Knowledge</span><span class="dot"></span>
+<span>Open Source</span>
+</div>
+</div>
+</body></html>`,
+		title, accentGlow, dotColor, dotColor, accent, icon, title, detail, headerLabel, headerRight, detail, note)
 }
 
 func openBrowser(url string) {
