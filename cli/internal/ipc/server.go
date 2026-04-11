@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"log/slog"
@@ -22,6 +23,11 @@ type Server struct {
 	listener    net.Listener
 	logger      *slog.Logger
 	wg          sync.WaitGroup
+	syncBus     *forgedsync.Bus
+}
+
+func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
+	s.syncBus = bus
 }
 
 func NewServer(socketPath string, v *vault.Vault, ks *vault.KeyStore, al *activity.ActivityLog, logger *slog.Logger) *Server {
@@ -155,6 +161,9 @@ func (s *Server) handleAdd(raw json.RawMessage) Response {
 	if err != nil {
 		return ErrorResponse(err)
 	}
+	if s.syncBus != nil {
+		s.syncBus.MarkDirty("key_added")
+	}
 	return OkResponse(map[string]string{
 		"name":        key.Name,
 		"type":        key.Type,
@@ -177,6 +186,9 @@ func (s *Server) handleGenerate(raw json.RawMessage) Response {
 	if err != nil {
 		return ErrorResponse(err)
 	}
+	if s.syncBus != nil {
+		s.syncBus.MarkDirty("key_generated")
+	}
 	return OkResponse(map[string]string{
 		"name":        key.Name,
 		"type":        key.Type,
@@ -197,6 +209,9 @@ func (s *Server) handleRemove(raw json.RawMessage) Response {
 	if err := s.keyStore.Remove(a.Name); err != nil {
 		return ErrorResponse(err)
 	}
+	if s.syncBus != nil {
+		s.syncBus.MarkDirty("key_removed")
+	}
 	return OkResponse(nil)
 }
 
@@ -212,6 +227,9 @@ func (s *Server) handleRename(raw json.RawMessage) Response {
 	}
 	if err := s.keyStore.Rename(a.OldName, a.NewName); err != nil {
 		return ErrorResponse(err)
+	}
+	if s.syncBus != nil {
+		s.syncBus.MarkDirty("key_renamed")
 	}
 	return OkResponse(nil)
 }
@@ -247,6 +265,9 @@ func (s *Server) handleHost(raw json.RawMessage) Response {
 			return ErrorResponse(err)
 		}
 	}
+	if s.syncBus != nil {
+		s.syncBus.MarkDirty("host_rule_added")
+	}
 	return OkResponse(nil)
 }
 
@@ -262,6 +283,9 @@ func (s *Server) handleUnhost(raw json.RawMessage) Response {
 	}
 	if err := s.keyStore.RemoveHostRule(a.KeyName, a.Pattern); err != nil {
 		return ErrorResponse(err)
+	}
+	if s.syncBus != nil {
+		s.syncBus.MarkDirty("host_rule_removed")
 	}
 	return OkResponse(nil)
 }
@@ -312,9 +336,9 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("server_url and token required"))
 	}
 
-	vaultData, err := os.ReadFile(s.vault.Path())
+	blob, err := s.vault.ExportForSync()
 	if err != nil {
-		return ErrorResponse(fmt.Errorf("reading vault: %w", err))
+		return ErrorResponse(fmt.Errorf("exporting vault: %w", err))
 	}
 
 	client := forgedsync.NewClient(a.ServerURL, a.Token, "")
@@ -329,7 +353,9 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 		expectedVersion = status.Version
 	}
 
-	result, err := client.Push(vaultData, expectedVersion)
+	protectedKey := base64.StdEncoding.EncodeToString(s.vault.ProtectedKeyBytes())
+	masterHash := base64.StdEncoding.EncodeToString(s.vault.MasterPasswordHash())
+	result, err := client.Push(blob, s.vault.KDFParams(), protectedKey, masterHash, expectedVersion)
 	if err != nil {
 		return ErrorResponse(fmt.Errorf("sync push: %w", err))
 	}

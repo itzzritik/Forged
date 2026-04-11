@@ -7,7 +7,6 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
-	"time"
 )
 
 type OAuthConfig struct {
@@ -17,6 +16,7 @@ type OAuthConfig struct {
 	GitHubClientSecret string
 	RedirectBaseURL    string
 	WebAppURL          string
+	HTTPClient         *http.Client
 }
 
 type OAuthUser struct {
@@ -26,6 +26,11 @@ type OAuthUser struct {
 }
 
 func ExchangeGoogleCode(cfg OAuthConfig, code string) (OAuthUser, error) {
+	client := cfg.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
+
 	data := url.Values{
 		"code":          {code},
 		"client_id":     {cfg.GoogleClientID},
@@ -34,7 +39,9 @@ func ExchangeGoogleCode(cfg OAuthConfig, code string) (OAuthUser, error) {
 		"grant_type":    {"authorization_code"},
 	}
 
-	resp, err := http.Post("https://oauth2.googleapis.com/token", "application/x-www-form-urlencoded", strings.NewReader(data.Encode()))
+	req, _ := http.NewRequest("POST", "https://oauth2.googleapis.com/token", strings.NewReader(data.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resp, err := client.Do(req)
 	if err != nil {
 		return OAuthUser{}, fmt.Errorf("exchanging code: %w", err)
 	}
@@ -48,7 +55,7 @@ func ExchangeGoogleCode(cfg OAuthConfig, code string) (OAuthUser, error) {
 		return OAuthUser{}, fmt.Errorf("parsing token response: %w", err)
 	}
 
-	userResp, err := httpGetWithAuth("https://www.googleapis.com/oauth2/v2/userinfo", tokenResp.AccessToken)
+	userResp, err := httpGetWithAuth(client, "https://www.googleapis.com/oauth2/v2/userinfo", tokenResp.AccessToken)
 	if err != nil {
 		return OAuthUser{}, err
 	}
@@ -76,7 +83,10 @@ func ExchangeGitHubCode(cfg OAuthConfig, code string) (OAuthUser, error) {
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := cfg.HTTPClient
+	if client == nil {
+		client = http.DefaultClient
+	}
 	resp, err := client.Do(req)
 	if err != nil {
 		return OAuthUser{}, fmt.Errorf("exchanging code: %w", err)
@@ -90,7 +100,7 @@ func ExchangeGitHubCode(cfg OAuthConfig, code string) (OAuthUser, error) {
 		return OAuthUser{}, fmt.Errorf("parsing token response: %w", err)
 	}
 
-	userResp, err := httpGetWithAuth("https://api.github.com/user", tokenResp.AccessToken)
+	userResp, err := httpGetWithAuth(client, "https://api.github.com/user", tokenResp.AccessToken)
 	if err != nil {
 		return OAuthUser{}, err
 	}
@@ -106,7 +116,7 @@ func ExchangeGitHubCode(cfg OAuthConfig, code string) (OAuthUser, error) {
 	}
 
 	if ghUser.Email == "" {
-		ghUser.Email, _ = fetchGitHubPrimaryEmail(tokenResp.AccessToken)
+		ghUser.Email, _ = fetchGitHubPrimaryEmail(client, tokenResp.AccessToken)
 	}
 
 	if ghUser.Email == "" {
@@ -121,8 +131,8 @@ func ExchangeGitHubCode(cfg OAuthConfig, code string) (OAuthUser, error) {
 	return OAuthUser{Email: ghUser.Email, Name: name, Provider: "github"}, nil
 }
 
-func fetchGitHubPrimaryEmail(token string) (string, error) {
-	resp, err := httpGetWithAuth("https://api.github.com/user/emails", token)
+func fetchGitHubPrimaryEmail(client *http.Client, token string) (string, error) {
+	resp, err := httpGetWithAuth(client, "https://api.github.com/user/emails", token)
 	if err != nil {
 		return "", err
 	}
@@ -144,14 +154,13 @@ func fetchGitHubPrimaryEmail(token string) (string, error) {
 	return "", fmt.Errorf("no primary email")
 }
 
-func httpGetWithAuth(url, token string) (*http.Response, error) {
+func httpGetWithAuth(client *http.Client, url, token string) (*http.Response, error) {
 	req, err := http.NewRequest("GET", url, nil)
 	if err != nil {
 		return nil, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 
-	client := &http.Client{Timeout: 10 * time.Second}
 	resp, err := client.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request to %s: %w", url, err)

@@ -1,6 +1,8 @@
 package vault
 
 import (
+	"crypto/rand"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -11,37 +13,41 @@ import (
 )
 
 type Vault struct {
-	path     string
-	lockFile *os.File
-	kdf      KDFParams
-	key      []byte
-	Data     VaultData
+	path               string
+	lockFile           *os.File
+	kdf                KDFParams
+	key                []byte // Symmetric Key (random, decrypted from Protected Symmetric Key)
+	protectedKey       [ProtectedKeySize]byte
+	masterPasswordHash []byte
+	Data               VaultData
 }
 
 type VaultData struct {
-	Keys           []Key              `json:"keys"`
-	Metadata       Metadata           `json:"metadata"`
-	VersionVector  map[string]int64   `json:"version_vector"`
-	Tombstones     []Tombstone        `json:"tombstones"`
-	KeyGeneration  int                `json:"key_generation"`
+	Keys          []Key            `json:"keys"`
+	Metadata      Metadata         `json:"metadata"`
+	VersionVector map[string]int64 `json:"version_vector"`
+	Tombstones    []Tombstone      `json:"tombstones"`
+	KeyGeneration int              `json:"key_generation"`
 }
 
 type Key struct {
-	ID           string     `json:"id"`
-	Name         string     `json:"name"`
-	Type         string     `json:"type"`
-	PublicKey    string     `json:"public_key"`
-	PrivateKey   []byte     `json:"private_key"`
-	Comment      string     `json:"comment"`
-	Fingerprint  string     `json:"fingerprint"`
-	CreatedAt    time.Time  `json:"created_at"`
-	UpdatedAt    time.Time  `json:"updated_at"`
-	LastUsedAt   *time.Time `json:"last_used_at,omitempty"`
-	Tags         []string   `json:"tags"`
-	HostRules    []HostRule `json:"host_rules"`
-	GitSigning   bool       `json:"git_signing"`
-	Version      int        `json:"version"`
-	DeviceOrigin string     `json:"device_origin"`
+	ID                  string     `json:"id"`
+	Name                string     `json:"name"`
+	Type                string     `json:"type"`
+	PublicKey           string     `json:"public_key"`
+	EncryptedPrivateKey string     `json:"encrypted_private_key"`
+	EncryptedCipherKey  string     `json:"encrypted_cipher_key"`
+	PrivateKey          []byte     `json:"-"`
+	Comment             string     `json:"comment"`
+	Fingerprint         string     `json:"fingerprint"`
+	CreatedAt           time.Time  `json:"created_at"`
+	UpdatedAt           time.Time  `json:"updated_at"`
+	LastUsedAt          *time.Time `json:"last_used_at,omitempty"`
+	Tags                []string   `json:"tags"`
+	HostRules           []HostRule `json:"host_rules"`
+	GitSigning          bool       `json:"git_signing"`
+	Version             int        `json:"version"`
+	DeviceOrigin        string     `json:"device_origin"`
 }
 
 type HostRule struct {
@@ -67,12 +73,57 @@ func Create(path string, password []byte) (*Vault, error) {
 	}
 
 	kdf := DefaultKDFParams()
-	key := DeriveKey(password, kdf)
+
+	masterKey := DeriveKey(password, kdf)
+
+	stretchedKey, err := DeriveStretchedKey(masterKey)
+	if err != nil {
+		for i := range masterKey {
+			masterKey[i] = 0
+		}
+		return nil, fmt.Errorf("deriving stretched key: %w", err)
+	}
+
+	masterPasswordHash := DeriveMasterPasswordHash(masterKey, password)
+
+	// Zero the master key -- no longer needed
+	for i := range masterKey {
+		masterKey[i] = 0
+	}
+
+	symmetricKey := make([]byte, KeySize)
+	if _, err := rand.Read(symmetricKey); err != nil {
+		for i := range stretchedKey {
+			stretchedKey[i] = 0
+		}
+		return nil, fmt.Errorf("generating symmetric key: %w", err)
+	}
+
+	protectedKeyData, err := EncryptCombined(stretchedKey, symmetricKey)
+	if err != nil {
+		for i := range stretchedKey {
+			stretchedKey[i] = 0
+		}
+		for i := range symmetricKey {
+			symmetricKey[i] = 0
+		}
+		return nil, fmt.Errorf("encrypting symmetric key: %w", err)
+	}
+
+	// Zero the stretched key -- no longer needed
+	for i := range stretchedKey {
+		stretchedKey[i] = 0
+	}
+
+	var protectedKey [ProtectedKeySize]byte
+	copy(protectedKey[:], protectedKeyData)
 
 	v := &Vault{
-		path: path,
-		kdf:  kdf,
-		key:  key,
+		path:               path,
+		kdf:                kdf,
+		key:                symmetricKey,
+		protectedKey:       protectedKey,
+		masterPasswordHash: masterPasswordHash,
 		Data: VaultData{
 			Keys:          []Key{},
 			Metadata:      Metadata{CreatedAt: time.Now().UTC()},
@@ -105,23 +156,60 @@ func Open(path string, password []byte) (*Vault, error) {
 		return nil, err
 	}
 
-	key := DeriveKey(password, header.KDF)
+	masterKey := DeriveKey(password, header.KDF)
 
-	plaintext, err := Decrypt(key, header.Nonce[:], ciphertext)
+	stretchedKey, err := DeriveStretchedKey(masterKey)
 	if err != nil {
+		for i := range masterKey {
+			masterKey[i] = 0
+		}
+		return nil, fmt.Errorf("deriving stretched key: %w", err)
+	}
+
+	symmetricKey, err := DecryptCombined(stretchedKey, header.ProtectedKey[:])
+	if err != nil {
+		for i := range masterKey {
+			masterKey[i] = 0
+		}
+		for i := range stretchedKey {
+			stretchedKey[i] = 0
+		}
+		return nil, fmt.Errorf("decrypting protected key: %w", err)
+	}
+
+	masterPasswordHash := DeriveMasterPasswordHash(masterKey, password)
+
+	// Zero master key and stretched key -- no longer needed
+	for i := range masterKey {
+		masterKey[i] = 0
+	}
+	for i := range stretchedKey {
+		stretchedKey[i] = 0
+	}
+
+	plaintext, err := Decrypt(symmetricKey, header.Nonce[:], ciphertext)
+	if err != nil {
+		for i := range symmetricKey {
+			symmetricKey[i] = 0
+		}
 		return nil, err
 	}
 
 	var vd VaultData
 	if err := json.Unmarshal(plaintext, &vd); err != nil {
+		for i := range symmetricKey {
+			symmetricKey[i] = 0
+		}
 		return nil, fmt.Errorf("parsing vault data: %w", err)
 	}
 
 	v := &Vault{
-		path: path,
-		kdf:  header.KDF,
-		key:  key,
-		Data: vd,
+		path:               path,
+		kdf:                header.KDF,
+		key:                symmetricKey,
+		protectedKey:       header.ProtectedKey,
+		masterPasswordHash: masterPasswordHash,
+		Data:               vd,
 	}
 
 	if err := v.acquireLock(); err != nil {
@@ -146,9 +234,10 @@ func (v *Vault) Save() error {
 	copy(nonceArr[:], nonce)
 
 	header := Header{
-		Version: CurrentVersion,
-		KDF:     v.kdf,
-		Nonce:   nonceArr,
+		Version:      CurrentVersion,
+		KDF:          v.kdf,
+		ProtectedKey: v.protectedKey,
+		Nonce:        nonceArr,
 	}
 
 	raw := MarshalVault(header, ciphertext)
@@ -158,6 +247,9 @@ func (v *Vault) Save() error {
 func (v *Vault) Close() {
 	for i := range v.key {
 		v.key[i] = 0
+	}
+	for i := range v.masterPasswordHash {
+		v.masterPasswordHash[i] = 0
 	}
 	v.releaseLock()
 }
@@ -170,16 +262,28 @@ func (v *Vault) Key() []byte {
 	return v.key
 }
 
+func (v *Vault) KDFParams() KDFParams {
+	return v.kdf
+}
+
+func (v *Vault) ProtectedKeyBytes() []byte {
+	return v.protectedKey[:]
+}
+
+func (v *Vault) MasterPasswordHash() []byte {
+	return v.masterPasswordHash
+}
+
 func (v *Vault) ExportForSync() ([]byte, error) {
 	plaintext, err := json.Marshal(v.Data)
 	if err != nil {
 		return nil, fmt.Errorf("serializing vault: %w", err)
 	}
-	return EncryptForSync(v.key, plaintext)
+	return EncryptCombined(v.key, plaintext)
 }
 
 func (v *Vault) ImportFromSync(data []byte) error {
-	plaintext, err := DecryptFromSync(v.key, data)
+	plaintext, err := DecryptCombined(v.key, data)
 	if err != nil {
 		return err
 	}
@@ -189,6 +293,47 @@ func (v *Vault) ImportFromSync(data []byte) error {
 	}
 	v.Data = vd
 	return v.Save()
+}
+
+func (v *Vault) DecryptAllPrivateKeys() error {
+	for i := range v.Data.Keys {
+		k := &v.Data.Keys[i]
+		if k.EncryptedCipherKey == "" || k.EncryptedPrivateKey == "" {
+			continue
+		}
+
+		cipherKeyData, err := base64.StdEncoding.DecodeString(k.EncryptedCipherKey)
+		if err != nil {
+			return fmt.Errorf("decoding cipher key for %s: %w", k.Name, err)
+		}
+
+		cipherKey, err := DecryptCombined(v.key, cipherKeyData)
+		if err != nil {
+			return fmt.Errorf("decrypting cipher key for %s: %w", k.Name, err)
+		}
+
+		privData, err := base64.StdEncoding.DecodeString(k.EncryptedPrivateKey)
+		if err != nil {
+			for j := range cipherKey {
+				cipherKey[j] = 0
+			}
+			return fmt.Errorf("decoding private key for %s: %w", k.Name, err)
+		}
+
+		privKey, err := DecryptCombined(cipherKey, privData)
+		if err != nil {
+			for j := range cipherKey {
+				cipherKey[j] = 0
+			}
+			return fmt.Errorf("decrypting private key for %s: %w", k.Name, err)
+		}
+
+		k.PrivateKey = privKey
+		for j := range cipherKey {
+			cipherKey[j] = 0
+		}
+	}
+	return nil
 }
 
 func atomicWrite(path string, data []byte) error {

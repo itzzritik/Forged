@@ -3,6 +3,7 @@ package vault
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/pem"
 	"fmt"
 	"os"
@@ -67,20 +68,49 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 		return Key{}, fmt.Errorf("marshaling private key: %w", err)
 	}
 
+	privateKeyBytes := pem.EncodeToMemory(pemBlock)
+
+	cipherKey := make([]byte, KeySize)
+	if _, err := rand.Read(cipherKey); err != nil {
+		return Key{}, fmt.Errorf("generating cipher key: %w", err)
+	}
+
+	encPriv, err := EncryptCombined(cipherKey, privateKeyBytes)
+	if err != nil {
+		for i := range cipherKey {
+			cipherKey[i] = 0
+		}
+		return Key{}, fmt.Errorf("encrypting private key: %w", err)
+	}
+
+	encCK, err := EncryptCombined(ks.vault.key, cipherKey)
+	if err != nil {
+		for i := range cipherKey {
+			cipherKey[i] = 0
+		}
+		return Key{}, fmt.Errorf("encrypting cipher key: %w", err)
+	}
+
+	for i := range cipherKey {
+		cipherKey[i] = 0
+	}
+
 	now := time.Now().UTC()
 	key := Key{
-		ID:          uuid.NewString(),
-		Name:        name,
-		Type:        sshPub.Type(),
-		PublicKey:    strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub))),
-		PrivateKey:  pem.EncodeToMemory(pemBlock),
-		Comment:     comment,
-		Fingerprint: ssh.FingerprintSHA256(sshPub),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Tags:        []string{},
-		HostRules:   []HostRule{},
-		Version:     1,
+		ID:                  uuid.NewString(),
+		Name:                name,
+		Type:                sshPub.Type(),
+		PublicKey:           strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub))),
+		EncryptedPrivateKey: base64.StdEncoding.EncodeToString(encPriv),
+		EncryptedCipherKey:  base64.StdEncoding.EncodeToString(encCK),
+		PrivateKey:          privateKeyBytes,
+		Comment:             comment,
+		Fingerprint:         ssh.FingerprintSHA256(sshPub),
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		Tags:                []string{},
+		HostRules:           []HostRule{},
+		Version:             1,
 	}
 
 	ks.vault.Data.Keys = append(ks.vault.Data.Keys, key)
@@ -107,20 +137,47 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 
 	sshPub := signer.PublicKey()
 
+	cipherKey := make([]byte, KeySize)
+	if _, err := rand.Read(cipherKey); err != nil {
+		return Key{}, fmt.Errorf("generating cipher key: %w", err)
+	}
+
+	encPriv, err := EncryptCombined(cipherKey, privateKeyBytes)
+	if err != nil {
+		for i := range cipherKey {
+			cipherKey[i] = 0
+		}
+		return Key{}, fmt.Errorf("encrypting private key: %w", err)
+	}
+
+	encCK, err := EncryptCombined(ks.vault.key, cipherKey)
+	if err != nil {
+		for i := range cipherKey {
+			cipherKey[i] = 0
+		}
+		return Key{}, fmt.Errorf("encrypting cipher key: %w", err)
+	}
+
+	for i := range cipherKey {
+		cipherKey[i] = 0
+	}
+
 	now := time.Now().UTC()
 	key := Key{
-		ID:          uuid.NewString(),
-		Name:        name,
-		Type:        sshPub.Type(),
-		PublicKey:    strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub))),
-		PrivateKey:  privateKeyBytes,
-		Comment:     comment,
-		Fingerprint: ssh.FingerprintSHA256(sshPub),
-		CreatedAt:   now,
-		UpdatedAt:   now,
-		Tags:        []string{},
-		HostRules:   []HostRule{},
-		Version:     1,
+		ID:                  uuid.NewString(),
+		Name:                name,
+		Type:                sshPub.Type(),
+		PublicKey:           strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub))),
+		EncryptedPrivateKey: base64.StdEncoding.EncodeToString(encPriv),
+		EncryptedCipherKey:  base64.StdEncoding.EncodeToString(encCK),
+		PrivateKey:          privateKeyBytes,
+		Comment:             comment,
+		Fingerprint:         ssh.FingerprintSHA256(sshPub),
+		CreatedAt:           now,
+		UpdatedAt:           now,
+		Tags:                []string{},
+		HostRules:           []HostRule{},
+		Version:             1,
 	}
 
 	ks.vault.Data.Keys = append(ks.vault.Data.Keys, key)

@@ -33,9 +33,16 @@ func (l *ipLimiter) allow(ip string) bool {
 	l.mu.Lock()
 	defer l.mu.Unlock()
 
-	b, ok := l.buckets[ip]
 	now := time.Now()
+	b, ok := l.buckets[ip]
 	if !ok {
+		if len(l.buckets) > 10000 {
+			for k, v := range l.buckets {
+				if v.lastSeen.Before(now.Add(-5 * time.Minute)) {
+					delete(l.buckets, k)
+				}
+			}
+		}
 		l.buckets[ip] = &bucket{tokens: float64(l.burst) - 1, lastSeen: now}
 		return true
 	}
@@ -56,7 +63,7 @@ func (l *ipLimiter) allow(ip string) bool {
 
 func (l *ipLimiter) cleanup() {
 	for {
-		time.Sleep(5 * time.Minute)
+		time.Sleep(10 * time.Minute)
 		l.mu.Lock()
 		cutoff := time.Now().Add(-10 * time.Minute)
 		for ip, b := range l.buckets {

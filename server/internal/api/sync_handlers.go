@@ -1,40 +1,50 @@
 package api
 
 import (
-	"io"
+	"encoding/base64"
+	"encoding/json"
 	"net/http"
-	"strconv"
 
 	"github.com/itzzritik/forged/server/internal/middleware"
+	"golang.org/x/crypto/bcrypt"
 )
 
 func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
 
-	versionStr := r.Header.Get("X-Vault-Version")
-	version, _ := strconv.ParseInt(versionStr, 10, 64)
-
-	deviceID := r.Header.Get("X-Device-ID")
-
-	blob, err := io.ReadAll(io.LimitReader(r.Body, 1<<20)) // 1MB max
-	if err != nil {
-		writeError(w, http.StatusBadRequest, "could not read body")
-		return
+	var req struct {
+		Blob                  string          `json:"blob"`
+		KDFParams             json.RawMessage `json:"kdf_params"`
+		ProtectedSymmetricKey string          `json:"protected_symmetric_key"`
+		MasterPasswordHash    string          `json:"master_password_hash"`
+		ExpectedVersion       int64           `json:"expected_version"`
+		DeviceID              string          `json:"device_id"`
 	}
-	defer r.Body.Close()
-
-	if len(blob) == 0 {
-		writeError(w, http.StatusBadRequest, "empty vault blob")
+	if err := readJSON(r, &req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
 		return
 	}
 
-	newVersion, err := s.DB.PushVault(r.Context(), userID, blob, version, deviceID)
+	blob, err := base64.StdEncoding.DecodeString(req.Blob)
+	if err != nil || len(blob) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid or empty blob")
+		return
+	}
+
+	newVersion, err := s.DB.PushVault(r.Context(), userID, blob, req.ExpectedVersion, req.DeviceID, req.KDFParams, req.ProtectedSymmetricKey)
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
 	}
 
-	s.DB.AuditLog(r.Context(), userID, deviceID, "sync_push", r.RemoteAddr)
+	if req.MasterPasswordHash != "" {
+		hashed, err := bcrypt.GenerateFromPassword([]byte(req.MasterPasswordHash), bcrypt.DefaultCost)
+		if err == nil {
+			s.DB.SetMasterPasswordHash(r.Context(), userID, string(hashed))
+		}
+	}
+
+	s.DB.AuditLog(r.Context(), userID, req.DeviceID, "sync_push", r.RemoteAddr)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"version": newVersion,
@@ -53,10 +63,15 @@ func (s *Server) handleSyncPull(w http.ResponseWriter, r *http.Request) {
 	deviceID := r.Header.Get("X-Device-ID")
 	s.DB.AuditLog(r.Context(), userID, deviceID, "sync_pull", r.RemoteAddr)
 
-	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Header().Set("X-Vault-Version", strconv.FormatInt(vault.Version, 10))
-	w.WriteHeader(http.StatusOK)
-	w.Write(vault.EncryptedBlob)
+	resp := map[string]any{
+		"blob":    base64.StdEncoding.EncodeToString(vault.EncryptedBlob),
+		"version": vault.Version,
+	}
+	if vault.KDFParams != nil {
+		resp["kdf_params"] = json.RawMessage(vault.KDFParams)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
@@ -70,9 +85,14 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]any{
+	resp := map[string]any{
 		"has_vault":  true,
 		"version":    vault.Version,
 		"updated_at": vault.UpdatedAt,
-	})
+	}
+	if vault.KDFParams != nil {
+		resp["kdf_params"] = json.RawMessage(vault.KDFParams)
+	}
+
+	writeJSON(w, http.StatusOK, resp)
 }

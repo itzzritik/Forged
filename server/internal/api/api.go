@@ -13,11 +13,12 @@ import (
 )
 
 type Server struct {
-	DB      *db.DB
-	Secret  string
-	OAuth   auth.OAuthConfig
-	DevMode bool
-	Logger  *slog.Logger
+	DB         *db.DB
+	Secret     string
+	OAuth      auth.OAuthConfig
+	DevMode    bool
+	Logger     *slog.Logger
+	HTTPClient *http.Client
 }
 
 func (s *Server) Routes() http.Handler {
@@ -41,6 +42,8 @@ func (s *Server) Routes() http.Handler {
 	authed.HandleFunc("POST /api/v1/devices/{id}/approve", s.handleApproveDevice)
 	authed.HandleFunc("GET /api/v1/account", s.handleGetAccount)
 	authed.HandleFunc("POST /api/v1/account/delete", s.handleDeleteAccount)
+	authed.HandleFunc("POST /api/v1/vault/verify", s.handleVaultVerify)
+	authed.HandleFunc("POST /api/v1/vault/rekey", s.handleVaultRekey)
 
 	mux.HandleFunc("POST /api/v1/auth/sessions", middleware.RateLimit(10, s.handleCreateSession))
 	mux.HandleFunc("GET /api/v1/auth/sessions/{code}", middleware.RateLimit(30, s.handlePollSession))
@@ -64,6 +67,12 @@ func (s *Server) StartSessionCleanup() {
 				s.Logger.Error("auth session cleanup failed", "error", err)
 			} else if count > 0 && s.Logger != nil {
 				s.Logger.Debug("cleaned auth sessions", "count", count)
+			}
+			auditCount, auditErr := s.DB.CleanupAuditLog(context.Background())
+			if auditErr != nil && s.Logger != nil {
+				s.Logger.Error("audit log cleanup failed", "error", auditErr)
+			} else if auditCount > 0 && s.Logger != nil {
+				s.Logger.Debug("cleaned audit log", "count", auditCount)
 			}
 		}
 	}()

@@ -1,0 +1,1 @@
+ALTER TABLE vaults ADD COLUMN IF NOT EXISTS kdf_params JSONB;

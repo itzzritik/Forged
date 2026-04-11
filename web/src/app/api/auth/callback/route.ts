@@ -1,4 +1,5 @@
 import { type NextRequest, NextResponse } from "next/server";
+import { cookies } from "next/headers";
 import { setSessionCookie } from "@/lib/auth";
 
 export async function GET(request: NextRequest) {
@@ -11,6 +12,15 @@ export async function GET(request: NextRequest) {
   }
 
   await setSessionCookie(token);
+
+  const cookieStore = await cookies();
+  cookieStore.set("forged_logged_in", "1", {
+    httpOnly: false,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 60 * 60 * 24 * 30,
+  });
 
   if (code) {
     return NextResponse.redirect(new URL("/auth/success", request.url));

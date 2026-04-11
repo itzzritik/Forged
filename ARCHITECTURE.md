@@ -1703,6 +1703,29 @@ forged/
 
 **Deliverable**: Public, installable, documented open-source release.
 
+### Phase 6: Web App Authentication (Week 12)
+
+**Goal**: Persistent browser sessions and web dashboard foundation.
+
+- [x] Encrypted session cookie (AES-256-GCM with `AUTH_SECRET`, HttpOnly/Secure/SameSite=Lax)
+- [x] Polling-based device flow for CLI login (replaces localhost HTTP server)
+- [x] Verification codes for session fixation prevention
+- [x] `/api/auth/callback` route (single chokepoint for cookie-setting)
+- [x] `/api/auth/logout` route
+- [x] `/auth/success` page (CLI authenticated confirmation)
+- [x] `/dashboard` placeholder page (authenticated)
+- [x] Next.js proxy protecting `/dashboard`, `/auth/success`, redirecting `/login` when authenticated
+- [x] JWT claims expanded with `email` and `name` (from OAuth providers)
+- [x] Landing page shows user name when authenticated
+- [x] Auth session endpoints with per-IP rate limiting (10/min create, 30/min poll)
+- [x] Background session cleanup goroutine (10-minute TTL)
+- [x] `auth_sessions` database table with versioned migration tool
+- [ ] Dashboard: device management UI
+- [ ] Dashboard: sync status UI
+- [ ] Dashboard: account management UI
+
+**Deliverable**: Authenticated web experience. CLI and browser login both persist sessions. Dashboard ready for feature development.
+
 ---
 
 ## Tech Stack Summary

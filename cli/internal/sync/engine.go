@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"encoding/base64"
 	"encoding/json"
 	"log/slog"
 	"sync/atomic"
@@ -69,8 +70,9 @@ func (e *Engine) push() error {
 	if err != nil {
 		return err
 	}
-
-	_, err = e.client.Push(blob, 0)
+	protectedKey := base64.StdEncoding.EncodeToString(e.vault.ProtectedKeyBytes())
+	masterHash := base64.StdEncoding.EncodeToString(e.vault.MasterPasswordHash())
+	_, err = e.client.Push(blob, e.vault.KDFParams(), protectedKey, masterHash, 0)
 	return err
 }
 
@@ -80,7 +82,7 @@ func (e *Engine) Pull() error {
 		return err
 	}
 
-	plaintext, err := vault.DecryptFromSync(e.vault.Key(), result.Blob)
+	plaintext, err := vault.DecryptCombined(e.vault.Key(), result.Blob)
 	if err != nil {
 		return err
 	}

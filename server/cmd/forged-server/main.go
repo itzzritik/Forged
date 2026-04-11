@@ -33,11 +33,21 @@ func main() {
 	}
 	defer database.Close()
 
+	httpClient := &http.Client{
+		Timeout: 10 * time.Second,
+		Transport: &http.Transport{
+			MaxIdleConns:        10,
+			MaxIdleConnsPerHost: 5,
+			IdleConnTimeout:     90 * time.Second,
+		},
+	}
+
 	srv := &api.Server{
-		DB:      database,
-		Secret:  jwtSecret,
-		DevMode: os.Getenv("REDIRECT_BASE_URL") == "",
-		Logger:  logger,
+		DB:         database,
+		Secret:     jwtSecret,
+		DevMode:    os.Getenv("REDIRECT_BASE_URL") == "",
+		Logger:     logger,
+		HTTPClient: httpClient,
 		OAuth: auth.OAuthConfig{
 			GoogleClientID:     envDefault("GOOGLE_CLIENT_ID", ""),
 			GoogleClientSecret: envDefault("GOOGLE_CLIENT_SECRET", ""),
@@ -45,6 +55,7 @@ func main() {
 			GitHubClientSecret: envDefault("GITHUB_CLIENT_SECRET", ""),
 			RedirectBaseURL:    envDefault("REDIRECT_BASE_URL", "https://forged-api.ritik.me"),
 			WebAppURL:          envDefault("WEBAPP_URL", "https://forged.ritik.me"),
+			HTTPClient:         httpClient,
 		},
 	}
 	srv.StartSessionCleanup()
