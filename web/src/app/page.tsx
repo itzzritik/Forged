@@ -7,7 +7,7 @@ import {
   TopologyVisualizer,
   TERMINAL_CARDS,
 } from "@/components/client";
-import type { TerminalCardDef } from "@/components/client";
+import type { TerminalStep } from "@/components/client";
 
 function Nav() {
   return (
@@ -43,42 +43,65 @@ function Nav() {
 }
 
 
-const INDUSTRIAL_TERMINAL_SEQUENCE: TerminalCardDef[] = [
-  { 
-    title: "",
-    status: "ok",
-    brightness: 1.0,
-    pace: "aggressive",
-    lines: [
-      "> forged status",
-      "[+] Daemon attached: unix:///tmp/forged.sock",
-      "[+] Secure enclave:  ACTIVE (Memory Guard verified)",
-    ]
+const ROUTING_DEMO: TerminalStep[] = [
+  {
+    command: "forged status",
+    output: [
+      "Daemon: running (PID 4129)",
+      "Keys:   3 loaded",
+      "Socket: /Users/user/.forged/agent.sock",
+    ],
+    pauseAfter: 2000,
   },
   {
-    title: "",
-    status: "ok",
-    brightness: 1.1,
-    pace: "aggressive",
-    lines: [
-      "> forged rule add --eval=\"*production*\" --key=\"vault-01\"",
-      "[+] Rule injected. Traffic to *production* strictly bound to vault-01.",
-    ]
+    command: "forged list",
+    output: [
+      "  NAME      TYPE         FINGERPRINT                                        SIGNING",
+      "  --------  -----------  -------------------------------------------------  -------",
+      "  github    ssh-ed25519  SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU  yes",
+      "  deploy    ssh-ed25519  SHA256:jRkG8NpL2wQx5vB7tY1fH3sA9dK6uEiO4cX8rZ3bVnw",
+      "  personal  ssh-rsa      SHA256:nVxK3mQR9f2QWv43kLwpQ2rBx87mN7pLq2iO8pK2wEzs",
+    ],
+    pauseAfter: 2500,
   },
   {
-    title: "",
-    status: "ok",
-    brightness: 1.2,
-    pace: "aggressive",
-    lines: [
-      "> ssh root@10.vpc.production.internal",
-      "[~] forged: connection intercepted",
-      "[~] forged: enforcing rule match -> vault-01",
-      "[+] forged: ephemeral key injected into ssh-agent memory space",
-      "Last login: Fri Apr 10 14:02 from 192.168.1.1",
-      "root@production:~#"
-    ]
-  }
+    command: 'forged host github "github.com" "*.github.com"',
+    output: ["Mapped github to [github.com *.github.com]"],
+    pauseAfter: 1800,
+  },
+  {
+    command: 'forged host deploy "*.prod.company.com" "10.0.*"',
+    output: ["Mapped deploy to [*.prod.company.com 10.0.*]"],
+    pauseAfter: 2200,
+  },
+  {
+    command: "forged hosts",
+    output: [
+      "  github\tgithub.com\t(exact)",
+      "  github\t*.github.com\t(wildcard)",
+      "  deploy\t*.prod.company.com\t(wildcard)",
+      "  deploy\t10.0.*\t(wildcard)",
+    ],
+    pauseAfter: 2800,
+  },
+  {
+    command: "ssh git@github.com",
+    output: [
+      "Hi user! You've successfully authenticated.",
+      "Connection to github.com closed.",
+    ],
+    pauseAfter: 2200,
+  },
+  {
+    command: "ssh deploy@api.prod.company.com",
+    output: [
+      "Welcome to Ubuntu 24.04.1 LTS (GNU/Linux 6.5.0-44-generic x86_64)",
+      "",
+      "Last login: Fri Apr 11 09:42:17 2026 from 10.0.1.5",
+      "deploy@api-prod:~$",
+    ],
+    pauseAfter: 3000,
+  },
 ];
 
 function Hero() {
@@ -179,7 +202,7 @@ function GridFeatures() {
       title: "Git Signatures",
       subtitle: "Verified commits",
       desc: "A built-in SSH agent allows frictionless, automatic verified signatures on every git commit across all your workflows.",
-      bullets: ["Automatic commit signing", "SSH-based GPG alternative", "Per-host signing keys"],
+      bullets: ["Automatic commit signing", "SSH-based GPG alternative", "forged-sign helper binary"],
       cta: "Setup Signing",
       href: "/docs#git-signing",
     },
@@ -187,7 +210,7 @@ function GridFeatures() {
       icon: "M9 3v2m6-2v2M9 19v2m6-2v2M5 9H3m2 6H3m18-6h-2m2 6h-2M7 19h10a2 2 0 0 0 2-2V7a2 2 0 0 0-2-2H7a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2zM9 9h6v6H9V9z",
       title: "Unix Daemon",
       subtitle: "Always running, always ready",
-      desc: "A single 15MB Go binary runs a background daemon that emulates the ssh-agent protocol. No Electron, no browser extensions.",
+      desc: "A single ~13MB Go binary runs a background daemon that emulates the ssh-agent protocol. No Electron, no browser extensions.",
       bullets: ["Pure Go socket agent", "launchctl/systemd binding", "0600 socket permissions"],
       cta: "View Architecture",
       href: "/docs#setup",
@@ -196,8 +219,8 @@ function GridFeatures() {
       icon: "M4 16l4.586-4.586a2 2 0 0 1 2.828 0L16 16m-2-2l1.586-1.586a2 2 0 0 1 2.828 0L20 14m-6-6h.01M6 20h12a2 2 0 0 0 2-2V6a2 2 0 0 0-2-2H6a2 2 0 0 0-2 2v12a2 2 0 0 0 2 2z",
       title: "Key Migration",
       subtitle: "Import from anywhere",
-      desc: "Migrate keys from ~/.ssh, 1Password, or any running ssh-agent in a single command. No manual file juggling.",
-      bullets: ["Import from ~/.ssh", "1Password CLI integration", "Active agent migration"],
+      desc: "Migrate keys from ~/.ssh or 1Password in a single command. Inspect your running ssh-agent to plan the move.",
+      bullets: ["Import from ~/.ssh", "1Password CLI integration", "Agent key discovery"],
       cta: "Migration Guide",
       href: "/docs#key-management",
     },
@@ -336,7 +359,7 @@ function TerminalSection() {
               
               {/* Terminal Body content */}
               <div className="flex-1 relative bg-black overflow-hidden">
-                 <AnimatedBigTerminal cards={INDUSTRIAL_TERMINAL_SEQUENCE} />
+                 <AnimatedBigTerminal steps={ROUTING_DEMO} />
               </div>
               
               {/* Data-Dense Footer */}
@@ -433,7 +456,7 @@ function EnterpriseSecurity() {
       id: "04",
       title: "Auditability",
       value: "Open Core",
-      desc: "The entire core daemon and CLI is 100% open source under MIT. No proprietary telemetry, no blackbox cryptographic implementations."
+      desc: "The entire core daemon and CLI is open source. No proprietary telemetry, no opaque cryptographic implementations."
     }
   ];
 
@@ -457,7 +480,7 @@ function EnterpriseSecurity() {
             Zero Knowledge.
           </h2>
           <p className="text-base lg:text-lg text-[#a1a1aa] max-w-2xl leading-relaxed mb-16">
-            We believe security through obscurity is no security at all. Forged is built entirely on open, mathematically auditable cryptographic standards. Your private keys never touch a disk unencrypted, and never leave your machine physically.
+            We believe security through obscurity is no security at all. Forged is built entirely on open, mathematically auditable cryptographic standards. Your private keys never touch a disk unencrypted, and never leave your machine without end-to-end encryption.
           </p>
         </ScrollReveal>
 

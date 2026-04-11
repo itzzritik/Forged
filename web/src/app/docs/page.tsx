@@ -145,7 +145,7 @@ export default function DocsPage() {
         </aside>
 
         <main className="min-w-0 flex-[1.5] max-w-4xl pt-2 pb-8">
-          <ScrollReveal className="mb-16">
+          <ScrollReveal className="mb-12">
             <div className="flex items-center gap-2.5 mb-6">
               <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Operations Reference</span>
             </div>
@@ -159,7 +159,7 @@ export default function DocsPage() {
 
           <Section id="installation" title="Installation">
             <p>
-              Forged is distributed as a highly optimized, 15MB single binary compiled purely in Go with zero external CGO dependencies.
+              Forged is distributed as a single ~13MB binary compiled purely in Go with zero external CGO dependencies.
             </p>
             <CodeBlock title="macOS">brew install forged</CodeBlock>
             <CodeBlock title="Linux / macOS (BASH)">{"curl -fsSL https://forged.ritik.me/install.sh | sh"}</CodeBlock>
@@ -168,7 +168,7 @@ export default function DocsPage() {
 
           <Section id="setup" title="Setup Workflow">
             <p>
-              Execute the initialization wizard to construct the AES vault, ingest your raw plaintext SSH keys from <Code>~/.ssh</Code>, bind the local daemon executable system services, and modify <Code>~/.ssh/config</Code>.
+              Execute the initialization wizard to construct the encrypted vault, ingest your raw plaintext SSH keys from <Code>~/.ssh</Code>, bind the local daemon executable system services, and modify <Code>~/.ssh/config</Code>.
             </p>
             <CodeBlock title="Terminal">forged setup</CodeBlock>
             
@@ -192,23 +192,23 @@ export default function DocsPage() {
             <p>
               Once bootstrapped, your CLI effectively passes through the Forged agent protocol. Compatible across any standard clients observing <Code>SSH_AUTH_SOCK</Code>.
             </p>
-            <CodeBlock title="Workflow">{"$ ssh myserver                     # Resolves automatically\n$ git push origin master           # Implicitly signs the commit"}</CodeBlock>
+            <CodeBlock title="Workflow">{"$ ssh myserver                     # Resolves automatically\n$ git commit -m \"deploy v2\"        # Automatically signed via SSH key"}</CodeBlock>
           </Section>
 
           <Section id="key-management" title="Entity Management">
             <p>Manage the lifecycle of keys directly inside the vault without ever touching the filesystem in plaintext.</p>
             <CodeBlock title="Management">{"$ forged generate my-key -c \"me@host\"    # Auto-generates Ed25519\n$ forged add work --file ~/.ssh/id_ed25519  # Ingest existing payload\n$ forged list                               # Global index status\n$ forged list --json                        # CI Pipeline indexing\n$ forged export my-key                      # Output stdout PK\n$ forged rename my-key github               # Modify identifier\n$ forged remove old-key                     # Hard delete entity"}</CodeBlock>
             <p className="mt-8 border-l border-[#ea580c]/50 pl-4">
-              Migrate bulk payloads seamlessly from existing agents using ingestion protocols:
+              Migrate payloads from existing sources using ingestion protocols:
             </p>
-            <CodeBlock title="Migration Protocol">{"$ forged migrate --from ssh          # Pull raw id_rsa/id_ed25519 payloads directly\n$ forged migrate --from 1password    # Directly integrates via 1P CLI interface\n$ forged migrate --from agent        # Copies actively bound instances loaded in memory"}</CodeBlock>
+            <CodeBlock title="Migration Protocol">{"$ forged migrate --from ssh          # Import id_rsa/id_ed25519 from ~/.ssh/\n$ forged migrate --from 1password    # Import via 1Password CLI interface\n$ forged migrate --from agent        # List keys in current ssh-agent (public only)"}</CodeBlock>
           </Section>
 
           <Section id="host-matching" title="Regex & Host Matching">
             <p>
               Enforce strict mappings computationally. Banish &quot;Too many authentication attempts&quot; failures entirely by binding specific keys exclusively to specific domains.
             </p>
-            <CodeBlock title="Routing Configuration">{"$ forged host github \"github.com\" \"*.github.com\"\n$ forged host deploy \"*.prod.company.com\" \"10.0.*\"\n$ forged hosts                       # Monitor index definitions active in daemon\n$ forged unhost deploy \"10.0.*\"      # Unbind rules gracefully"}</CodeBlock>
+            <CodeBlock title="Routing Configuration">{"$ forged host github \"github.com\" \"*.github.com\"\n$ forged host deploy \"*.prod.company.com\" \"10.0.*\"\n$ forged host api \"~^api\\\\d+\\\\.example\\\\.com$\"  # Regex via ~ prefix\n$ forged hosts                       # List all active host mappings\n$ forged unhost deploy \"10.0.*\"      # Remove a host mapping"}</CodeBlock>
             <p className="mt-8 text-white/50 text-sm uppercase tracking-widest font-mono">
               [ Manual overrides via local architecture ]
             </p>
@@ -219,8 +219,15 @@ export default function DocsPage() {
           </Section>
 
           <Section id="git-signing" title="Signature Verification">
-             <p>Enable rigorous provenance tracing by utilizing SSH signatures instead of traditional GPG protocols.</p>
-            <CodeBlock title="~/.gitconfig">{"[user]\n    signingkey = ssh-ed25519 AAAA...\n[gpg]\n    format = ssh\n[gpg \"ssh\"]\n    program = /usr/local/bin/forged-sign\n[commit]\n    gpgsign = true"}</CodeBlock>
+             <p>Enable rigorous provenance tracing by utilizing SSH signatures instead of traditional GPG protocols. The <Code>signing</Code> command configures your global Git settings automatically.</p>
+            <CodeBlock title="Terminal">{"$ forged signing                     # Interactive key selector\n$ forged signing my-key              # Assign specific key for signing\n$ forged signing --off               # Disable Git commit signing"}</CodeBlock>
+            <p className="mt-8 text-white/50 text-sm uppercase tracking-widest font-mono">
+              [ Equivalent manual configuration ]
+            </p>
+            <p className="mt-4">
+              Under the hood, this writes the following to your global <Code>~/.gitconfig</Code>:
+            </p>
+            <CodeBlock title="~/.gitconfig">{"[user]\n    signingkey = ssh-ed25519 AAAA...\n[gpg]\n    format = ssh\n[gpg \"ssh\"]\n    program = /path/to/forged-sign\n[commit]\n    gpgsign = true"}</CodeBlock>
           </Section>
 
           <Section id="sync" title="Multi-node Sync">
@@ -239,7 +246,7 @@ export default function DocsPage() {
           </Section>
 
           <Section id="commands" title="Unified Call Stack">
-            <CodeBlock title="CLI Reference">{"# Lifecycle\nforged setup                     Bootstrap vault and daemon\nforged start / stop              Manage supervisor state\nforged status                    Diagnostics block\nforged doctor                    System checks and fixes\n\n# Cryptographic\nforged generate <name>           Yield new RSA/Ed keys\nforged add <name> --file <path>  Consume target\nforged list                      Dump database\nforged remove <name>             Nuke entry\nforged export <name>             Raw out PK\n\n# Routing\nforged host <key> <patterns>     Define routing target\nforged hosts                     List logic blocks\nforged unhost <key> <pattern>    Destruct constraint\n\n# Network\nforged login                     Browser OAuth\nforged sync                      Execute Blob pipeline \nforged sync status               Monitor\nforged logout                    Clear tokens\n\n# Maintenance\nforged lock / unlock             Manage buffer suspension\nforged change-password           Reroll Argon2 derivation\nforged migrate --from <source>   Intake routine\nforged benchmark                 Speedtest Argon thresholds\nforged logs                      Daemon trace\nforged config                    Modify application state"}</CodeBlock>
+            <CodeBlock title="CLI Reference">{"# Lifecycle\nforged setup                     Bootstrap vault and daemon\nforged start / stop              Manage daemon service\nforged status                    Show daemon and key info\nforged doctor                    Diagnose common issues\nforged doctor --fix              Diagnose and auto-fix issues\nforged version                   Print version info\n\n# Keys\nforged generate [name]           Generate new Ed25519 key\nforged add <name> --file <path>  Import existing key\nforged list                      List all keys\nforged remove <name>             Delete a key\nforged export <name>             Output public key\nforged rename <old> <new>        Rename a key\n\n# Host Routing\nforged host <key> <patterns>     Map key to host patterns\nforged hosts                     List all host mappings\nforged unhost <key> <pattern>    Remove a host mapping\n\n# Git Signing\nforged signing [key]             Configure commit signing\nforged signing --off             Disable commit signing\n\n# Cloud Sync\nforged login                     Authenticate via browser\nforged sync                      Sync vault to cloud\nforged sync status               Show sync state\nforged logout                    Clear credentials\n\n# Maintenance\nforged enable / disable          Toggle SSH agent integration\nforged change-password           Change master password\nforged migrate --from <source>   Import from ssh/1password/agent\nforged benchmark                 Test Argon2id performance\nforged logs                      Tail daemon logs"}</CodeBlock>
           </Section>
         </main>
       </div>

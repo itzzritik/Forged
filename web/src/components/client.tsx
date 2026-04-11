@@ -133,7 +133,7 @@ export type TerminalCardDef = {
   title: string;
   status: "ok" | "warn" | "error";
   brightness: number;
-  pace: "fast" | "normal" | "slow" | "aggressive";
+  pace: "fast" | "normal" | "slow";
   lines: string[];
 };
 
@@ -169,12 +169,9 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
   ]},
   { title: "AGENT // STATUS", status: "ok", brightness: 0.75, pace: "slow", lines: [
     "> forged status",
-    "daemon:  running (pid 4821)",
-    "socket:  /tmp/forged.sock",
-    "keys:    4 loaded",
-    "hosts:   3 bound",
-    "uptime:  14h 23m 07s",
-    "memory:  2.1 MB resident",
+    "Daemon: running (PID 4821)",
+    "Keys:   4 loaded",
+    "Socket: ~/.forged/agent.sock",
   ]},
   { title: "KEYGEN // ED25519", status: "ok", brightness: 1.1, pace: "fast", lines: [
     "> forged generate deploy-prod",
@@ -215,8 +212,8 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
   { title: "MIGRATE // IMPORT", status: "warn", brightness: 1.0, pace: "normal", lines: [
     "> forged migrate --from ssh",
     "[SCAN] Reading ~/.ssh/ ...",
-    "[FOUND] id_ed25519 (4096 bit)",
-    "[FOUND] id_rsa (2048 bit)",
+    "[FOUND] id_ed25519 (Ed25519)",
+    "[FOUND] id_rsa (RSA 2048-bit)",
     "[WARN] id_rsa uses weak RSA-2048",
     "[IMPORT] 2 keys ingested",
     "[VAULT] Re-encrypted with Argon2id",
@@ -240,7 +237,7 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
     "Master password: ********",
   ]},
   { title: "DAEMON // LOGS", status: "ok", brightness: 1.0, pace: "fast", lines: [
-    "> forged logs --tail",
+    "> forged logs",
     "14:23:07 [INFO] github.com -> ok",
     "14:23:08 [INFO] key: github",
     "14:23:08 [INFO] auth: success",
@@ -268,15 +265,14 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
   ]},
   { title: "LIST // KEYS", status: "ok", brightness: 0.75, pace: "slow", lines: [
     "> forged list",
-    "  NAME       TYPE      CREATED",
-    "  github     ed25519   2025-03-14",
-    "  deploy     ed25519   2025-06-01",
-    "  personal   rsa-4096  2024-11-22",
-    "  signing    ed25519   2025-01-09",
-    "4 keys in vault",
+    "  NAME       TYPE          FINGERPRINT",
+    "  github     ssh-ed25519   SHA256:xK3...",
+    "  deploy     ssh-ed25519   SHA256:mN7...",
+    "  personal   ssh-rsa       SHA256:pQ2...",
+    "  signing    ssh-ed25519   SHA256:vB9...",
   ]},
   { title: "EXPORT // KEY", status: "ok", brightness: 1.1, pace: "normal", lines: [
-    "> forged export github --pub",
+    "> forged export github",
     "ssh-ed25519 AAAAC3NzaC1lZDI1",
     "NTE5AAAAIG8f3kR7vKJzMnL+hW2",
     "Kf9mN3pQ5xR1tY6uI0oP8aS2dF4",
@@ -302,23 +298,23 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
     "conflicts: 0",
     "[OK] Vault in sync",
   ]},
-  { title: "SECURITY // AUDIT", status: "error", brightness: 1.0, pace: "normal", lines: [
-    "> forged audit",
-    "[AUDIT] Checking key strength...",
-    "[OK] github: ed25519 (strong)",
-    "[OK] deploy: ed25519 (strong)",
-    "[WARN] personal: rsa-2048 (weak)",
-    "[OK] signing: ed25519 (strong)",
-    "[WARN] 1 key below threshold",
+  { title: "SECURITY // DOCTOR", status: "ok", brightness: 1.0, pace: "normal", lines: [
+    "> forged doctor --fix",
+    "[PASS] Vault exists",
+    "[PASS] Config exists",
+    "[PASS] Daemon running (PID 4821)",
+    "[PASS] Agent socket 0600",
+    "[PASS] IPC socket",
+    "[FIXED] SSH agent IdentityAgent",
   ]},
   { title: "RENAME // KEY", status: "ok", brightness: 0.75, pace: "slow", lines: [
     "> forged rename personal backup",
-    "[VAULT] Updating identifier...",
-    "[VAULT] Re-encrypting entry...",
-    "[OK] personal -> backup",
+    "Renamed personal -> backup",
+    "",
     "> forged list --json",
     "{\"keys\":[{\"name\":\"backup\",",
-    "\"type\":\"rsa\",\"bits\":4096}]}",
+    "\"type\":\"ssh-rsa\",",
+    "\"fingerprint\":\"SHA256:pQ2\"}]}",
   ]},
   { title: "UNHOST // UNBIND", status: "ok", brightness: 1.1, pace: "fast", lines: [
     "> forged unhost deploy \"10.0.*\"",
@@ -330,13 +326,8 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
     "  deploy   *.prod.company.com",
   ]},
   { title: "DAEMON // START", status: "ok", brightness: 1.0, pace: "fast", lines: [
-    "> forged start --background",
-    "[DAEMON] Forking to background...",
-    "[DAEMON] PID 4821 registered",
-    "[SOCKET] Listening on agent.sock",
-    "[SOCKET] Permissions: 0600",
-    "[VAULT] 4 keys loaded to memory",
-    "[OK] Agent ready, accepting conn",
+    "> forged start",
+    "Daemon started (PID 4821)",
   ]},
 ];
 
@@ -596,161 +587,157 @@ export function GlitchButton({
   );
 }
 
-export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
-  const [lines, setLines] = useState<{ id: string; text: string; isCommand: boolean; timestamp: string }[]>([]);
-  const [typingCommand, setTypingCommand] = useState("");
-  const [showCursor, setShowCursor] = useState(true);
+export type TerminalStep = {
+  command: string;
+  output: string[];
+  pauseAfter?: number;
+};
+
+function TerminalOutputLine({ text }: { text: string }) {
+  if (/^\s+-+\s+-+/.test(text)) return <span className="text-[#27272a]">{text}</span>;
+  if (/^\s+(NAME|TYPE|FINGERPRINT|SIGNING)/.test(text)) return <span className="text-[#52525b]">{text}</span>;
+  if (text.startsWith("Mapped ")) return <span className="text-[#10b981]">{text}</span>;
+  if (text.includes("Connection") && text.includes("closed")) return <span className="text-[#52525b]">{text}</span>;
+  if (/^\w+@[\w-]+:[~\/]/.test(text)) return <span className="text-[#ea580c]">{text}</span>;
+  return <span className="text-[#a1a1aa]">{text}</span>;
+}
+
+export function AnimatedBigTerminal({ steps }: { steps: TerminalStep[] }) {
   const containerRef = useRef<HTMLDivElement>(null);
+  const [lines, setLines] = useState<{ id: string; text: string; type: "cmd" | "out"; ts: string }[]>([]);
+  const [typing, setTyping] = useState("");
+  const [cursorOn, setCursorOn] = useState(true);
+  const tsRef = useRef({ base: Date.now(), offset: 0 });
 
   useEffect(() => {
-    const int = setInterval(() => setShowCursor(c => !c), 500);
-    return () => clearInterval(int);
+    const id = setInterval(() => setCursorOn(v => !v), 530);
+    return () => clearInterval(id);
   }, []);
 
   useEffect(() => {
-    let active = true;
-    let cardIndex = 0;
+    let alive = true;
+    let step = 0;
+    const sleep = (ms: number) => new Promise<void>(r => setTimeout(r, ms));
 
-    const generateTimestamp = () => {
-      const now = new Date();
-      return `[${now.getHours().toString().padStart(2, '0')}:${now.getMinutes().toString().padStart(2, '0')}:${now.getSeconds().toString().padStart(2, '0')}.${Math.floor(Math.random() * 99).toString().padStart(2, '0')}]`;
+    const ts = () => {
+      const t = tsRef.current;
+      const d = new Date(t.base + t.offset);
+      t.offset += 20 + Math.floor(Math.random() * 180);
+      const hh = d.getHours().toString().padStart(2, "0");
+      const mm = d.getMinutes().toString().padStart(2, "0");
+      const ss = d.getSeconds().toString().padStart(2, "0");
+      const ms = d.getMilliseconds().toString().padStart(3, "0");
+      return `${hh}:${mm}:${ss}.${ms}`;
     };
 
-    const wait = (ms: number) => new Promise(r => setTimeout(r, ms));
+    const charDelay = (ch: string, prev: string): number => {
+      if (ch === " ") return 15 + Math.random() * 12;
+      if ('"\'*@'.includes(ch)) return 60 + Math.random() * 30;
+      if (".-/~".includes(ch)) return 28 + Math.random() * 14;
+      if (prev === " " && Math.random() < 0.12) return 130 + Math.random() * 90;
+      return 25 + Math.random() * 28;
+    };
 
-    async function run() {
-      await wait(1000);
-      
-      while (active) {
-        const card = cards[cardIndex];
-        const rawCmd = card.lines[0];
-        const cmd = rawCmd.startsWith("> ") ? rawCmd.slice(2) : rawCmd;
-        const output = card.lines.slice(1);
+    async function animate() {
+      await sleep(700);
 
-        let charDelay = 30;
-        let lineDelay = 150;
-        if (card.pace === "fast") {
-          charDelay = 15;
-          lineDelay = 50;
-        } else if (card.pace === "slow") {
-          charDelay = 50;
-          lineDelay = 300;
-        } else if (card.pace === "aggressive") {
-          charDelay = 10;
-          lineDelay = 100;
+      while (alive) {
+        const s = steps[step];
+
+        let typed = "";
+        let prev = "";
+        for (const ch of s.command) {
+          if (!alive) return;
+          typed += ch;
+          setTyping(typed);
+          await sleep(charDelay(ch, prev));
+          prev = ch;
         }
 
-        let currentCmd = "";
-        for (let i = 0; i < cmd.length; i++) {
-          if (!active) return;
-          currentCmd += cmd[i];
-          setTypingCommand(currentCmd);
-          if (charDelay > 0) {
-            await wait(charDelay + Math.random() * (charDelay / 2));
-          }
+        if (!alive) return;
+
+        setLines(p => [...p, { id: `c${step}-${Date.now()}`, text: s.command, type: "cmd", ts: ts() }]);
+        setTyping("");
+
+        await sleep(160 + Math.random() * 120);
+
+        for (let i = 0; i < s.output.length; i++) {
+          if (!alive) return;
+          const line = s.output[i];
+          setLines(p => [...p, { id: `o${step}-${i}-${Date.now()}`, text: line, type: "out", ts: ts() }]);
+
+          let d = 45;
+          if (/^\s+-+/.test(line)) d = 12;
+          else if (i === 0 && s.output.length > 3) d = 20;
+          else if (line.includes("Welcome") || line.includes("Last login")) d = 110;
+          await sleep(d + Math.random() * 25);
         }
+        setLines(p => [...p, { id: `g${step}-${Date.now()}`, text: "\u00A0", type: "out", ts: "" }]);
 
-        if (!active) return;
-        setLines(prev => {
-           const next = [...prev, { id: Math.random().toString(), text: cmd, isCommand: true, timestamp: generateTimestamp() }];
-           return next.slice(-40);
-        });
-        setTypingCommand("");
-        
-        await wait(200);
+        await sleep(s.pauseAfter ?? 2500);
 
-        for (const outLine of output) {
-          if (!active) return;
-          setLines(prev => {
-             const next = [...prev, { id: Math.random().toString(), text: outLine, isCommand: false, timestamp: generateTimestamp() }];
-             return next.slice(-40);
-          });
-          if (lineDelay > 0) {
-            await wait(lineDelay + Math.random() * (lineDelay / 2));
-          }
-        }
-
-        await wait(3000);
-        
-        cardIndex = (cardIndex + 1) % cards.length;
+        step = (step + 1) % steps.length;
       }
     }
 
-    run();
+    animate();
+    return () => { alive = false; };
+  }, [steps]);
 
-    return () => { active = false; };
-  }, [cards]);
-
-  // Smooth synchronized scrolling via effect
   useEffect(() => {
-    if (containerRef.current) {
-      containerRef.current.scrollTo({
-        top: containerRef.current.scrollHeight,
-        behavior: 'smooth'
-      });
-    }
-  }, [lines, typingCommand]);
-
-  const getLineColor = (lineText: string) => {
-    if (lineText.includes("[WARN]") || lineText.includes("⚠️")) return "#f59e0b";
-    if (lineText.includes("[ERR]") || lineText.match(/\[error\]/i) || lineText.includes("failed on channel")) return "#ef4444";
-    if (lineText.match(/\[\+\]|\[OK\]| ok | success/i)) return "#10b981"; // success
-    if (lineText.match(/\[\~\]|\[INFO\]|^\[[A-Z]+\]/)) return "#0ea5e9";
-    if (lineText.startsWith("forged:")) return "#a1a1aa";
-    return "#a1a1aa";
-  };
+    containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
+  }, [lines, typing]);
 
   return (
-    <div className="w-full h-full bg-transparent relative flex flex-col overflow-hidden">
-      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(234,88,12,0.05)_0%,_transparent_60%)] pointer-events-none" />
-      
-      <div ref={containerRef} className="p-4 md:p-6 flex-1 overflow-hidden [&::-webkit-scrollbar]:hidden relative z-10 font-mono text-[11px] md:text-xs pb-24">
+    <div className="w-full h-full relative flex flex-col overflow-hidden">
+      <div className="absolute inset-0 bg-[radial-gradient(ellipse_at_top,_rgba(234,88,12,0.04)_0%,_transparent_55%)] pointer-events-none" />
+
+      <div
+        ref={containerRef}
+        className="p-5 md:px-6 md:py-5 flex-1 overflow-hidden [&::-webkit-scrollbar]:hidden relative z-10 font-mono text-[11px] md:text-[13px] leading-[1.9]"
+        style={{ tabSize: 8 }}
+      >
         <AnimatePresence initial={false}>
           {lines.map((line) => (
             <motion.div
-              initial={{ opacity: 0, y: 10 }}
+              key={line.id}
+              initial={{ opacity: 0, y: 5 }}
               animate={{ opacity: 1, y: 0 }}
-              transition={{ duration: 0.2, ease: "easeOut" }}
-              key={line.id} 
-              className="leading-[1.7] whitespace-pre-wrap break-all mb-1.5 flex items-start group"
+              transition={{ duration: 0.12, ease: "easeOut" }}
+              className="whitespace-pre flex"
             >
-              {/* Timestamp Gutter */}
-              <span className="text-[#3f3f46] mr-4 select-none shrink-0">{line.timestamp}</span>
-
-              {line.isCommand ? (
-                <div className="flex items-start">
-                  <span className="text-[#ea580c] mr-3 select-none flex-shrink-0">root@forged:~$</span>
-                  <span className="text-white font-medium">{line.text}</span>
-                </div>
-              ) : (
-                <div className="flex items-start">
-                   <span className="text-transparent mr-3 select-none hidden md:inline flex-shrink-0">root@forged:~$</span>
-                   <span style={{ color: getLineColor(line.text) }}>
-                     {line.text.startsWith('forged:') ? (
-                       <>
-                         <span className="text-[#ea580c] font-bold">forged:</span>
-                         <span className="text-white ml-2">{line.text.replace('forged:', '')}</span>
-                       </>
-                     ) : (
-                       line.text
-                     )}
-                   </span>
-                </div>
-              )}
+              {line.ts && <span className="text-[#1e1e21] select-none mr-4 shrink-0 hidden lg:inline">{line.ts}</span>}
+              <span className="flex-1">
+                {line.type === "cmd" ? (
+                  <>
+                    <span className="text-[#ea580c] select-none">$ </span>
+                    <span className="text-white">{line.text}</span>
+                  </>
+                ) : (
+                  <TerminalOutputLine text={line.text} />
+                )}
+              </span>
             </motion.div>
           ))}
         </AnimatePresence>
-        
-        <div className="leading-[1.7] whitespace-pre-wrap break-all mt-1.5 flex items-start">
-          <span className="text-[#3f3f46] mr-4 select-none shrink-0 opacity-0">[00:00:00.00]</span>
-          <span className="text-[#ea580c] mr-3 select-none flex-shrink-0">root@forged:~$</span>
-          <span className="text-white font-medium">{typingCommand}</span>
-          <span className={`inline-block w-2.5 h-3.5 ml-1 bg-[#ea580c] align-middle translate-y-[2px] shadow-[0_0_8px_rgba(234,88,12,0.6)] ${showCursor ? 'opacity-100' : 'opacity-0'}`} />
-        </div>
-        <div className="h-32" />
-      </div>
 
-      <div className="absolute inset-x-0 bottom-0 h-32 bg-gradient-to-t from-[#050505] via-[#050505]/90 to-transparent pointer-events-none w-full z-10" />
+        {/* Active typing line with cursor */}
+        <div className="whitespace-pre flex">
+          <span className="text-[#1e1e21] select-none mr-4 shrink-0 hidden lg:inline">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+          <span className="flex-1">
+            <span className="text-[#ea580c] select-none">$ </span>
+            <span className="text-white">{typing}</span>
+            <span
+              className="inline-block w-[7px] h-[14px] ml-px translate-y-[2px] transition-opacity duration-75"
+              style={{
+                backgroundColor: cursorOn ? "#ea580c" : "transparent",
+                boxShadow: cursorOn ? "0 0 8px rgba(234,88,12,0.5)" : "none",
+              }}
+            />
+          </span>
+        </div>
+
+      </div>
     </div>
   );
 }

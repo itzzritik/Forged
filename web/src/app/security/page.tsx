@@ -140,9 +140,7 @@ function Hero() {
               <span className="text-[10px] text-[#10b981] font-mono tracking-widest uppercase font-bold">Audited</span>
             </div>
             <span className="w-px h-4 bg-[#27272a] hidden sm:block" />
-            <span className="text-[10px] text-[#a1a1aa] font-mono tracking-widest uppercase hidden sm:block">MIT Licensed</span>
-            <span className="w-px h-4 bg-[#27272a] hidden md:block" />
-            <span className="text-[10px] text-[#a1a1aa] font-mono tracking-widest uppercase hidden md:block">Open Source</span>
+            <span className="text-[10px] text-[#a1a1aa] font-mono tracking-widest uppercase hidden sm:block">Open Source</span>
           </div>
           <div className="flex items-center gap-2">
             <span className="text-[9px] font-mono tracking-widest text-[#3f3f46] uppercase hidden sm:block">golang.org/x/crypto</span>
@@ -516,7 +514,7 @@ function SecurityCTA() {
           Don&apos;t trust us.<br />Audit us.
         </h2>
         <p className="text-base lg:text-xl text-[#a1a1aa] leading-relaxed mb-12 max-w-2xl">
-          The entire Forged core is open source under MIT. Every cryptographic implementation, every daemon operation, every vault interaction - fully inspectable.
+          The entire Forged core is open source. Every cryptographic implementation, every daemon operation, every vault interaction - fully inspectable.
         </p>
         <div className="flex flex-col sm:flex-row items-center justify-center gap-4">
           <GlitchButton href="https://github.com/itzzritik/forged" external className="h-14 px-10 text-sm">Examine Source Code</GlitchButton>

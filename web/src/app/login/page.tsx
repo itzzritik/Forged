@@ -180,7 +180,7 @@ function LoginContent() {
           <span className="w-1 h-1 bg-[#27272a]" />
           <span className="text-[9px] font-mono tracking-widest text-[#27272a] uppercase">Zero Knowledge</span>
           <span className="w-1 h-1 bg-[#27272a]" />
-          <span className="text-[9px] font-mono tracking-widest text-[#27272a] uppercase">MIT Licensed</span>
+          <span className="text-[9px] font-mono tracking-widest text-[#27272a] uppercase">Open Source</span>
         </div>
       </div>
     </div>
