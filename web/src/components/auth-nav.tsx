@@ -1,44 +1,41 @@
 "use client";
 
-import { useState, useEffect } from "react";
 import Link from "next/link";
+import { useEffect, useState } from "react";
 import { GlitchButton } from "@/components/client";
 
 export function AuthNavButton() {
-  const [loggedIn, setLoggedIn] = useState(false);
+	const [loggedIn, setLoggedIn] = useState(false);
 
-  useEffect(() => {
-    setLoggedIn(document.cookie.includes("forged_logged_in=1"));
-  }, []);
+	useEffect(() => {
+		setLoggedIn(document.cookie.includes("forged_logged_in=1"));
+	}, []);
 
-  if (loggedIn) {
-    return (
-      <Link href="/dashboard" className="flex items-center gap-2 group">
-        <div className="w-7 h-7 bg-[#ea580c] flex items-center justify-center text-[11px] font-bold font-mono text-black">
-          F
-        </div>
-      </Link>
-    );
-  }
+	if (loggedIn) {
+		return (
+			<Link className="group flex items-center gap-2" href="/dashboard">
+				<div className="flex h-7 w-7 items-center justify-center bg-[#ea580c] font-bold font-mono text-[11px] text-black">F</div>
+			</Link>
+		);
+	}
 
-  return (
-    <GlitchButton href="/login" className="px-5 h-8 text-[12px]">Sign in</GlitchButton>
-  );
+	return (
+		<GlitchButton className="h-8 px-5 text-[12px]" href="/login">
+			Sign in
+		</GlitchButton>
+	);
 }
 
 export function AuthCTAButton() {
-  const [loggedIn, setLoggedIn] = useState(false);
+	const [loggedIn, setLoggedIn] = useState(false);
 
-  useEffect(() => {
-    setLoggedIn(document.cookie.includes("forged_logged_in=1"));
-  }, []);
+	useEffect(() => {
+		setLoggedIn(document.cookie.includes("forged_logged_in=1"));
+	}, []);
 
-  return (
-    <GlitchButton
-      href={loggedIn ? "/dashboard" : "/login"}
-      className="h-14 px-12 text-sm max-w-full"
-    >
-      {loggedIn ? "Dashboard" : "Start Syncing"}
-    </GlitchButton>
-  );
+	return (
+		<GlitchButton className="h-14 max-w-full px-12 text-sm" href={loggedIn ? "/dashboard" : "/login"}>
+			{loggedIn ? "Dashboard" : "Start Syncing"}
+		</GlitchButton>
+	);
 }

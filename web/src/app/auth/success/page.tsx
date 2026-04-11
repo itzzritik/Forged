@@ -1,85 +1,79 @@
-import { getSession, parseJWTPayload } from "@/lib/auth";
-import { redirect } from "next/navigation";
 import Link from "next/link";
+import { redirect } from "next/navigation";
+import { getSession, parseJWTPayload } from "@/lib/auth";
 
-export default async function AuthSuccessPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ error?: string }>;
-}) {
-  const { error } = await searchParams;
+export default async function AuthSuccessPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
+	const { error } = await searchParams;
 
-  if (error) {
-    return (
-      <div className="min-h-screen bg-black flex flex-col items-center justify-center px-6">
-        <div className="w-full max-w-[440px] text-center">
-          <div className="relative inline-block mb-8">
-            <div className="absolute inset-0 bg-red-500/15 blur-[24px] scale-150" />
-            <div className="relative w-14 h-14 bg-black border border-[#27272a] flex items-center justify-center">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="10" />
-                <line x1="15" y1="9" x2="9" y2="15" />
-                <line x1="9" y1="9" x2="15" y2="15" />
-              </svg>
-            </div>
-          </div>
-          <h1 className="text-2xl font-bold tracking-tight text-white mb-3">Authentication Failed</h1>
-          <p className="text-sm text-[#a1a1aa] font-mono mb-8">{decodeURIComponent(error)}</p>
-          <Link href="/login" className="text-xs text-[#a1a1aa] hover:text-white font-mono tracking-wider uppercase transition-colors">
-            Try again
-          </Link>
-        </div>
-      </div>
-    );
-  }
+	if (error) {
+		return (
+			<div className="flex min-h-screen flex-col items-center justify-center bg-black px-6">
+				<div className="w-full max-w-[440px] text-center">
+					<div className="relative mb-8 inline-block">
+						<div className="absolute inset-0 scale-150 bg-red-500/15 blur-[24px]" />
+						<div className="relative flex h-14 w-14 items-center justify-center border border-[#27272a] bg-black">
+							<svg fill="none" height="24" stroke="#ef4444" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="24">
+								<circle cx="12" cy="12" r="10" />
+								<line x1="15" x2="9" y1="9" y2="15" />
+								<line x1="9" x2="15" y1="9" y2="15" />
+							</svg>
+						</div>
+					</div>
+					<h1 className="mb-3 font-bold text-2xl text-white tracking-tight">Authentication Failed</h1>
+					<p className="mb-8 font-mono text-[#a1a1aa] text-sm">{decodeURIComponent(error)}</p>
+					<Link className="font-mono text-[#a1a1aa] text-xs uppercase tracking-wider transition-colors hover:text-white" href="/login">
+						Try again
+					</Link>
+				</div>
+			</div>
+		);
+	}
 
-  const token = await getSession();
-  if (!token) redirect("/login");
+	const token = await getSession();
+	if (!token) redirect("/login");
 
-  const payload = parseJWTPayload(token);
-  const name = (payload?.name || "") as string;
-  const email = (payload?.email || payload?.sub || "") as string;
+	const payload = parseJWTPayload(token);
+	const name = (payload?.name || "") as string;
+	const email = (payload?.email || payload?.sub || "") as string;
 
-  return (
-    <div className="min-h-screen bg-black flex flex-col items-center justify-center px-6">
-      <div className="w-full max-w-[440px]">
-        <div className="flex flex-col items-center mb-8">
-          <div className="relative">
-            <div className="absolute inset-0 bg-[#ea580c]/15 blur-[24px] scale-150" />
-            <div className="relative w-14 h-14 bg-black border border-[#27272a] flex items-center justify-center">
-              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
-                <polyline points="22 4 12 14.01 9 11.01" />
-              </svg>
-            </div>
-          </div>
-          <h1 className="mt-8 text-2xl font-bold tracking-tight text-white">CLI Authenticated</h1>
-          <p className="mt-2 text-sm text-[#a1a1aa] font-mono">{name || email}</p>
-        </div>
+	return (
+		<div className="flex min-h-screen flex-col items-center justify-center bg-black px-6">
+			<div className="w-full max-w-[440px]">
+				<div className="mb-8 flex flex-col items-center">
+					<div className="relative">
+						<div className="absolute inset-0 scale-150 bg-[#ea580c]/15 blur-[24px]" />
+						<div className="relative flex h-14 w-14 items-center justify-center border border-[#27272a] bg-black">
+							<svg fill="none" height="24" stroke="white" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="24">
+								<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
+								<polyline points="22 4 12 14.01 9 11.01" />
+							</svg>
+						</div>
+					</div>
+					<h1 className="mt-8 font-bold text-2xl text-white tracking-tight">CLI Authenticated</h1>
+					<p className="mt-2 font-mono text-[#a1a1aa] text-sm">{name || email}</p>
+				</div>
 
-        <div className="border border-[#27272a] bg-[#050505] overflow-hidden">
-          <div className="border-b border-[#27272a] bg-[#030303] px-6 h-10 flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <span className="w-1.5 h-1.5 rounded-full bg-[#10b981] animate-pulse shadow-[0_0_8px_#10b981]" />
-              <span className="text-[10px] font-mono tracking-widest text-[#a1a1aa] uppercase">Session // Authenticated</span>
-            </div>
-            <span className="text-[9px] font-mono tracking-widest text-[#3f3f46] uppercase">CLI</span>
-          </div>
-          <div className="p-6 text-center">
-            <p className="text-sm text-[#a1a1aa] font-mono">
-              You can close this tab and return to your terminal.
-            </p>
-          </div>
-        </div>
+				<div className="overflow-hidden border border-[#27272a] bg-[#050505]">
+					<div className="flex h-10 items-center justify-between border-[#27272a] border-b bg-[#030303] px-6">
+						<div className="flex items-center gap-3">
+							<span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981]" />
+							<span className="font-mono text-[#a1a1aa] text-[10px] uppercase tracking-widest">Session // Authenticated</span>
+						</div>
+						<span className="font-mono text-[#3f3f46] text-[9px] uppercase tracking-widest">CLI</span>
+					</div>
+					<div className="p-6 text-center">
+						<p className="font-mono text-[#a1a1aa] text-sm">You can close this tab and return to your terminal.</p>
+					</div>
+				</div>
 
-        <div className="mt-8 flex items-center justify-center gap-6">
-          <span className="text-[9px] font-mono tracking-widest text-[#27272a] uppercase">E2E Encrypted</span>
-          <span className="w-1 h-1 bg-[#27272a]" />
-          <span className="text-[9px] font-mono tracking-widest text-[#27272a] uppercase">Zero Knowledge</span>
-          <span className="w-1 h-1 bg-[#27272a]" />
-          <span className="text-[9px] font-mono tracking-widest text-[#27272a] uppercase">Open Source</span>
-        </div>
-      </div>
-    </div>
-  );
+				<div className="mt-8 flex items-center justify-center gap-6">
+					<span className="font-mono text-[#27272a] text-[9px] uppercase tracking-widest">E2E Encrypted</span>
+					<span className="h-1 w-1 bg-[#27272a]" />
+					<span className="font-mono text-[#27272a] text-[9px] uppercase tracking-widest">Zero Knowledge</span>
+					<span className="h-1 w-1 bg-[#27272a]" />
+					<span className="font-mono text-[#27272a] text-[9px] uppercase tracking-widest">Open Source</span>
+				</div>
+			</div>
+		</div>
+	);
 }

@@ -1,118 +1,103 @@
 "use client";
 
-import { useState } from "react";
 import { motion } from "framer-motion";
+import { useState } from "react";
+import { CommandPalette } from "@/components/dashboard/command-palette";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { VaultUnlock } from "@/components/dashboard/vault-unlock";
-import { CommandPalette } from "@/components/dashboard/command-palette";
 import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
-import { useVault } from "@/hooks/use-vault";
-import { useSidebar } from "@/hooks/use-sidebar";
 import { useCommandPalette } from "@/hooks/use-command-palette";
+import { useSidebar } from "@/hooks/use-sidebar";
+import { useVault } from "@/hooks/use-vault";
 
 interface DashboardShellProps {
-  user: { name: string; email: string };
-  children: React.ReactNode;
+	children: React.ReactNode;
+	user: { name: string; email: string };
 }
 
 export const DashboardShell = ({ user, children }: DashboardShellProps) => {
-  const vault = useVault();
-  const sidebar = useSidebar();
-  const commandPalette = useCommandPalette();
-  const [mobileOpen, setMobileOpen] = useState(false);
+	const vault = useVault();
+	const sidebar = useSidebar();
+	const commandPalette = useCommandPalette();
+	const [mobileOpen, setMobileOpen] = useState(false);
 
-  return (
-    <div className="flex h-screen bg-background">
-      {/* Desktop sidebar */}
-      <div className="hidden md:block">
-        <Sidebar user={user} collapsed={sidebar.collapsed} />
-      </div>
+	return (
+		<div className="flex h-screen bg-background">
+			{/* Desktop sidebar */}
+			<div className="hidden md:block">
+				<Sidebar collapsed={sidebar.collapsed} user={user} />
+			</div>
 
-      {/* Mobile sidebar sheet */}
-      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
-        <SheetContent side="left" className="p-0 w-55" showCloseButton={false}>
-          <Sidebar user={user} collapsed={false} />
-        </SheetContent>
-      </Sheet>
+			{/* Mobile sidebar sheet */}
+			<Sheet onOpenChange={setMobileOpen} open={mobileOpen}>
+				<SheetContent className="w-55 p-0" showCloseButton={false} side="left">
+					<Sidebar collapsed={false} user={user} />
+				</SheetContent>
+			</Sheet>
 
-      <div className="flex-1 flex flex-col min-w-0">
-        <Topbar
-          collapsed={sidebar.collapsed}
-          onToggle={() => {
-            if (typeof window !== "undefined" && window.innerWidth < 768) {
-              setMobileOpen((v) => !v);
-            } else {
-              sidebar.toggle();
-            }
-          }}
-          onSearchOpen={commandPalette.setOpen.bind(null, true)}
-        />
-        <main className="flex-1 overflow-auto">
-          {vault.status === "loading" && <LoadingSkeleton />}
-          {vault.status === "no-vault" && <NoVault />}
-          {vault.status === "error" && <VaultError message={vault.error} />}
-          {vault.status === "unlocked" && (
-            <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              transition={{ duration: 0.3 }}
-            >
-              {children}
-            </motion.div>
-          )}
-        </main>
-      </div>
-      {vault.status === "locked" && (
-        <VaultUnlock
-          onUnlock={vault.unlock}
-          error={vault.error}
-          attemptsRemaining={vault.attemptsRemaining}
-          lockedUntil={vault.lockedUntil}
-        />
-      )}
-      <CommandPalette
-        open={commandPalette.open}
-        onOpenChange={commandPalette.setOpen}
-        keys={vault.vaultData?.keys ?? []}
-      />
-    </div>
-  );
+			<div className="flex min-w-0 flex-1 flex-col">
+				<Topbar
+					collapsed={sidebar.collapsed}
+					onSearchOpen={commandPalette.setOpen.bind(null, true)}
+					onToggle={() => {
+						if (typeof window !== "undefined" && window.innerWidth < 768) {
+							setMobileOpen((v) => !v);
+						} else {
+							sidebar.toggle();
+						}
+					}}
+				/>
+				<main className="flex-1 overflow-auto">
+					{vault.status === "loading" && <LoadingSkeleton />}
+					{vault.status === "no-vault" && <NoVault />}
+					{vault.status === "error" && <VaultError message={vault.error} />}
+					{vault.status === "unlocked" && (
+						<motion.div animate={{ opacity: 1 }} initial={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+							{children}
+						</motion.div>
+					)}
+				</main>
+			</div>
+			{vault.status === "locked" && (
+				<VaultUnlock attemptsRemaining={vault.attemptsRemaining} error={vault.error} lockedUntil={vault.lockedUntil} onUnlock={vault.unlock} />
+			)}
+			<CommandPalette keys={vault.vaultData?.keys ?? []} onOpenChange={commandPalette.setOpen} open={commandPalette.open} />
+		</div>
+	);
 };
 
 const LoadingSkeleton = () => (
-  <div className="p-6 space-y-4">
-    <Skeleton className="h-8 w-48" />
-    <Skeleton className="h-4 w-full max-w-md" />
-    <Skeleton className="h-4 w-full max-w-sm" />
-    <div className="pt-4 space-y-3">
-      <Skeleton className="h-12 w-full" />
-      <Skeleton className="h-12 w-full" />
-      <Skeleton className="h-12 w-full" />
-    </div>
-  </div>
+	<div className="space-y-4 p-6">
+		<Skeleton className="h-8 w-48" />
+		<Skeleton className="h-4 w-full max-w-md" />
+		<Skeleton className="h-4 w-full max-w-sm" />
+		<div className="space-y-3 pt-4">
+			<Skeleton className="h-12 w-full" />
+			<Skeleton className="h-12 w-full" />
+			<Skeleton className="h-12 w-full" />
+		</div>
+	</div>
 );
 
 const NoVault = () => (
-  <div className="flex flex-col items-center justify-center h-full gap-3 text-center px-6">
-    <p className="text-sm font-mono text-foreground">No vault synced yet.</p>
-    <p className="text-xs font-mono text-muted-foreground">
-      Run <code className="text-primary">forged sync</code> from your CLI to push your vault to the cloud.
-    </p>
-  </div>
+	<div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
+		<p className="font-mono text-foreground text-sm">No vault synced yet.</p>
+		<p className="font-mono text-muted-foreground text-xs">
+			Run <code className="text-primary">forged sync</code> from your CLI to push your vault to the cloud.
+		</p>
+	</div>
 );
 
 const VaultError = ({ message }: { message: string | null }) => (
-  <div className="flex flex-col items-center justify-center h-full gap-4 text-center px-6">
-    <p className="text-sm font-mono text-destructive">
-      {message || "An error occurred loading your vault."}
-    </p>
-    <button
-      onClick={() => window.location.reload()}
-      className="text-xs font-mono text-muted-foreground hover:text-foreground transition-colors underline underline-offset-4"
-    >
-      Retry
-    </button>
-  </div>
+	<div className="flex h-full flex-col items-center justify-center gap-4 px-6 text-center">
+		<p className="font-mono text-destructive text-sm">{message || "An error occurred loading your vault."}</p>
+		<button
+			className="font-mono text-muted-foreground text-xs underline underline-offset-4 transition-colors hover:text-foreground"
+			onClick={() => window.location.reload()}
+		>
+			Retry
+		</button>
+	</div>
 );
