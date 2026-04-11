@@ -1,6 +1,7 @@
 import Link from "next/link";
 import type { Metadata } from "next";
 import { ScrollReveal } from "@/components/client";
+import { DocsTOC, type DocsTOCGroup } from "@/components/docs-toc";
 
 export const metadata: Metadata = {
   title: "Documentation - Forged",
@@ -62,17 +63,32 @@ function Section({ id, title, children }: { id: string; title: string; children:
   );
 }
 
-function TOCLink({ href, children }: { href: string; children: string }) {
-  return (
-    <a href={href} className="group flex items-center justify-between text-xs tracking-widest text-[#a1a1aa] hover:text-white transition-colors py-2 font-mono">
-      <span className="flex items-center gap-3 uppercase">
-        <span className="text-[#3f3f46] group-hover:text-[#ea580c] transition-colors">{">"}</span>
-        {children}
-      </span>
-      <span className="text-[#ea580c] opacity-0 group-hover:opacity-100 transition-opacity">●</span>
-    </a>
-  );
-}
+const tocGroups: DocsTOCGroup[] = [
+  {
+    title: "[ 01 ] // Getting Started",
+    items: [
+      { href: "#installation", label: "Installation" },
+      { href: "#setup", label: "Setup Workflow" },
+      { href: "#usage", label: "Execution" },
+    ],
+  },
+  {
+    title: "[ 02 ] // Core Concepts",
+    items: [
+      { href: "#key-management", label: "Entity Management" },
+      { href: "#host-matching", label: "Host Matching" },
+      { href: "#git-signing", label: "Git Signing" },
+    ],
+  },
+  {
+    title: "[ 03 ] // Advanced Setup",
+    items: [
+      { href: "#sync", label: "Cloud Sync" },
+      { href: "#configuration", label: "Configuration" },
+      { href: "#commands", label: "Commands Ref" },
+    ],
+  },
+];
 
 export default function DocsPage() {
   return (
@@ -107,42 +123,7 @@ export default function DocsPage() {
       </nav>
 
       <div className="relative z-10 w-full max-w-[1400px] mx-auto px-6 lg:px-16 pt-32 pb-32 flex flex-col lg:flex-row gap-20">
-        <aside className="hidden lg:block w-72 shrink-0 sticky top-32 self-start pt-2 pr-12 h-[calc(100vh-140px)] overflow-y-auto">
-          <div className="flex flex-col gap-12">
-            <div>
-              <div className="text-[10px] text-[#ea580c] uppercase tracking-[0.2em] font-bold mb-6 font-mono pb-2 border-b border-[#27272a]">
-                [ 01 ] // Getting Started
-              </div>
-              <nav className="flex flex-col space-y-1">
-                <TOCLink href="#installation">Installation</TOCLink>
-                <TOCLink href="#setup">Setup Workflow</TOCLink>
-                <TOCLink href="#usage">Execution</TOCLink>
-              </nav>
-            </div>
-
-            <div>
-              <div className="text-[10px] text-[#ea580c] uppercase tracking-[0.2em] font-bold mb-6 font-mono pb-2 border-b border-[#27272a]">
-                [ 02 ] // Core Concepts
-              </div>
-              <nav className="flex flex-col space-y-1">
-                <TOCLink href="#key-management">Entity Management</TOCLink>
-                <TOCLink href="#host-matching">Host Matching</TOCLink>
-                <TOCLink href="#git-signing">Git Signing</TOCLink>
-              </nav>
-            </div>
-
-            <div>
-              <div className="text-[10px] text-[#ea580c] uppercase tracking-[0.2em] font-bold mb-6 font-mono pb-2 border-b border-[#27272a]">
-                [ 03 ] // Advanced Setup
-              </div>
-              <nav className="flex flex-col space-y-1">
-                <TOCLink href="#sync">Cloud Sync</TOCLink>
-                <TOCLink href="#configuration">Configuration</TOCLink>
-                <TOCLink href="#commands">Commands Ref</TOCLink>
-              </nav>
-            </div>
-          </div>
-        </aside>
+        <DocsTOC groups={tocGroups} />
 
         <main className="min-w-0 flex-[1.5] max-w-4xl pt-2 pb-8">
           <ScrollReveal className="mb-12">
@@ -287,4 +268,3 @@ function Footer() {
     </footer>
   );
 }
-
