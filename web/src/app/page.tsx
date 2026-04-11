@@ -8,8 +8,14 @@ import {
   TERMINAL_CARDS,
 } from "@/components/client";
 import type { TerminalStep } from "@/components/client";
+import { getSession, parseJWTPayload } from "@/lib/auth";
 
-function Nav() {
+async function Nav() {
+  const token = await getSession();
+  const payload = token ? parseJWTPayload(token) : null;
+  const email = (payload?.email || payload?.sub || "") as string;
+  const initial = email ? email[0].toUpperCase() : "";
+
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-[#27272a] bg-black/80 backdrop-blur-xl">
       <div className="w-full px-6 lg:px-16 h-14 flex items-center justify-between">
@@ -35,7 +41,18 @@ function Nav() {
           <a href="https://github.com/itzzritik/forged" className="hidden md:block text-[12px] tracking-wider text-[#a1a1aa] hover:text-white transition-colors uppercase">
             GitHub
           </a>
-          <GlitchButton href="/login" className="px-5 h-8 text-[12px]">Sign in</GlitchButton>
+          {token ? (
+            <Link href="/dashboard" className="flex items-center gap-2 group">
+              <div className="w-7 h-7 bg-[#ea580c] flex items-center justify-center text-[11px] font-bold font-mono text-black">
+                {initial}
+              </div>
+              <span className="hidden sm:block text-[12px] tracking-wider text-[#a1a1aa] group-hover:text-white transition-colors uppercase font-mono">
+                {email}
+              </span>
+            </Link>
+          ) : (
+            <GlitchButton href="/login" className="px-5 h-8 text-[12px]">Sign in</GlitchButton>
+          )}
         </div>
       </div>
     </nav>
@@ -528,7 +545,8 @@ function EnterpriseSecurity() {
   );
 }
 
-function CTA() {
+async function CTA() {
+  const token = await getSession();
   return (
     <section className="relative py-36 bg-black border-t border-white/10 overflow-hidden text-center flex flex-col items-center justify-center">
       <div className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_center,_rgba(234,88,12,0.06)_0%,_transparent_60%)]" />
@@ -546,7 +564,7 @@ function CTA() {
           Install Forged. Never think about SSH key management again.
         </p>
         <div className="flex flex-col flex-wrap sm:flex-row items-center justify-center gap-6">
-          <GlitchButton href="/login" className="h-14 px-12 text-sm max-w-full">Create Account</GlitchButton>
+          <GlitchButton href={token ? "/dashboard" : "/login"} className="h-14 px-12 text-sm max-w-full">{token ? "Dashboard" : "Create Account"}</GlitchButton>
           <GlitchButton href="/docs" variant="secondary" className="h-14 px-12 text-sm max-w-full">Read Docs</GlitchButton>
         </div>
       </ScrollReveal>

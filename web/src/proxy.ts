@@ -1,20 +1,28 @@
 import { type NextRequest, NextResponse } from "next/server";
 import { COOKIE_NAME, decrypt, parseJWTPayload } from "@/lib/auth";
 
-export async function proxy(request: NextRequest) {
-  const cookie = request.cookies.get(COOKIE_NAME);
-  if (!cookie?.value) {
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
-
-  const token = await decrypt(cookie.value);
-  if (!token) {
-    return NextResponse.redirect(new URL("/login", request.url));
-  }
-
+function hasValidSession(token: string | null): boolean {
+  if (!token) return false;
   const payload = parseJWTPayload(token);
   const exp = payload?.exp;
-  if (typeof exp === "number" && exp * 1000 < Date.now()) {
+  return !(typeof exp === "number" && exp * 1000 < Date.now());
+}
+
+export async function proxy(request: NextRequest) {
+  const cookie = request.cookies.get(COOKIE_NAME);
+  const token = cookie?.value ? await decrypt(cookie.value) : null;
+  const isAuthenticated = hasValidSession(token);
+  const path = request.nextUrl.pathname;
+
+  // Redirect authenticated users away from /login (unless CLI flow with callback)
+  if (path === "/login" && isAuthenticated) {
+    if (!request.nextUrl.searchParams.has("callback")) {
+      return NextResponse.redirect(new URL("/dashboard", request.url));
+    }
+  }
+
+  // Protect /dashboard routes
+  if (path.startsWith("/dashboard") && !isAuthenticated) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
@@ -22,5 +30,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*"],
+  matcher: ["/dashboard/:path*", "/login"],
 };
