@@ -5,6 +5,7 @@ import {
   AnimatedTerminalGrid,
   AnimatedBigTerminal,
   TopologyVisualizer,
+  TERMINAL_CARDS,
 } from "@/components/client";
 import type { TerminalCardDef } from "@/components/client";
 
@@ -41,189 +42,6 @@ function Nav() {
   );
 }
 
-const TERMINAL_CARDS: TerminalCardDef[] = [
-  { title: "SETUP // BOOTSTRAP", status: "ok", brightness: 1.0, pace: "normal", lines: [
-    "> forged setup",
-    "[INIT] Creating vault at ~/.forged/",
-    "[INIT] Master password: ********",
-    "[SCAN] Found 5 keys in ~/.ssh/",
-    "[IMPORT] id_ed25519 ... ok",
-    "[IMPORT] id_rsa ... ok",
-    "[IMPORT] deploy_key ... ok",
-    "[DAEMON] Binding socket 0600",
-  ]},
-  { title: "AGENT // STATUS", status: "ok", brightness: 0.75, pace: "slow", lines: [
-    "> forged status",
-    "daemon:  running (pid 4821)",
-    "socket:  /tmp/forged.sock",
-    "keys:    4 loaded",
-    "hosts:   3 bound",
-    "uptime:  14h 23m 07s",
-    "memory:  2.1 MB resident",
-  ]},
-  { title: "KEYGEN // ED25519", status: "ok", brightness: 1.1, pace: "fast", lines: [
-    "> forged generate deploy-prod",
-    "[GEN] Algorithm: Ed25519",
-    "[GEN] Comment: deploy@prod",
-    "[VAULT] Encrypting with XChaCha20",
-    "[VAULT] Nonce: random 24-byte",
-    "[OK] Key deploy-prod created",
-    "[OK] Vault synced to disk",
-  ]},
-  { title: "SYNC // CLOUD", status: "ok", brightness: 1.1, pace: "fast", lines: [
-    "> forged sync",
-    "[AUTH] Token valid (exp 2026-04-11)",
-    "[HKDF] Deriving sync key...",
-    "[UPLOAD] Encrypting vault blob",
-    "[UPLOAD] 4.2 KB -> blob storage",
-    "[OK] Sync complete (312ms)",
-    "[OK] 4 keys propagated",
-  ]},
-  { title: "HOST // BINDING", status: "ok", brightness: 0.75, pace: "slow", lines: [
-    "> forged hosts",
-    "  NAME        PATTERNS",
-    "  github      *.github.com",
-    "  deploy      *.prod.company.com",
-    "  personal    *",
-    "> forged host github \"github.com\"",
-    "[OK] Pattern bound: github.com",
-  ]},
-  { title: "SSH // CONNECT", status: "ok", brightness: 1.1, pace: "fast", lines: [
-    "> ssh git@github.com",
-    "[AGENT] Request from ssh (pid 9102)",
-    "[MATCH] github.com -> github key",
-    "[AUTH] Ed25519 challenge-response",
-    "[OK] Authenticated as git",
-    "Hi user! You've successfully",
-    "authenticated with key: github",
-  ]},
-  { title: "MIGRATE // IMPORT", status: "warn", brightness: 1.0, pace: "normal", lines: [
-    "> forged migrate --from ssh",
-    "[SCAN] Reading ~/.ssh/ ...",
-    "[FOUND] id_ed25519 (4096 bit)",
-    "[FOUND] id_rsa (2048 bit)",
-    "[WARN] id_rsa uses weak RSA-2048",
-    "[IMPORT] 2 keys ingested",
-    "[VAULT] Re-encrypted with Argon2id",
-  ]},
-  { title: "GIT // SIGNING", status: "ok", brightness: 0.75, pace: "normal", lines: [
-    "> git commit -m \"fix auth flow\"",
-    "[SIGN] Request from git (pid 3401)",
-    "[MATCH] git -> signing key",
-    "[SIGN] SSH signature created",
-    "[OK] Commit signed: a3f2b1c",
-    "[OK] Verified: ssh-ed25519",
-    "1 file changed, 12 insertions(+)",
-  ]},
-  { title: "VAULT // ENCRYPT", status: "ok", brightness: 0.75, pace: "slow", lines: [
-    "> forged lock",
-    "[LOCK] Zeroing memory pages...",
-    "[LOCK] mlock() released 4 pages",
-    "[LOCK] Agent socket suspended",
-    "[OK] Vault locked, 0 keys in mem",
-    "> forged unlock",
-    "Master password: ********",
-  ]},
-  { title: "DAEMON // LOGS", status: "ok", brightness: 1.0, pace: "fast", lines: [
-    "> forged logs --tail",
-    "14:23:07 [INFO] github.com -> ok",
-    "14:23:08 [INFO] key: github",
-    "14:23:08 [INFO] auth: success",
-    "14:23:09 [INFO] session: active",
-    "14:25:11 [INFO] prod.co -> ok",
-    "14:25:12 [INFO] key: deploy",
-  ]},
-  { title: "CONFIG // TOML", status: "ok", brightness: 1.1, pace: "slow", lines: [
-    "[[hosts]]",
-    "name = \"GitHub\"",
-    "match = [\"github.com\"]",
-    "key = \"github\"",
-    "git_signing = true",
-    "",
-    "[[hosts]]",
-  ]},
-  { title: "DOCTOR // CHECK", status: "ok", brightness: 1.0, pace: "normal", lines: [
-    "> forged doctor",
-    "[CHECK] Vault integrity ... ok",
-    "[CHECK] Daemon running ... ok",
-    "[CHECK] Socket perms 0600 ... ok",
-    "[CHECK] SSH config ... ok",
-    "[CHECK] Argon2id params ... ok",
-    "[OK] All 5 checks passed",
-  ]},
-  { title: "LIST // KEYS", status: "ok", brightness: 0.75, pace: "slow", lines: [
-    "> forged list",
-    "  NAME       TYPE      CREATED",
-    "  github     ed25519   2025-03-14",
-    "  deploy     ed25519   2025-06-01",
-    "  personal   rsa-4096  2024-11-22",
-    "  signing    ed25519   2025-01-09",
-    "4 keys in vault",
-  ]},
-  { title: "EXPORT // KEY", status: "ok", brightness: 1.1, pace: "normal", lines: [
-    "> forged export github --pub",
-    "ssh-ed25519 AAAAC3NzaC1lZDI1",
-    "NTE5AAAAIG8f3kR7vKJzMnL+hW2",
-    "Kf9mN3pQ5xR1tY6uI0oP8aS2dF4",
-    "gH7jK1lZ3xC5vB9nM2qW8eR6tY0",
-    "uI4oP7aS1dF3gH6jK0 github@f",
-    "[OK] Public key written to stdout",
-  ]},
-  { title: "BENCHMARK // ARGON", status: "warn", brightness: 1.0, pace: "normal", lines: [
-    "> forged benchmark",
-    "[BENCH] Argon2id 64MB 3 iter",
-    "[BENCH] Derive: 287ms avg",
-    "[BENCH] Encrypt: 0.4ms avg",
-    "[BENCH] Decrypt: 0.3ms avg",
-    "[BENCH] Total: 288ms per unlock",
-    "[OK] Within security threshold",
-  ]},
-  { title: "SYNC // STATUS", status: "ok", brightness: 1.1, pace: "fast", lines: [
-    "> forged sync status",
-    "account:  user@forged.dev",
-    "last_sync: 2m ago",
-    "blob_size: 4.2 KB",
-    "devices:   3 linked",
-    "conflicts: 0",
-    "[OK] Vault in sync",
-  ]},
-  { title: "SECURITY // AUDIT", status: "error", brightness: 1.0, pace: "normal", lines: [
-    "> forged audit",
-    "[AUDIT] Checking key strength...",
-    "[OK] github: ed25519 (strong)",
-    "[OK] deploy: ed25519 (strong)",
-    "[WARN] personal: rsa-2048 (weak)",
-    "[OK] signing: ed25519 (strong)",
-    "[WARN] 1 key below threshold",
-  ]},
-  { title: "RENAME // KEY", status: "ok", brightness: 0.75, pace: "slow", lines: [
-    "> forged rename personal backup",
-    "[VAULT] Updating identifier...",
-    "[VAULT] Re-encrypting entry...",
-    "[OK] personal -> backup",
-    "> forged list --json",
-    "{\"keys\":[{\"name\":\"backup\",",
-    "\"type\":\"rsa\",\"bits\":4096}]}",
-  ]},
-  { title: "UNHOST // UNBIND", status: "ok", brightness: 1.1, pace: "fast", lines: [
-    "> forged unhost deploy \"10.0.*\"",
-    "[ROUTE] Removing pattern...",
-    "[OK] Unbound: 10.0.*",
-    "> forged hosts",
-    "  NAME     PATTERNS",
-    "  github   *.github.com",
-    "  deploy   *.prod.company.com",
-  ]},
-  { title: "DAEMON // START", status: "ok", brightness: 1.0, pace: "fast", lines: [
-    "> forged start --background",
-    "[DAEMON] Forking to background...",
-    "[DAEMON] PID 4821 registered",
-    "[SOCKET] Listening on agent.sock",
-    "[SOCKET] Permissions: 0600",
-    "[VAULT] 4 keys loaded to memory",
-    "[OK] Agent ready, accepting conn",
-  ]},
-];
 
 const INDUSTRIAL_TERMINAL_SEQUENCE: TerminalCardDef[] = [
   { 
@@ -620,28 +438,27 @@ function EnterpriseSecurity() {
   ];
 
   return (
-    <section className="relative py-24 lg:py-40 bg-black border-t border-white/10 overflow-hidden">
+    <section className="relative py-36 bg-black border-t border-[#27272a] overflow-hidden">
       {/* Brutalist Grid Background overlay */}
       <div className="absolute inset-0 opacity-[0.02]" style={{ backgroundImage: "linear-gradient(#fff 1px, transparent 1px), linear-gradient(90deg, #fff 1px, transparent 1px)", backgroundSize: "64px 64px" }} />
 
       <div className="relative z-10 w-full max-w-[1400px] mx-auto px-6 lg:px-16">
         
         {/* Deep industrial header */}
-        <ScrollReveal className="flex flex-col xl:flex-row xl:items-end justify-between gap-10 mb-24 border-b border-[#27272a] pb-12">
-          <div>
-             <div className="flex items-center gap-2.5 mb-6">
-               <span className="h-2 w-2 bg-[#ea580c] animate-pulse shadow-[0_0_10px_#ea580c]" />
-               <span className="text-[10px] font-mono tracking-[0.2em] text-[#ea580c] font-bold uppercase">Enterprise Security</span>
-             </div>
-             <h2 className="text-[clamp(3rem,8vw,8rem)] font-bold tracking-tighter text-white leading-[0.9]">
-                Zero<br/>Knowledge.
-             </h2>
+        <ScrollReveal className="mb-4">
+          <div className="flex items-center gap-2.5">
+            <span className="h-2 w-2 bg-[#ea580c]" />
+            <span className="text-[10px] font-mono tracking-[0.2em] text-[#a1a1aa] uppercase">Enterprise Security</span>
           </div>
-          <div className="max-w-xl xl:pl-10 xl:border-l xl:border-[#27272a] pb-2">
-             <p className="text-base sm:text-lg text-[#a1a1aa] leading-relaxed">
-                We believe security through obscurity is no security at all. Forged is built entirely on open, mathematically auditable cryptographic standards. Your private keys never touch a disk unencrypted, and never leave your machine physically.
-             </p>
-          </div>
+        </ScrollReveal>
+
+        <ScrollReveal>
+          <h2 className="text-4xl sm:text-5xl lg:text-7xl xl:text-8xl font-bold tracking-tighter leading-[0.95] text-white text-pretty mb-6">
+            Zero Knowledge.
+          </h2>
+          <p className="text-base lg:text-lg text-[#a1a1aa] max-w-2xl leading-relaxed mb-16">
+            We believe security through obscurity is no security at all. Forged is built entirely on open, mathematically auditable cryptographic standards. Your private keys never touch a disk unencrypted, and never leave your machine physically.
+          </p>
         </ScrollReveal>
 
         {/* The Specs Grid (Data-dense, purely typographical, massive impact) */}
