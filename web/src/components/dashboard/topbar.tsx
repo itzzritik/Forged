@@ -102,8 +102,8 @@ export const Topbar = ({ collapsed, onToggle, onSearchOpen }: TopbarProps) => {
           )}
         >
           <SearchIcon />
-          <span>Search...</span>
-          <kbd className="ml-1 px-1 py-0.5 text-[10px] border border-sidebar-border bg-sidebar font-mono leading-none">
+          <span className="hidden sm:inline">Search...</span>
+          <kbd className="ml-1 px-1 py-0.5 text-[10px] border border-sidebar-border bg-sidebar font-mono leading-none hidden sm:inline">
             ⌘K
           </kbd>
         </div>

@@ -1,9 +1,12 @@
 "use client";
 
+import { useState } from "react";
+import { motion } from "framer-motion";
 import { Sidebar } from "@/components/dashboard/sidebar";
 import { Topbar } from "@/components/dashboard/topbar";
 import { VaultUnlock } from "@/components/dashboard/vault-unlock";
 import { CommandPalette } from "@/components/dashboard/command-palette";
+import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useVault } from "@/hooks/use-vault";
 import { useSidebar } from "@/hooks/use-sidebar";
@@ -18,21 +21,47 @@ export const DashboardShell = ({ user, children }: DashboardShellProps) => {
   const vault = useVault();
   const sidebar = useSidebar();
   const commandPalette = useCommandPalette();
+  const [mobileOpen, setMobileOpen] = useState(false);
 
   return (
     <div className="flex h-screen bg-background">
-      <Sidebar user={user} collapsed={sidebar.collapsed} />
+      {/* Desktop sidebar */}
+      <div className="hidden md:block">
+        <Sidebar user={user} collapsed={sidebar.collapsed} />
+      </div>
+
+      {/* Mobile sidebar sheet */}
+      <Sheet open={mobileOpen} onOpenChange={setMobileOpen}>
+        <SheetContent side="left" className="p-0 w-55" showCloseButton={false}>
+          <Sidebar user={user} collapsed={false} />
+        </SheetContent>
+      </Sheet>
+
       <div className="flex-1 flex flex-col min-w-0">
         <Topbar
           collapsed={sidebar.collapsed}
-          onToggle={sidebar.toggle}
+          onToggle={() => {
+            if (typeof window !== "undefined" && window.innerWidth < 768) {
+              setMobileOpen((v) => !v);
+            } else {
+              sidebar.toggle();
+            }
+          }}
           onSearchOpen={commandPalette.setOpen.bind(null, true)}
         />
         <main className="flex-1 overflow-auto">
           {vault.status === "loading" && <LoadingSkeleton />}
           {vault.status === "no-vault" && <NoVault />}
           {vault.status === "error" && <VaultError message={vault.error} />}
-          {vault.status === "unlocked" && children}
+          {vault.status === "unlocked" && (
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              transition={{ duration: 0.3 }}
+            >
+              {children}
+            </motion.div>
+          )}
         </main>
       </div>
       {vault.status === "locked" && (

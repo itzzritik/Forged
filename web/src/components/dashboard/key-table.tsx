@@ -55,9 +55,9 @@ export const KeyTable = ({ keys }: KeyTableProps) => {
         <TableHeader>
           <TableRow>
             <TableHead>Name</TableHead>
-            <TableHead>Fingerprint</TableHead>
+            <TableHead className="hidden sm:table-cell">Fingerprint</TableHead>
             <TableHead>Hosts</TableHead>
-            <TableHead>Signing</TableHead>
+            <TableHead className="hidden sm:table-cell">Signing</TableHead>
             <TableHead>Actions</TableHead>
           </TableRow>
         </TableHeader>
@@ -68,7 +68,7 @@ export const KeyTable = ({ keys }: KeyTableProps) => {
                 <span className="font-medium text-foreground">{key.name}</span>
                 <div className="text-xs text-muted-foreground">{key.type}</div>
               </TableCell>
-              <TableCell>
+              <TableCell className="hidden sm:table-cell">
                 <Tooltip>
                   <TooltipTrigger render={<span />} className="font-mono text-sm text-muted-foreground block max-w-[180px] truncate cursor-default">
                     {key.fingerprint}
@@ -94,7 +94,7 @@ export const KeyTable = ({ keys }: KeyTableProps) => {
                   )}
                 </div>
               </TableCell>
-              <TableCell>
+              <TableCell className="hidden sm:table-cell">
                 {key.gitSigning ? (
                   <span className="flex items-center gap-1.5 text-sm text-green-500">
                     <span className="size-1.5 rounded-full bg-green-500 shrink-0" />

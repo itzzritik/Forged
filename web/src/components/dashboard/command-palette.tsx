@@ -90,7 +90,7 @@ export const CommandPalette = ({ open, onOpenChange, keys }: CommandPaletteProps
   };
 
   return (
-    <CommandDialog open={open} onOpenChange={onOpenChange}>
+    <CommandDialog open={open} onOpenChange={onOpenChange} className="max-w-[calc(100vw-2rem)] sm:max-w-lg">
       <CommandInput placeholder="Search keys, actions, navigation..." />
       <CommandList>
         <CommandEmpty>No results found.</CommandEmpty>
@@ -108,7 +108,7 @@ export const CommandPalette = ({ open, onOpenChange, keys }: CommandPaletteProps
                   >
                     <KeyIcon />
                     <span className="flex-1 truncate">{key.name}</span>
-                    <span className="text-xs text-muted-foreground truncate max-w-[200px]">
+                    <span className="text-xs text-muted-foreground truncate max-w-50">
                       {key.type}{hosts ? ` · ${hosts}` : ""}
                     </span>
                     <CommandShortcut>Copy</CommandShortcut>
