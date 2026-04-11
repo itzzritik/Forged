@@ -152,7 +152,8 @@ export const useVault = (): UseVaultReturn => {
       setError(null);
       setAttemptsRemaining(null);
       setLockedUntil(null);
-      setStatus("loading");
+      // Keep status as "locked" -- modal stays visible during unlock attempt.
+      // Modal handles its own loading state internally.
 
       try {
         // phase 1: derive hash in worker
@@ -209,8 +210,15 @@ export const useVault = (): UseVaultReturn => {
           router.push("/login");
           return;
         }
+        const msg = err instanceof Error ? err.message : "Unknown error";
+        // Wrong password or decryption failure -> back to locked, not error
+        if (msg === "wrong password" || msg.includes("decrypt") || msg.includes("Derivation")) {
+          setError("Wrong password");
+          setStatus("locked");
+          return;
+        }
         setStatus("error");
-        setError(err instanceof Error ? err.message : "Unknown error");
+        setError(msg);
       }
     },
     [kdfParams, router],

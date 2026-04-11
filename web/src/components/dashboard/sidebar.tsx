@@ -107,13 +107,17 @@ export const Sidebar = ({ collapsed, user }: SidebarProps) => {
           </div>
         )}
         {!collapsed && (
-          <a
-            href="/api/auth/logout"
-            className="text-muted-foreground hover:text-sidebar-foreground transition-colors shrink-0"
+          <button
+            onClick={async () => {
+              const { clearSyncKey } = await import("@/lib/vault-store");
+              await clearSyncKey();
+              window.location.href = "/api/auth/logout";
+            }}
+            className="text-muted-foreground hover:text-sidebar-foreground transition-colors shrink-0 cursor-pointer"
             aria-label="Sign out"
           >
             <LogOutIcon />
-          </a>
+          </button>
         )}
       </div>
     </aside>
