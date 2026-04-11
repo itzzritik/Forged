@@ -13,8 +13,10 @@ import { getSession, parseJWTPayload } from "@/lib/auth";
 async function Nav() {
   const token = await getSession();
   const payload = token ? parseJWTPayload(token) : null;
+  const name = (payload?.name || "") as string;
   const email = (payload?.email || payload?.sub || "") as string;
-  const initial = email ? email[0].toUpperCase() : "";
+  const displayName = name || email;
+  const initial = displayName ? displayName[0].toUpperCase() : "";
 
   return (
     <nav className="fixed top-0 left-0 right-0 z-50 border-b border-[#27272a] bg-black/80 backdrop-blur-xl">
@@ -47,7 +49,7 @@ async function Nav() {
                 {initial}
               </div>
               <span className="hidden sm:block text-[12px] tracking-wider text-[#a1a1aa] group-hover:text-white transition-colors uppercase font-mono">
-                {email}
+                {displayName}
               </span>
             </Link>
           ) : (

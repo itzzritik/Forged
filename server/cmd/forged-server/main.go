@@ -37,6 +37,7 @@ func main() {
 		DB:      database,
 		Secret:  jwtSecret,
 		DevMode: os.Getenv("REDIRECT_BASE_URL") == "",
+		Logger:  logger,
 		OAuth: auth.OAuthConfig{
 			GoogleClientID:     envDefault("GOOGLE_CLIENT_ID", ""),
 			GoogleClientSecret: envDefault("GOOGLE_CLIENT_SECRET", ""),
@@ -46,6 +47,7 @@ func main() {
 			WebAppURL:          envDefault("WEBAPP_URL", "https://forged.ritik.me"),
 		},
 	}
+	srv.StartSessionCleanup()
 
 	handler := middleware.CORS(middleware.Logger(logger, srv.Routes()))
 

@@ -2,11 +2,14 @@ package db
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
+
+var ErrSessionNotFound = errors.New("auth session not found or expired")
 
 type DB struct {
 	Pool *pgxpool.Pool

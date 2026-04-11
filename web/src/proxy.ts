@@ -16,13 +16,13 @@ export async function proxy(request: NextRequest) {
 
   // Redirect authenticated users away from /login (unless CLI flow with callback)
   if (path === "/login" && isAuthenticated) {
-    if (!request.nextUrl.searchParams.has("callback")) {
+    if (!request.nextUrl.searchParams.has("code")) {
       return NextResponse.redirect(new URL("/dashboard", request.url));
     }
   }
 
   // Protect /dashboard routes
-  if (path.startsWith("/dashboard") && !isAuthenticated) {
+  if ((path.startsWith("/dashboard") || path === "/auth/success") && !isAuthenticated) {
     return NextResponse.redirect(new URL("/login", request.url));
   }
 
@@ -30,5 +30,5 @@ export async function proxy(request: NextRequest) {
 }
 
 export const config = {
-  matcher: ["/dashboard/:path*", "/login"],
+  matcher: ["/dashboard/:path*", "/login", "/auth/success"],
 };

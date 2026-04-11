@@ -3,6 +3,7 @@ import { getSession, parseJWTPayload } from "@/lib/auth";
 export default async function DashboardPage() {
   const token = await getSession();
   const payload = token ? parseJWTPayload(token) : null;
+  const name = (payload?.name || "") as string;
   const email = (payload?.email || payload?.sub || "") as string;
 
   return (
@@ -10,7 +11,7 @@ export default async function DashboardPage() {
       <div className="w-full max-w-md space-y-8">
         <div className="text-center space-y-2">
           <h1 className="text-2xl font-bold tracking-tight font-mono">
-            Dashboard
+            {name || "Dashboard"}
           </h1>
           {email && (
             <p className="text-sm text-[#a1a1aa] font-mono">{email}</p>

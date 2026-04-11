@@ -1,14 +1,17 @@
 package cmd
 
 import (
+	"bytes"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -133,127 +136,78 @@ type oauthResult struct {
 }
 
 func oauthLogin(server string) (oauthResult, error) {
-	resultCh := make(chan oauthResult, 1)
-	errCh := make(chan error, 1)
-
-	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	code, err := randomHex(16)
 	if err != nil {
-		return oauthResult{}, fmt.Errorf("starting local server: %w", err)
+		return oauthResult{}, fmt.Errorf("generating code: %w", err)
 	}
-	port := listener.Addr().(*net.TCPAddr).Port
+	verification, err := randomHex(2)
+	if err != nil {
+		return oauthResult{}, fmt.Errorf("generating verification: %w", err)
+	}
+	verificationDisplay := fmt.Sprintf("FORGE-%s", strings.ToUpper(verification))
 
-	mux := http.NewServeMux()
-	mux.HandleFunc("/callback", func(w http.ResponseWriter, r *http.Request) {
-		token := r.URL.Query().Get("token")
-		userID := r.URL.Query().Get("user_id")
-		email := r.URL.Query().Get("email")
-		errMsg := r.URL.Query().Get("error")
+	body, _ := json.Marshal(map[string]string{"code": code, "verification": verification})
+	resp, err := http.Post(server+"/api/v1/auth/sessions", "application/json", bytes.NewReader(body))
+	if err != nil {
+		return oauthResult{}, fmt.Errorf("could not reach server: %w", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusCreated {
+		return oauthResult{}, fmt.Errorf("could not create auth session (status %d)", resp.StatusCode)
+	}
 
-		w.Header().Set("Content-Type", "text/html")
-
-		if errMsg != "" {
-			fmt.Fprintf(w, callbackPage("Authentication Failed", errMsg, true))
-			errCh <- fmt.Errorf("auth failed: %s", errMsg)
-			return
-		}
-
-		fmt.Fprintf(w, callbackPage("Welcome to Forged", email, false))
-		resultCh <- oauthResult{Token: token, UserID: userID, Email: email}
-	})
-
-	srv := &http.Server{Handler: mux}
-	go srv.Serve(listener)
-	defer srv.Close()
-
-	authURL := fmt.Sprintf(ipc.DefaultWebApp + "/login?callback=http://localhost:%d/callback", port)
+	authURL := ipc.DefaultWebApp + "/login?code=" + code
 
 	fmt.Println("Opening browser to login...")
+	fmt.Printf("Verification code: %s\n", verificationDisplay)
 	openBrowser(authURL)
 	fmt.Printf("If browser didn't open, visit:\n  %s\n\n", authURL)
 	fmt.Println("Waiting for authentication...")
 
-	select {
-	case result := <-resultCh:
-		return result, nil
-	case err := <-errCh:
-		return oauthResult{}, err
-	case <-time.After(5 * time.Minute):
-		return oauthResult{}, fmt.Errorf("login timed out after 5 minutes")
+	pollURL := server + "/api/v1/auth/sessions/" + code
+	deadline := time.Now().Add(5 * time.Minute)
+	interval := 2 * time.Second
+
+	for time.Now().Before(deadline) {
+		time.Sleep(interval)
+
+		resp, err := http.Get(pollURL)
+		if err != nil {
+			interval = min(interval*2, 10*time.Second)
+			continue
+		}
+
+		var result struct {
+			Status string `json:"status"`
+			Token  string `json:"token"`
+			UserID string `json:"user_id"`
+			Email  string `json:"email"`
+			Error  string `json:"error"`
+		}
+		json.NewDecoder(resp.Body).Decode(&result)
+		resp.Body.Close()
+
+		interval = 2 * time.Second
+
+		switch result.Status {
+		case "complete":
+			return oauthResult{Token: result.Token, UserID: result.UserID, Email: result.Email}, nil
+		case "error":
+			return oauthResult{}, fmt.Errorf("authentication failed: %s", result.Error)
+		case "pending":
+			continue
+		}
 	}
+
+	return oauthResult{}, fmt.Errorf("login timed out after 5 minutes")
 }
 
-func callbackPage(title, detail string, isError bool) string {
-	accent := "#ea580c"
-	accentGlow := "rgba(234,88,12,0.15)"
-	dotColor := "#10b981"
-	icon := `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`
-	headerLabel := "Session // Authenticated"
-	headerRight := "CLI"
-	note := "You can close this tab and return to your terminal."
-
-	if isError {
-		accent = "#ef4444"
-		accentGlow = "rgba(239,68,68,0.15)"
-		dotColor = "#ef4444"
-		icon = `<svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="white" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`
-		headerLabel = "Session // Error"
-		headerRight = "Failed"
-		note = `Try running <span style="background:#000;border:1px solid #27272a;padding:3px 10px;font-size:11px;color:#ea580c">forged login</span> again.`
+func randomHex(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
 	}
-
-	return fmt.Sprintf(`<!DOCTYPE html>
-<html><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>%s - Forged</title>
-<style>
-*{margin:0;padding:0;box-sizing:border-box}
-body{background:#000;color:#e4e4e7;font-family:ui-monospace,SFMono-Regular,Menlo,monospace;min-height:100vh;display:flex;flex-direction:column;align-items:center;justify-content:center;padding:24px}
-.wrap{width:100%%;max-width:440px}
-.glow{position:relative;display:flex;justify-content:center;margin-bottom:32px}
-.glow::before{content:'';position:absolute;inset:0;background:%s;filter:blur(24px);transform:scale(1.5)}
-.icon-box{position:relative;width:56px;height:56px;background:#000;border:1px solid #27272a;display:flex;align-items:center;justify-content:center}
-h1{font-size:1.75rem;font-weight:700;letter-spacing:-0.03em;text-align:center;margin-bottom:8px}
-.sub{text-align:center;font-size:13px;color:#a1a1aa;letter-spacing:0.04em;margin-bottom:32px}
-.card{border:1px solid #27272a;background:#050505;overflow:hidden}
-.card-header{border-bottom:1px solid #27272a;background:#030303;padding:0 24px;height:40px;display:flex;align-items:center;justify-content:space-between}
-.card-header .left{display:flex;align-items:center;gap:12px}
-.card-header .dot{width:6px;height:6px;border-radius:50%%;background:%s;box-shadow:0 0 8px %s;animation:pulse 2s infinite}
-.card-header .label{font-size:10px;letter-spacing:0.15em;color:#a1a1aa;text-transform:uppercase}
-.card-header .right{font-size:9px;letter-spacing:0.15em;color:#3f3f46;text-transform:uppercase}
-@keyframes pulse{0%%,100%%{opacity:1}50%%{opacity:0.4}}
-.card-body{padding:32px 24px;text-align:center}
-.email{color:%s;font-size:14px;font-weight:600;margin-bottom:24px}
-.sep{display:flex;align-items:center;gap:16px;margin-bottom:24px}
-.sep .line{flex:1;height:1px;background:#27272a}
-.sep .text{font-size:9px;color:#3f3f46;text-transform:uppercase;letter-spacing:0.15em}
-.note{color:#3f3f46;font-size:11px;line-height:1.8}
-.badges{display:flex;align-items:center;justify-content:center;gap:24px;margin-top:32px}
-.badges span{font-size:9px;letter-spacing:0.15em;color:#27272a;text-transform:uppercase}
-.badges .dot{width:4px;height:4px;background:#27272a}
-</style></head>
-<body>
-<div class="wrap">
-<div class="glow"><div class="icon-box">%s</div></div>
-<h1>%s</h1>
-<p class="sub">%s</p>
-<div class="card">
-<div class="card-header">
-<div class="left"><span class="dot"></span><span class="label">%s</span></div>
-<span class="right">%s</span>
-</div>
-<div class="card-body">
-<p class="email">%s</p>
-<div class="sep"><div class="line"></div><span class="text">info</span><div class="line"></div></div>
-<p class="note">%s</p>
-</div>
-</div>
-<div class="badges">
-<span>E2E Encrypted</span><span class="dot"></span>
-<span>Zero Knowledge</span><span class="dot"></span>
-<span>Open Source</span>
-</div>
-</div>
-</body></html>`,
-		title, accentGlow, dotColor, dotColor, accent, icon, title, detail, headerLabel, headerRight, detail, note)
+	return hex.EncodeToString(b), nil
 }
 
 func openBrowser(url string) {

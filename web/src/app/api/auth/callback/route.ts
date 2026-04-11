@@ -4,7 +4,7 @@ import { setSessionCookie } from "@/lib/auth";
 export async function GET(request: NextRequest) {
   const params = request.nextUrl.searchParams;
   const token = params.get("token");
-  const callback = params.get("callback");
+  const code = params.get("code");
 
   if (!token) {
     return NextResponse.redirect(new URL("/login", request.url));
@@ -12,18 +12,8 @@ export async function GET(request: NextRequest) {
 
   await setSessionCookie(token);
 
-  if (callback) {
-    try {
-      const target = new URL(callback);
-      target.searchParams.set("token", token);
-      const userId = params.get("user_id");
-      const email = params.get("email");
-      if (userId) target.searchParams.set("user_id", userId);
-      if (email) target.searchParams.set("email", email);
-      return NextResponse.redirect(target.toString());
-    } catch {
-      return NextResponse.redirect(new URL("/dashboard", request.url));
-    }
+  if (code) {
+    return NextResponse.redirect(new URL("/auth/success", request.url));
   }
 
   return NextResponse.redirect(new URL("/dashboard", request.url));

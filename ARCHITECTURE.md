@@ -918,31 +918,34 @@ Everything users see in a browser.
 
 All login paths route through `forged.ritik.me/api/auth/callback` to set an encrypted browser session cookie (JWE). The JWT is encrypted with `AUTH_SECRET` (separate from Go server's `JWT_SECRET`) before storing in an HttpOnly/Secure/SameSite=Lax cookie named `forged_session`.
 
-**CLI Login** (`forged login`):
+**CLI Login** (`forged login`) -- polling-based device flow, no localhost server:
 ```
-  1. CLI starts localhost:RANDOM/callback listener
-  2. Opens browser to forged.ritik.me/login?callback=http://localhost:RANDOM/callback
-  3. User sees login page with Google/GitHub buttons
-  4. User clicks GitHub
-  5. Next.js redirects to forged-api.ritik.me/api/v1/auth/github?callback=...
-  6. Go server redirects to GitHub OAuth
-  7. User authorizes on GitHub
-  8. GitHub redirects back to Go server with code
-  9. Go server exchanges code for user info, creates/upserts user, generates JWT
-  10. Go server redirects to forged.ritik.me/api/auth/callback?token=...&email=...&callback=...
-  11. Next.js encrypts JWT, sets browser cookie, redirects to localhost:RANDOM/callback?token=...&email=...
-  12. CLI receives token, saves to credentials.json
-  13. Browser session persisted for future /dashboard visits
+  1. CLI generates session code (128-bit) + verification code (FORGE-XXXX)
+  2. CLI calls POST /api/v1/auth/sessions to create pending session
+  3. CLI prints verification code and opens browser to forged.ritik.me/login?code=CODE
+  4. Login page fetches and displays verification code for anti-phishing confirmation
+  5. User confirms code matches terminal, clicks GitHub
+  6. Redirects to forged-api.ritik.me/api/v1/auth/github?code=CODE
+  7. Go server redirects to GitHub OAuth (session code carried in state param)
+  8. User authorizes on GitHub
+  9. GitHub redirects back to Go server with authorization code + state
+  10. Go server exchanges code, creates/upserts user, generates JWT (with email + name claims)
+  11. Go server stores token in auth_sessions DB row, marks complete
+  12. Go server redirects to forged.ritik.me/api/auth/callback?token=...&email=...&code=CODE
+  13. Next.js encrypts JWT, sets browser cookie, redirects to /auth/success
+  14. Browser shows "CLI Authenticated" page on forged.ritik.me
+  15. CLI poll picks up token from GET /api/v1/auth/sessions/CODE (independent of browser)
+  16. CLI saves to credentials.json, prints success
 ```
 
-**Direct Browser Login** (user visits `/login` directly):
+**Direct Browser Login** (user visits `/login` directly, unchanged):
 ```
   1. User clicks "Sign in" on landing page, navigates to /login
-  2. User clicks GitHub
-  3. Next.js redirects to forged-api.ritik.me/api/v1/auth/github (no callback)
+  2. User clicks GitHub (no code param)
+  3. Next.js redirects to forged-api.ritik.me/api/v1/auth/github (no code)
   4. Go server redirects to GitHub OAuth
   5. User authorizes on GitHub
-  6. GitHub redirects back to Go server with code
+  6. GitHub redirects back to Go server with authorization code
   7. Go server exchanges code for user info, creates/upserts user, generates JWT
   8. Go server redirects to forged.ritik.me/api/auth/callback?token=...&email=...
   9. Next.js encrypts JWT, sets browser cookie, redirects to /dashboard
@@ -994,7 +997,20 @@ CREATE TABLE audit_log (
     ip_address INET,
     created_at TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE TABLE auth_sessions (
+    code TEXT PRIMARY KEY,
+    verification TEXT NOT NULL,
+    token TEXT,
+    user_id TEXT,
+    email TEXT,
+    error TEXT,
+    created_at TIMESTAMPTZ DEFAULT now(),
+    completed_at TIMESTAMPTZ
+);
 ```
+
+Auth sessions are ephemeral (10-minute TTL, cleaned by background goroutine). Used for the CLI polling auth flow -- CLI creates a session, user authenticates in browser, CLI polls until complete. Verification codes prevent session fixation attacks.
 
 ---
 

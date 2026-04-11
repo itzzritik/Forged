@@ -1,8 +1,11 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
+	"log/slog"
 	"net/http"
+	"time"
 
 	"github.com/itzzritik/forged/server/internal/auth"
 	"github.com/itzzritik/forged/server/internal/db"
@@ -14,6 +17,7 @@ type Server struct {
 	Secret  string
 	OAuth   auth.OAuthConfig
 	DevMode bool
+	Logger  *slog.Logger
 }
 
 func (s *Server) Routes() http.Handler {
@@ -38,6 +42,10 @@ func (s *Server) Routes() http.Handler {
 	authed.HandleFunc("GET /api/v1/account", s.handleGetAccount)
 	authed.HandleFunc("POST /api/v1/account/delete", s.handleDeleteAccount)
 
+	mux.HandleFunc("POST /api/v1/auth/sessions", middleware.RateLimit(10, s.handleCreateSession))
+	mux.HandleFunc("GET /api/v1/auth/sessions/{code}", middleware.RateLimit(30, s.handlePollSession))
+	mux.HandleFunc("GET /api/v1/auth/sessions/{code}/verification", middleware.RateLimit(30, s.handleGetVerification))
+
 	mux.Handle("/api/v1/", middleware.Auth(s.Secret, authed))
 
 	mux.HandleFunc("GET /health", func(w http.ResponseWriter, r *http.Request) {
@@ -45,6 +53,20 @@ func (s *Server) Routes() http.Handler {
 	})
 
 	return mux
+}
+
+func (s *Server) StartSessionCleanup() {
+	go func() {
+		for {
+			time.Sleep(5 * time.Minute)
+			count, err := s.DB.CleanupAuthSessions(context.Background())
+			if err != nil && s.Logger != nil {
+				s.Logger.Error("auth session cleanup failed", "error", err)
+			} else if count > 0 && s.Logger != nil {
+				s.Logger.Debug("cleaned auth sessions", "count", count)
+			}
+		}
+	}()
 }
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

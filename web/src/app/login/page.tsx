@@ -1,7 +1,7 @@
 "use client";
 
 import { useSearchParams } from "next/navigation";
-import { Suspense } from "react";
+import { Suspense, useState, useEffect } from "react";
 import Link from "next/link";
 import { GlitchText, AnimatedTerminalGrid, TERMINAL_CARDS } from "@/components/client";
 
@@ -49,12 +49,21 @@ function BackgroundGrid() {
 
 function LoginContent() {
   const searchParams = useSearchParams();
-  const callback = searchParams.get("callback") || "";
+  const code = searchParams.get("code") || "";
   const error = searchParams.get("error");
+  const [verification, setVerification] = useState<string | null>(null);
 
-  const callbackParam = callback ? `?callback=${encodeURIComponent(callback)}` : "";
-  const githubUrl = `${API_URL}/api/v1/auth/github${callbackParam}`;
-  const googleUrl = `${API_URL}/api/v1/auth/google${callbackParam}`;
+  useEffect(() => {
+    if (!code) return;
+    fetch(`${API_URL}/api/v1/auth/sessions/${code}/verification`)
+      .then((r) => r.json())
+      .then((data) => setVerification(data.verification || null))
+      .catch(() => setVerification(null));
+  }, [code]);
+
+  const codeParam = code ? `?code=${encodeURIComponent(code)}` : "";
+  const githubUrl = `${API_URL}/api/v1/auth/github${codeParam}`;
+  const googleUrl = `${API_URL}/api/v1/auth/google${codeParam}`;
 
   return (
     <div className="min-h-screen flex flex-col items-center justify-center px-6 relative overflow-hidden bg-black">
@@ -127,6 +136,23 @@ function LoginContent() {
                   <line x1="9" y1="9" x2="15" y2="15" />
                 </svg>
                 {decodeURIComponent(error)}
+              </div>
+            )}
+
+            {code && verification && (
+              <div className="mb-6 p-4 bg-surface-hover border border-border-line text-center">
+                <p className="text-[10px] font-mono tracking-widest text-[#3f3f46] uppercase mb-2">
+                  Verify this code matches your terminal
+                </p>
+                <p className="text-lg font-bold font-mono tracking-[0.15em] text-accent">
+                  FORGE-{verification.toUpperCase()}
+                </p>
+              </div>
+            )}
+
+            {code && !verification && (
+              <div className="mb-6 p-4 bg-surface-hover border border-border-line flex items-center justify-center">
+                <div className="w-4 h-4 border-2 border-border-line border-t-accent rounded-full animate-spin" />
               </div>
             )}
 
