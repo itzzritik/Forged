@@ -274,6 +274,49 @@ func (v *Vault) MasterPasswordHash() []byte {
 	return v.masterPasswordHash
 }
 
+func (v *Vault) ChangePassword(newPassword []byte) error {
+	newKDF := DefaultKDFParams()
+
+	newMasterKey := DeriveKey(newPassword, newKDF)
+
+	newStretchedKey, err := DeriveStretchedKey(newMasterKey)
+	if err != nil {
+		for i := range newMasterKey {
+			newMasterKey[i] = 0
+		}
+		return fmt.Errorf("deriving new stretched key: %w", err)
+	}
+
+	newHash := DeriveMasterPasswordHash(newMasterKey, newPassword)
+
+	newProtectedKey, err := EncryptCombined(newStretchedKey, v.key)
+	if err != nil {
+		for i := range newMasterKey {
+			newMasterKey[i] = 0
+		}
+		for i := range newStretchedKey {
+			newStretchedKey[i] = 0
+		}
+		return fmt.Errorf("encrypting new protected key: %w", err)
+	}
+
+	for i := range newMasterKey {
+		newMasterKey[i] = 0
+	}
+	for i := range newStretchedKey {
+		newStretchedKey[i] = 0
+	}
+
+	var protectedKeyArr [ProtectedKeySize]byte
+	copy(protectedKeyArr[:], newProtectedKey)
+
+	v.kdf = newKDF
+	v.protectedKey = protectedKeyArr
+	v.masterPasswordHash = newHash
+
+	return v.Save()
+}
+
 func (v *Vault) ExportForSync() ([]byte, error) {
 	plaintext, err := json.Marshal(v.Data)
 	if err != nil {

@@ -145,7 +145,7 @@ function Hero() {
             </p>
 
             <div className="flex flex-col sm:flex-row items-start sm:items-center gap-4 animate-slide-up delay-300">
-              <GlitchButton href="https://github.com/itzzritik/forged" external className="h-12 px-8">Install Forged</GlitchButton>
+              <GlitchButton href="/docs" className="h-12 px-8">Get Started</GlitchButton>
               <div className="flex items-center h-12 bg-[#09090b] border border-[#27272a] group hover:border-[#a1a1aa]/30 transition-colors">
                 <span className="text-[#27272a] mx-3 font-mono text-lg select-none">$</span>
                 <code className="text-white font-mono text-sm tracking-wide pr-4">

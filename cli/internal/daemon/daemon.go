@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -9,12 +10,14 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/activity"
 	forgedagent "github.com/itzzritik/forged/cli/internal/agent"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/platform"
+	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
 	"github.com/itzzritik/forged/cli/internal/vault"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
@@ -27,6 +30,7 @@ type Daemon struct {
 	agent       *forgedagent.ForgedAgent
 	agentServer *forgedagent.Server
 	ipcServer   *ipc.Server
+	syncBus     *forgedsync.Bus
 	logger      *slog.Logger
 	stop        chan struct{}
 }
@@ -63,6 +67,8 @@ func (d *Daemon) Run(password []byte) error {
 	if err := d.startIPC(); err != nil {
 		return err
 	}
+
+	d.initSync()
 
 	if err := d.startAgent(); err != nil {
 		return err
@@ -196,6 +202,35 @@ func (d *Daemon) startAgent() error {
 	return nil
 }
 
+type syncCredentials struct {
+	ServerURL string `json:"server_url"`
+	Token     string `json:"token"`
+}
+
+func (d *Daemon) initSync() {
+	data, err := os.ReadFile(d.paths.CredentialsFile())
+	if err != nil {
+		return
+	}
+	var creds syncCredentials
+	if err := json.Unmarshal(data, &creds); err != nil || creds.ServerURL == "" || creds.Token == "" {
+		return
+	}
+
+	client := forgedsync.NewClient(creds.ServerURL, creds.Token, "")
+	engine := forgedsync.NewEngine(d.vault, client, d.logger, 5*time.Minute)
+	bus := forgedsync.NewBus(engine, d.logger, d.paths.SyncDirtyFile())
+
+	d.syncBus = bus
+	d.ipcServer.SetSyncBus(bus)
+
+	bus.CheckDirtyFlag()
+
+	go bus.RequestPull("daemon_start")
+
+	d.logger.Info("sync initialized", "server", creds.ServerURL)
+}
+
 func (d *Daemon) waitForSignal() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -210,6 +245,10 @@ func (d *Daemon) waitForSignal() {
 
 func (d *Daemon) shutdown() {
 	d.logger.Info("shutting down")
+
+	if d.syncBus != nil {
+		d.syncBus.PersistDirtyFlag()
+	}
 
 	if d.agentServer != nil {
 		d.agentServer.Stop()

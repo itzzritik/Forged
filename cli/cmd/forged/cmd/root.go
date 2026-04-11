@@ -67,6 +67,7 @@ func init() {
 		benchmarkCmd,
 		setupCmd,
 		versionCmd,
+		changePasswordCmd,
 	)
 }
 

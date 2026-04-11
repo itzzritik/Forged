@@ -38,7 +38,7 @@ export function AuthCTAButton() {
       href={loggedIn ? "/dashboard" : "/login"}
       className="h-14 px-12 text-sm max-w-full"
     >
-      {loggedIn ? "Dashboard" : "Create Account"}
+      {loggedIn ? "Dashboard" : "Start Syncing"}
     </GlitchButton>
   );
 }
