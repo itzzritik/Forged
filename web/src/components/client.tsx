@@ -77,6 +77,7 @@ export function SpotlightCard({ children, className = "" }: { children: ReactNod
 				setPos({ x: e.clientX - rect.left, y: e.clientY - rect.top });
 			}}
 			ref={ref}
+			role="presentation"
 		>
 			{hovering && (
 				<div
@@ -93,13 +94,13 @@ export function SpotlightCard({ children, className = "" }: { children: ReactNod
 
 // --- Animated Terminal Grid ---
 
-export type TerminalCardDef = {
-	title: string;
-	status: "ok" | "warn" | "error";
+export interface TerminalCardDef {
 	brightness: number;
-	pace: "fast" | "normal" | "slow";
 	lines: string[];
-};
+	pace: "fast" | "normal" | "slow";
+	status: "ok" | "warn" | "error";
+	title: string;
+}
 
 const PACE_CONFIG = {
 	fast: { lineInterval: 160, holdTime: 2000 },
@@ -407,6 +408,7 @@ export function AnimatedTerminalGrid({ cards }: { cards: TerminalCardDef[] }) {
 		let active = true;
 		const start = performance.now();
 
+		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: animation tick function requires complex state management
 		function tick(now: number) {
 			for (let t = 0; t < cards.length; t++) {
 				const card: TerminalCardDef = cards[t];
@@ -543,7 +545,15 @@ function useGlitchText(text: string) {
 		const tick = (now: number) => {
 			const progress = Math.min(1, (now - start) / GLITCH_DURATION);
 			const resolved = Math.floor(progress * chars.length);
-			setDisplay(chars.map((c, i) => (c === " " ? " " : i < resolved ? c : rand())).join(""));
+			setDisplay(
+				chars
+					.map((c, i) => {
+						if (c === " ") return " ";
+						if (i < resolved) return c;
+						return rand();
+					})
+					.join("")
+			);
 			if (progress < 1) {
 				requestAnimationFrame(tick);
 			} else {
@@ -637,18 +647,22 @@ export function GlitchButton({ children, variant = "primary", href, external, cl
 	);
 }
 
-export type TerminalStep = {
+export interface TerminalStep {
 	command: string;
 	output: string[];
 	pauseAfter?: number;
-};
+}
+
+const SEPARATOR_RE = /^\s+-+\s+-+/;
+const HEADER_RE = /^\s+(NAME|TYPE|FINGERPRINT|SIGNING)/;
+const SHELL_PROMPT_RE = /^\w+@[\w-]+:[~/]/;
 
 function TerminalOutputLine({ text }: { text: string }) {
-	if (/^\s+-+\s+-+/.test(text)) return <span className="text-[#27272a]">{text}</span>;
-	if (/^\s+(NAME|TYPE|FINGERPRINT|SIGNING)/.test(text)) return <span className="text-[#52525b]">{text}</span>;
+	if (SEPARATOR_RE.test(text)) return <span className="text-[#27272a]">{text}</span>;
+	if (HEADER_RE.test(text)) return <span className="text-[#52525b]">{text}</span>;
 	if (text.startsWith("Mapped ")) return <span className="text-[#10b981]">{text}</span>;
 	if (text.includes("Connection") && text.includes("closed")) return <span className="text-[#52525b]">{text}</span>;
-	if (/^\w+@[\w-]+:[~/]/.test(text)) return <span className="text-[#ea580c]">{text}</span>;
+	if (SHELL_PROMPT_RE.test(text)) return <span className="text-[#ea580c]">{text}</span>;
 	return <span className="text-[#a1a1aa]">{text}</span>;
 }
 
@@ -688,6 +702,7 @@ export function AnimatedBigTerminal({ steps }: { steps: TerminalStep[] }) {
 			return 25 + Math.random() * 28;
 		};
 
+		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: terminal animation requires sequential async state machine
 		async function animate() {
 			await sleep(700);
 
@@ -717,7 +732,7 @@ export function AnimatedBigTerminal({ steps }: { steps: TerminalStep[] }) {
 					setLines((p) => [...p, { id: `o${step}-${i}-${Date.now()}`, text: line, type: "out", ts: ts() }]);
 
 					let d = 45;
-					if (/^\s+-+/.test(line)) d = 12;
+					if (SEPARATOR_RE.test(line)) d = 12;
 					else if (i === 0 && s.output.length > 3) d = 20;
 					else if (line.includes("Welcome") || line.includes("Last login")) d = 110;
 					await sleep(d + Math.random() * 25);
@@ -736,6 +751,7 @@ export function AnimatedBigTerminal({ steps }: { steps: TerminalStep[] }) {
 		};
 	}, [steps]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: containerRef is a stable ref, intentionally omitted
 	useEffect(() => {
 		containerRef.current?.scrollTo({ top: containerRef.current.scrollHeight, behavior: "smooth" });
 	}, [lines, typing]);
@@ -817,7 +833,7 @@ export function TopologyVisualizer() {
 				>
 					<div className="mb-6 flex items-center justify-between border-[#27272a] border-b pb-4">
 						<div className="flex items-center gap-3">
-							<span className="font-mono text-[#a1a1aa] text-[10px] tracking-[0.2em]">01 //</span>
+							<span className="font-mono text-[#a1a1aa] text-[10px] tracking-[0.2em]">01 {/* // */}</span>
 							<span className="font-bold font-mono text-[11px] text-white uppercase tracking-widest">Ingress Socket</span>
 						</div>
 						<div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981]" />
@@ -845,7 +861,7 @@ export function TopologyVisualizer() {
 				>
 					<div className="mb-6 flex items-center justify-between border-[#27272a] border-b pb-4">
 						<div className="flex items-center gap-3">
-							<span className="font-mono text-[#a1a1aa] text-[10px] tracking-[0.2em]">02 //</span>
+							<span className="font-mono text-[#a1a1aa] text-[10px] tracking-[0.2em]">02 {/* // */}</span>
 							<span className="font-bold font-mono text-[11px] text-white uppercase tracking-widest">E2E Sync Node</span>
 						</div>
 						<div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ea580c] shadow-[0_0_8px_#ea580c]" />
@@ -882,7 +898,7 @@ export function TopologyVisualizer() {
 				>
 					<div className="mb-6 flex items-center justify-between border-[#27272a] border-b pb-4">
 						<div className="flex items-center gap-3">
-							<span className="font-mono text-[#a1a1aa] text-[10px] tracking-[0.2em]">03 //</span>
+							<span className="font-mono text-[#a1a1aa] text-[10px] tracking-[0.2em]">03 {/* // */}</span>
 							<span className="font-bold font-mono text-[11px] text-white uppercase tracking-widest">Pattern Engine</span>
 						</div>
 						<div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981]" />
@@ -939,7 +955,7 @@ export function TopologyVisualizer() {
 				>
 					<div className="mb-6 flex items-center justify-between border-[#27272a] border-b pb-4">
 						<div className="flex items-center gap-3">
-							<span className="font-mono text-[#a1a1aa] text-[10px] tracking-[0.2em]">04 //</span>
+							<span className="font-mono text-[#a1a1aa] text-[10px] tracking-[0.2em]">04 {/* // */}</span>
 							<span className="font-bold font-mono text-[11px] text-white uppercase tracking-widest">Memory Vault</span>
 						</div>
 						<div className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ea580c] shadow-[0_0_8px_#ea580c]" />

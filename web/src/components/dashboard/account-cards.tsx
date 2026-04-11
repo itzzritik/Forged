@@ -25,7 +25,9 @@ export const AccountCards = () => {
 		fetch("/api/vault/account")
 			.then((r) => r.json())
 			.then((data) => setAccount(data))
-			.catch(() => {});
+			.catch(() => {
+				/* ignore fetch errors */
+			});
 	}, []);
 
 	const handleDelete = async () => {

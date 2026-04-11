@@ -11,7 +11,18 @@ interface TopbarProps {
 }
 
 const HamburgerIcon = () => (
-	<svg fill="none" height="16" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="16">
+	<svg
+		aria-label="Toggle sidebar"
+		fill="none"
+		height="16"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="16"
+	>
 		<line x1="3" x2="21" y1="6" y2="6" />
 		<line x1="3" x2="21" y1="12" y2="12" />
 		<line x1="3" x2="21" y1="18" y2="18" />
@@ -19,20 +30,53 @@ const HamburgerIcon = () => (
 );
 
 const SearchIcon = () => (
-	<svg fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
+	<svg
+		aria-label="Search"
+		fill="none"
+		height="14"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="14"
+	>
 		<circle cx="11" cy="11" r="8" />
 		<line x1="21" x2="16.65" y1="21" y2="16.65" />
 	</svg>
 );
 
 const MoonIcon = () => (
-	<svg fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="15">
+	<svg
+		aria-label="Moon"
+		fill="none"
+		height="15"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="15"
+	>
 		<path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
 	</svg>
 );
 
 const SunIcon = () => (
-	<svg fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="15">
+	<svg
+		aria-label="Sun"
+		fill="none"
+		height="15"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="15"
+	>
 		<circle cx="12" cy="12" r="5" />
 		<line x1="12" x2="12" y1="1" y2="3" />
 		<line x1="12" x2="12" y1="21" y2="23" />
@@ -46,7 +90,18 @@ const SunIcon = () => (
 );
 
 const SystemIcon = () => (
-	<svg fill="none" height="15" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="15">
+	<svg
+		aria-label="System"
+		fill="none"
+		height="15"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="15"
+	>
 		<rect height="14" rx="2" ry="2" width="20" x="2" y="3" />
 		<line x1="8" x2="16" y1="21" y2="21" />
 		<line x1="12" x2="12" y1="17" y2="21" />
@@ -61,19 +116,23 @@ const breadcrumbMap: Record<string, string> = {
 
 const themeOrder = ["dark", "light", "system"] as const;
 
-export const Topbar = ({ collapsed, onToggle, onSearchOpen }: TopbarProps) => {
+export const Topbar = ({ collapsed: _collapsed, onToggle, onSearchOpen }: TopbarProps) => {
 	const pathname = usePathname();
 	const { theme, setTheme } = useTheme();
 
 	const breadcrumb = breadcrumbMap[pathname] ?? "Dashboard";
 
-	const cycleTheme = () => {
-		const current = themeOrder.indexOf((theme ?? "dark") as (typeof themeOrder)[number]);
-		const next = themeOrder[(current + 1) % themeOrder.length];
-		setTheme(next);
-	};
+	function getThemeIcon() {
+		if (theme === "light") return SunIcon;
+		if (theme === "system") return SystemIcon;
+		return MoonIcon;
+	}
+	const ThemeIcon = getThemeIcon();
 
-	const ThemeIcon = theme === "light" ? SunIcon : theme === "system" ? SystemIcon : MoonIcon;
+	const getNextTheme = () => {
+		const current = themeOrder.indexOf((theme ?? "dark") as (typeof themeOrder)[number]);
+		return themeOrder[(current + 1) % themeOrder.length];
+	};
 
 	return (
 		<header className="flex h-11 shrink-0 items-center gap-3 border-sidebar-border border-b bg-sidebar px-3">
@@ -86,21 +145,26 @@ export const Topbar = ({ collapsed, onToggle, onSearchOpen }: TopbarProps) => {
 
 			{/* Right */}
 			<div className="ml-auto flex items-center gap-2">
-				<div
+				<button
+					aria-label="Open search"
 					className={cn(
 						"flex h-7 items-center gap-2 border border-sidebar-border bg-background px-2",
 						"cursor-pointer font-mono text-muted-foreground text-xs",
 						"select-none transition-colors hover:border-muted-foreground"
 					)}
 					onClick={onSearchOpen}
-					role="button"
+					type="button"
 				>
 					<SearchIcon />
 					<span className="hidden sm:inline">Search...</span>
 					<kbd className="ml-1 hidden border border-sidebar-border bg-sidebar px-1 py-0.5 font-mono text-[10px] leading-none sm:inline">⌘K</kbd>
-				</div>
+				</button>
 
-				<button aria-label="Toggle theme" className="p-1 text-muted-foreground transition-colors hover:text-sidebar-foreground" onClick={cycleTheme}>
+				<button
+					aria-label="Toggle theme"
+					className="p-1 text-muted-foreground transition-colors hover:text-sidebar-foreground"
+					onClick={() => setTheme(getNextTheme())}
+				>
 					<ThemeIcon />
 				</button>
 			</div>

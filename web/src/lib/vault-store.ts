@@ -108,7 +108,9 @@ export async function touchActivity(): Promise<void> {
 			db.close();
 		};
 		req.onerror = () => db.close();
-	} catch {}
+	} catch {
+		/* IndexedDB operation failed - activity not updated */
+	}
 }
 
 export async function clearSyncKey(): Promise<void> {
@@ -121,5 +123,7 @@ export async function clearSyncKey(): Promise<void> {
 		const tx = db.transaction(STORE_NAME, "readwrite");
 		tx.objectStore(STORE_NAME).delete(KEY_ID);
 		db.close();
-	} catch {}
+	} catch {
+		/* IndexedDB operation failed - key not cleared from IDB */
+	}
 }

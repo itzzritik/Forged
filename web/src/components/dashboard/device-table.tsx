@@ -48,7 +48,7 @@ export const DeviceTable = () => {
 				</TableRow>
 			</TableHeader>
 			<TableBody>
-				{loading ? (
+				{loading &&
 					Array.from({ length: 3 }).map((_, i) => (
 						<TableRow key={i}>
 							<TableCell>
@@ -67,8 +67,8 @@ export const DeviceTable = () => {
 								<Skeleton className="h-5 w-16 rounded-full" />
 							</TableCell>
 						</TableRow>
-					))
-				) : devices.length === 0 ? (
+					))}
+				{!loading && devices.length === 0 && (
 					<TableRow>
 						<TableCell className="py-12 text-center" colSpan={4}>
 							<p className="font-medium text-sm">No devices registered</p>
@@ -77,7 +77,9 @@ export const DeviceTable = () => {
 							</p>
 						</TableCell>
 					</TableRow>
-				) : (
+				)}
+				{!loading &&
+					devices.length > 0 &&
 					devices.map((device) => (
 						<TableRow key={device.id}>
 							<TableCell>
@@ -94,8 +96,7 @@ export const DeviceTable = () => {
 								)}
 							</TableCell>
 						</TableRow>
-					))
-				)}
+					))}
 			</TableBody>
 		</Table>
 	);

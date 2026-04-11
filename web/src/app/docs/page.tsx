@@ -26,7 +26,10 @@ function CodeBlock({ title, children }: { title?: string; children: string }) {
 				<div className="flex h-12 items-center justify-between border-[#27272a] border-b bg-[#09090b] px-5">
 					<div className="flex items-center gap-3">
 						<span className="h-1.5 w-1.5 bg-[#ea580c]" />
-						<span className="font-mono text-[#a1a1aa] text-[10px] uppercase tracking-[0.2em]">SYSTEM // {title}</span>
+						<span className="font-mono text-[#a1a1aa] text-[10px] uppercase tracking-[0.2em]">
+							SYSTEM {/* // */}
+							{title}
+						</span>
 					</div>
 					<span className="select-none font-mono text-[#3f3f46] text-[10px] uppercase tracking-widest">READY</span>
 				</div>
@@ -101,9 +104,11 @@ export default function DocsPage() {
 					<Link className="group flex items-center gap-3" href="/">
 						<div className="flex h-7 w-7 items-center justify-center border border-[#27272a] bg-black transition-colors group-hover:border-[#ea580c]">
 							<svg
+								aria-label="Forged logo"
 								className="text-white transition-colors group-hover:text-[#ea580c]"
 								fill="none"
 								height="14"
+								role="img"
 								stroke="currentColor"
 								strokeLinecap="round"
 								strokeLinejoin="round"
@@ -160,7 +165,7 @@ export default function DocsPage() {
 						{/* Warning Diagnostic Alert */}
 						<div className="group relative my-10 overflow-hidden border border-[#27272a] bg-black p-6 shadow-[4px_4px_0px_#ea580c]">
 							<div className="mb-4 flex items-center gap-3 border-[#27272a] border-b pb-4">
-								<svg fill="none" height="18" stroke="#ea580c" strokeWidth="2" viewBox="0 0 24 24" width="18">
+								<svg aria-label="Warning" fill="none" height="18" role="img" stroke="#ea580c" strokeWidth="2" viewBox="0 0 24 24" width="18">
 									<path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
 									<line x1="12" x2="12" y1="9" y2="13" />
 									<line x1="12" x2="12.01" y1="17" y2="17" />
@@ -289,7 +294,17 @@ function Footer() {
 			<div className="mx-auto flex w-full max-w-[1400px] flex-col items-center justify-between gap-6 px-6 sm:flex-row lg:px-16">
 				<div className="flex items-center gap-3">
 					<div className="flex h-6 w-6 items-center justify-center border border-[#27272a] bg-black">
-						<svg className="text-white" fill="none" height="12" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="12">
+						<svg
+							aria-label="Forged logo"
+							className="text-white"
+							fill="none"
+							height="12"
+							role="img"
+							stroke="currentColor"
+							strokeWidth="2"
+							viewBox="0 0 24 24"
+							width="12"
+						>
 							<path d="M15 3h6v6" />
 							<path d="M10 14L21 3" />
 							<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />

@@ -12,7 +12,18 @@ export default async function AuthSuccessPage({ searchParams }: { searchParams: 
 					<div className="relative mb-8 inline-block">
 						<div className="absolute inset-0 scale-150 bg-red-500/15 blur-[24px]" />
 						<div className="relative flex h-14 w-14 items-center justify-center border border-[#27272a] bg-black">
-							<svg fill="none" height="24" stroke="#ef4444" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="24">
+							<svg
+								aria-label="Error"
+								fill="none"
+								height="24"
+								role="img"
+								stroke="#ef4444"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth="1.5"
+								viewBox="0 0 24 24"
+								width="24"
+							>
 								<circle cx="12" cy="12" r="10" />
 								<line x1="15" x2="9" y1="9" y2="15" />
 								<line x1="9" x2="15" y1="9" y2="15" />
@@ -43,7 +54,18 @@ export default async function AuthSuccessPage({ searchParams }: { searchParams: 
 					<div className="relative">
 						<div className="absolute inset-0 scale-150 bg-[#ea580c]/15 blur-[24px]" />
 						<div className="relative flex h-14 w-14 items-center justify-center border border-[#27272a] bg-black">
-							<svg fill="none" height="24" stroke="white" strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" viewBox="0 0 24 24" width="24">
+							<svg
+								aria-label="Success"
+								fill="none"
+								height="24"
+								role="img"
+								stroke="white"
+								strokeLinecap="round"
+								strokeLinejoin="round"
+								strokeWidth="1.5"
+								viewBox="0 0 24 24"
+								width="24"
+							>
 								<path d="M22 11.08V12a10 10 0 1 1-5.93-9.14" />
 								<polyline points="22 4 12 14.01 9 11.01" />
 							</svg>
@@ -57,7 +79,7 @@ export default async function AuthSuccessPage({ searchParams }: { searchParams: 
 					<div className="flex h-10 items-center justify-between border-[#27272a] border-b bg-[#030303] px-6">
 						<div className="flex items-center gap-3">
 							<span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#10b981] shadow-[0_0_8px_#10b981]" />
-							<span className="font-mono text-[#a1a1aa] text-[10px] uppercase tracking-widest">Session // Authenticated</span>
+							<span className="font-mono text-[#a1a1aa] text-[10px] uppercase tracking-widest">Session {/* // */} Authenticated</span>
 						</div>
 						<span className="font-mono text-[#3f3f46] text-[9px] uppercase tracking-widest">CLI</span>
 					</div>

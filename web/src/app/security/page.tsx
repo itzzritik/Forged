@@ -14,9 +14,11 @@ function Nav() {
 				<Link className="group flex items-center gap-3" href="/">
 					<div className="flex h-7 w-7 items-center justify-center border border-[#27272a] bg-black transition-colors group-hover:border-[#ea580c]">
 						<svg
+							aria-label="Forged logo"
 							className="text-white transition-colors group-hover:text-[#ea580c]"
 							fill="none"
 							height="14"
+							role="img"
 							stroke="currentColor"
 							strokeLinecap="round"
 							strokeLinejoin="round"
@@ -249,7 +251,7 @@ function EncryptionPrimitives() {
 							{/* Icon + Title */}
 							<div className="relative flex items-center gap-3.5 px-6 pt-6 pb-3">
 								<div className="flex h-9 w-9 items-center justify-center border border-white/10 bg-black text-white/70 transition-colors duration-300 group-hover:border-[#ea580c]/40 group-hover:text-orange-400">
-									<svg fill="none" height="20" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" width="20">
+									<svg aria-label={f.title} fill="none" height="20" role="img" stroke="currentColor" strokeWidth="1.5" viewBox="0 0 24 24" width="20">
 										<path d={f.icon} />
 									</svg>
 								</div>
@@ -282,9 +284,11 @@ function EncryptionPrimitives() {
 								>
 									{f.cta}
 									<svg
+										aria-label="Arrow right"
 										className="opacity-0 transition-opacity group-hover:opacity-100"
 										fill="none"
 										height="14"
+										role="img"
 										stroke="currentColor"
 										strokeWidth="2"
 										viewBox="0 0 24 24"
@@ -377,11 +381,16 @@ function KeyHierarchy() {
 							<div className="pointer-events-none absolute inset-0 bg-gradient-to-br from-[#ea580c]/5 to-transparent opacity-0 transition-opacity duration-500 group-hover:opacity-100" />
 
 							<div className="mb-8 flex items-center justify-between">
-								<span className="font-mono text-[#a1a1aa] text-xs uppercase tracking-widest">Step // {step.id}</span>
+								<span className="font-mono text-[#a1a1aa] text-xs uppercase tracking-widest">
+									Step {/* // */}
+									{step.id}
+								</span>
 								<svg
+									aria-label="Arrow right"
 									className="text-[#3f3f46] transition-colors duration-500 group-hover:text-[#ea580c]"
 									fill="none"
 									height="14"
+									role="img"
 									stroke="currentColor"
 									strokeWidth="1.5"
 									viewBox="0 0 24 24"
@@ -627,7 +636,17 @@ function Footer() {
 			<div className="flex w-full flex-col items-center justify-between gap-6 px-6 sm:flex-row lg:px-16">
 				<div className="flex items-center gap-3">
 					<div className="flex h-6 w-6 items-center justify-center border border-[#27272a] bg-black">
-						<svg className="text-white" fill="none" height="12" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="12">
+						<svg
+							aria-label="Forged logo"
+							className="text-white"
+							fill="none"
+							height="12"
+							role="img"
+							stroke="currentColor"
+							strokeWidth="2"
+							viewBox="0 0 24 24"
+							width="12"
+						>
 							<path d="M15 3h6v6" />
 							<path d="M10 14L21 3" />
 							<path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6" />

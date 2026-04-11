@@ -2,16 +2,18 @@
 
 import { useEffect, useMemo, useState } from "react";
 
-export type DocsTOCGroup = {
-	title: string;
+export interface DocsTOCGroup {
 	items: Array<{
 		href: string;
 		label: string;
 	}>;
-};
+	title: string;
+}
+
+const HASH_PATTERN = /^#/;
 
 function getSectionId(href: string) {
-	return decodeURIComponent(href.replace(/^#/, ""));
+	return decodeURIComponent(href.replace(HASH_PATTERN, ""));
 }
 
 export function DocsTOC({ groups }: { groups: DocsTOCGroup[] }) {

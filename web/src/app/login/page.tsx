@@ -9,7 +9,7 @@ const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 function GitHubIcon() {
 	return (
-		<svg fill="currentColor" height="16" viewBox="0 0 24 24" width="16">
+		<svg aria-label="GitHub" fill="currentColor" height="16" role="img" viewBox="0 0 24 24" width="16">
 			<path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
 		</svg>
 	);
@@ -17,7 +17,7 @@ function GitHubIcon() {
 
 function GoogleIcon() {
 	return (
-		<svg height="16" viewBox="0 0 24 24" width="16">
+		<svg aria-label="Google" height="16" role="img" viewBox="0 0 24 24" width="16">
 			<path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92a5.06 5.06 0 0 1-2.2 3.32v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.1z" fill="currentColor" />
 			<path
 				d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"
@@ -81,9 +81,11 @@ function LoginContent() {
 					<Link className="group flex items-center gap-3" href="/">
 						<div className="flex h-7 w-7 items-center justify-center border border-[#27272a] bg-black transition-colors group-hover:border-[#ea580c]">
 							<svg
+								aria-label="Forged logo"
 								className="text-white transition-colors group-hover:text-[#ea580c]"
 								fill="none"
 								height="14"
+								role="img"
 								stroke="currentColor"
 								strokeLinecap="round"
 								strokeLinejoin="round"
@@ -99,7 +101,7 @@ function LoginContent() {
 						<span className="font-bold font-mono text-[13px] text-white uppercase tracking-[0.2em] transition-colors group-hover:text-[#ea580c]">Forged</span>
 					</Link>
 					<Link className="flex items-center gap-2 text-[#a1a1aa] text-[12px] uppercase tracking-wider transition-colors hover:text-white" href="/">
-						<svg fill="none" height="12" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="12">
+						<svg aria-label="Back" fill="none" height="12" role="img" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="12">
 							<line x1="19" x2="5" y1="12" y2="12" />
 							<polyline points="12 19 5 12 12 5" />
 						</svg>
@@ -116,9 +118,11 @@ function LoginContent() {
 						<div className="absolute inset-0 scale-150 bg-[#ea580c]/15 blur-[24px]" />
 						<div className="relative flex h-14 w-14 items-center justify-center border border-[#27272a] bg-black">
 							<svg
+								aria-label="Forged logo"
 								className="text-white"
 								fill="none"
 								height="24"
+								role="img"
 								stroke="currentColor"
 								strokeLinecap="round"
 								strokeLinejoin="round"
@@ -142,7 +146,7 @@ function LoginContent() {
 					<div className="flex h-10 items-center justify-between border-[#27272a] border-b bg-[#030303] px-6">
 						<div className="flex items-center gap-3">
 							<span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#ea580c] shadow-[0_0_8px_#ea580c]" />
-							<span className="font-mono text-[#a1a1aa] text-[10px] uppercase tracking-widest">Session // Auth</span>
+							<span className="font-mono text-[#a1a1aa] text-[10px] uppercase tracking-widest">Session {/* // */} Auth</span>
 						</div>
 						<span className="font-mono text-[#3f3f46] text-[9px] uppercase tracking-widest">OAuth 2.0</span>
 					</div>
@@ -150,7 +154,17 @@ function LoginContent() {
 					<div className="p-6 sm:p-8">
 						{error && (
 							<div className="mb-6 flex items-center gap-3 border border-red-500/20 bg-red-950/20 p-4 font-mono text-[12px] text-red-400">
-								<svg className="shrink-0" fill="none" height="14" stroke="currentColor" strokeWidth="2" viewBox="0 0 24 24" width="14">
+								<svg
+									aria-label="Error icon"
+									className="shrink-0"
+									fill="none"
+									height="14"
+									role="img"
+									stroke="currentColor"
+									strokeWidth="2"
+									viewBox="0 0 24 24"
+									width="14"
+								>
 									<circle cx="12" cy="12" r="10" />
 									<line x1="15" x2="9" y1="9" y2="15" />
 									<line x1="9" x2="15" y1="9" y2="15" />

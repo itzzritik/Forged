@@ -41,7 +41,7 @@ function terminateWorker() {
 	activeWorker = null;
 }
 
-export async function derivePasswordHash(password: string, kdfParams: KDFParams): Promise<Uint8Array> {
+export function derivePasswordHash(password: string, kdfParams: KDFParams): Promise<Uint8Array> {
 	const worker = getWorker();
 	return new Promise((resolve, reject) => {
 		worker.onmessage = (e: MessageEvent<WorkerMessage>) => {
@@ -60,7 +60,7 @@ export async function derivePasswordHash(password: string, kdfParams: KDFParams)
 	});
 }
 
-export async function decryptProtectedKey(protectedSymmetricKey: string): Promise<CryptoKey> {
+export function decryptProtectedKey(protectedSymmetricKey: string): Promise<CryptoKey> {
 	const worker = getWorker();
 	return new Promise((resolve, reject) => {
 		worker.onmessage = (e: MessageEvent<WorkerMessage>) => {
@@ -92,7 +92,7 @@ export async function decryptBlob(symmetricKey: CryptoKey, blob: Uint8Array): Pr
 	const json = new TextDecoder().decode(plaintext);
 	const parsed = JSON.parse(json);
 
-	const keys: VaultKeyMetadata[] = (parsed.keys || []).map((k: any) => ({
+	const keys: VaultKeyMetadata[] = (parsed.keys || []).map((k: Record<string, unknown>) => ({
 		id: k.id,
 		name: k.name,
 		type: k.type,

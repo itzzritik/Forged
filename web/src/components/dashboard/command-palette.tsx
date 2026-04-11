@@ -13,7 +13,18 @@ interface CommandPaletteProps {
 }
 
 const KeyIcon = () => (
-	<svg fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
+	<svg
+		aria-label="Key"
+		fill="none"
+		height="14"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="14"
+	>
 		<circle cx="7.5" cy="15.5" r="5.5" />
 		<path d="M21 2l-9.6 9.6" />
 		<path d="M15.5 7.5l3 3L22 7l-3-3" />
@@ -21,13 +32,35 @@ const KeyIcon = () => (
 );
 
 const NavIcon = () => (
-	<svg fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
+	<svg
+		aria-label="Navigate"
+		fill="none"
+		height="14"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="14"
+	>
 		<polyline points="9 18 15 12 9 6" />
 	</svg>
 );
 
 const ThemeIcon = () => (
-	<svg fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
+	<svg
+		aria-label="Theme"
+		fill="none"
+		height="14"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="14"
+	>
 		<circle cx="12" cy="12" r="5" />
 		<line x1="12" x2="12" y1="1" y2="3" />
 		<line x1="12" x2="12" y1="21" y2="23" />
@@ -41,14 +74,36 @@ const ThemeIcon = () => (
 );
 
 const LockIcon = () => (
-	<svg fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
+	<svg
+		aria-label="Lock"
+		fill="none"
+		height="14"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="14"
+	>
 		<rect height="11" rx="2" ry="2" width="18" x="3" y="11" />
 		<path d="M7 11V7a5 5 0 0 1 10 0v4" />
 	</svg>
 );
 
 const CopyIcon = () => (
-	<svg fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
+	<svg
+		aria-label="Copy"
+		fill="none"
+		height="14"
+		role="img"
+		stroke="currentColor"
+		strokeLinecap="round"
+		strokeLinejoin="round"
+		strokeWidth="2"
+		viewBox="0 0 24 24"
+		width="14"
+	>
 		<rect height="13" rx="2" ry="2" width="13" x="9" y="9" />
 		<path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1" />
 	</svg>
@@ -75,7 +130,10 @@ export const CommandPalette = ({ open, onOpenChange, keys }: CommandPaletteProps
 	};
 
 	const toggleTheme = () => {
-		const next = theme === "dark" ? "light" : theme === "light" ? "system" : "dark";
+		let next: string;
+		if (theme === "dark") next = "light";
+		else if (theme === "light") next = "system";
+		else next = "dark";
 		setTheme(next);
 		toast.success(`Theme set to ${next}`);
 	};

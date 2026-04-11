@@ -76,6 +76,7 @@ export const useVault = (): UseVaultReturn => {
 		if (initialized.current) return;
 		initialized.current = true;
 
+		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: vault initialization requires complex cascading async state logic
 		const init = async () => {
 			// check IndexedDB for a cached key first
 			const stored = await getSyncKey();
@@ -126,6 +127,7 @@ export const useVault = (): UseVaultReturn => {
 	}, [router]);
 
 	const unlock = useCallback(
+		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: vault unlock requires complex error handling and lockout state machine
 		async (password: string) => {
 			if (!kdfParams) {
 				setStatus("error");

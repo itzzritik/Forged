@@ -1,6 +1,6 @@
 "use client";
 
-import * as DialogPrimitive from "@radix-ui/react-dialog";
+import { Content, Overlay, Portal, Root } from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
 
 interface ModalProps {
@@ -14,10 +14,10 @@ interface ModalProps {
 
 export const Modal = ({ title, closable = true, open, onOpenChange, children, className }: ModalProps) => {
 	return (
-		<DialogPrimitive.Root onOpenChange={closable ? onOpenChange : undefined} open={open}>
-			<DialogPrimitive.Portal>
-				<DialogPrimitive.Overlay className="data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=closed]:animate-out data-[state=open]:animate-in" />
-				<DialogPrimitive.Content
+		<Root onOpenChange={closable ? onOpenChange : undefined} open={open}>
+			<Portal>
+				<Overlay className="data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0 fixed inset-0 z-50 bg-black/60 backdrop-blur-sm data-[state=closed]:animate-out data-[state=open]:animate-in" />
+				<Content
 					className={cn(
 						"fixed top-1/2 left-1/2 z-50 -translate-x-1/2 -translate-y-1/2",
 						"overflow-hidden border border-border bg-card shadow-2xl",
@@ -51,8 +51,8 @@ export const Modal = ({ title, closable = true, open, onOpenChange, children, cl
 						<div className="w-[51px]" />
 					</div>
 					{children}
-				</DialogPrimitive.Content>
-			</DialogPrimitive.Portal>
-		</DialogPrimitive.Root>
+				</Content>
+			</Portal>
+		</Root>
 	);
 };
