@@ -571,6 +571,8 @@ export function AnimatedBigTerminal({ cards }: { cards: TerminalCardDef[] }) {
   );
 }
 
+
+
 // --- Topology Blueprint (Architecture) ---
 
 export function TopologyVisualizer() {
