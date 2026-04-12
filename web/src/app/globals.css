@@ -70,6 +70,7 @@
 	/* Modal & command surfaces */
 	--modal-shell: var(--card);
 	--modal-shell-border: var(--border);
+	--modal-titlebar-height: 38px;
 	--modal-titlebar: var(--surface-inset);
 	--modal-titlebar-border: var(--border);
 	--modal-traffic-close: var(--destructive);
@@ -153,6 +154,7 @@
 	/* Modal & command surfaces */
 	--modal-shell: var(--card);
 	--modal-shell-border: var(--border);
+	--modal-titlebar-height: 38px;
 	--modal-titlebar: var(--surface-inset);
 	--modal-titlebar-border: var(--border);
 	--modal-traffic-close: var(--destructive);

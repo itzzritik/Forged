@@ -54,33 +54,44 @@ export const Modal = ({ title, closable = true, open, onOpenChange, children, cl
 				>
 					<div className="flex h-[38px] items-center border-modal-titlebar-border border-b bg-modal-titlebar px-3.5">
 						<div className="modal-window-controls flex items-center gap-2">
-							<button
-								aria-label="Close"
-								className={cn(
-									"modal-close-control group/modal-close relative flex h-[13px] w-[13px] items-center justify-center rounded-full border transition-[filter,box-shadow,background-color]",
-									closable
-										? "cursor-pointer border-modal-traffic-close/25 bg-modal-traffic-close hover:brightness-110 focus-visible:brightness-110 focus-visible:outline-none"
-										: "cursor-default border-modal-traffic-close/20 bg-modal-traffic-close-soft"
-								)}
-								disabled={!closable}
-								onClick={() => closable && onOpenChange(false)}
-								style={closable ? { boxShadow: "0 0 14px var(--modal-traffic-close-glow)" } : undefined}
-								type="button"
-							>
-								<svg
-									aria-hidden
-									className="pointer-events-none size-[8px] text-[var(--modal-traffic-close-icon)] opacity-0 transition-opacity group-hover/modal-close:opacity-100 group-focus-visible/modal-close:opacity-100"
-									fill="none"
-									stroke="currentColor"
-									strokeLinecap="round"
-									strokeLinejoin="round"
-									strokeWidth="2.8"
-									viewBox="0 0 10 10"
+							<div className="relative h-[13px] w-[13px]">
+								<button
+									aria-label="Close"
+									className={cn(
+										"modal-close-control group/modal-close absolute top-1/2 left-1/2 z-10 flex -translate-x-1/2 -translate-y-1/2 items-center justify-center rounded-none bg-transparent focus-visible:outline-none",
+										closable ? "cursor-pointer" : "cursor-default"
+									)}
+									disabled={!closable}
+									onClick={() => closable && onOpenChange(false)}
+									style={{ width: "var(--modal-titlebar-height)", height: "var(--modal-titlebar-height)" }}
+									type="button"
 								>
-									<path d="M2 2l6 6" />
-									<path d="M8 2L2 8" />
-								</svg>
-							</button>
+									<span
+										aria-hidden
+										className={cn(
+											"flex h-[13px] w-[13px] items-center justify-center rounded-full border transition-[filter,box-shadow,background-color]",
+											closable
+												? "border-modal-traffic-close/25 bg-modal-traffic-close group-hover/modal-close:brightness-110 group-focus-visible/modal-close:brightness-110"
+												: "border-modal-traffic-close/20 bg-modal-traffic-close-soft"
+										)}
+										style={closable ? { boxShadow: "0 0 14px var(--modal-traffic-close-glow)" } : undefined}
+									>
+										<svg
+											aria-hidden
+											className="pointer-events-none size-[8px] text-[var(--modal-traffic-close-icon)] opacity-0 transition-opacity group-hover/modal-close:opacity-100 group-focus-visible/modal-close:opacity-100"
+											fill="none"
+											stroke="currentColor"
+											strokeLinecap="round"
+											strokeLinejoin="round"
+											strokeWidth="2.8"
+											viewBox="0 0 10 10"
+										>
+											<path d="M2 2l6 6" />
+											<path d="M8 2L2 8" />
+										</svg>
+									</span>
+								</button>
+							</div>
 							<div
 								aria-hidden
 								className="modal-traffic-secondary-warning h-[13px] w-[13px] rounded-full border border-modal-traffic-warning/20 bg-modal-traffic-warning-soft transition-[background-color,border-color]"
