@@ -1,9 +1,9 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { cancelDerivation, decryptBlob, decryptProtectedKey, derivePasswordHash, type KDFParams, type VaultData } from "@/lib/vault-crypto";
-import { clearSyncKey, getSyncKey, storeSyncKey, touchActivity } from "@/lib/vault-store";
+import { clearSyncKey, getSyncKey, hasCachedKeySync, storeSyncKey, touchActivity } from "@/lib/vault-store";
 
 export type VaultStatus = "loading" | "no-vault" | "locked" | "unlocked" | "error";
 
@@ -18,8 +18,9 @@ interface VerifyResponse {
 
 interface VerifyErrorResponse {
 	attempts_remaining?: number;
-	error: string;
+	error?: string;
 	locked_until?: string;
+	verified?: boolean;
 }
 
 interface PullResponse {
@@ -69,6 +70,11 @@ export const useVault = (): UseVaultReturn => {
 	const [lockedUntil, setLockedUntil] = useState<string | null>(null);
 	const [kdfParams, setKdfParams] = useState<KDFParams | null>(null);
 
+	// Sync-determine locked state before browser paints (avoids modal flash)
+	useLayoutEffect(() => {
+		if (!hasCachedKeySync()) setStatus("locked");
+	}, []);
+
 	// prevent double-init in React StrictMode
 	const initialized = useRef(false);
 
@@ -81,6 +87,7 @@ export const useVault = (): UseVaultReturn => {
 			// check IndexedDB for a cached key first
 			const stored = await getSyncKey();
 			if (stored) {
+				setStatus("loading");
 				await touchActivity();
 				try {
 					const { data, blob, version } = await fetchAndDecryptBlob(stored.cryptoKey, stored.cachedBlob, stored.blobVersion);
@@ -153,23 +160,26 @@ export const useVault = (): UseVaultReturn => {
 					body: JSON.stringify({ master_password_hash: hashB64 }),
 				});
 
-				if (verifyRes.status === 401) {
-					router.push("/login");
-					return;
-				}
-
 				if (!verifyRes.ok) {
 					const errBody: VerifyErrorResponse = await verifyRes.json().catch(() => ({
 						error: "Wrong password",
 					}));
 
-					if (verifyRes.status === 423) {
+					// Session expired (auth middleware 401, not vault verify 401)
+					if (verifyRes.status === 401 && !("verified" in errBody)) {
+						router.push("/login");
+						return;
+					}
+
+					// Account locked after too many attempts
+					if (verifyRes.status === 429) {
 						setLockedUntil(errBody.locked_until ?? null);
-						setError(errBody.error || "Account locked");
+						setError("Account locked");
 						setStatus("locked");
 						return;
 					}
 
+					// Wrong password (401 from vault verify)
 					setAttemptsRemaining(errBody.attempts_remaining ?? null);
 					setError(errBody.error || "Wrong password");
 					setStatus("locked");
@@ -179,7 +189,17 @@ export const useVault = (): UseVaultReturn => {
 				const { protected_symmetric_key }: VerifyResponse = await verifyRes.json();
 
 				// phase 2: decrypt protected key in worker (same worker instance, which already holds the derived key)
-				const cryptoKey = await decryptProtectedKey(protected_symmetric_key);
+				let cryptoKey: CryptoKey;
+				try {
+					cryptoKey = await decryptProtectedKey(protected_symmetric_key);
+				} catch (decryptErr) {
+					// Server accepted the hash but local decryption of the protected key failed.
+					// This is not a wrong-password scenario -- the key material or encoding is inconsistent.
+					console.error("Protected key decryption failed after server verified password:", decryptErr);
+					setStatus("error");
+					setError("Failed to decrypt vault key");
+					return;
+				}
 
 				// store in IndexedDB
 				await storeSyncKey(cryptoKey);
@@ -197,12 +217,6 @@ export const useVault = (): UseVaultReturn => {
 					return;
 				}
 				const msg = err instanceof Error ? err.message : "Unknown error";
-				// Wrong password or decryption failure -> back to locked, not error
-				if (msg === "wrong password" || msg.includes("decrypt") || msg.includes("Derivation")) {
-					setError("Wrong password");
-					setStatus("locked");
-					return;
-				}
 				setStatus("error");
 				setError(msg);
 			}

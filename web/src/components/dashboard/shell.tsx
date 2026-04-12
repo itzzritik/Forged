@@ -50,7 +50,6 @@ export const DashboardShell = ({ user, children }: DashboardShellProps) => {
 					}}
 				/>
 				<main className="flex-1 overflow-auto">
-					{vault.status === "loading" && <LoadingSkeleton />}
 					{vault.status === "no-vault" && <NoVault />}
 					{vault.status === "error" && <VaultError message={vault.error} />}
 					{vault.status === "unlocked" && (
@@ -58,10 +57,14 @@ export const DashboardShell = ({ user, children }: DashboardShellProps) => {
 							{children}
 						</motion.div>
 					)}
+					{vault.status === "loading" && <LoadingSkeleton />}
 				</main>
 			</div>
 			{vault.status === "locked" && (
-				<VaultUnlock attemptsRemaining={vault.attemptsRemaining} error={vault.error} lockedUntil={vault.lockedUntil} onUnlock={vault.unlock} />
+				<>
+					<div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" />
+					<VaultUnlock attemptsRemaining={vault.attemptsRemaining} error={vault.error} lockedUntil={vault.lockedUntil} onUnlock={vault.unlock} />
+				</>
 			)}
 			<CommandPalette keys={vault.vaultData?.keys ?? []} onOpenChange={commandPalette.setOpen} open={commandPalette.open} />
 		</div>

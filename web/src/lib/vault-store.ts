@@ -2,6 +2,7 @@ const DB_NAME = "forged-vault";
 const STORE_NAME = "keys";
 const KEY_ID = "sync-key";
 const TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
+const HAS_KEY_FLAG = "forged-has-key";
 
 interface StoredEntry {
 	blobVersion?: number;
@@ -9,6 +10,10 @@ interface StoredEntry {
 	cryptoKey: CryptoKey;
 	id: string;
 	lastActivity: number;
+}
+
+export function hasCachedKeySync(): boolean {
+	try { return localStorage.getItem(HAS_KEY_FLAG) === "1"; } catch { return false; }
 }
 
 let memoryFallback: StoredEntry | null = null;
@@ -34,6 +39,8 @@ export async function storeSyncKey(cryptoKey: CryptoKey, blob?: Uint8Array, vers
 		lastActivity: Date.now(),
 	};
 
+	try { localStorage.setItem(HAS_KEY_FLAG, "1"); } catch { /* localStorage unavailable */ }
+
 	if (!idbAvailable) {
 		memoryFallback = entry;
 		return;
@@ -43,6 +50,10 @@ export async function storeSyncKey(cryptoKey: CryptoKey, blob?: Uint8Array, vers
 		const db = await openDB();
 		const tx = db.transaction(STORE_NAME, "readwrite");
 		tx.objectStore(STORE_NAME).put(entry);
+		await new Promise<void>((resolve, reject) => {
+			tx.oncomplete = () => resolve();
+			tx.onerror = () => reject(tx.error);
+		});
 		db.close();
 	} catch {
 		idbAvailable = false;
@@ -115,6 +126,7 @@ export async function touchActivity(): Promise<void> {
 
 export async function clearSyncKey(): Promise<void> {
 	memoryFallback = null;
+	try { localStorage.removeItem(HAS_KEY_FLAG); } catch { /* localStorage unavailable */ }
 
 	if (!idbAvailable) return;
 
