@@ -90,7 +90,7 @@ export const DeviceTable = () => {
 							<TableCell className="text-muted-foreground text-sm">{relativeTime(device.last_seen_at)}</TableCell>
 							<TableCell>
 								{device.approved ? (
-									<Badge className="border-green-500/20 bg-green-500/10 text-green-500 hover:bg-green-500/10">Approved</Badge>
+									<Badge className="border-success/20 bg-success/10 text-success hover:bg-success/10">Approved</Badge>
 								) : (
 									<Badge className="border-yellow-500/20 bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/10">Pending</Badge>
 								)}

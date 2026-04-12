@@ -102,13 +102,13 @@ export const Sidebar = ({ collapsed, user }: SidebarProps) => {
 		>
 			{/* Logo */}
 			<div className={cn("flex items-center gap-3 border-sidebar-border border-b px-3 py-4", collapsed && "justify-center")}>
-				<div className="flex h-8 w-8 shrink-0 items-center justify-center border border-sidebar-border">
+				<div className="flex h-8 w-8 shrink-0 items-center justify-center border border-sidebar-border text-primary">
 					<svg
 						aria-label="Forged"
 						fill="none"
 						height="16"
 						role="img"
-						stroke="#ea580c"
+						stroke="currentColor"
 						strokeLinecap="round"
 						strokeLinejoin="round"
 						strokeWidth="2"
@@ -148,7 +148,7 @@ export const Sidebar = ({ collapsed, user }: SidebarProps) => {
 
 			{/* User */}
 			<div className={cn("flex items-center gap-3 border-sidebar-border border-t px-3 py-4", collapsed && "justify-center")}>
-				<div className="flex h-7 w-7 shrink-0 items-center justify-center bg-[#ea580c] font-bold font-mono text-[11px] text-black">{initial}</div>
+				<div className="flex h-7 w-7 shrink-0 items-center justify-center bg-primary font-bold font-mono text-[11px] text-primary-foreground">{initial}</div>
 				{!collapsed && (
 					<div className="min-w-0 flex-1">
 						<p className="truncate font-mono text-sidebar-foreground text-xs">{user.name}</p>

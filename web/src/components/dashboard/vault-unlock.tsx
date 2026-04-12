@@ -91,11 +91,11 @@ export const VaultUnlock = ({ onUnlock, error }: VaultUnlockProps) => {
 			className="fixed top-1/2 left-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 overflow-hidden border border-border bg-card font-mono shadow-2xl"
 			transition={{ duration: 0.5 }}
 		>
-			<div className="flex h-[38px] items-center border-border border-b bg-[#0a0a0a] px-3.5">
+			<div className="flex h-[38px] items-center border-border border-b bg-surface-inset px-3.5">
 				<div className="flex items-center gap-[7px]">
-					<div aria-hidden className="h-[11px] w-[11px] rounded-full border border-[#3f1c20] bg-[#2a1215]" />
-					<div aria-hidden className="h-[11px] w-[11px] rounded-full border border-[#3f3615] bg-[#2a2510]" />
-					<div aria-hidden className="h-[11px] w-[11px] rounded-full border border-[#1a3f25] bg-[#0f2a18]" />
+					<div aria-hidden className="h-[11px] w-[11px] rounded-full border border-destructive/20 bg-destructive/10" />
+					<div aria-hidden className="h-[11px] w-[11px] rounded-full border border-warning/20 bg-warning/10" />
+					<div aria-hidden className="h-[11px] w-[11px] rounded-full border border-success/20 bg-success/10" />
 				</div>
 				<div className="flex-1 text-center text-[10px] text-muted-foreground uppercase tracking-[0.1em]">{"Vault // Unlock"}</div>
 				<div className="w-[51px]" />

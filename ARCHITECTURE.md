@@ -86,7 +86,7 @@ Developers manage SSH keys poorly:
 4. **Single binary**: No runtime dependencies. No Node, no Python, no Docker.
 5. **Minimal attack surface**: The daemon is small, auditable, and does one thing well.
 6. **Offline-first**: Works without network. Sync is opportunistic, not required.
-7. **CLI-first**: The terminal is the primary interface. No web dashboard, no GUI.
+7. **CLI-first, dashboard second**: The terminal is the primary interface. The web dashboard is a first-class citizen for key management and account administration, but the CLI remains the primary surface.
 
 ---
 
@@ -96,8 +96,10 @@ Key decisions made during planning, with rationale:
 
 | Decision | Choice | Rationale |
 |----------|--------|-----------|
-| **UI** | CLI-only, no web dashboard | Target users live in the terminal. Eliminates React/Vite/embed complexity. REST API and dashboard can be added later if needed. |
-| **Local HTTP server** | None | No dashboard means no consumer. CLI talks to daemon via Unix socket IPC. Eliminates unnecessary attack surface. |
+| **UI** | CLI-first + web dashboard | Target users live in the terminal. Web dashboard is a first-class citizen for key management (generate, rename, delete, host rules, password change). CLI handles everything; dashboard adds convenience. |
+| **Local HTTP server** | None (daemon) / Next.js (web) | Daemon talks to CLI via Unix socket IPC. Web app (Next.js on Vercel) is separate -- no local server in the Go binary. |
+| **Vault crypto** | Bitwarden-modeled: Protected Symmetric Key, per-item cipher keys, AES-256-GCM. Server never verifies passwords. | True zero-knowledge. Wrong password = AES-GCM decryption failure client-side. No master_password_hash, no attempt tracking. |
+| **Dashboard writes** | Blob-based: decrypt, modify, re-encrypt, push whole blob. | Cost-efficient (1 row per user). Instant for <50KB vaults. All mutations go through /sync/push. |
 | **Sync API** | Go on Fly.io (`forged-api.ritik.me`) | Same language as client. Flat pricing suits daemon polling. API only, no HTML. |
 | **Web app** | Next.js on Vercel (`forged.ritik.me`) | Landing page, login (OAuth), dashboard, docs, pricing. |
 | **Cloud auth** | Google/GitHub OAuth | Passwordless. Login page on Next.js, token exchange on Go API. |
@@ -328,33 +330,36 @@ $XDG_STATE_HOME/forged/       # (~/.local/state/forged/)
 │    Memory cost (uint32)            │
 │    Parallelism (uint8)             │
 ├─────────────────────────────────────┤
-│  Nonce (24 bytes, XChaCha20)       │
+│  Protected Symmetric Key            │
+│  (AES-GCM ciphertext + 12B nonce)  │
+├─────────────────────────────────────┤
+│  Nonce (12 bytes, AES-GCM)         │
 ├─────────────────────────────────────┤
 │  Encrypted payload                  │
-│  (XChaCha20-Poly1305)              │
+│  (AES-256-GCM)                     │
 │  ┌─────────────────────────────┐   │
 │  │  JSON:                      │   │
 │  │  {                          │   │
 │  │    "keys": [...],           │   │
 │  │    "hosts": [...],          │   │
 │  │    "metadata": {...},       │   │
-│  │    "version_vector": {...}, │   │
-│  │    "tombstones": [...],     │   │
 │  │    "key_generation": 1      │   │
 │  │  }                          │   │
 │  └─────────────────────────────┘   │
 ├─────────────────────────────────────┤
-│  Auth tag (16 bytes, Poly1305)     │
+│  Auth tag (16 bytes, AES-GCM)      │
 └─────────────────────────────────────┘
 ```
 
 **Encryption chain**:
 1. User provides master password
-2. Argon2id derives 256-bit key from password + salt (time=3, memory=64MB, parallelism=4)
-3. XChaCha20-Poly1305 encrypts the vault payload
-4. Auth tag provides integrity verification
+2. Argon2id derives 256-bit Master Key from password + salt (time=3, memory=64MB, parallelism=4)
+3. HKDF-SHA256("forged-stretch") stretches Master Key into Stretched Master Key
+4. AES-256-GCM decrypts the Protected Symmetric Key (stored on server) using the Stretched Master Key -- this yields the random Symmetric Key
+5. AES-256-GCM decrypts the vault payload using the Symmetric Key
+6. Auth tag on each AES-GCM operation provides integrity verification; wrong password = decryption failure
 
-**Why XChaCha20-Poly1305**: 24-byte nonce eliminates nonce-reuse risk (critical when syncing across devices). Faster than AES-GCM on systems without AES-NI (common on ARM/budget machines). Used by age, WireGuard, and Bitwarden.
+**Why AES-256-GCM**: Standard AEAD cipher with hardware acceleration on all modern CPUs (AES-NI). Fits the Bitwarden-modeled Protected Symmetric Key pattern natively. 12-byte nonce is sufficient when the Symmetric Key is random and single-use per encryption. Nonces are stored alongside ciphertext.
 
 **Argon2id parameters**: Stored in the vault header, not hardcoded. Defaults tuned for modern hardware (64MB, 3 iterations). `forged benchmark` command available to test and recommend parameters for the current machine.
 
@@ -476,7 +481,8 @@ Not a cryptic "connection refused" or a hang.
   "name": "personal-github",
   "type": "ssh-ed25519",
   "public_key": "ssh-ed25519 AAAAC3Nza...",
-  "private_key": "base64...",
+  "encrypted_cipher_key": "base64...",
+  "encrypted_private_key": "base64...",
   "comment": "ritik@macbook",
   "fingerprint": "SHA256:abc123...",
   "created_at": "2026-03-15T10:00:00Z",
@@ -499,7 +505,7 @@ Not a cryptic "connection refused" or a hang.
 }
 ```
 
-Note: `private_key` is stored in plaintext within the vault JSON because the entire vault payload is encrypted. There is no double-encryption of individual keys.
+Note: `private_key` is NOT stored in plaintext in the vault JSON. Each key has its own random cipher key (`encrypted_cipher_key`, encrypted with the Symmetric Key via AES-GCM). The private key material is encrypted with that per-item cipher key (`encrypted_private_key`). This is double-encryption: Symmetric Key -> cipher key -> private key.
 
 ### Tombstone Object (for sync conflict resolution)
 
@@ -556,7 +562,7 @@ Tombstones are pruned after 90 days. Devices that haven't synced in 90 days do a
 | **Memory dump / swap** | Key memory pages locked with `mlock()`. Daemon zeros key material on lock/shutdown. |
 | **Local process snooping on agent socket** | Socket file permissions set to `0600`. Only the owning user can connect. |
 | **Man-in-the-middle on sync** | TLS for transport. Vault payload independently encrypted with client-side key. Double encryption. |
-| **Master password brute force** | Argon2id with high parameters (64MB memory, 3 iterations). Rate limiting on cloud login. |
+| **Master password brute force** | Argon2id with high parameters (64MB memory, 3 iterations). No server-side verification -- attacker must brute-force locally against the encrypted blob. Cost is purely Argon2id. |
 | **Rogue device added to account** | New device registration requires approval from an existing device OR entering a device pairing code. |
 | **Agent forwarding abuse** | Forged logs all signing requests with client PID and name. Optional: restrict which keys are available for forwarded sessions. |
 | **Vault corruption (crash mid-write)** | Atomic writes: write to tmp, fsync, rename. Never partial writes to the vault file. |
@@ -570,20 +576,26 @@ Tombstones are pruned after 90 days. Devices that haven't synced in 90 days do a
 ```
 Master Password (user-provided)
     │
-    ├─ Argon2id(salt_A, time=3, mem=64MB, p=4)
-    │   └─ Vault Encryption Key (256-bit) — NEVER sent to server
-    │       │
-    │       ├─ Encrypts local vault file (XChaCha20-Poly1305)
-    │       │
-    │       └─ HKDF-SHA256(context="forged-sync")
-    │           └─ Sync Key — encrypts vault blob for cloud upload
+    Argon2id(salt, time=3, mem=64MB, p=4)
     │
-    └─ Argon2id(salt_B, time=3, mem=64MB, p=4)
-        └─ Auth Key → bcrypt → server stores this hash
-           (server can authenticate user but CANNOT decrypt vault)
+    Master Key (256-bit)
+    │
+    +-- HKDF-SHA256("forged-stretch") -> Stretched Master Key
+    |   |
+    |   AES-GCM(Stretched Key, Symmetric Key) -> Protected Symmetric Key
+    |   |                                         (stored on server, encrypted)
+    |   |
+    |   Symmetric Key (random 256-bit, NEVER sent to server)
+    |       |
+    |       +-- AES-GCM(Symmetric Key, vault JSON) -> Encrypted Blob
+    |       |
+    |       +-- Per-item: AES-GCM(Symmetric Key, cipher_key_i) -> encrypted_cipher_key
+    |                      AES-GCM(cipher_key_i, private_key_i) -> encrypted_private_key
+    |
+    (Master Password Hash: REMOVED -- server never verifies passwords)
 ```
 
-This is the same dual-derivation approach used by 1Password and Bitwarden.
+This is the Bitwarden-modeled Protected Symmetric Key pattern. The server stores the Protected Symmetric Key but cannot decrypt it -- only the client can, using the Stretched Master Key derived from the user's password locally.
 
 ### What the server stores
 
@@ -593,8 +605,9 @@ This is the same dual-derivation approach used by 1Password and Bitwarden.
 │                                      │
 │  user_id: "uuid"                     │
 │  email: "ritik@example.com"          │
-│  auth_hash: bcrypt(auth_key)         │  ← Account auth only
-│  encrypted_vault: "opaque blob"      │  ← Server can't read this
+│  encrypted_blob: <opaque bytes>      │  ← Server can't read this
+│  protected_symmetric_key: "base64"   │  ← Encrypted; server can't decrypt
+│  kdf_params: { salt, time, mem, p }  │  ← Public Argon2id parameters
 │  vault_version: 42                   │  ← Optimistic locking
 │  key_generation: 1                   │  ← Bumped on password change
 │  devices: [...]                      │
@@ -602,6 +615,8 @@ This is the same dual-derivation approach used by 1Password and Bitwarden.
 │  updated_at: "..."                   │
 └─────────────────────────────────────┘
 ```
+
+No password hash. No unlock attempt tracking. True zero-knowledge -- server is a dumb encrypted blob store.
 
 ### Master Password Change
 
@@ -693,29 +708,17 @@ Device A (makes change)              Cloud Server              Device B
 
 ### Conflict Resolution
 
-**Strategy: Whole-vault replacement with version vector**
+**Strategy: Whole-vault replacement with optimistic locking**
 
-Each device maintains a version counter. The vault includes a version vector:
-
-```json
-{
-  "version_vector": {
-    "device-macbook": 15,
-    "device-ubuntu": 8,
-    "device-windows": 3
-  }
-}
-```
+Note: version vectors and tombstones are legacy design artifacts. The server is now the source of truth for item existence. The client pulls before pushing, merges with local state, and pushes back. Deletion is handled by omitting the item from the re-encrypted blob; no tombstone tracking needed.
 
 On conflict (two devices push simultaneously):
 1. Server rejects the second push (optimistic locking: `UPDATE vaults SET ... WHERE version = $expected`)
 2. Rejected device pulls latest vault, merges locally:
    - Key additions: union (keep both)
-   - Key deletions: tombstone with timestamp (latest delete wins)
+   - Key deletions: server blob is authoritative -- item absent in server blob is treated as deleted
    - Key modifications: last-writer-wins based on `updated_at`
-3. Merged vault pushed with new version
-
-**Tombstone TTL**: Tombstones pruned after 90 days. Devices offline >90 days do full vault replacement.
+3. Merged vault re-encrypted and pushed with new version
 
 **Why whole-vault sync (not per-key)**:
 - Vault is small (typical: 5-20 keys = under 50KB encrypted)
@@ -884,8 +887,9 @@ GET    /api/v1/auth/google/callback   Exchange code, redirect to CLI with token
 GET    /api/v1/auth/github            Redirect to GitHub OAuth
 GET    /api/v1/auth/github/callback   Exchange code, redirect to CLI with token
 POST   /api/v1/sync/push              Upload encrypted vault blob
-GET    /api/v1/sync/pull              Download encrypted vault blob
-GET    /api/v1/sync/status            Sync metadata
+GET    /api/v1/sync/pull              Download encrypted vault blob + protected_symmetric_key
+GET    /api/v1/sync/status            Sync metadata + protected_symmetric_key (for dashboard unlock)
+POST   /api/v1/vault/rekey            Replace protected_symmetric_key + encrypted_blob atomically
 GET    /api/v1/devices                List registered devices
 POST   /api/v1/devices                Register a new device
 DELETE /api/v1/devices/:id            Deauthorize a device
@@ -894,6 +898,8 @@ GET    /api/v1/account                Account info
 POST   /api/v1/account/delete         Delete account + all data
 GET    /health                        Health check
 ```
+
+Note: `/api/v1/vault/verify` has been removed. The server no longer verifies passwords.
 
 ### Web App (`forged.ritik.me`) - Next.js on Vercel
 
@@ -912,7 +918,9 @@ Everything users see in a browser.
 - `/pricing` - Free (local) / Pro (cloud sync) / Team (per user)
 - `/docs` - Installation, setup, configuration guides
 - `/security` - Security model explanation
-- `/dashboard` - Manage devices, billing, plan (future)
+- `/dashboard` - SSH keys (view, generate, rename, delete, host rules); vault unlock via local AES-GCM decryption
+- `/dashboard/devices` - Device management (list, deauthorize, approve)
+- `/dashboard/account` - Profile, change master password (client-side rekey via web worker), delete account
 
 ### Auth Flow
 
@@ -956,6 +964,11 @@ All login paths route through `forged.ritik.me/api/auth/callback` to set an encr
 ### Database Schema
 
 ```sql
+-- Dropped columns (removed in Crypto v2 refactor):
+--   master_password_hash TEXT  -- bcrypt hash, removed; server never verifies passwords
+--   vault_unlock_attempts INT  -- removed; no server-side lockout
+--   vault_locked_until TIMESTAMPTZ -- removed; no server-side lockout
+
 CREATE TABLE users (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     email TEXT UNIQUE NOT NULL,
@@ -971,6 +984,8 @@ CREATE TABLE vaults (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id UUID REFERENCES users(id) ON DELETE CASCADE,
     encrypted_blob BYTEA NOT NULL,
+    protected_symmetric_key TEXT NOT NULL,
+    kdf_params JSONB NOT NULL,
     version BIGINT NOT NULL DEFAULT 1,
     updated_at TIMESTAMPTZ DEFAULT now(),
     updated_by_device UUID,
@@ -1720,11 +1735,35 @@ forged/
 - [x] Auth session endpoints with per-IP rate limiting (10/min create, 30/min poll)
 - [x] Background session cleanup goroutine (10-minute TTL)
 - [x] `auth_sessions` database table with versioned migration tool
-- [ ] Dashboard: device management UI
-- [ ] Dashboard: sync status UI
-- [ ] Dashboard: account management UI
+- [x] Dashboard: device management UI
+- [x] Dashboard: sync status UI
+- [x] Dashboard: account management UI
 
 **Deliverable**: Authenticated web experience. CLI and browser login both persist sessions. Dashboard ready for feature development.
+
+### Phase 7: Zero-Knowledge + Dashboard Writes (Week 13-14) - COMPLETE
+
+**Goal**: True zero-knowledge architecture and full dashboard write capability.
+
+**Architecture change**: Removed all server-side password verification. Adopted Bitwarden-modeled Protected Symmetric Key pattern. Dashboard can now create, modify, and delete keys with client-side encryption.
+
+- [x] Crypto v2: AES-256-GCM, Protected Symmetric Key, per-item cipher keys
+- [x] Remove `/vault/verify` endpoint -- server never verifies passwords
+- [x] Remove `master_password_hash`, `vault_unlock_attempts`, `vault_locked_until` from DB
+- [x] Return `protected_symmetric_key` in `/sync/pull` and `/sync/status`
+- [x] Simplify `/vault/rekey` -- no old password verification
+- [x] CLI: remove all password hash derivation and sending
+- [x] Dashboard: vault unlock via local AES-GCM decryption
+- [x] Dashboard: VaultContext for shared vault state
+- [x] Dashboard: generate Ed25519 keys (Web Crypto API)
+- [x] Dashboard: inline rename, delete keys
+- [x] Dashboard: host rules editor
+- [x] Dashboard: change password (client-side rekey via web worker)
+- [x] Dashboard: command palette with key search + keyboard shortcuts
+- [x] SSH key utilities: wire format encoder, fingerprint computation
+- [x] Web worker: Argon2id + HKDF derivation, protected key decrypt/encrypt, rekey
+
+**Deliverable**: True zero-knowledge. Dashboard is a first-class citizen for key management. Server is a dumb encrypted blob store.
 
 ---
 
@@ -1752,7 +1791,6 @@ forged/
 |-----------|---------|
 | `net/http` (stdlib) | HTTP server |
 | `github.com/jackc/pgx/v5` | PostgreSQL driver |
-| `golang.org/x/crypto/bcrypt` | Password hashing |
 | `github.com/golang-jwt/jwt/v5` | JWT authentication |
 | Fly.io | Hosting |
 | PostgreSQL (Fly Postgres) | Database |

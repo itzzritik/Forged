@@ -2,7 +2,14 @@
 
 import { usePathname } from "next/navigation";
 import { useTheme } from "next-themes";
+import { useEffect, useState } from "react";
 import { cn } from "@/lib/utils";
+
+const useMounted = () => {
+	const [mounted, setMounted] = useState(false);
+	useEffect(() => setMounted(true), []);
+	return mounted;
+};
 
 interface TopbarProps {
 	collapsed: boolean;
@@ -119,10 +126,12 @@ const themeOrder = ["dark", "light", "system"] as const;
 export const Topbar = ({ collapsed: _collapsed, onToggle, onSearchOpen }: TopbarProps) => {
 	const pathname = usePathname();
 	const { theme, setTheme } = useTheme();
+	const mounted = useMounted();
 
 	const breadcrumb = breadcrumbMap[pathname] ?? "Dashboard";
 
 	function getThemeIcon() {
+		if (!mounted) return MoonIcon;
 		if (theme === "light") return SunIcon;
 		if (theme === "system") return SystemIcon;
 		return MoonIcon;

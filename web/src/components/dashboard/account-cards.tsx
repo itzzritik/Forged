@@ -94,7 +94,9 @@ export const AccountCards = () => {
 			{/* Profile Card */}
 			<div className="rounded-lg border border-border bg-card p-6">
 				<div className="flex items-center gap-4">
-					<div className="flex size-16 shrink-0 items-center justify-center rounded-full bg-orange-500 font-semibold text-2xl text-white">{initial}</div>
+					<div className="flex size-16 shrink-0 items-center justify-center rounded-full bg-primary font-semibold text-2xl text-primary-foreground">
+						{initial}
+					</div>
 					<div className="min-w-0">
 						<p className="truncate font-semibold text-lg">{account?.name ?? "--"}</p>
 						<p className="truncate text-muted-foreground text-sm">{account?.email ?? "--"}</p>
@@ -115,7 +117,7 @@ export const AccountCards = () => {
 					<Input onChange={(e) => setNewPassword(e.target.value)} placeholder="New password (min 8 chars)" type="password" value={newPassword} />
 					<Input onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm new password" type="password" value={confirmPassword} />
 					{rekeyError && <p className="text-destructive text-xs">{rekeyError}</p>}
-					{rekeySuccess && <p className="text-green-500 text-xs">Password changed successfully.</p>}
+					{rekeySuccess && <p className="text-success text-xs">Password changed successfully.</p>}
 					<Button disabled={rekeying} onClick={handleRekey} size="sm">
 						{rekeying ? "Changing..." : "Change Password"}
 					</Button>

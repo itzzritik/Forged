@@ -144,8 +144,8 @@ export const KeyTable = () => {
 								</TableCell>
 								<TableCell className="hidden sm:table-cell">
 									{key.gitSigning ? (
-										<span className="flex items-center gap-1.5 text-green-500 text-sm">
-											<span className="size-1.5 shrink-0 rounded-full bg-green-500" />
+										<span className="flex items-center gap-1.5 text-sm text-success">
+											<span className="size-1.5 shrink-0 rounded-full bg-success" />
 											Active
 										</span>
 									) : (
