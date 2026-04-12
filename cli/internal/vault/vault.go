@@ -13,12 +13,12 @@ import (
 )
 
 type Vault struct {
-	path               string
-	lockFile           *os.File
-	kdf                KDFParams
-	key                []byte // Symmetric Key (random, decrypted from Protected Symmetric Key)
-	protectedKey       [ProtectedKeySize]byte
-	Data               VaultData
+	path         string
+	lockFile     *os.File
+	kdf          KDFParams
+	key          []byte // Symmetric Key (random, decrypted from Protected Symmetric Key)
+	protectedKey [ProtectedKeySize]byte
+	Data         VaultData
 }
 
 type VaultData struct {
@@ -260,6 +260,9 @@ func (v *Vault) ProtectedKeyBytes() []byte {
 	return v.protectedKey[:]
 }
 
+func (v *Vault) DeviceID() string {
+	return v.Data.Metadata.DeviceID
+}
 
 func (v *Vault) ChangePassword(newPassword []byte) error {
 	newKDF := DefaultKDFParams()

@@ -129,54 +129,70 @@ export async function decryptBlob(symmetricKey: CryptoKey, blob: Uint8Array): Pr
 	const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, symmetricKey, ciphertext);
 
 	const json = new TextDecoder().decode(plaintext);
-	const parsed = JSON.parse(json);
-
-	const keys: VaultKeyMetadata[] = (parsed.keys || []).map((k: Record<string, unknown>) => ({
-		id: k.id,
-		name: k.name,
-		type: k.type,
-		publicKey: k.public_key,
-		fingerprint: k.fingerprint,
-		comment: k.comment,
-		createdAt: k.created_at,
-		updatedAt: k.updated_at,
-		hostRules: k.host_rules || [],
-		gitSigning: k.git_signing,
-	}));
-
-	return {
-		keys,
-		metadata: {
-			createdAt: parsed.metadata?.created_at || "",
-			deviceId: parsed.metadata?.device_id || "",
-			deviceName: parsed.metadata?.device_name || "",
-		},
-		keyGeneration: parsed.key_generation || 1,
-		raw: json,
-	};
+	return vaultDataFromRaw(json);
 }
 
 // Mutation helpers that operate on the raw JSON (snake_case, preserves encrypted fields)
 
-export function addKeyToVault(data: VaultData, snakeCaseKey: Record<string, unknown>): VaultData {
-	const parsed = JSON.parse(data.raw);
-	parsed.keys = [...(parsed.keys || []), snakeCaseKey];
-	const raw = JSON.stringify(parsed);
-	return { ...decryptBlobSync(parsed), raw };
+export function vaultDataFromRaw(rawJson: string): VaultData {
+	return { ...decryptBlobSync(JSON.parse(rawJson) as Record<string, unknown>), raw: rawJson };
 }
 
-export function removeKeyFromVault(data: VaultData, keyId: string): VaultData {
-	const parsed = JSON.parse(data.raw);
-	parsed.keys = (parsed.keys || []).filter((k: Record<string, unknown>) => k.id !== keyId);
+export function addKeyToVault(data: VaultData, snakeCaseKey: Record<string, unknown>, deviceId?: string): VaultData {
+	const parsed = JSON.parse(data.raw) as Record<string, unknown>;
+	const now = new Date().toISOString();
+	const currentDeviceId = applyLocalDeviceMetadata(parsed, deviceId);
+	const key = {
+		...snakeCaseKey,
+		created_at: snakeCaseKey.created_at ?? now,
+		device_origin: snakeCaseKey.device_origin && snakeCaseKey.device_origin !== "web" ? snakeCaseKey.device_origin : currentDeviceId,
+		updated_at: snakeCaseKey.updated_at ?? now,
+		version: snakeCaseKey.version ?? 1,
+	};
+	parsed.keys = [...(((parsed.keys as Record<string, unknown>[]) ?? [])), key];
+	bumpVersionVector(parsed, currentDeviceId);
 	const raw = JSON.stringify(parsed);
-	return { ...decryptBlobSync(parsed), raw };
+	return vaultDataFromRaw(raw);
 }
 
-export function updateKeyInVault(data: VaultData, keyId: string, updates: Record<string, unknown>): VaultData {
-	const parsed = JSON.parse(data.raw);
-	parsed.keys = (parsed.keys || []).map((k: Record<string, unknown>) => (k.id === keyId ? { ...k, ...updates, updated_at: new Date().toISOString() } : k));
+export function removeKeyFromVault(data: VaultData, keyId: string, deviceId?: string): VaultData {
+	const parsed = JSON.parse(data.raw) as Record<string, unknown>;
+	const keys = (parsed.keys as Record<string, unknown>[]) ?? [];
+	const removed = keys.find((key) => key.id === keyId);
+	parsed.keys = keys.filter((key) => key.id !== keyId);
+	if (removed) {
+		const currentDeviceId = applyLocalDeviceMetadata(parsed, deviceId);
+		upsertTombstone(parsed, keyId, currentDeviceId, new Date().toISOString());
+		bumpVersionVector(parsed, currentDeviceId);
+	}
 	const raw = JSON.stringify(parsed);
-	return { ...decryptBlobSync(parsed), raw };
+	return vaultDataFromRaw(raw);
+}
+
+export function updateKeyInVault(data: VaultData, keyId: string, updates: Record<string, unknown>, deviceId?: string): VaultData {
+	const parsed = JSON.parse(data.raw) as Record<string, unknown>;
+	const keys = ((parsed.keys as Record<string, unknown>[]) ?? []).map((key) => {
+		if (key.id !== keyId) {
+			return key;
+		}
+
+		const currentDeviceId = firstNonEmpty(deviceId, ((parsed.metadata as Record<string, unknown> | undefined)?.device_id as string | undefined), "web");
+		return {
+			...key,
+			...updates,
+			device_origin: (key.device_origin as string | undefined) ?? currentDeviceId,
+			updated_at: new Date().toISOString(),
+			version: Number(key.version ?? 0) + 1,
+		};
+	});
+	const changed = keys.some((key) => key.id === keyId);
+	parsed.keys = keys;
+	if (changed) {
+		const currentDeviceId = applyLocalDeviceMetadata(parsed, deviceId);
+		bumpVersionVector(parsed, currentDeviceId);
+	}
+	const raw = JSON.stringify(parsed);
+	return vaultDataFromRaw(raw);
 }
 
 function decryptBlobSync(parsed: Record<string, unknown>): Omit<VaultData, "raw"> {
@@ -202,6 +218,51 @@ function decryptBlobSync(parsed: Record<string, unknown>): Omit<VaultData, "raw"
 		},
 		keyGeneration: (parsed.key_generation as number) || 1,
 	};
+}
+
+function applyLocalDeviceMetadata(parsed: Record<string, unknown>, deviceId?: string): string {
+	const metadata = (parsed.metadata as Record<string, unknown> | undefined) ?? {};
+	const currentDeviceId = firstNonEmpty(deviceId, metadata.device_id as string | undefined, "web");
+	parsed.metadata = {
+		...metadata,
+		device_id: currentDeviceId,
+		device_name: (metadata.device_name as string | undefined) ?? "Browser",
+	};
+	return currentDeviceId;
+}
+
+function bumpVersionVector(parsed: Record<string, unknown>, deviceId: string) {
+	const vector = { ...((parsed.version_vector as Record<string, number> | undefined) ?? {}) };
+	vector[deviceId] = Number(vector[deviceId] ?? 0) + 1;
+	parsed.version_vector = vector;
+}
+
+function upsertTombstone(parsed: Record<string, unknown>, keyId: string, deviceId: string, deletedAt: string) {
+	const tombstones = ((parsed.tombstones as Record<string, unknown>[]) ?? []).map((tombstone) => ({ ...tombstone }));
+	const next = {
+		key_id: keyId,
+		deleted_at: deletedAt,
+		deleted_by_device: deviceId,
+	};
+	const index = tombstones.findIndex((tombstone) => tombstone.key_id === keyId);
+	if (index >= 0) {
+		const existing = tombstones[index];
+		if (Date.parse(deletedAt) > Date.parse(String(existing.deleted_at ?? ""))) {
+			tombstones[index] = next;
+		}
+	} else {
+		tombstones.push(next);
+	}
+	parsed.tombstones = tombstones;
+}
+
+function firstNonEmpty(...values: Array<string | undefined>): string {
+	for (const value of values) {
+		if (value) {
+			return value;
+		}
+	}
+	return "";
 }
 
 export async function encryptBlob(symmetricKey: CryptoKey, rawJson: string): Promise<Uint8Array> {

@@ -103,7 +103,7 @@ async function parseSource(source: Source, file: File): Promise<ImportedKey[]> {
 }
 
 export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
-	const { vaultData, symmetricKeyRef, pushVault } = useVaultContext();
+	const { deviceId, vaultData, symmetricKeyRef, pushVault } = useVaultContext();
 	const [step, setStep] = useState<Step>(1);
 	const [source, setSource] = useState<Source | null>(null);
 	const [reviewKeys, setReviewKeys] = useState<ReviewKey[]>([]);
@@ -190,7 +190,7 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 					device_origin: "web",
 					encrypted_cipher_key: encryptedCipherKeyB64,
 					encrypted_private_key: encryptedPrivateKeyB64,
-				});
+				}, deviceId);
 			}
 
 			await pushVault(current);

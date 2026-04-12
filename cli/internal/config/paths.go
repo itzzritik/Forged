@@ -14,10 +14,11 @@ type Paths struct {
 	StateDir   string
 }
 
-func (p Paths) ConfigFile() string       { return filepath.Join(p.ConfigDir, "config.toml") }
-func (p Paths) VaultFile() string        { return filepath.Join(p.DataDir, "vault.forged") }
-func (p Paths) CredentialsFile() string  { return filepath.Join(p.ConfigDir, "credentials.json") }
-func (p Paths) SyncDirtyFile() string    { return filepath.Join(p.DataDir, "sync.dirty") }
+func (p Paths) ConfigFile() string      { return filepath.Join(p.ConfigDir, "config.toml") }
+func (p Paths) VaultFile() string       { return filepath.Join(p.DataDir, "vault.forged") }
+func (p Paths) CredentialsFile() string { return filepath.Join(p.ConfigDir, "credentials.json") }
+func (p Paths) SyncStateFile() string   { return filepath.Join(p.DataDir, "sync-state.json") }
+func (p Paths) SyncDirtyFile() string   { return filepath.Join(p.DataDir, "sync.dirty") }
 func (p Paths) AgentSocket() string {
 	if runtime.GOOS == "windows" {
 		return `\\.\pipe\forged-agent`
@@ -31,8 +32,8 @@ func (p Paths) CtlSocket() string {
 	}
 	return filepath.Join(p.RuntimeDir, "ctl.sock")
 }
-func (p Paths) PIDFile() string     { return filepath.Join(p.RuntimeDir, "daemon.pid") }
-func (p Paths) LogFile() string     { return filepath.Join(p.StateDir, "logs", "forged.log") }
+func (p Paths) PIDFile() string { return filepath.Join(p.RuntimeDir, "daemon.pid") }
+func (p Paths) LogFile() string { return filepath.Join(p.StateDir, "logs", "forged.log") }
 
 func DefaultPaths() Paths {
 	switch runtime.GOOS {

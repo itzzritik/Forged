@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
@@ -24,10 +25,15 @@ type Server struct {
 	logger      *slog.Logger
 	wg          sync.WaitGroup
 	syncBus     *forgedsync.Bus
+	syncLink    func(SyncLinkArgs) error
 }
 
 func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
 	s.syncBus = bus
+}
+
+func (s *Server) SetSyncLinkHandler(handler func(SyncLinkArgs) error) {
+	s.syncLink = handler
 }
 
 func NewServer(socketPath string, v *vault.Vault, ks *vault.KeyStore, al *activity.ActivityLog, logger *slog.Logger) *Server {
@@ -126,6 +132,8 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleActivity(req.Args)
 	case CmdSyncTrigger:
 		return s.handleSyncTrigger(req.Args)
+	case CmdSyncLink:
+		return s.handleSyncLink(req.Args)
 	case "status":
 		return s.handleStatus()
 	default:
@@ -134,6 +142,8 @@ func (s *Server) dispatch(req Request) Response {
 }
 
 func (s *Server) handleList() Response {
+	s.refreshForRead("list")
+
 	keys := s.keyStore.List()
 	type keyInfo struct {
 		Name        string `json:"name"`
@@ -164,7 +174,7 @@ func (s *Server) handleAdd(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 	if s.syncBus != nil {
-		s.syncBus.MarkDirty("key_added")
+		s.syncBus.LocalMutation("key_added")
 	}
 	return OkResponse(map[string]string{
 		"name":        key.Name,
@@ -189,7 +199,7 @@ func (s *Server) handleGenerate(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 	if s.syncBus != nil {
-		s.syncBus.MarkDirty("key_generated")
+		s.syncBus.LocalMutation("key_generated")
 	}
 	return OkResponse(map[string]string{
 		"name":        key.Name,
@@ -212,7 +222,7 @@ func (s *Server) handleRemove(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 	if s.syncBus != nil {
-		s.syncBus.MarkDirty("key_removed")
+		s.syncBus.LocalMutation("key_removed")
 	}
 	return OkResponse(nil)
 }
@@ -231,7 +241,7 @@ func (s *Server) handleRename(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 	if s.syncBus != nil {
-		s.syncBus.MarkDirty("key_renamed")
+		s.syncBus.LocalMutation("key_renamed")
 	}
 	return OkResponse(nil)
 }
@@ -241,6 +251,8 @@ type exportArgs struct {
 }
 
 func (s *Server) handleExport(raw json.RawMessage) Response {
+	s.refreshForRead("export")
+
 	var a exportArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
@@ -253,6 +265,8 @@ func (s *Server) handleExport(raw json.RawMessage) Response {
 }
 
 func (s *Server) handleExportAll() Response {
+	s.refreshForRead("export_all")
+
 	if err := s.vault.DecryptAllPrivateKeys(); err != nil {
 		return ErrorResponse(fmt.Errorf("decrypting keys: %w", err))
 	}
@@ -307,7 +321,7 @@ func (s *Server) handleHost(raw json.RawMessage) Response {
 		}
 	}
 	if s.syncBus != nil {
-		s.syncBus.MarkDirty("host_rule_added")
+		s.syncBus.LocalMutation("host_rule_added")
 	}
 	return OkResponse(nil)
 }
@@ -326,16 +340,18 @@ func (s *Server) handleUnhost(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 	if s.syncBus != nil {
-		s.syncBus.MarkDirty("host_rule_removed")
+		s.syncBus.LocalMutation("host_rule_removed")
 	}
 	return OkResponse(nil)
 }
 
 func (s *Server) handleHosts() Response {
+	s.refreshForRead("hosts")
+
 	keys := s.keyStore.List()
 	type mapping struct {
-		KeyName  string           `json:"key_name"`
-		Rules    []vault.HostRule `json:"rules"`
+		KeyName string           `json:"key_name"`
+		Rules   []vault.HostRule `json:"rules"`
 	}
 	var mappings []mapping
 	for _, k := range keys {
@@ -377,6 +393,14 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("server_url and token required"))
 	}
 
+	if s.syncBus != nil {
+		if err := s.syncBus.ForceSync(context.Background(), "manual_sync"); err != nil {
+			return ErrorResponse(fmt.Errorf("sync failed: %w", err))
+		}
+		state := s.syncBus.SnapshotState()
+		return OkResponse(map[string]any{"version": state.LastKnownServerVersion})
+	}
+
 	blob, err := s.vault.ExportForSync()
 	if err != nil {
 		return ErrorResponse(fmt.Errorf("exporting vault: %w", err))
@@ -403,10 +427,56 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 	return OkResponse(map[string]any{"version": result.Version})
 }
 
+func (s *Server) handleSyncLink(raw json.RawMessage) Response {
+	var a SyncLinkArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+	if a.ServerURL == "" || a.Token == "" || a.UserID == "" {
+		return ErrorResponse(fmt.Errorf("server_url, token, and user_id required"))
+	}
+	if s.syncLink == nil {
+		return ErrorResponse(fmt.Errorf("sync link handler unavailable"))
+	}
+	if err := s.syncLink(a); err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(nil)
+}
+
 func (s *Server) handleStatus() Response {
-	keys := s.keyStore.List()
-	return OkResponse(map[string]any{
+	status := map[string]any{
 		"pid":       os.Getpid(),
-		"key_count": len(keys),
-	})
+		"key_count": len(s.keyStore.List()),
+	}
+
+	if s.syncBus != nil {
+		syncState := s.syncBus.SnapshotState()
+		status["sync"] = map[string]any{
+			"device_id":                 syncState.DeviceID,
+			"dirty":                     syncState.Dirty,
+			"last_error":                syncState.LastError,
+			"last_known_server_version": syncState.LastKnownServerVersion,
+			"last_successful_pull_at":   syncState.LastSuccessfulPullAt,
+			"last_successful_push_at":   syncState.LastSuccessfulPushAt,
+			"linked":                    syncState.LinkedUserID != "" && syncState.ServerURL != "",
+			"linked_user_id":            syncState.LinkedUserID,
+			"server_url":                syncState.ServerURL,
+		}
+	}
+
+	return OkResponse(status)
+}
+
+func (s *Server) refreshForRead(reason string) {
+	if s.syncBus == nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	if err := s.syncBus.ForegroundRead(ctx, reason); err != nil {
+		s.logger.Debug("foreground sync refresh failed", "reason", reason, "error", err)
+	}
 }

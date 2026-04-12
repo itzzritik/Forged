@@ -2,7 +2,9 @@
 
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { cancelDerivation, decryptBlob, decryptProtectedKey, deriveStretchedKey, encryptBlob, type KDFParams, type VaultData } from "@/lib/vault-crypto";
+import { cancelDerivation, decryptBlob, decryptProtectedKey, deriveStretchedKey, encryptBlob, vaultDataFromRaw, type KDFParams, type VaultData } from "@/lib/vault-crypto";
+import { getBrowserDeviceId } from "@/lib/sync/device";
+import { mergeThreeWayRaw } from "@/lib/sync/merge";
 import { clearSyncKey, getSyncKey, hasCachedKeySync, storeSyncKey, touchActivity } from "@/lib/vault-store";
 
 export type VaultStatus = "loading" | "no-vault" | "locked" | "unlocked" | "error";
@@ -20,6 +22,7 @@ interface PullResponse {
 }
 
 export interface UseVaultReturn {
+	deviceId: string;
 	error: string | null;
 	kdfParams: KDFParams | null;
 	lock: () => Promise<void>;
@@ -40,8 +43,10 @@ export const useVaultContext = () => {
 	return ctx;
 };
 
-async function fetchVault(cryptoKey: CryptoKey): Promise<{ data: VaultData; version: number }> {
-	const res = await fetch("/api/vault/pull");
+async function fetchVault(cryptoKey: CryptoKey, deviceId: string): Promise<{ data: VaultData; version: number }> {
+	const res = await fetch("/api/vault/pull", {
+		headers: { "X-Device-ID": deviceId },
+	});
 	if (res.status === 401) throw new Error("401");
 	if (!res.ok) throw new Error(`Failed to pull vault: ${res.status}`);
 
@@ -60,6 +65,12 @@ export const useVault = (): UseVaultReturn => {
 	const [protectedKey, setProtectedKey] = useState<string | null>(null);
 	const [version, setVersion] = useState(0);
 	const symmetricKeyRef = useRef<CryptoKey | null>(null);
+	const deviceIdRef = useRef("");
+	const lastSyncedBaseRawRef = useRef<string | null>(null);
+
+	if (!deviceIdRef.current && typeof window !== "undefined") {
+		deviceIdRef.current = getBrowserDeviceId();
+	}
 
 	// Sync-determine locked state before browser paints (avoids modal flash)
 	useLayoutEffect(() => {
@@ -82,10 +93,11 @@ export const useVault = (): UseVaultReturn => {
 				await touchActivity();
 				try {
 					symmetricKeyRef.current = stored.cryptoKey;
-					const { data, version: v } = await fetchVault(stored.cryptoKey);
+					const { data, version: v } = await fetchVault(stored.cryptoKey, deviceIdRef.current);
 					await storeSyncKey(stored.cryptoKey);
 					setVaultData(data);
 					setVersion(v);
+					lastSyncedBaseRawRef.current = data.raw;
 					setStatus("unlocked");
 					return;
 				} catch (err) {
@@ -152,9 +164,10 @@ export const useVault = (): UseVaultReturn => {
 				symmetricKeyRef.current = cryptoKey;
 				await storeSyncKey(cryptoKey);
 
-				const { data, version: v } = await fetchVault(cryptoKey);
+				const { data, version: v } = await fetchVault(cryptoKey, deviceIdRef.current);
 				setVaultData(data);
 				setVersion(v);
+				lastSyncedBaseRawRef.current = data.raw;
 				setStatus("unlocked");
 			} catch (err) {
 				cancelDerivation();
@@ -175,39 +188,70 @@ export const useVault = (): UseVaultReturn => {
 			const key = symmetricKeyRef.current;
 			if (!key) throw new Error("Vault not unlocked");
 
-			const blob = await encryptBlob(key, updatedData.raw);
-			const b64 = btoa(String.fromCharCode(...blob));
+			const deviceId = deviceIdRef.current;
 
-			const res = await fetch("/api/vault/push", {
-				method: "POST",
-				headers: { "Content-Type": "application/json" },
-				body: JSON.stringify({
-					blob: b64,
-					kdf_params: kdfParams,
-					protected_symmetric_key: protectedKey,
-					expected_version: version,
-				}),
-			});
+			const pushRaw = async (raw: string, expectedVersion: number) => {
+				const blob = await encryptBlob(key, raw);
+				const b64 = btoa(String.fromCharCode(...blob));
 
-			if (res.status === 409) throw new Error("Version conflict: vault was updated by another device. Please refresh.");
+				return fetch("/api/vault/push", {
+					method: "POST",
+					headers: {
+						"Content-Type": "application/json",
+						"X-Device-ID": deviceId,
+					},
+					body: JSON.stringify({
+						blob: b64,
+						kdf_params: kdfParams,
+						protected_symmetric_key: protectedKey,
+						expected_version: expectedVersion,
+						device_id: deviceId,
+					}),
+				});
+			};
+
+			const res = await pushRaw(updatedData.raw, version);
+			if (res.status === 409) {
+				const remote = await fetchVault(key, deviceId);
+				const baseRaw = lastSyncedBaseRawRef.current ?? vaultData?.raw ?? updatedData.raw;
+				const mergedRaw = mergeThreeWayRaw(baseRaw, updatedData.raw, remote.data.raw, deviceId, remote.data.metadata.deviceId);
+				const mergedData = vaultDataFromRaw(mergedRaw);
+
+				const retry = await pushRaw(mergedRaw, remote.version);
+				if (retry.status === 409) {
+					throw new Error("Version conflict: vault changed again while retrying sync");
+				}
+				if (!retry.ok) {
+					throw new Error(`Push failed: ${retry.status}`);
+				}
+
+				const { version: mergedVersion } = await retry.json();
+				lastSyncedBaseRawRef.current = mergedRaw;
+				setVersion(mergedVersion);
+				setVaultData(mergedData);
+				return;
+			}
 			if (!res.ok) throw new Error(`Push failed: ${res.status}`);
 
 			const { version: newVersion } = await res.json();
+			lastSyncedBaseRawRef.current = updatedData.raw;
 			setVersion(newVersion);
 			setVaultData(updatedData);
 		},
-		[kdfParams, protectedKey, version]
+		[kdfParams, protectedKey, version, vaultData]
 	);
 
 	const lock = useCallback(async () => {
 		await clearSyncKey();
 		symmetricKeyRef.current = null;
+		lastSyncedBaseRawRef.current = null;
 		setVaultData(null);
 		setError(null);
 		setStatus("locked");
 	}, []);
 
 	return {
+		deviceId: deviceIdRef.current,
 		status,
 		vaultData,
 		error,

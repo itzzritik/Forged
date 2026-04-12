@@ -188,7 +188,6 @@ func doImport(keys []importers.ImportedKey) error {
 
 	fmt.Println()
 	fmt.Printf("  %d key(s) imported.\n", imported)
-	fmt.Println("Run 'forged sync' to sync to cloud.")
 	return nil
 }
 

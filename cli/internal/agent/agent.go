@@ -2,9 +2,11 @@ package agent
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"sort"
 	"sync"
+	"time"
 
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -16,13 +18,27 @@ type ForgedAgent struct {
 	mu       sync.RWMutex
 	keyStore *vault.KeyStore
 	locked   bool
+	syncBus  SyncCoordinator
+}
+
+type SyncCoordinator interface {
+	AgentAccess(reason string)
+	RefreshMissingKey(ctx context.Context, reason string) error
 }
 
 func New(ks *vault.KeyStore) *ForgedAgent {
 	return &ForgedAgent{keyStore: ks}
 }
 
+func (a *ForgedAgent) SetSyncCoordinator(syncBus SyncCoordinator) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.syncBus = syncBus
+}
+
 func (a *ForgedAgent) List() ([]*agent.Key, error) {
+	a.recordAgentAccess("ssh_agent_list")
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -66,6 +82,8 @@ func (a *ForgedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, erro
 }
 
 func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
+	a.recordAgentAccess("ssh_agent_sign")
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -75,7 +93,16 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 
 	signer, name, err := a.findSigner(key)
 	if err != nil {
-		return nil, err
+		a.mu.RUnlock()
+		if refreshErr := a.refreshMissingKey("sign_missing_key"); refreshErr == nil {
+			a.mu.RLock()
+			signer, name, err = a.findSigner(key)
+		} else {
+			a.mu.RLock()
+		}
+		if err != nil {
+			return nil, err
+		}
 	}
 
 	var algo string
@@ -131,6 +158,8 @@ func (a *ForgedAgent) Unlock(passphrase []byte) error {
 }
 
 func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
+	a.recordAgentAccess("ssh_agent_signers")
+
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
@@ -180,5 +209,28 @@ func parsePublicKey(authorizedKey string) (ssh.PublicKey, error) {
 	return pub, nil
 }
 
+func (a *ForgedAgent) recordAgentAccess(reason string) {
+	a.mu.RLock()
+	syncBus := a.syncBus
+	a.mu.RUnlock()
+
+	if syncBus != nil {
+		syncBus.AgentAccess(reason)
+	}
+}
+
+func (a *ForgedAgent) refreshMissingKey(reason string) error {
+	a.mu.RLock()
+	syncBus := a.syncBus
+	a.mu.RUnlock()
+
+	if syncBus == nil {
+		return nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	defer cancel()
+	return syncBus.RefreshMissingKey(ctx, reason)
+}
 
 var _ agent.ExtendedAgent = (*ForgedAgent)(nil)

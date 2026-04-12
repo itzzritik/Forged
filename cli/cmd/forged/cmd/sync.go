@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
 	"github.com/spf13/cobra"
@@ -71,6 +72,16 @@ var loginCmd = &cobra.Command{
 		}
 		if err := saveCredentials(creds); err != nil {
 			return fmt.Errorf("saving credentials: %w", err)
+		}
+
+		if _, running := daemon.IsRunning(config.DefaultPaths()); running {
+			if _, err := ctlClient().Call(ipc.CmdSyncLink, ipc.SyncLinkArgs{
+				ServerURL: creds.ServerURL,
+				Token:     creds.Token,
+				UserID:    creds.UserID,
+			}); err != nil {
+				return fmt.Errorf("linking running daemon: %w", err)
+			}
 		}
 
 		fmt.Printf("Logged in as %s\n", result.Email)

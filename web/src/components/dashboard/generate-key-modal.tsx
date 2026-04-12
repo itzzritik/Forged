@@ -12,7 +12,7 @@ interface GenerateKeyModalProps {
 }
 
 export const GenerateKeyModal = ({ onClose }: GenerateKeyModalProps) => {
-	const { vaultData, symmetricKeyRef, pushVault } = useVaultContext();
+	const { deviceId, vaultData, symmetricKeyRef, pushVault } = useVaultContext();
 	const [name, setName] = useState("");
 	const [isLoading, setIsLoading] = useState(false);
 	const [error, setError] = useState<string | null>(null);
@@ -57,7 +57,7 @@ export const GenerateKeyModal = ({ onClose }: GenerateKeyModalProps) => {
 				encrypted_private_key: encryptedPrivateKeyB64,
 			};
 
-			const updated = addKeyToVault(vaultData, newKey);
+			const updated = addKeyToVault(vaultData, newKey, deviceId);
 			await pushVault(updated);
 			onClose();
 		} catch (err) {

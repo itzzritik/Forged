@@ -12,7 +12,7 @@ import { removeKeyFromVault, updateKeyInVault, type VaultKeyMetadata } from "@/l
 import { HostRulesEditor } from "./host-rules-editor";
 
 export const KeyTable = () => {
-	const { vaultData, pushVault } = useVaultContext();
+	const { deviceId, vaultData, pushVault } = useVaultContext();
 	const keys = vaultData?.keys ?? [];
 
 	const [editingId, setEditingId] = useState<string | null>(null);
@@ -52,7 +52,7 @@ export const KeyTable = () => {
 		setEditingId(null);
 		if (!trimmed || trimmed === key.name || !vaultData) return;
 		try {
-			const updated = updateKeyInVault(vaultData, key.id, { name: trimmed });
+			const updated = updateKeyInVault(vaultData, key.id, { name: trimmed }, deviceId);
 			await pushVault(updated);
 			toast.success("Key renamed");
 		} catch {
@@ -68,7 +68,7 @@ export const KeyTable = () => {
 		setPendingDeleteId(null);
 		if (!vaultData) return;
 		try {
-			const updated = removeKeyFromVault(vaultData, key.id);
+			const updated = removeKeyFromVault(vaultData, key.id, deviceId);
 			await pushVault(updated);
 			toast.success("Key deleted");
 		} catch {

@@ -111,11 +111,15 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 		Tags:                []string{},
 		HostRules:           []HostRule{},
 		Version:             1,
+		DeviceOrigin:        ks.vault.DeviceID(),
 	}
 
+	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
 	ks.vault.Data.Keys = append(ks.vault.Data.Keys, key)
+	ks.bumpVersionVector()
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.Keys = ks.vault.Data.Keys[:len(ks.vault.Data.Keys)-1]
+		ks.vault.Data.VersionVector = originalVersionVector
 		return Key{}, fmt.Errorf("saving vault: %w", err)
 	}
 
@@ -178,11 +182,15 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 		Tags:                []string{},
 		HostRules:           []HostRule{},
 		Version:             1,
+		DeviceOrigin:        ks.vault.DeviceID(),
 	}
 
+	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
 	ks.vault.Data.Keys = append(ks.vault.Data.Keys, key)
+	ks.bumpVersionVector()
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.Keys = ks.vault.Data.Keys[:len(ks.vault.Data.Keys)-1]
+		ks.vault.Data.VersionVector = originalVersionVector
 		return Key{}, fmt.Errorf("saving vault: %w", err)
 	}
 
@@ -206,11 +214,18 @@ func (ks *KeyStore) Remove(name string) error {
 		return fmt.Errorf("key %q not found", name)
 	}
 
+	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
+	originalTombstones := cloneTombstones(ks.vault.Data.Tombstones)
 	removed := ks.vault.Data.Keys[idx]
 	ks.vault.Data.Keys = append(ks.vault.Data.Keys[:idx], ks.vault.Data.Keys[idx+1:]...)
+	now := time.Now().UTC()
+	ks.upsertTombstone(removed.ID, now)
+	ks.bumpVersionVector()
 
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.Keys = append(ks.vault.Data.Keys[:idx], append([]Key{removed}, ks.vault.Data.Keys[idx:]...)...)
+		ks.vault.Data.Tombstones = originalTombstones
+		ks.vault.Data.VersionVector = originalVersionVector
 		return fmt.Errorf("saving vault: %w", err)
 	}
 
@@ -230,12 +245,16 @@ func (ks *KeyStore) Rename(oldName, newName string) error {
 		return fmt.Errorf("key %q not found", oldName)
 	}
 
+	original := cloneKey(ks.vault.Data.Keys[idx])
+	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
 	ks.vault.Data.Keys[idx].Name = newName
 	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
 	ks.vault.Data.Keys[idx].Version++
+	ks.bumpVersionVector()
 
 	if err := ks.vault.Save(); err != nil {
-		ks.vault.Data.Keys[idx].Name = oldName
+		ks.vault.Data.Keys[idx] = original
+		ks.vault.Data.VersionVector = originalVersionVector
 		return fmt.Errorf("saving vault: %w", err)
 	}
 
@@ -286,14 +305,22 @@ func (ks *KeyStore) AddHostRule(keyName, pattern string) error {
 		}
 	}
 
+	original := cloneKey(ks.vault.Data.Keys[idx])
+	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
 	ks.vault.Data.Keys[idx].HostRules = append(ks.vault.Data.Keys[idx].HostRules, HostRule{
 		Match: pattern,
 		Type:  patternType,
 	})
 	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
 	ks.vault.Data.Keys[idx].Version++
+	ks.bumpVersionVector()
 
-	return ks.vault.Save()
+	if err := ks.vault.Save(); err != nil {
+		ks.vault.Data.Keys[idx] = original
+		ks.vault.Data.VersionVector = originalVersionVector
+		return err
+	}
+	return nil
 }
 
 func (ks *KeyStore) RemoveHostRule(keyName, pattern string) error {
@@ -305,6 +332,8 @@ func (ks *KeyStore) RemoveHostRule(keyName, pattern string) error {
 		return fmt.Errorf("key %q not found", keyName)
 	}
 
+	original := cloneKey(ks.vault.Data.Keys[idx])
+	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
 	rules := ks.vault.Data.Keys[idx].HostRules
 	found := false
 	for i, r := range rules {
@@ -321,8 +350,14 @@ func (ks *KeyStore) RemoveHostRule(keyName, pattern string) error {
 
 	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
 	ks.vault.Data.Keys[idx].Version++
+	ks.bumpVersionVector()
 
-	return ks.vault.Save()
+	if err := ks.vault.Save(); err != nil {
+		ks.vault.Data.Keys[idx] = original
+		ks.vault.Data.VersionVector = originalVersionVector
+		return err
+	}
+	return nil
 }
 
 func (ks *KeyStore) SetGitSigning(keyName string, enabled bool) error {
@@ -334,17 +369,39 @@ func (ks *KeyStore) SetGitSigning(keyName string, enabled bool) error {
 		return fmt.Errorf("key %q not found", keyName)
 	}
 
+	originalKeys := cloneKeys(ks.vault.Data.Keys)
+	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
+	now := time.Now().UTC()
+	changed := false
 	if enabled {
 		for i := range ks.vault.Data.Keys {
-			ks.vault.Data.Keys[i].GitSigning = false
+			if i != idx && ks.vault.Data.Keys[i].GitSigning {
+				ks.vault.Data.Keys[i].GitSigning = false
+				ks.vault.Data.Keys[i].UpdatedAt = now
+				ks.vault.Data.Keys[i].Version++
+				changed = true
+			}
 		}
 	}
 
-	ks.vault.Data.Keys[idx].GitSigning = enabled
-	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
-	ks.vault.Data.Keys[idx].Version++
+	if ks.vault.Data.Keys[idx].GitSigning != enabled {
+		ks.vault.Data.Keys[idx].GitSigning = enabled
+		ks.vault.Data.Keys[idx].UpdatedAt = now
+		ks.vault.Data.Keys[idx].Version++
+		changed = true
+	}
 
-	return ks.vault.Save()
+	if !changed {
+		return nil
+	}
+
+	ks.bumpVersionVector()
+	if err := ks.vault.Save(); err != nil {
+		ks.vault.Data.Keys = originalKeys
+		ks.vault.Data.VersionVector = originalVersionVector
+		return err
+	}
+	return nil
 }
 
 func (ks *KeyStore) GetGitSigningKey() (Key, bool) {
@@ -380,4 +437,70 @@ func (ks *KeyStore) indexOf(name string) int {
 		}
 	}
 	return -1
+}
+
+func (ks *KeyStore) bumpVersionVector() {
+	deviceID := ks.vault.DeviceID()
+	if deviceID == "" {
+		return
+	}
+
+	if ks.vault.Data.VersionVector == nil {
+		ks.vault.Data.VersionVector = map[string]int64{}
+	}
+	ks.vault.Data.VersionVector[deviceID]++
+}
+
+func (ks *KeyStore) upsertTombstone(keyID string, deletedAt time.Time) {
+	tombstone := Tombstone{
+		KeyID:           keyID,
+		DeletedAt:       deletedAt,
+		DeletedByDevice: ks.vault.DeviceID(),
+	}
+
+	for i := range ks.vault.Data.Tombstones {
+		if ks.vault.Data.Tombstones[i].KeyID != keyID {
+			continue
+		}
+		if deletedAt.After(ks.vault.Data.Tombstones[i].DeletedAt) {
+			ks.vault.Data.Tombstones[i] = tombstone
+		}
+		return
+	}
+
+	ks.vault.Data.Tombstones = append(ks.vault.Data.Tombstones, tombstone)
+}
+
+func cloneKeys(keys []Key) []Key {
+	cloned := make([]Key, len(keys))
+	for i := range keys {
+		cloned[i] = cloneKey(keys[i])
+	}
+	return cloned
+}
+
+func cloneKey(key Key) Key {
+	cloned := key
+	cloned.PrivateKey = append([]byte(nil), key.PrivateKey...)
+	cloned.Tags = append([]string(nil), key.Tags...)
+	cloned.HostRules = append([]HostRule(nil), key.HostRules...)
+	if key.LastUsedAt != nil {
+		lastUsedAt := *key.LastUsedAt
+		cloned.LastUsedAt = &lastUsedAt
+	}
+	return cloned
+}
+
+func cloneTombstones(tombstones []Tombstone) []Tombstone {
+	cloned := make([]Tombstone, len(tombstones))
+	copy(cloned, tombstones)
+	return cloned
+}
+
+func cloneVersionVector(vector map[string]int64) map[string]int64 {
+	cloned := make(map[string]int64, len(vector))
+	for key, value := range vector {
+		cloned[key] = value
+	}
+	return cloned
 }

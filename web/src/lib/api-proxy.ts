@@ -3,7 +3,7 @@ import { getSession } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-export async function proxyToAPI(method: string, path: string, body?: string): Promise<NextResponse> {
+export async function proxyToAPI(method: string, path: string, body?: string, extraHeaders: Record<string, string> = {}): Promise<NextResponse> {
 	const token = await getSession();
 	if (!token) {
 		return NextResponse.json({ error: "unauthorized" }, { status: 401 });
@@ -11,6 +11,7 @@ export async function proxyToAPI(method: string, path: string, body?: string): P
 
 	const headers: Record<string, string> = {
 		Authorization: `Bearer ${token}`,
+		...extraHeaders,
 	};
 	if (body) headers["Content-Type"] = "application/json";
 

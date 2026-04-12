@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -18,6 +19,13 @@ type Client struct {
 	DeviceID   string
 	HTTPClient *http.Client
 }
+
+var _ API = (*Client)(nil)
+
+var (
+	ErrNoRemoteVault   = errors.New("no vault on server")
+	ErrVersionConflict = errors.New("version conflict")
+)
 
 func NewClient(serverURL, token, deviceID string) *Client {
 	return &Client{
@@ -79,7 +87,7 @@ func (c *Client) Push(blob []byte, kdf vault.KDFParams, protectedKey string, exp
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusConflict {
-		return PushResult{}, fmt.Errorf("version conflict: vault was updated by another device")
+		return PushResult{}, fmt.Errorf("%w: vault was updated by another device", ErrVersionConflict)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -140,7 +148,7 @@ func (c *Client) Pull() (PullResult, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return PullResult{}, fmt.Errorf("no vault on server")
+		return PullResult{}, ErrNoRemoteVault
 	}
 
 	if resp.StatusCode != http.StatusOK {

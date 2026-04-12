@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -10,8 +11,8 @@ import (
 	"path/filepath"
 	"strconv"
 	"syscall"
-	"time"
 
+	"github.com/google/uuid"
 	"github.com/itzzritik/forged/cli/internal/activity"
 	forgedagent "github.com/itzzritik/forged/cli/internal/agent"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -178,6 +179,7 @@ func (d *Daemon) startIPC() error {
 	}
 
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
+	d.ipcServer.SetSyncLinkHandler(d.handleSyncLink)
 	if err := d.ipcServer.Start(); err != nil {
 		return fmt.Errorf("starting ipc server: %w", err)
 	}
@@ -193,6 +195,7 @@ func (d *Daemon) startAgent() error {
 	}
 
 	d.agent = forgedagent.New(d.keyStore)
+	d.agent.SetSyncCoordinator(d.syncBus)
 	d.agentServer = forgedagent.NewServer(agentPath, d.agent, d.logger)
 	if err := d.agentServer.Start(); err != nil {
 		return fmt.Errorf("starting agent server: %w", err)
@@ -205,6 +208,7 @@ func (d *Daemon) startAgent() error {
 type syncCredentials struct {
 	ServerURL string `json:"server_url"`
 	Token     string `json:"token"`
+	UserID    string `json:"user_id"`
 }
 
 func (d *Daemon) initSync() {
@@ -217,18 +221,77 @@ func (d *Daemon) initSync() {
 		return
 	}
 
-	client := forgedsync.NewClient(creds.ServerURL, creds.Token, "")
-	engine := forgedsync.NewEngine(d.vault, client, d.logger, 5*time.Minute)
-	bus := forgedsync.NewBus(engine, d.logger, d.paths.SyncDirtyFile())
+	state, err := d.configureSync(creds)
+	if err != nil {
+		d.logger.Warn("initializing sync failed", "error", err)
+		return
+	}
+
+	if creds.UserID != "" && (state.LinkedUserID != creds.UserID || (state.LastKnownServerVersion == 0 && len(state.LastSyncedBaseBlob) == 0)) {
+		go func() {
+			if err := d.syncBus.AuthLinked(context.Background(), creds.UserID, creds.ServerURL); err != nil {
+				d.logger.Warn("link reconcile failed", "error", err)
+			}
+		}()
+		return
+	}
+
+	go d.syncBus.LifecycleRefresh("daemon_start")
+}
+
+func (d *Daemon) configureSync(creds syncCredentials) (*forgedsync.SyncState, error) {
+	stateStore := forgedsync.NewStateStore(d.paths.SyncStateFile())
+	state, err := stateStore.Load()
+	if err != nil {
+		return nil, fmt.Errorf("loading sync state: %w", err)
+	}
+	if state == nil {
+		defaultState := forgedsync.DefaultSyncState(uuid.NewString())
+		state = &defaultState
+	}
+	if state.DeviceID == "" {
+		state.DeviceID = uuid.NewString()
+	}
+	state.ServerURL = creds.ServerURL
+
+	client := forgedsync.NewClient(creds.ServerURL, creds.Token, state.DeviceID)
+	engine := forgedsync.NewEngine(d.vault, client, d.logger)
+	bus := forgedsync.NewBus(engine, state, d.logger, forgedsync.BusConfig{
+		DirtyFlagPath: d.paths.SyncDirtyFile(),
+		StateStore:    stateStore,
+	})
 
 	d.syncBus = bus
 	d.ipcServer.SetSyncBus(bus)
+	if d.agent != nil {
+		d.agent.SetSyncCoordinator(bus)
+	}
 
 	bus.CheckDirtyFlag()
 
-	go bus.RequestPull("daemon_start")
+	d.logger.Info("sync initialized", "server", creds.ServerURL, "device_id", state.DeviceID)
+	return state, nil
+}
 
-	d.logger.Info("sync initialized", "server", creds.ServerURL)
+func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
+	if _, err := d.configureSync(syncCredentials{
+		ServerURL: args.ServerURL,
+		Token:     args.Token,
+		UserID:    args.UserID,
+	}); err != nil {
+		return err
+	}
+	if d.syncBus == nil {
+		return fmt.Errorf("sync bus unavailable")
+	}
+	if args.UserID == "" {
+		return nil
+	}
+	if err := d.syncBus.AuthLinked(context.Background(), args.UserID, args.ServerURL); err != nil {
+		return err
+	}
+	d.logger.Info("sync link refreshed", "user_id", args.UserID)
+	return nil
 }
 
 func (d *Daemon) waitForSignal() {

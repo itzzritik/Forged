@@ -21,7 +21,7 @@ function detectType(pattern: string): string {
 }
 
 export const HostRulesEditor = ({ hostRules, keyId, keyName, onClose }: HostRulesEditorProps) => {
-	const { vaultData, pushVault } = useVaultContext();
+	const { deviceId, vaultData, pushVault } = useVaultContext();
 	const [rules, setRules] = useState(hostRules);
 	const [input, setInput] = useState("");
 	const [isLoading, setIsLoading] = useState(false);
@@ -47,7 +47,7 @@ export const HostRulesEditor = ({ hostRules, keyId, keyName, onClose }: HostRule
 		setIsLoading(true);
 		setError(null);
 		try {
-			const updated = updateKeyInVault(vaultData, keyId, { host_rules: rules });
+			const updated = updateKeyInVault(vaultData, keyId, { host_rules: rules }, deviceId);
 			await pushVault(updated);
 			onClose();
 		} catch (err) {
