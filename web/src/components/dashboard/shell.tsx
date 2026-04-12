@@ -10,7 +10,7 @@ import { Sheet, SheetContent } from "@/components/ui/sheet";
 import { Skeleton } from "@/components/ui/skeleton";
 import { useCommandPalette } from "@/hooks/use-command-palette";
 import { useSidebar } from "@/hooks/use-sidebar";
-import { useVault } from "@/hooks/use-vault";
+import { useVault, VaultContext } from "@/hooks/use-vault";
 
 interface DashboardShellProps {
 	children: React.ReactNode;
@@ -24,50 +24,52 @@ export const DashboardShell = ({ user, children }: DashboardShellProps) => {
 	const [mobileOpen, setMobileOpen] = useState(false);
 
 	return (
-		<div className="flex h-screen bg-background">
-			{/* Desktop sidebar */}
-			<div className="hidden md:block">
-				<Sidebar collapsed={sidebar.collapsed} user={user} />
-			</div>
+		<VaultContext.Provider value={vault}>
+			<div className="flex h-screen bg-background">
+				{/* Desktop sidebar */}
+				<div className="hidden md:block">
+					<Sidebar collapsed={sidebar.collapsed} user={user} />
+				</div>
 
-			{/* Mobile sidebar sheet */}
-			<Sheet onOpenChange={setMobileOpen} open={mobileOpen}>
-				<SheetContent className="w-55 p-0" showCloseButton={false} side="left">
-					<Sidebar collapsed={false} user={user} />
-				</SheetContent>
-			</Sheet>
+				{/* Mobile sidebar sheet */}
+				<Sheet onOpenChange={setMobileOpen} open={mobileOpen}>
+					<SheetContent className="w-55 p-0" showCloseButton={false} side="left">
+						<Sidebar collapsed={false} user={user} />
+					</SheetContent>
+				</Sheet>
 
-			<div className="flex min-w-0 flex-1 flex-col">
-				<Topbar
-					collapsed={sidebar.collapsed}
-					onSearchOpen={commandPalette.setOpen.bind(null, true)}
-					onToggle={() => {
-						if (typeof window !== "undefined" && window.innerWidth < 768) {
-							setMobileOpen((v) => !v);
-						} else {
-							sidebar.toggle();
-						}
-					}}
-				/>
-				<main className="flex-1 overflow-auto">
-					{vault.status === "no-vault" && <NoVault />}
-					{vault.status === "error" && <VaultError message={vault.error} />}
-					{vault.status === "unlocked" && (
-						<motion.div animate={{ opacity: 1 }} initial={{ opacity: 0 }} transition={{ duration: 0.3 }}>
-							{children}
-						</motion.div>
-					)}
-					{vault.status === "loading" && <LoadingSkeleton />}
-				</main>
+				<div className="flex min-w-0 flex-1 flex-col">
+					<Topbar
+						collapsed={sidebar.collapsed}
+						onSearchOpen={commandPalette.setOpen.bind(null, true)}
+						onToggle={() => {
+							if (typeof window !== "undefined" && window.innerWidth < 768) {
+								setMobileOpen((v) => !v);
+							} else {
+								sidebar.toggle();
+							}
+						}}
+					/>
+					<main className="flex-1 overflow-auto">
+						{vault.status === "no-vault" && <NoVault />}
+						{vault.status === "error" && <VaultError message={vault.error} />}
+						{vault.status === "unlocked" && (
+							<motion.div animate={{ opacity: 1 }} initial={{ opacity: 0 }} transition={{ duration: 0.3 }}>
+								{children}
+							</motion.div>
+						)}
+						{vault.status === "loading" && <LoadingSkeleton />}
+					</main>
+				</div>
+				{vault.status === "locked" && (
+					<>
+						<div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" />
+						<VaultUnlock error={vault.error} onUnlock={vault.unlock} />
+					</>
+				)}
+				<CommandPalette keys={vault.vaultData?.keys ?? []} onOpenChange={commandPalette.setOpen} open={commandPalette.open} />
 			</div>
-			{vault.status === "locked" && (
-				<>
-					<div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" />
-					<VaultUnlock attemptsRemaining={vault.attemptsRemaining} error={vault.error} lockedUntil={vault.lockedUntil} onUnlock={vault.unlock} />
-				</>
-			)}
-			<CommandPalette keys={vault.vaultData?.keys ?? []} onOpenChange={commandPalette.setOpen} open={commandPalette.open} />
-		</div>
+		</VaultContext.Provider>
 	);
 };
 

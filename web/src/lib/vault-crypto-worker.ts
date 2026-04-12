@@ -35,26 +35,10 @@ self.onmessage = async (e: MessageEvent) => {
 		);
 		stretchedMasterKey = new Uint8Array(stretchedBits);
 
-		// PBKDF2(Master Key, password, 1) -> Master Password Hash
-		const pbkdfKey = await crypto.subtle.importKey("raw", masterKey, "PBKDF2", false, ["deriveBits"]);
-		const hashBits = await crypto.subtle.deriveBits(
-			{
-				name: "PBKDF2",
-				hash: "SHA-256",
-				salt: new TextEncoder().encode(password),
-				iterations: 1,
-			},
-			pbkdfKey,
-			256
-		);
-
 		// Zero master key
 		masterKey.fill(0);
 
-		self.postMessage({
-			type: "hash",
-			masterPasswordHash: new Uint8Array(hashBits),
-		});
+		self.postMessage({ type: "derived" });
 	}
 
 	if (type === "decrypt") {
@@ -86,6 +70,69 @@ self.onmessage = async (e: MessageEvent) => {
 			stretchedMasterKey?.fill(0);
 			stretchedMasterKey = null;
 			self.postMessage({ type: "error", error: "wrong password" });
+		}
+	}
+
+	if (type === "rekey") {
+		const { oldPassword, oldSalt, oldTime, oldMemory, oldParallelism, oldProtectedKey, newPassword, newSalt, newTime, newMemory, newParallelism } = e.data;
+
+		try {
+			// Derive old stretched key
+			const oldSaltBytes = Uint8Array.from(atob(oldSalt), (c) => c.charCodeAt(0));
+			const oldResult = await argon2.hash({
+				pass: oldPassword,
+				salt: oldSaltBytes,
+				time: oldTime,
+				mem: oldMemory,
+				hashLen: 32,
+				parallelism: oldParallelism,
+				type: argon2.ArgonType.Argon2id,
+			});
+			const oldMasterKey = new Uint8Array(oldResult.hash);
+			const oldHkdf = await crypto.subtle.importKey("raw", oldMasterKey, "HKDF", false, ["deriveBits"]);
+			const oldStretched = new Uint8Array(
+				await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new TextEncoder().encode("forged-stretch") }, oldHkdf, 256)
+			);
+			oldMasterKey.fill(0);
+
+			// Decrypt protected key to get raw symmetric key
+			const combined = Uint8Array.from(atob(oldProtectedKey), (c) => c.charCodeAt(0));
+			const oldAesKey = await crypto.subtle.importKey("raw", oldStretched, "AES-GCM", false, ["decrypt"]);
+			const symmetricKeyBytes = new Uint8Array(await crypto.subtle.decrypt({ name: "AES-GCM", iv: combined.slice(0, 12) }, oldAesKey, combined.slice(12)));
+			oldStretched.fill(0);
+
+			// Derive new stretched key
+			const newSaltBytes = Uint8Array.from(atob(newSalt), (c) => c.charCodeAt(0));
+			const newResult = await argon2.hash({
+				pass: newPassword,
+				salt: newSaltBytes,
+				time: newTime,
+				mem: newMemory,
+				hashLen: 32,
+				parallelism: newParallelism,
+				type: argon2.ArgonType.Argon2id,
+			});
+			const newMasterKey = new Uint8Array(newResult.hash);
+			const newHkdf = await crypto.subtle.importKey("raw", newMasterKey, "HKDF", false, ["deriveBits"]);
+			const newStretched = new Uint8Array(
+				await crypto.subtle.deriveBits({ name: "HKDF", hash: "SHA-256", salt: new Uint8Array(0), info: new TextEncoder().encode("forged-stretch") }, newHkdf, 256)
+			);
+			newMasterKey.fill(0);
+
+			// Re-encrypt symmetric key with new stretched key
+			const newAesKey = await crypto.subtle.importKey("raw", newStretched, "AES-GCM", false, ["encrypt"]);
+			const nonce = crypto.getRandomValues(new Uint8Array(12));
+			const encrypted = new Uint8Array(await crypto.subtle.encrypt({ name: "AES-GCM", iv: nonce }, newAesKey, symmetricKeyBytes));
+			newStretched.fill(0);
+			symmetricKeyBytes.fill(0);
+
+			const newProtected = new Uint8Array(12 + encrypted.byteLength);
+			newProtected.set(nonce);
+			newProtected.set(encrypted, 12);
+
+			self.postMessage({ type: "rekeyed", newProtectedKey: btoa(String.fromCharCode(...newProtected)) });
+		} catch {
+			self.postMessage({ type: "error", error: "rekey failed (wrong old password?)" });
 		}
 	}
 };

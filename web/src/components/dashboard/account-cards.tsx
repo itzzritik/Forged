@@ -7,6 +7,8 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal } from "@/components/ui/modal";
 import { Separator } from "@/components/ui/separator";
+import { useVaultContext } from "@/hooks/use-vault";
+import { generateKDFParams, rekeyProtectedKey } from "@/lib/vault-crypto";
 
 interface AccountData {
 	email: string;
@@ -16,10 +18,54 @@ interface AccountData {
 
 export const AccountCards = () => {
 	const router = useRouter();
+	const { kdfParams, protectedKey } = useVaultContext();
 	const [account, setAccount] = useState<AccountData | null>(null);
 	const [deleteOpen, setDeleteOpen] = useState(false);
 	const [deleteInput, setDeleteInput] = useState("");
 	const [deleting, setDeleting] = useState(false);
+
+	const [oldPassword, setOldPassword] = useState("");
+	const [newPassword, setNewPassword] = useState("");
+	const [confirmPassword, setConfirmPassword] = useState("");
+	const [rekeyError, setRekeyError] = useState("");
+	const [rekeySuccess, setRekeySuccess] = useState(false);
+	const [rekeying, setRekeying] = useState(false);
+
+	const handleRekey = async () => {
+		setRekeyError("");
+		setRekeySuccess(false);
+		if (newPassword.length < 8) {
+			setRekeyError("New password must be at least 8 characters.");
+			return;
+		}
+		if (newPassword !== confirmPassword) {
+			setRekeyError("New passwords do not match.");
+			return;
+		}
+		if (!(kdfParams && protectedKey)) return;
+		setRekeying(true);
+		try {
+			const newKdfParams = generateKDFParams();
+			const newProtectedKey = await rekeyProtectedKey(oldPassword, kdfParams, protectedKey, newPassword, newKdfParams);
+			const res = await fetch("/api/vault/rekey", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({ kdf_params: newKdfParams, protected_symmetric_key: newProtectedKey }),
+			});
+			if (!res.ok) {
+				setRekeyError("Server error. Please try again.");
+				return;
+			}
+			setRekeySuccess(true);
+			setOldPassword("");
+			setNewPassword("");
+			setConfirmPassword("");
+		} catch {
+			setRekeyError("Wrong password.");
+		} finally {
+			setRekeying(false);
+		}
+	};
 
 	useEffect(() => {
 		fetch("/api/vault/account")
@@ -65,8 +111,14 @@ export const AccountCards = () => {
 			<div className="rounded-lg border border-border bg-card p-6">
 				<h2 className="mb-4 font-semibold text-sm">Master Password</h2>
 				<div className="flex flex-col gap-3">
-					<p className="text-muted-foreground text-sm">Change your master password via CLI:</p>
-					<code className="inline-block w-fit rounded bg-muted px-3 py-1.5 font-mono text-foreground text-sm">forged change-password</code>
+					<Input onChange={(e) => setOldPassword(e.target.value)} placeholder="Current password" type="password" value={oldPassword} />
+					<Input onChange={(e) => setNewPassword(e.target.value)} placeholder="New password (min 8 chars)" type="password" value={newPassword} />
+					<Input onChange={(e) => setConfirmPassword(e.target.value)} placeholder="Confirm new password" type="password" value={confirmPassword} />
+					{rekeyError && <p className="text-destructive text-xs">{rekeyError}</p>}
+					{rekeySuccess && <p className="text-green-500 text-xs">Password changed successfully.</p>}
+					<Button disabled={rekeying} onClick={handleRekey} size="sm">
+						{rekeying ? "Changing..." : "Change Password"}
+					</Button>
 					<Separator />
 					<p className="text-muted-foreground text-sm">Vault Timeout: 4 hours of inactivity</p>
 				</div>

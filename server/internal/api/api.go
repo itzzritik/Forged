@@ -42,7 +42,6 @@ func (s *Server) Routes() http.Handler {
 	authed.HandleFunc("POST /api/v1/devices/{id}/approve", s.handleApproveDevice)
 	authed.HandleFunc("GET /api/v1/account", s.handleGetAccount)
 	authed.HandleFunc("POST /api/v1/account/delete", s.handleDeleteAccount)
-	authed.HandleFunc("POST /api/v1/vault/verify", s.handleVaultVerify)
 	authed.HandleFunc("POST /api/v1/vault/rekey", s.handleVaultRekey)
 
 	mux.HandleFunc("POST /api/v1/auth/sessions", middleware.RateLimit(10, s.handleCreateSession))

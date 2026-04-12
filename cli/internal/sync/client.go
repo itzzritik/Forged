@@ -55,12 +55,11 @@ func kdfToJSON(kdf vault.KDFParams) kdfParamsJSON {
 	}
 }
 
-func (c *Client) Push(blob []byte, kdf vault.KDFParams, protectedKey string, masterPasswordHash string, expectedVersion int64) (PushResult, error) {
+func (c *Client) Push(blob []byte, kdf vault.KDFParams, protectedKey string, expectedVersion int64) (PushResult, error) {
 	body, _ := json.Marshal(map[string]any{
 		"blob":                    base64.StdEncoding.EncodeToString(blob),
 		"kdf_params":              kdfToJSON(kdf),
 		"protected_symmetric_key": protectedKey,
-		"master_password_hash":    masterPasswordHash,
 		"expected_version":        expectedVersion,
 		"device_id":               c.DeviceID,
 	})
@@ -93,12 +92,10 @@ func (c *Client) Push(blob []byte, kdf vault.KDFParams, protectedKey string, mas
 	return result, nil
 }
 
-func (c *Client) Rekey(oldMasterPasswordHash string, kdf vault.KDFParams, protectedKey string, masterPasswordHash string) error {
+func (c *Client) Rekey(kdf vault.KDFParams, protectedKey string) error {
 	body, _ := json.Marshal(map[string]any{
-		"old_master_password_hash": oldMasterPasswordHash,
 		"kdf_params":              kdfToJSON(kdf),
 		"protected_symmetric_key": protectedKey,
-		"master_password_hash":    masterPasswordHash,
 	})
 
 	req, err := http.NewRequest("POST", c.ServerURL+"/api/v1/vault/rekey", bytes.NewReader(body))
@@ -114,9 +111,6 @@ func (c *Client) Rekey(oldMasterPasswordHash string, kdf vault.KDFParams, protec
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode == http.StatusUnauthorized {
-		return fmt.Errorf("wrong password")
-	}
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
 		return fmt.Errorf("rekey failed (%d): %s", resp.StatusCode, string(respBody))

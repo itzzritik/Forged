@@ -53,8 +53,6 @@ var changePasswordCmd = &cobra.Command{
 			return fmt.Errorf("passwords do not match")
 		}
 
-		oldHash := v.MasterPasswordHash()
-
 		if err := v.ChangePassword(newPassword); err != nil {
 			return fmt.Errorf("changing password: %w", err)
 		}
@@ -69,10 +67,8 @@ var changePasswordCmd = &cobra.Command{
 		client := forgedsync.NewClient(creds.ServerURL, creds.Token, "")
 
 		err = client.Rekey(
-			base64.StdEncoding.EncodeToString(oldHash),
 			v.KDFParams(),
 			base64.StdEncoding.EncodeToString(v.ProtectedKeyBytes()),
-			base64.StdEncoding.EncodeToString(v.MasterPasswordHash()),
 		)
 		if err != nil {
 			fmt.Println("Password changed locally.")

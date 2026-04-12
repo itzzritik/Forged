@@ -9,7 +9,6 @@ import (
 
 	"golang.org/x/crypto/argon2"
 	"golang.org/x/crypto/hkdf"
-	"golang.org/x/crypto/pbkdf2"
 )
 
 const (
@@ -95,10 +94,6 @@ func DeriveStretchedKey(masterKey []byte) ([]byte, error) {
 		return nil, fmt.Errorf("deriving stretched key: %w", err)
 	}
 	return stretched, nil
-}
-
-func DeriveMasterPasswordHash(masterKey, password []byte) []byte {
-	return pbkdf2.Key(masterKey, password, 1, 32, sha256.New)
 }
 
 func EncryptCombined(key, plaintext []byte) ([]byte, error) {

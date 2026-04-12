@@ -5,15 +5,17 @@ const TIMEOUT_MS = 4 * 60 * 60 * 1000; // 4 hours
 const HAS_KEY_FLAG = "forged-has-key";
 
 interface StoredEntry {
-	blobVersion?: number;
-	cachedBlob?: Uint8Array;
 	cryptoKey: CryptoKey;
 	id: string;
 	lastActivity: number;
 }
 
 export function hasCachedKeySync(): boolean {
-	try { return localStorage.getItem(HAS_KEY_FLAG) === "1"; } catch { return false; }
+	try {
+		return localStorage.getItem(HAS_KEY_FLAG) === "1";
+	} catch {
+		return false;
+	}
 }
 
 let memoryFallback: StoredEntry | null = null;
@@ -30,16 +32,18 @@ function openDB(): Promise<IDBDatabase> {
 	});
 }
 
-export async function storeSyncKey(cryptoKey: CryptoKey, blob?: Uint8Array, version?: number): Promise<void> {
+export async function storeSyncKey(cryptoKey: CryptoKey): Promise<void> {
 	const entry: StoredEntry = {
 		id: KEY_ID,
 		cryptoKey,
-		cachedBlob: blob,
-		blobVersion: version,
 		lastActivity: Date.now(),
 	};
 
-	try { localStorage.setItem(HAS_KEY_FLAG, "1"); } catch { /* localStorage unavailable */ }
+	try {
+		localStorage.setItem(HAS_KEY_FLAG, "1");
+	} catch {
+		/* localStorage unavailable */
+	}
 
 	if (!idbAvailable) {
 		memoryFallback = entry;
@@ -126,7 +130,11 @@ export async function touchActivity(): Promise<void> {
 
 export async function clearSyncKey(): Promise<void> {
 	memoryFallback = null;
-	try { localStorage.removeItem(HAS_KEY_FLAG); } catch { /* localStorage unavailable */ }
+	try {
+		localStorage.removeItem(HAS_KEY_FLAG);
+	} catch {
+		/* localStorage unavailable */
+	}
 
 	if (!idbAvailable) return;
 

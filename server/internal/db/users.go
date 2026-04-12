@@ -55,60 +55,14 @@ func (d *DB) DeleteUser(ctx context.Context, id string) error {
 	return err
 }
 
-func (d *DB) GetUserVaultAuth(ctx context.Context, userID string) (masterPasswordHash *string, protectedSymmetricKey *string, attempts int, lockedUntil *time.Time, err error) {
-	var hash, protKey *string
-	var att int
-	var locked *time.Time
-	err = d.Pool.QueryRow(ctx,
-		`SELECT u.master_password_hash, v.protected_symmetric_key, u.vault_unlock_attempts, u.vault_locked_until
-		 FROM users u LEFT JOIN vaults v ON v.user_id = u.id
-		 WHERE u.id = $1`, userID).Scan(&hash, &protKey, &att, &locked)
-	if err != nil {
-		return nil, nil, 0, nil, fmt.Errorf("getting vault auth: %w", err)
-	}
-	return hash, protKey, att, locked, nil
-}
-
-func (d *DB) SetMasterPasswordHash(ctx context.Context, userID, hash string) error {
+func (d *DB) UpdateRekey(ctx context.Context, userID string, kdfParams json.RawMessage, protectedKey string) error {
 	_, err := d.Pool.Exec(ctx,
-		"UPDATE users SET master_password_hash = $1 WHERE id = $2",
-		hash, userID)
-	return err
-}
-
-func (d *DB) IncrementUnlockAttempts(ctx context.Context, userID string) (int, error) {
-	var attempts int
-	err := d.Pool.QueryRow(ctx,
-		"UPDATE users SET vault_unlock_attempts = vault_unlock_attempts + 1 WHERE id = $1 RETURNING vault_unlock_attempts",
-		userID).Scan(&attempts)
-	return attempts, err
-}
-
-func (d *DB) ResetUnlockAttempts(ctx context.Context, userID string) error {
-	_, err := d.Pool.Exec(ctx,
-		"UPDATE users SET vault_unlock_attempts = 0, vault_locked_until = NULL WHERE id = $1",
-		userID)
-	return err
-}
-
-func (d *DB) LockVaultUnlock(ctx context.Context, userID string, until time.Time) error {
-	_, err := d.Pool.Exec(ctx,
-		"UPDATE users SET vault_locked_until = $1, vault_unlock_attempts = 0 WHERE id = $2",
-		until, userID)
-	return err
-}
-
-func (d *DB) UpdateRekey(ctx context.Context, userID string, kdfParams json.RawMessage, protectedKey, masterPasswordHash string) error {
-	_, err := d.Pool.Exec(ctx,
-		`UPDATE vaults SET kdf_params = $1, protected_symmetric_key = $2 WHERE user_id = $3`,
+		`UPDATE vaults SET kdf_params = $1, protected_symmetric_key = $2, updated_at = now() WHERE user_id = $3`,
 		kdfParams, protectedKey, userID)
 	if err != nil {
 		return fmt.Errorf("updating vault rekey: %w", err)
 	}
-	_, err = d.Pool.Exec(ctx,
-		`UPDATE users SET master_password_hash = $1, vault_unlock_attempts = 0, vault_locked_until = NULL WHERE id = $2`,
-		masterPasswordHash, userID)
-	return err
+	return nil
 }
 
 func (d *DB) CleanupAuditLog(ctx context.Context) (int64, error) {

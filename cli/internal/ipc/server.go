@@ -354,8 +354,7 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 	}
 
 	protectedKey := base64.StdEncoding.EncodeToString(s.vault.ProtectedKeyBytes())
-	masterHash := base64.StdEncoding.EncodeToString(s.vault.MasterPasswordHash())
-	result, err := client.Push(blob, s.vault.KDFParams(), protectedKey, masterHash, expectedVersion)
+	result, err := client.Push(blob, s.vault.KDFParams(), protectedKey, expectedVersion)
 	if err != nil {
 		return ErrorResponse(fmt.Errorf("sync push: %w", err))
 	}

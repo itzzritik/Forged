@@ -1,8 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
-import { cancelDerivation, decryptBlob, decryptProtectedKey, derivePasswordHash, type KDFParams, type VaultData } from "@/lib/vault-crypto";
+import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { cancelDerivation, decryptBlob, decryptProtectedKey, deriveStretchedKey, encryptBlob, type KDFParams, type VaultData } from "@/lib/vault-crypto";
 import { clearSyncKey, getSyncKey, hasCachedKeySync, storeSyncKey, touchActivity } from "@/lib/vault-store";
 
 export type VaultStatus = "loading" | "no-vault" | "locked" | "unlocked" | "error";
@@ -10,55 +10,45 @@ export type VaultStatus = "loading" | "no-vault" | "locked" | "unlocked" | "erro
 interface StatusResponse {
 	has_vault: boolean;
 	kdf_params?: KDFParams;
-}
-
-interface VerifyResponse {
-	protected_symmetric_key: string;
-}
-
-interface VerifyErrorResponse {
-	attempts_remaining?: number;
-	error?: string;
-	locked_until?: string;
-	verified?: boolean;
+	protected_symmetric_key?: string;
 }
 
 interface PullResponse {
-	blob: string; // base64
+	blob: string;
+	protected_symmetric_key?: string;
 	version: number;
 }
 
 export interface UseVaultReturn {
-	attemptsRemaining: number | null;
 	error: string | null;
 	kdfParams: KDFParams | null;
 	lock: () => Promise<void>;
-	lockedUntil: string | null;
+	protectedKey: string | null;
+	pushVault: (updatedData: VaultData) => Promise<void>;
 	status: VaultStatus;
+	symmetricKeyRef: React.RefObject<CryptoKey | null>;
 	unlock: (password: string) => Promise<void>;
 	vaultData: VaultData | null;
+	version: number;
 }
 
-async function fetchAndDecryptBlob(
-	cryptoKey: CryptoKey,
-	cachedBlob?: Uint8Array,
-	cachedVersion?: number
-): Promise<{ data: VaultData; blob: Uint8Array; version: number }> {
+export const VaultContext = createContext<UseVaultReturn | null>(null);
+
+export const useVaultContext = () => {
+	const ctx = useContext(VaultContext);
+	if (!ctx) throw new Error("useVaultContext must be used within DashboardShell");
+	return ctx;
+};
+
+async function fetchVault(cryptoKey: CryptoKey): Promise<{ data: VaultData; version: number }> {
 	const res = await fetch("/api/vault/pull");
 	if (res.status === 401) throw new Error("401");
 	if (!res.ok) throw new Error(`Failed to pull vault: ${res.status}`);
 
 	const json: PullResponse = await res.json();
-
-	// use cached blob if version matches
-	if (cachedBlob && cachedVersion === json.version) {
-		const data = await decryptBlob(cryptoKey, cachedBlob);
-		return { data, blob: cachedBlob, version: json.version };
-	}
-
 	const blob = Uint8Array.from(atob(json.blob), (c) => c.charCodeAt(0));
 	const data = await decryptBlob(cryptoKey, blob);
-	return { data, blob, version: json.version };
+	return { data, version: json.version };
 }
 
 export const useVault = (): UseVaultReturn => {
@@ -66,9 +56,10 @@ export const useVault = (): UseVaultReturn => {
 	const [status, setStatus] = useState<VaultStatus>("loading");
 	const [vaultData, setVaultData] = useState<VaultData | null>(null);
 	const [error, setError] = useState<string | null>(null);
-	const [attemptsRemaining, setAttemptsRemaining] = useState<number | null>(null);
-	const [lockedUntil, setLockedUntil] = useState<string | null>(null);
 	const [kdfParams, setKdfParams] = useState<KDFParams | null>(null);
+	const [protectedKey, setProtectedKey] = useState<string | null>(null);
+	const [version, setVersion] = useState(0);
+	const symmetricKeyRef = useRef<CryptoKey | null>(null);
 
 	// Sync-determine locked state before browser paints (avoids modal flash)
 	useLayoutEffect(() => {
@@ -82,7 +73,7 @@ export const useVault = (): UseVaultReturn => {
 		if (initialized.current) return;
 		initialized.current = true;
 
-		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: vault initialization requires complex cascading async state logic
+		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: vault initialization requires cascading async state logic
 		const init = async () => {
 			// check IndexedDB for a cached key first
 			const stored = await getSyncKey();
@@ -90,9 +81,11 @@ export const useVault = (): UseVaultReturn => {
 				setStatus("loading");
 				await touchActivity();
 				try {
-					const { data, blob, version } = await fetchAndDecryptBlob(stored.cryptoKey, stored.cachedBlob, stored.blobVersion);
-					await storeSyncKey(stored.cryptoKey, blob, version);
+					symmetricKeyRef.current = stored.cryptoKey;
+					const { data, version: v } = await fetchVault(stored.cryptoKey);
+					await storeSyncKey(stored.cryptoKey);
 					setVaultData(data);
+					setVersion(v);
 					setStatus("unlocked");
 					return;
 				} catch (err) {
@@ -100,8 +93,8 @@ export const useVault = (): UseVaultReturn => {
 						router.push("/login");
 						return;
 					}
-					// cached key is stale or blob decryption failed - fall through to locked
 					await clearSyncKey();
+					symmetricKeyRef.current = null;
 				}
 			}
 
@@ -123,6 +116,7 @@ export const useVault = (): UseVaultReturn => {
 					return;
 				}
 				if (body.kdf_params) setKdfParams(body.kdf_params);
+				if (body.protected_symmetric_key) setProtectedKey(body.protected_symmetric_key);
 				setStatus("locked");
 			} catch {
 				setStatus("error");
@@ -134,81 +128,33 @@ export const useVault = (): UseVaultReturn => {
 	}, [router]);
 
 	const unlock = useCallback(
-		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: vault unlock requires complex error handling and lockout state machine
 		async (password: string) => {
-			if (!kdfParams) {
+			if (kdfParams == null || protectedKey == null) {
 				setStatus("error");
-				setError("KDF params not loaded");
+				setError("Vault parameters not loaded");
 				return;
 			}
 
 			setError(null);
-			setAttemptsRemaining(null);
-			setLockedUntil(null);
-			// Keep status as "locked" -- modal stays visible during unlock attempt.
-			// Modal handles its own loading state internally.
 
 			try {
-				// phase 1: derive hash in worker
-				const masterPasswordHash = await derivePasswordHash(password, kdfParams);
-				const hashB64 = btoa(String.fromCharCode(...masterPasswordHash));
+				await deriveStretchedKey(password, kdfParams);
 
-				// verify with server
-				const verifyRes = await fetch("/api/vault/verify", {
-					method: "POST",
-					headers: { "Content-Type": "application/json" },
-					body: JSON.stringify({ master_password_hash: hashB64 }),
-				});
-
-				if (!verifyRes.ok) {
-					const errBody: VerifyErrorResponse = await verifyRes.json().catch(() => ({
-						error: "Wrong password",
-					}));
-
-					// Session expired (auth middleware 401, not vault verify 401)
-					if (verifyRes.status === 401 && !("verified" in errBody)) {
-						router.push("/login");
-						return;
-					}
-
-					// Account locked after too many attempts
-					if (verifyRes.status === 429) {
-						setLockedUntil(errBody.locked_until ?? null);
-						setError("Account locked");
-						setStatus("locked");
-						return;
-					}
-
-					// Wrong password (401 from vault verify)
-					setAttemptsRemaining(errBody.attempts_remaining ?? null);
-					setError(errBody.error || "Wrong password");
+				let cryptoKey: CryptoKey;
+				try {
+					cryptoKey = await decryptProtectedKey(protectedKey);
+				} catch {
+					setError("Wrong password");
 					setStatus("locked");
 					return;
 				}
 
-				const { protected_symmetric_key }: VerifyResponse = await verifyRes.json();
-
-				// phase 2: decrypt protected key in worker (same worker instance, which already holds the derived key)
-				let cryptoKey: CryptoKey;
-				try {
-					cryptoKey = await decryptProtectedKey(protected_symmetric_key);
-				} catch (decryptErr) {
-					// Server accepted the hash but local decryption of the protected key failed.
-					// This is not a wrong-password scenario -- the key material or encoding is inconsistent.
-					console.error("Protected key decryption failed after server verified password:", decryptErr);
-					setStatus("error");
-					setError("Failed to decrypt vault key");
-					return;
-				}
-
-				// store in IndexedDB
+				symmetricKeyRef.current = cryptoKey;
 				await storeSyncKey(cryptoKey);
 
-				// fetch and decrypt blob
-				const { data, blob, version } = await fetchAndDecryptBlob(cryptoKey);
-				await storeSyncKey(cryptoKey, blob, version);
-
+				const { data, version: v } = await fetchVault(cryptoKey);
 				setVaultData(data);
+				setVersion(v);
 				setStatus("unlocked");
 			} catch (err) {
 				cancelDerivation();
@@ -221,15 +167,43 @@ export const useVault = (): UseVaultReturn => {
 				setError(msg);
 			}
 		},
-		[kdfParams, router]
+		[kdfParams, protectedKey, router]
+	);
+
+	const pushVault = useCallback(
+		async (updatedData: VaultData) => {
+			const key = symmetricKeyRef.current;
+			if (!key) throw new Error("Vault not unlocked");
+
+			const blob = await encryptBlob(key, updatedData.raw);
+			const b64 = btoa(String.fromCharCode(...blob));
+
+			const res = await fetch("/api/vault/push", {
+				method: "POST",
+				headers: { "Content-Type": "application/json" },
+				body: JSON.stringify({
+					blob: b64,
+					kdf_params: kdfParams,
+					protected_symmetric_key: protectedKey,
+					expected_version: version,
+				}),
+			});
+
+			if (res.status === 409) throw new Error("Version conflict: vault was updated by another device. Please refresh.");
+			if (!res.ok) throw new Error(`Push failed: ${res.status}`);
+
+			const { version: newVersion } = await res.json();
+			setVersion(newVersion);
+			setVaultData(updatedData);
+		},
+		[kdfParams, protectedKey, version]
 	);
 
 	const lock = useCallback(async () => {
 		await clearSyncKey();
+		symmetricKeyRef.current = null;
 		setVaultData(null);
 		setError(null);
-		setAttemptsRemaining(null);
-		setLockedUntil(null);
 		setStatus("locked");
 	}, []);
 
@@ -237,10 +211,12 @@ export const useVault = (): UseVaultReturn => {
 		status,
 		vaultData,
 		error,
-		attemptsRemaining,
-		lockedUntil,
 		kdfParams,
+		protectedKey,
+		version,
+		symmetricKeyRef,
 		unlock,
 		lock,
+		pushVault,
 	};
 };

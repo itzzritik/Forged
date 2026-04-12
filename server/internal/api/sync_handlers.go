@@ -6,7 +6,6 @@ import (
 	"net/http"
 
 	"github.com/itzzritik/forged/server/internal/middleware"
-	"golang.org/x/crypto/bcrypt"
 )
 
 func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
@@ -16,7 +15,6 @@ func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
 		Blob                  string          `json:"blob"`
 		KDFParams             json.RawMessage `json:"kdf_params"`
 		ProtectedSymmetricKey string          `json:"protected_symmetric_key"`
-		MasterPasswordHash    string          `json:"master_password_hash"`
 		ExpectedVersion       int64           `json:"expected_version"`
 		DeviceID              string          `json:"device_id"`
 	}
@@ -35,13 +33,6 @@ func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusConflict, err.Error())
 		return
-	}
-
-	if req.MasterPasswordHash != "" {
-		hashed, err := bcrypt.GenerateFromPassword([]byte(req.MasterPasswordHash), bcrypt.DefaultCost)
-		if err == nil {
-			s.DB.SetMasterPasswordHash(r.Context(), userID, string(hashed))
-		}
 	}
 
 	s.DB.AuditLog(r.Context(), userID, req.DeviceID, "sync_push", r.RemoteAddr)
@@ -70,6 +61,9 @@ func (s *Server) handleSyncPull(w http.ResponseWriter, r *http.Request) {
 	if vault.KDFParams != nil {
 		resp["kdf_params"] = json.RawMessage(vault.KDFParams)
 	}
+	if vault.ProtectedSymmetricKey != nil {
+		resp["protected_symmetric_key"] = *vault.ProtectedSymmetricKey
+	}
 
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -92,6 +86,9 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	}
 	if vault.KDFParams != nil {
 		resp["kdf_params"] = json.RawMessage(vault.KDFParams)
+	}
+	if vault.ProtectedSymmetricKey != nil {
+		resp["protected_symmetric_key"] = *vault.ProtectedSymmetricKey
 	}
 
 	writeJSON(w, http.StatusOK, resp)

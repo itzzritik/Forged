@@ -71,8 +71,7 @@ func (e *Engine) push() error {
 		return err
 	}
 	protectedKey := base64.StdEncoding.EncodeToString(e.vault.ProtectedKeyBytes())
-	masterHash := base64.StdEncoding.EncodeToString(e.vault.MasterPasswordHash())
-	_, err = e.client.Push(blob, e.vault.KDFParams(), protectedKey, masterHash, 0)
+	_, err = e.client.Push(blob, e.vault.KDFParams(), protectedKey, 0)
 	return err
 }
 

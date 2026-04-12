@@ -18,7 +18,6 @@ type Vault struct {
 	kdf                KDFParams
 	key                []byte // Symmetric Key (random, decrypted from Protected Symmetric Key)
 	protectedKey       [ProtectedKeySize]byte
-	masterPasswordHash []byte
 	Data               VaultData
 }
 
@@ -84,8 +83,6 @@ func Create(path string, password []byte) (*Vault, error) {
 		return nil, fmt.Errorf("deriving stretched key: %w", err)
 	}
 
-	masterPasswordHash := DeriveMasterPasswordHash(masterKey, password)
-
 	// Zero the master key -- no longer needed
 	for i := range masterKey {
 		masterKey[i] = 0
@@ -119,11 +116,10 @@ func Create(path string, password []byte) (*Vault, error) {
 	copy(protectedKey[:], protectedKeyData)
 
 	v := &Vault{
-		path:               path,
-		kdf:                kdf,
-		key:                symmetricKey,
-		protectedKey:       protectedKey,
-		masterPasswordHash: masterPasswordHash,
+		path:         path,
+		kdf:          kdf,
+		key:          symmetricKey,
+		protectedKey: protectedKey,
 		Data: VaultData{
 			Keys:          []Key{},
 			Metadata:      Metadata{CreatedAt: time.Now().UTC()},
@@ -177,8 +173,6 @@ func Open(path string, password []byte) (*Vault, error) {
 		return nil, fmt.Errorf("decrypting protected key: %w", err)
 	}
 
-	masterPasswordHash := DeriveMasterPasswordHash(masterKey, password)
-
 	// Zero master key and stretched key -- no longer needed
 	for i := range masterKey {
 		masterKey[i] = 0
@@ -204,12 +198,11 @@ func Open(path string, password []byte) (*Vault, error) {
 	}
 
 	v := &Vault{
-		path:               path,
-		kdf:                header.KDF,
-		key:                symmetricKey,
-		protectedKey:       header.ProtectedKey,
-		masterPasswordHash: masterPasswordHash,
-		Data:               vd,
+		path:         path,
+		kdf:          header.KDF,
+		key:          symmetricKey,
+		protectedKey: header.ProtectedKey,
+		Data:         vd,
 	}
 
 	if err := v.acquireLock(); err != nil {
@@ -248,9 +241,6 @@ func (v *Vault) Close() {
 	for i := range v.key {
 		v.key[i] = 0
 	}
-	for i := range v.masterPasswordHash {
-		v.masterPasswordHash[i] = 0
-	}
 	v.releaseLock()
 }
 
@@ -270,9 +260,6 @@ func (v *Vault) ProtectedKeyBytes() []byte {
 	return v.protectedKey[:]
 }
 
-func (v *Vault) MasterPasswordHash() []byte {
-	return v.masterPasswordHash
-}
 
 func (v *Vault) ChangePassword(newPassword []byte) error {
 	newKDF := DefaultKDFParams()
@@ -286,8 +273,6 @@ func (v *Vault) ChangePassword(newPassword []byte) error {
 		}
 		return fmt.Errorf("deriving new stretched key: %w", err)
 	}
-
-	newHash := DeriveMasterPasswordHash(newMasterKey, newPassword)
 
 	newProtectedKey, err := EncryptCombined(newStretchedKey, v.key)
 	if err != nil {
@@ -312,7 +297,6 @@ func (v *Vault) ChangePassword(newPassword []byte) error {
 
 	v.kdf = newKDF
 	v.protectedKey = protectedKeyArr
-	v.masterPasswordHash = newHash
 
 	return v.Save()
 }
