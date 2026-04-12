@@ -10,6 +10,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/vault"
 	"github.com/spf13/cobra"
 )
 
@@ -31,6 +32,14 @@ var addCmd = &cobra.Command{
 			return fmt.Errorf("reading key file: %w", err)
 		}
 		comment, _ := cmd.Flags().GetString("comment")
+		normalized, normErr := vault.NormalizePrivateKeyToOpenSSH(data, comment)
+		if normErr != nil {
+			return formatPrivateKeyImportError(normErr)
+		}
+		if normalized.Converted {
+			fmt.Println(singlePrivateKeyConversionWarning(normalized.Format))
+			fmt.Println()
+		}
 
 		resp, err := ctlClient().Call(ipc.CmdAdd, map[string]string{
 			"name":        args[0],
@@ -44,8 +53,13 @@ var addCmd = &cobra.Command{
 			return printOutput(json.RawMessage(resp.Data))
 		}
 		var result map[string]string
-		if err := json.Unmarshal(resp.Data, &result); err != nil { return fmt.Errorf("parsing response: %w", err) }
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return fmt.Errorf("parsing response: %w", err)
+		}
 		fmt.Printf("Added %s (%s)\n  %s\n", result["name"], result["type"], result["fingerprint"])
+		if normalized.Converted {
+			fmt.Println("  Stored as canonical OpenSSH private key format.")
+		}
 		return nil
 	},
 }
@@ -96,7 +110,9 @@ var generateCmd = &cobra.Command{
 			return printOutput(json.RawMessage(resp.Data))
 		}
 		var result map[string]string
-		if err := json.Unmarshal(resp.Data, &result); err != nil { return fmt.Errorf("parsing response: %w", err) }
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return fmt.Errorf("parsing response: %w", err)
+		}
 
 		pub := result["public_key"]
 		if comment != "" {
@@ -139,7 +155,9 @@ var listCmd = &cobra.Command{
 				Fingerprint string `json:"fingerprint"`
 			} `json:"keys"`
 		}
-		if err := json.Unmarshal(resp.Data, &result); err != nil { return fmt.Errorf("parsing response: %w", err) }
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return fmt.Errorf("parsing response: %w", err)
+		}
 
 		if len(result.Keys) == 0 {
 			fmt.Println("No keys in vault")
@@ -165,9 +183,15 @@ var listCmd = &cobra.Command{
 				}
 			}
 			rows = append(rows, r)
-			if len(r.name) > colW[0] { colW[0] = len(r.name) }
-			if len(r.keyType) > colW[1] { colW[1] = len(r.keyType) }
-			if len(r.fingerprint) > colW[2] { colW[2] = len(r.fingerprint) }
+			if len(r.name) > colW[0] {
+				colW[0] = len(r.name)
+			}
+			if len(r.keyType) > colW[1] {
+				colW[1] = len(r.keyType)
+			}
+			if len(r.fingerprint) > colW[2] {
+				colW[2] = len(r.fingerprint)
+			}
 		}
 
 		header := fmt.Sprintf("  %-*s  %-*s  %-*s  %s", colW[0], "NAME", colW[1], "TYPE", colW[2], "FINGERPRINT", "SIGNING")
@@ -252,13 +276,13 @@ func exportAllKeys(cmd *cobra.Command) error {
 			"type": "ssh_key",
 			"name": k.Name,
 			"ssh_key": map[string]any{
-				"private_key":  k.PrivateKey,
-				"public_key":   k.PublicKey,
-				"fingerprint":  k.Fingerprint,
-				"key_type":     k.Type,
-				"comment":      k.Comment,
-				"host_rules":   k.HostRules,
-				"git_signing":  k.GitSigning,
+				"private_key": k.PrivateKey,
+				"public_key":  k.PublicKey,
+				"fingerprint": k.Fingerprint,
+				"key_type":    k.Type,
+				"comment":     k.Comment,
+				"host_rules":  k.HostRules,
+				"git_signing": k.GitSigning,
 			},
 			"created_at": k.CreatedAt,
 			"updated_at": k.UpdatedAt,

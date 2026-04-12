@@ -10,8 +10,17 @@ import (
 	"github.com/itzzritik/forged/cli/internal/hostmatch"
 	"github.com/itzzritik/forged/cli/internal/importers"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/vault"
 	"github.com/spf13/cobra"
 )
+
+type importPreview struct {
+	converted bool
+	format    string
+	key       importers.ImportedKey
+	keyType   string
+	rawFormat vault.PrivateKeyFormat
+}
 
 var importCmd = &cobra.Command{
 	Use:   "import",
@@ -45,7 +54,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		fmt.Println()
 		fmt.Println("  Select a source:")
 		fmt.Println()
-		fmt.Println("    1. 1Password (.1pux)")
+		fmt.Println("    1. 1Password (.1pux, .csv)")
 		fmt.Println("    2. Bitwarden (.json)")
 		fmt.Println("    3. Forged export (.json)")
 		fmt.Println("    4. SSH directory (~/.ssh/)")
@@ -112,11 +121,11 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	fmt.Println()
-	fmt.Printf("  Found %d SSH key(s):\n", len(keys))
-	for i, k := range keys {
-		fmt.Printf("    %d. %-20s (%s)\n", i+1, k.Name, keyType(k.PrivateKey))
+	previews, err := buildImportPreview(keys)
+	if err != nil {
+		return err
 	}
+	printImportPreview(previews)
 
 	fmt.Println()
 	fmt.Printf("  Import all %d key(s)? [Y/n] ", len(keys))
@@ -137,32 +146,41 @@ func importFromSSHDir() error {
 		return nil
 	}
 
-	fmt.Println()
-	fmt.Printf("  Found %d SSH key(s):\n", len(paths))
-	for i, p := range paths {
-		fmt.Printf("    %d. %s\n", i+1, p)
-	}
-
-	fmt.Println()
-	fmt.Printf("  Import all %d key(s)? [Y/n] ", len(paths))
-	confirm, _ := bufio.NewReader(os.Stdin).ReadString('\n')
-	confirm = strings.TrimSpace(strings.ToLower(confirm))
-	if confirm == "n" || confirm == "no" {
-		fmt.Println("  Aborted.")
-		return nil
-	}
-
 	var keys []importers.ImportedKey
+	var previews []importPreview
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
 			fmt.Printf("  Skipped %s: %v\n", p, err)
 			continue
 		}
-		keys = append(keys, importers.ImportedKey{
+		key := importers.ImportedKey{
 			Name:       deriveKeyName(p),
 			PrivateKey: string(data),
-		})
+		}
+		preview, err := previewImportedKey(key)
+		if err != nil {
+			fmt.Printf("  Skipped %s: %v\n", p, err)
+			continue
+		}
+		keys = append(keys, key)
+		previews = append(previews, preview)
+	}
+
+	if len(keys) == 0 {
+		fmt.Println("  No SSH keys found in ~/.ssh/")
+		return nil
+	}
+
+	printImportPreview(previews)
+
+	fmt.Println()
+	fmt.Printf("  Import all %d key(s)? [Y/n] ", len(keys))
+	confirm, _ := bufio.NewReader(os.Stdin).ReadString('\n')
+	confirm = strings.TrimSpace(strings.ToLower(confirm))
+	if confirm == "n" || confirm == "no" {
+		fmt.Println("  Aborted.")
+		return nil
 	}
 
 	return doImport(keys)
@@ -191,15 +209,51 @@ func doImport(keys []importers.ImportedKey) error {
 	return nil
 }
 
-func keyType(privateKey string) string {
-	switch {
-	case strings.Contains(privateKey, "ssh-ed25519"):
-		return "ed25519"
-	case strings.Contains(privateKey, "ssh-rsa"):
-		return "rsa"
-	case strings.Contains(privateKey, "ecdsa"):
-		return "ecdsa"
-	default:
-		return "unknown"
+func buildImportPreview(keys []importers.ImportedKey) ([]importPreview, error) {
+	previews := make([]importPreview, 0, len(keys))
+	for _, key := range keys {
+		preview, err := previewImportedKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key.Name, err)
+		}
+		previews = append(previews, preview)
 	}
+	return previews, nil
+}
+
+func previewImportedKey(key importers.ImportedKey) (importPreview, error) {
+	normalized, err := vault.NormalizePrivateKeyToOpenSSH([]byte(key.PrivateKey), "")
+	if err != nil {
+		return importPreview{}, formatPrivateKeyImportError(err)
+	}
+
+	preview := importPreview{
+		key:       key,
+		keyType:   normalizeImportedKeyType(normalized.Type),
+		format:    privateKeyImportFormatLabel(normalized.Format),
+		converted: normalized.Converted,
+		rawFormat: normalized.Format,
+	}
+	return preview, nil
+}
+
+func printImportPreview(previews []importPreview) {
+	fmt.Println()
+	fmt.Printf("  Found %d SSH key(s):\n", len(previews))
+
+	convertedFormats := make([]vault.PrivateKeyFormat, 0, len(previews))
+	for i, preview := range previews {
+		if preview.converted {
+			convertedFormats = append(convertedFormats, preview.rawFormat)
+		}
+		fmt.Printf("    %d. %-20s (%s) [%s]\n", i+1, preview.key.Name, preview.keyType, preview.format)
+	}
+
+	warning, ok := privateKeyConversionSummary(convertedFormats)
+	if !ok {
+		return
+	}
+
+	fmt.Println()
+	fmt.Println(warning)
 }

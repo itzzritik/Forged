@@ -3,11 +3,15 @@ package importers
 import (
 	"archive/zip"
 	"bytes"
+	"encoding/csv"
 	"encoding/json"
 	"fmt"
 	"io"
+	"regexp"
 	"strings"
 )
+
+var onePasswordPrivateKeyRE = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`)
 
 type onePasswordExport struct {
 	Accounts []struct {
@@ -33,6 +37,14 @@ type onePasswordItem struct {
 }
 
 func Parse1Password(data []byte) ([]ImportedKey, error) {
+	trimmed := bytes.TrimSpace(data)
+	if isZipArchive(trimmed) {
+		return parse1Password1PUX(trimmed)
+	}
+	return parse1PasswordCSV(trimmed)
+}
+
+func parse1Password1PUX(data []byte) ([]ImportedKey, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
 		return nil, fmt.Errorf("opening 1pux archive: %w", err)
@@ -95,16 +107,122 @@ func extractOnePasswordSSHKey(item onePasswordItem) string {
 					PrivateKey string `json:"privateKey"`
 				}
 				if err := json.Unmarshal(sshKeyRaw, &sshKey); err == nil && sshKey.PrivateKey != "" {
-					return sshKey.PrivateKey
+					return extractPrivateKeyBlock(sshKey.PrivateKey)
 				}
 			}
 			if strings.Contains(strings.ToLower(field.Title), "private key") {
 				var plain string
-				if err := json.Unmarshal(field.Value, &plain); err == nil && strings.Contains(plain, "PRIVATE KEY") {
-					return plain
+				if err := json.Unmarshal(field.Value, &plain); err == nil {
+					if privateKey := extractPrivateKeyBlock(plain); privateKey != "" {
+						return privateKey
+					}
 				}
 			}
 		}
 	}
 	return ""
+}
+
+func parse1PasswordCSV(data []byte) ([]ImportedKey, error) {
+	reader := csv.NewReader(strings.NewReader(string(data)))
+	reader.FieldsPerRecord = -1
+	reader.LazyQuotes = true
+
+	rows, err := reader.ReadAll()
+	if err != nil {
+		return nil, fmt.Errorf("parsing 1Password CSV: %w", err)
+	}
+	if len(rows) == 0 {
+		return nil, nil
+	}
+
+	titleIndex, start := detectOnePasswordCSVHeader(rows[0])
+	keys := make([]ImportedKey, 0)
+	for i, row := range rows[start:] {
+		privateKey := extractPrivateKeyFromCSVRow(row)
+		if privateKey == "" {
+			continue
+		}
+		keys = append(keys, ImportedKey{
+			Name:       deriveOnePasswordCSVName(row, titleIndex, i+1),
+			PrivateKey: privateKey,
+		})
+	}
+	return keys, nil
+}
+
+func isZipArchive(data []byte) bool {
+	return len(data) >= 4 &&
+		data[0] == 'P' &&
+		data[1] == 'K' &&
+		((data[2] == 0x03 && data[3] == 0x04) ||
+			(data[2] == 0x05 && data[3] == 0x06) ||
+			(data[2] == 0x07 && data[3] == 0x08))
+}
+
+func detectOnePasswordCSVHeader(row []string) (int, int) {
+	titleIndex := -1
+	hasHeader := false
+
+	for i, value := range row {
+		switch normalizeOnePasswordCSVHeader(value) {
+		case "title", "name":
+			hasHeader = true
+			titleIndex = i
+		case "website", "url", "username", "password", "notes", "tags", "favorite", "archived", "one-timepassword":
+			hasHeader = true
+		}
+	}
+
+	if hasHeader {
+		return titleIndex, 1
+	}
+	return -1, 0
+}
+
+func normalizeOnePasswordCSVHeader(value string) string {
+	value = strings.ToLower(strings.TrimSpace(value))
+	value = strings.ReplaceAll(value, " ", "")
+	value = strings.ReplaceAll(value, "-", "")
+	value = strings.ReplaceAll(value, "_", "")
+	return value
+}
+
+func extractPrivateKeyFromCSVRow(row []string) string {
+	for _, value := range row {
+		if privateKey := extractPrivateKeyBlock(value); privateKey != "" {
+			return privateKey
+		}
+	}
+	return ""
+}
+
+func extractPrivateKeyBlock(value string) string {
+	match := onePasswordPrivateKeyRE.FindString(value)
+	if match == "" {
+		return ""
+	}
+	return strings.TrimSpace(match)
+}
+
+func deriveOnePasswordCSVName(row []string, titleIndex int, ordinal int) string {
+	if titleIndex >= 0 && titleIndex < len(row) {
+		name := SanitizeName(row[titleIndex])
+		if name != "imported" {
+			return name
+		}
+	}
+
+	for _, value := range row {
+		value = strings.TrimSpace(value)
+		if value == "" || strings.Contains(value, "PRIVATE KEY") {
+			continue
+		}
+		name := SanitizeName(value)
+		if name != "imported" {
+			return name
+		}
+	}
+
+	return fmt.Sprintf("imported-%d", ordinal)
 }

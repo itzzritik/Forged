@@ -92,6 +92,11 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 
 	state.LastKnownServerVersion = result.Version
 	state.LastSuccessfulPullAt = time.Now().UTC()
+	if !state.Dirty && remoteMetadataMissing(result) {
+		if err := e.repairRemoteMetadata(ctx, state, result.Version); err != nil && e.logger != nil {
+			e.logger.Warn("repairing missing remote vault metadata failed", "error", err)
+		}
+	}
 	return remote, result, nil
 }
 
@@ -270,4 +275,21 @@ func (e *Engine) fetchRemote(ctx context.Context) (vault.VaultData, PullResult, 
 	}
 
 	return remote, result, true, nil
+}
+
+func remoteMetadataMissing(result PullResult) bool {
+	return result.KDFParams == nil || result.ProtectedSymmetricKey == nil || *result.ProtectedSymmetricKey == ""
+}
+
+func (e *Engine) repairRemoteMetadata(ctx context.Context, state *SyncState, version int64) error {
+	if state == nil {
+		return fmt.Errorf("sync state required")
+	}
+
+	if e.logger != nil {
+		e.logger.Info("remote vault metadata missing, repairing with local metadata", "version", version)
+	}
+
+	state.LastKnownServerVersion = version
+	return e.PushCurrent(ctx, state)
 }

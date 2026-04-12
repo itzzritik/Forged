@@ -127,9 +127,10 @@ func (c *Client) Rekey(kdf vault.KDFParams, protectedKey string) error {
 }
 
 type PullResult struct {
-	Blob      []byte
-	Version   int64
-	KDFParams *kdfParamsJSON
+	Blob                  []byte
+	Version               int64
+	KDFParams             *kdfParamsJSON
+	ProtectedSymmetricKey *string
 }
 
 func (c *Client) Pull() (PullResult, error) {
@@ -157,9 +158,10 @@ func (c *Client) Pull() (PullResult, error) {
 	}
 
 	var jsonResp struct {
-		Blob      string         `json:"blob"`
-		Version   int64          `json:"version"`
-		KDFParams *kdfParamsJSON `json:"kdf_params"`
+		Blob                  string         `json:"blob"`
+		Version               int64          `json:"version"`
+		KDFParams             *kdfParamsJSON `json:"kdf_params"`
+		ProtectedSymmetricKey *string        `json:"protected_symmetric_key"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&jsonResp); err != nil {
 		return PullResult{}, fmt.Errorf("parsing pull response: %w", err)
@@ -170,7 +172,12 @@ func (c *Client) Pull() (PullResult, error) {
 		return PullResult{}, fmt.Errorf("decoding blob: %w", err)
 	}
 
-	return PullResult{Blob: blob, Version: jsonResp.Version, KDFParams: jsonResp.KDFParams}, nil
+	return PullResult{
+		Blob:                  blob,
+		Version:               jsonResp.Version,
+		KDFParams:             jsonResp.KDFParams,
+		ProtectedSymmetricKey: jsonResp.ProtectedSymmetricKey,
+	}, nil
 }
 
 type StatusResult struct {

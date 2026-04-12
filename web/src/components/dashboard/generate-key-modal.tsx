@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { useVaultContext } from "@/hooks/use-vault";
+import { exportPrivateKeyToOpenSSH } from "@/lib/ssh-key-parser";
 import { computeFingerprint, formatSSHPublicKey } from "@/lib/ssh-key-utils";
 import { addKeyToVault, encryptNewItemKey, encryptPrivateKey } from "@/lib/vault-crypto";
 
@@ -28,15 +29,15 @@ export const GenerateKeyModal = ({ onClose }: GenerateKeyModalProps) => {
 		try {
 			const keyPair = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
 			const publicKeyRaw = new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey));
-			const privateKeyRaw = new Uint8Array(await crypto.subtle.exportKey("pkcs8", keyPair.privateKey));
+			const privateKeyBytes = await exportPrivateKeyToOpenSSH(keyPair.privateKey, "ed25519");
 
 			const publicKeyStr = formatSSHPublicKey(publicKeyRaw, trimmed);
 			const fingerprint = await computeFingerprint(publicKeyRaw);
 
 			const symmetricKey = symmetricKeyRef.current;
 			const { cipherKey, encryptedCipherKeyB64 } = await encryptNewItemKey(symmetricKey);
-			const encryptedPrivateKeyB64 = await encryptPrivateKey(cipherKey, privateKeyRaw);
-			privateKeyRaw.fill(0);
+			const encryptedPrivateKeyB64 = await encryptPrivateKey(cipherKey, privateKeyBytes);
+			privateKeyBytes.fill(0);
 
 			const now = new Date().toISOString();
 			const newKey = {

@@ -1,11 +1,11 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { createContext, useCallback, useContext, useEffect, useLayoutEffect, useRef, useState } from "react";
+import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
 import { cancelDerivation, decryptBlob, decryptProtectedKey, deriveStretchedKey, encryptBlob, vaultDataFromRaw, type KDFParams, type VaultData } from "@/lib/vault-crypto";
 import { getBrowserDeviceId } from "@/lib/sync/device";
 import { mergeThreeWayRaw } from "@/lib/sync/merge";
-import { clearSyncKey, getSyncKey, hasCachedKeySync, storeSyncKey, touchActivity } from "@/lib/vault-store";
+import { clearSyncKey, getSyncKey, storeSyncKey, touchActivity } from "@/lib/vault-store";
 
 export type VaultStatus = "loading" | "no-vault" | "locked" | "unlocked" | "error";
 
@@ -17,6 +17,7 @@ interface StatusResponse {
 
 interface PullResponse {
 	blob: string;
+	kdf_params?: KDFParams;
 	protected_symmetric_key?: string;
 	version: number;
 }
@@ -43,17 +44,28 @@ export const useVaultContext = () => {
 	return ctx;
 };
 
-async function fetchVault(cryptoKey: CryptoKey, deviceId: string): Promise<{ data: VaultData; version: number }> {
+async function fetchVaultResponse(deviceId: string): Promise<PullResponse> {
 	const res = await fetch("/api/vault/pull", {
 		headers: { "X-Device-ID": deviceId },
 	});
 	if (res.status === 401) throw new Error("401");
 	if (!res.ok) throw new Error(`Failed to pull vault: ${res.status}`);
+	return res.json();
+}
 
-	const json: PullResponse = await res.json();
+async function fetchVault(
+	cryptoKey: CryptoKey,
+	deviceId: string
+): Promise<{ data: VaultData; kdfParams: KDFParams | null; protectedKey: string | null; version: number }> {
+	const json = await fetchVaultResponse(deviceId);
 	const blob = Uint8Array.from(atob(json.blob), (c) => c.charCodeAt(0));
 	const data = await decryptBlob(cryptoKey, blob);
-	return { data, version: json.version };
+	return {
+		data,
+		kdfParams: json.kdf_params ?? null,
+		protectedKey: json.protected_symmetric_key ?? null,
+		version: json.version,
+	};
 }
 
 export const useVault = (): UseVaultReturn => {
@@ -72,11 +84,6 @@ export const useVault = (): UseVaultReturn => {
 		deviceIdRef.current = getBrowserDeviceId();
 	}
 
-	// Sync-determine locked state before browser paints (avoids modal flash)
-	useLayoutEffect(() => {
-		if (!hasCachedKeySync()) setStatus("locked");
-	}, []);
-
 	// prevent double-init in React StrictMode
 	const initialized = useRef(false);
 
@@ -93,11 +100,13 @@ export const useVault = (): UseVaultReturn => {
 				await touchActivity();
 				try {
 					symmetricKeyRef.current = stored.cryptoKey;
-					const { data, version: v } = await fetchVault(stored.cryptoKey, deviceIdRef.current);
+					const pulled = await fetchVault(stored.cryptoKey, deviceIdRef.current);
 					await storeSyncKey(stored.cryptoKey);
-					setVaultData(data);
-					setVersion(v);
-					lastSyncedBaseRawRef.current = data.raw;
+					setVaultData(pulled.data);
+					setVersion(pulled.version);
+					if (pulled.kdfParams) setKdfParams(pulled.kdfParams);
+					if (pulled.protectedKey) setProtectedKey(pulled.protectedKey);
+					lastSyncedBaseRawRef.current = pulled.data.raw;
 					setStatus("unlocked");
 					return;
 				} catch (err) {
@@ -127,8 +136,27 @@ export const useVault = (): UseVaultReturn => {
 					setStatus("no-vault");
 					return;
 				}
-				if (body.kdf_params) setKdfParams(body.kdf_params);
-				if (body.protected_symmetric_key) setProtectedKey(body.protected_symmetric_key);
+
+				let nextKdfParams = body.kdf_params ?? null;
+				let nextProtectedKey = body.protected_symmetric_key ?? null;
+
+				if (!(nextKdfParams && nextProtectedKey)) {
+					try {
+						const pulled = await fetchVaultResponse(deviceIdRef.current);
+						nextKdfParams = nextKdfParams ?? pulled.kdf_params ?? null;
+						nextProtectedKey = nextProtectedKey ?? pulled.protected_symmetric_key ?? null;
+					} catch {
+						// Fall through to explicit metadata error below.
+					}
+				}
+
+				if (!(nextKdfParams && nextProtectedKey)) {
+					setStatus("error");
+					setError("Vault metadata missing on server. Run forged sync from a linked CLI to repair it.");
+					return;
+				}
+				setKdfParams(nextKdfParams);
+				setProtectedKey(nextProtectedKey);
 				setStatus("locked");
 			} catch {
 				setStatus("error");
@@ -142,8 +170,7 @@ export const useVault = (): UseVaultReturn => {
 	const unlock = useCallback(
 		async (password: string) => {
 			if (kdfParams == null || protectedKey == null) {
-				setStatus("error");
-				setError("Vault parameters not loaded");
+				setError("Vault is still loading. Retry in a moment.");
 				return;
 			}
 
@@ -164,10 +191,12 @@ export const useVault = (): UseVaultReturn => {
 				symmetricKeyRef.current = cryptoKey;
 				await storeSyncKey(cryptoKey);
 
-				const { data, version: v } = await fetchVault(cryptoKey, deviceIdRef.current);
-				setVaultData(data);
-				setVersion(v);
-				lastSyncedBaseRawRef.current = data.raw;
+				const pulled = await fetchVault(cryptoKey, deviceIdRef.current);
+				setVaultData(pulled.data);
+				setVersion(pulled.version);
+				if (pulled.kdfParams) setKdfParams(pulled.kdfParams);
+				if (pulled.protectedKey) setProtectedKey(pulled.protectedKey);
+				lastSyncedBaseRawRef.current = pulled.data.raw;
 				setStatus("unlocked");
 			} catch (err) {
 				cancelDerivation();

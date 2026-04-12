@@ -134,19 +134,17 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 		return Key{}, fmt.Errorf("key %q already exists", name)
 	}
 
-	signer, err := ssh.ParsePrivateKey(privateKeyBytes)
+	normalized, err := NormalizePrivateKeyToOpenSSH(privateKeyBytes, comment)
 	if err != nil {
-		return Key{}, fmt.Errorf("parsing private key: %w", err)
+		return Key{}, err
 	}
-
-	sshPub := signer.PublicKey()
 
 	cipherKey := make([]byte, KeySize)
 	if _, err := rand.Read(cipherKey); err != nil {
 		return Key{}, fmt.Errorf("generating cipher key: %w", err)
 	}
 
-	encPriv, err := EncryptCombined(cipherKey, privateKeyBytes)
+	encPriv, err := EncryptCombined(cipherKey, normalized.Bytes)
 	if err != nil {
 		for i := range cipherKey {
 			cipherKey[i] = 0
@@ -170,13 +168,13 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 	key := Key{
 		ID:                  uuid.NewString(),
 		Name:                name,
-		Type:                sshPub.Type(),
-		PublicKey:           strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub))),
+		Type:                normalized.Type,
+		PublicKey:           normalized.PublicKey,
 		EncryptedPrivateKey: base64.StdEncoding.EncodeToString(encPriv),
 		EncryptedCipherKey:  base64.StdEncoding.EncodeToString(encCK),
-		PrivateKey:          privateKeyBytes,
+		PrivateKey:          normalized.Bytes,
 		Comment:             comment,
-		Fingerprint:         ssh.FingerprintSHA256(sshPub),
+		Fingerprint:         normalized.Fingerprint,
 		CreatedAt:           now,
 		UpdatedAt:           now,
 		Tags:                []string{},
