@@ -61,12 +61,7 @@ export const DashboardShell = ({ user, children }: DashboardShellProps) => {
 						{vault.status === "loading" && <LoadingSkeleton />}
 					</main>
 				</div>
-				{vault.status === "locked" && (
-					<>
-						<div className="fixed inset-0 z-40 bg-black/60 backdrop-blur-sm" />
-						<VaultUnlock error={vault.error} onUnlock={vault.unlock} />
-					</>
-				)}
+				{vault.status === "locked" && <VaultUnlock error={vault.error} onUnlock={vault.unlock} />}
 				<CommandPalette keys={vault.vaultData?.keys ?? []} onOpenChange={commandPalette.setOpen} open={commandPalette.open} />
 			</div>
 		</VaultContext.Provider>

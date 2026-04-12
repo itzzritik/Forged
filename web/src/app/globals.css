@@ -34,6 +34,7 @@
 	/* Semantic */
 	--destructive: #dc2626;
 	--success: #16a34a;
+	--info: #0ea5e9;
 	--warning: #d97706;
 
 	/* Borders & inputs */
@@ -65,6 +66,27 @@
 	--text-subtle: #a1a1aa;
 	--brand-glow: rgba(234, 88, 12, 0.12);
 	--brand-glow-strong: rgba(234, 88, 12, 0.25);
+
+	/* Modal & command surfaces */
+	--modal-shell: var(--card);
+	--modal-shell-border: var(--border);
+	--modal-titlebar: var(--surface-inset);
+	--modal-titlebar-border: var(--border);
+	--modal-traffic-close: var(--destructive);
+	--modal-traffic-close-soft: color-mix(in srgb, var(--destructive) 12%, transparent);
+	--modal-traffic-close-glow: color-mix(in srgb, var(--destructive) 32%, transparent);
+	--modal-traffic-close-icon: rgba(55, 21, 24, 0.92);
+	--modal-traffic-warning: var(--warning);
+	--modal-traffic-warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
+	--modal-traffic-success: var(--success);
+	--modal-traffic-success-soft: color-mix(in srgb, var(--success) 12%, transparent);
+
+	--command-shell: var(--card);
+	--command-shell-border: var(--border);
+	--command-input: var(--surface-inset);
+	--command-item-hover: var(--surface-hover);
+	--command-item-selected: var(--brand-glow);
+	--command-shortcut: var(--muted-foreground);
 }
 
 /* ------------------------------------------------------------------ */
@@ -95,6 +117,7 @@
 	/* Semantic */
 	--destructive: #ef4444;
 	--success: #22c55e;
+	--info: #7dd3fc;
 	--warning: #f59e0b;
 
 	/* Borders & inputs */
@@ -126,6 +149,27 @@
 	--text-subtle: #52525b;
 	--brand-glow: rgba(234, 88, 12, 0.08);
 	--brand-glow-strong: rgba(234, 88, 12, 0.3);
+
+	/* Modal & command surfaces */
+	--modal-shell: var(--card);
+	--modal-shell-border: var(--border);
+	--modal-titlebar: var(--surface-inset);
+	--modal-titlebar-border: var(--border);
+	--modal-traffic-close: var(--destructive);
+	--modal-traffic-close-soft: color-mix(in srgb, var(--destructive) 12%, transparent);
+	--modal-traffic-close-glow: color-mix(in srgb, var(--destructive) 36%, transparent);
+	--modal-traffic-close-icon: rgba(52, 18, 21, 0.94);
+	--modal-traffic-warning: var(--warning);
+	--modal-traffic-warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
+	--modal-traffic-success: var(--success);
+	--modal-traffic-success-soft: color-mix(in srgb, var(--success) 12%, transparent);
+
+	--command-shell: var(--card);
+	--command-shell-border: var(--border);
+	--command-input: var(--surface-inset);
+	--command-item-hover: var(--surface-hover);
+	--command-item-selected: var(--brand-glow);
+	--command-shortcut: var(--muted-foreground);
 }
 
 /* ------------------------------------------------------------------ */
@@ -160,6 +204,7 @@
 
 	/* Semantic */
 	--color-success: var(--success);
+	--color-info: var(--info);
 	--color-warning: var(--warning);
 
 	/* Extended */
@@ -169,6 +214,24 @@
 	--color-text-subtle: var(--text-subtle);
 	--color-brand-glow: var(--brand-glow);
 	--color-brand-glow-strong: var(--brand-glow-strong);
+	--color-modal-shell: var(--modal-shell);
+	--color-modal-shell-border: var(--modal-shell-border);
+	--color-modal-titlebar: var(--modal-titlebar);
+	--color-modal-titlebar-border: var(--modal-titlebar-border);
+	--color-modal-traffic-close: var(--modal-traffic-close);
+	--color-modal-traffic-close-soft: var(--modal-traffic-close-soft);
+	--color-modal-traffic-close-glow: var(--modal-traffic-close-glow);
+	--color-modal-traffic-close-icon: var(--modal-traffic-close-icon);
+	--color-modal-traffic-warning: var(--modal-traffic-warning);
+	--color-modal-traffic-warning-soft: var(--modal-traffic-warning-soft);
+	--color-modal-traffic-success: var(--modal-traffic-success);
+	--color-modal-traffic-success-soft: var(--modal-traffic-success-soft);
+	--color-command-shell: var(--command-shell);
+	--color-command-shell-border: var(--command-shell-border);
+	--color-command-input: var(--command-input);
+	--color-command-item-hover: var(--command-item-hover);
+	--color-command-item-selected: var(--command-item-selected);
+	--color-command-shortcut: var(--command-shortcut);
 
 	/* Charts */
 	--color-chart-1: var(--chart-1);
@@ -215,6 +278,20 @@
 
 body {
 	overflow-x: hidden;
+}
+
+@layer components {
+	.modal-window-controls:has(.modal-close-control:hover) .modal-traffic-secondary-warning,
+	.modal-window-controls:has(.modal-close-control:focus-visible) .modal-traffic-secondary-warning {
+		border-color: color-mix(in srgb, var(--modal-traffic-warning) 25%, transparent);
+		background-color: var(--modal-traffic-warning);
+	}
+
+	.modal-window-controls:has(.modal-close-control:hover) .modal-traffic-secondary-success,
+	.modal-window-controls:has(.modal-close-control:focus-visible) .modal-traffic-secondary-success {
+		border-color: color-mix(in srgb, var(--modal-traffic-success) 25%, transparent);
+		background-color: var(--modal-traffic-success);
+	}
 }
 
 /* ------------------------------------------------------------------ */

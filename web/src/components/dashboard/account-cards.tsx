@@ -5,7 +5,7 @@ import { useEffect, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Modal } from "@/components/ui/modal";
+import { Modal, ModalBody, ModalFooter } from "@/components/ui/modal";
 import { Separator } from "@/components/ui/separator";
 import { useVaultContext } from "@/hooks/use-vault";
 import { generateKDFParams, rekeyProtectedKey } from "@/lib/vault-crypto";
@@ -136,15 +136,24 @@ export const AccountCards = () => {
 			</div>
 
 			<Modal closable={true} onOpenChange={setDeleteOpen} open={deleteOpen} title="Account // Delete">
-				<div className="flex flex-col gap-4 p-5">
+				<ModalBody>
+					<div className="space-y-1">
+						<p className="font-semibold text-lg">Delete Account</p>
+						<p className="text-muted-foreground text-sm">This action is irreversible. Type DELETE to confirm.</p>
+					</div>
 					<p className="text-muted-foreground text-sm">
-						This action is irreversible. Type <span className="font-mono text-foreground">DELETE</span> to confirm.
+						Type <span className="font-mono text-foreground">DELETE</span> to permanently remove your account and vault data.
 					</p>
 					<Input autoFocus onChange={(e) => setDeleteInput(e.target.value)} placeholder="DELETE" value={deleteInput} />
-					<Button disabled={deleteInput !== "DELETE" || deleting} onClick={handleDelete} variant="destructive">
-						{deleting ? "Deleting..." : "Delete Account"}
-					</Button>
-				</div>
+					<ModalFooter className="justify-end">
+						<Button onClick={() => setDeleteOpen(false)} type="button" variant="outline">
+							Cancel
+						</Button>
+						<Button disabled={deleteInput !== "DELETE" || deleting} onClick={handleDelete} variant="destructive">
+							{deleting ? "Deleting..." : "Delete Account"}
+						</Button>
+					</ModalFooter>
+				</ModalBody>
 			</Modal>
 		</div>
 	);

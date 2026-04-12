@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Modal, ModalBody, ModalFooter } from "@/components/ui/modal";
 import { useVaultContext } from "@/hooks/use-vault";
 import { exportPrivateKeyToOpenSSH } from "@/lib/ssh-key-parser";
 import { computeFingerprint, formatSSHPublicKey } from "@/lib/ssh-key-utils";
@@ -69,23 +70,25 @@ export const GenerateKeyModal = ({ onClose }: GenerateKeyModalProps) => {
 	};
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center">
-			<div aria-hidden className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-			<div className="relative z-10 w-full max-w-md border border-border bg-card p-6 font-mono shadow-2xl">
-				<p className="mb-4 font-semibold text-lg">Generate SSH Key</p>
+		<Modal onOpenChange={(open) => !open && onClose()} open size="sm" title="Keys // Generate">
+			<ModalBody>
+				<div className="space-y-1">
+					<p className="font-semibold text-lg">Generate SSH Key</p>
+					<p className="text-muted-foreground text-sm">Create a new Ed25519 key and add it to your vault</p>
+				</div>
 				<form className="flex flex-col gap-3" onSubmit={handleGenerate}>
 					<Input autoFocus onChange={(e) => setName(e.target.value)} placeholder="Key name (e.g. github-personal)" value={name} />
 					{error && <p className="text-destructive text-xs">{error}</p>}
-					<div className="flex justify-end gap-2">
+					<ModalFooter className="justify-end">
 						<Button onClick={onClose} type="button" variant="outline">
 							Cancel
 						</Button>
 						<Button disabled={isLoading || !name.trim()} type="submit">
 							{isLoading ? "Generating..." : "Generate Ed25519"}
 						</Button>
-					</div>
+					</ModalFooter>
 				</form>
-			</div>
-		</div>
+			</ModalBody>
+		</Modal>
 	);
 };

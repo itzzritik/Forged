@@ -1,7 +1,10 @@
 "use client";
 
-import { useCallback, useRef, useState } from "react";
+import { useCallback, useMemo, useRef, useState } from "react";
+import { badgeVariants } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Modal, ModalBody, ModalFooter } from "@/components/ui/modal";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { useVaultContext } from "@/hooks/use-vault";
 import { parseBitwarden } from "@/lib/importers/bitwarden";
 import { parseForged } from "@/lib/importers/forged-format";
@@ -9,6 +12,7 @@ import { parse1Password } from "@/lib/importers/onepassword";
 import type { ImportedKey } from "@/lib/importers/types";
 import { parseSSHKeyFile, type ParsedSSHKey } from "@/lib/ssh-key-parser";
 import { computeFingerprintFromBlob, formatSSHPublicKeyFromBlob } from "@/lib/ssh-key-utils";
+import { cn } from "@/lib/utils";
 import { addKeyToVault, encryptNewItemKey, encryptPrivateKey } from "@/lib/vault-crypto";
 
 interface ImportKeyModalProps {
@@ -27,14 +31,21 @@ interface SourceMeta {
 }
 
 interface PreparedImportKey {
+	fingerprint: string;
 	key: ImportedKey;
 	parsed: ParsedSSHKey;
 }
 
 interface ReviewKey {
+	alreadyInVault: boolean;
 	checked: boolean;
+	collapsedDuplicates: number;
 	entry: PreparedImportKey;
 }
+
+const REVIEW_LIST_HEIGHT = 360;
+const REVIEW_ROW_HEIGHT = 92;
+const REVIEW_OVERSCAN = 6;
 
 const SOURCES: SourceMeta[] = [
 	{
@@ -81,24 +92,57 @@ function formatParseError(msg: string): string {
 	return msg;
 }
 
-function importFormatLabel(parsed: ParsedSSHKey): string {
-	switch (parsed.sourceFormat) {
-		case "openssh":
-			return "OpenSSH";
-		case "pkcs8-pem":
-			return "PKCS#8 PEM -> OpenSSH";
-		case "legacy-pem":
-			return "Legacy PEM -> OpenSSH";
-	}
-}
-
 async function prepareImportedKeys(keys: ImportedKey[]): Promise<PreparedImportKey[]> {
 	return Promise.all(
-		keys.map(async (key) => ({
-			key,
-			parsed: await parseSSHKeyFile(key.privateKey),
-		}))
+		keys.map(async (key) => {
+			const parsed = await parseSSHKeyFile(key.privateKey);
+			return {
+				key,
+				parsed,
+				fingerprint: await computeFingerprintFromBlob(parsed.publicKeyBlob),
+			};
+		})
 	);
+}
+
+function buildReviewKeys(entries: PreparedImportKey[], existingFingerprints: Set<string>): ReviewKey[] {
+	const byFingerprint = new Map<string, ReviewKey>();
+	const review: ReviewKey[] = [];
+
+	for (const entry of entries) {
+		const existing = byFingerprint.get(entry.fingerprint);
+		if (existing) {
+			existing.collapsedDuplicates++;
+			continue;
+		}
+
+		const alreadyInVault = existingFingerprints.has(entry.fingerprint);
+		const item: ReviewKey = {
+			entry,
+			checked: !alreadyInVault,
+			alreadyInVault,
+			collapsedDuplicates: 0,
+		};
+		byFingerprint.set(entry.fingerprint, item);
+		review.push(item);
+	}
+
+	return review.sort((left, right) => Number(left.alreadyInVault) - Number(right.alreadyInVault));
+}
+
+function truncateMiddle(value: string, leading = 18, trailing = 10): string {
+	if (value.length <= leading + trailing + 1) return value;
+	return `${value.slice(0, leading)}...${value.slice(-trailing)}`;
+}
+
+function getUpgradeTooltip(parsed: ParsedSSHKey): string {
+	if (parsed.sourceFormat === "pkcs8-pem") {
+		return "PKCS#8 PEM detected. This key will be upgraded to the OpenSSH private key format";
+	}
+	if (parsed.sourceFormat === "legacy-pem") {
+		return "Legacy PEM detected. This key will be upgraded to the OpenSSH private key format";
+	}
+	return "This key is already in the OpenSSH private key format";
 }
 
 async function parseSource(source: Source, file: File): Promise<PreparedImportKey[]> {
@@ -116,7 +160,7 @@ async function parseSource(source: Source, file: File): Promise<PreparedImportKe
 	const text = await file.text();
 	const parsed = await parseSSHKeyFile(text);
 	const name = parsed.comment || deriveNameFromFile(file.name);
-	return [{ key: { name, privateKey: text }, parsed }];
+	return [{ key: { name, privateKey: text }, parsed, fingerprint: await computeFingerprintFromBlob(parsed.publicKeyBlob) }];
 }
 
 export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
@@ -127,6 +171,7 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 	const [error, setError] = useState<string | null>(null);
 	const [isDragOver, setIsDragOver] = useState(false);
 	const [isLoading, setIsLoading] = useState(false);
+	const [scrollTop, setScrollTop] = useState(0);
 	const fileInputRef = useRef<HTMLInputElement>(null);
 
 	const sourceMeta = SOURCES.find((s) => s.id === source) ?? null;
@@ -141,14 +186,16 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 					setError("No SSH keys found in the selected file.");
 					return;
 				}
-				setReviewKeys(entries.map((entry) => ({ entry, checked: true })));
+				const existingFingerprints = new Set((vaultData?.keys ?? []).map((key) => key.fingerprint));
+				setReviewKeys(buildReviewKeys(entries, existingFingerprints));
+				setScrollTop(0);
 				setStep(3);
 			} catch (err) {
 				const msg = err instanceof Error ? err.message : "Failed to parse file";
 				setError(formatParseError(msg));
 			}
 		},
-		[source]
+		[source, vaultData]
 	);
 
 	const handleDrop = useCallback(
@@ -162,13 +209,53 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 	);
 
 	const checkedCount = reviewKeys.filter((r) => r.checked).length;
-	const convertedCount = reviewKeys.filter((r) => r.checked && r.entry.parsed.convertedToOpenSSH).length;
-	const pkcs8ConvertedCount = reviewKeys.filter((r) => r.checked && r.entry.parsed.sourceFormat === "pkcs8-pem").length;
-	const legacyConvertedCount = reviewKeys.filter((r) => r.checked && r.entry.parsed.sourceFormat === "legacy-pem").length;
-	const allChecked = checkedCount === reviewKeys.length;
+	const convertedCount = reviewKeys.filter((r) => r.entry.parsed.convertedToOpenSSH).length;
+	const hasVaultDuplicates = reviewKeys.some((r) => r.alreadyInVault);
+	const collapsedDuplicateCount = reviewKeys.reduce((sum, reviewKey) => sum + reviewKey.collapsedDuplicates, 0);
+	const allChecked = reviewKeys.length > 0 && checkedCount === reviewKeys.length;
+	const duplicateSelected = reviewKeys.some((reviewKey) => reviewKey.alreadyInVault && reviewKey.checked);
+	const keyCount = reviewKeys.length;
+	const keyLabel = (n: number) => (n === 1 ? "Key" : "Keys");
+	const primaryImportLabel =
+		checkedCount === 0 ? "Import Keys" : checkedCount === keyCount ? (keyCount === 1 ? "Import Key" : "Import All Keys") : `Import ${checkedCount.toLocaleString()} ${keyLabel(checkedCount)}`;
+	const bulkToggleLabel = hasVaultDuplicates
+		? allChecked
+			? "Deselect all"
+			: duplicateSelected
+				? "Select all"
+				: "Select all unique"
+		: allChecked
+			? "Deselect all"
+			: "Select all";
+	const summaryLines = [
+		hasVaultDuplicates ? `${reviewKeys.filter((reviewKey) => reviewKey.alreadyInVault).length.toLocaleString()} duplicates in vault` : null,
+		convertedCount > 0 ? `${convertedCount.toLocaleString()} keys will upgrade to OpenSSH` : null,
+		collapsedDuplicateCount > 0 ? `${collapsedDuplicateCount.toLocaleString()} duplicate entries in this import were consolidated` : null,
+	].filter((value): value is string => Boolean(value));
+	const startIndex = Math.max(0, Math.floor(scrollTop / REVIEW_ROW_HEIGHT) - REVIEW_OVERSCAN);
+	const endIndex = Math.min(keyCount, Math.ceil((scrollTop + REVIEW_LIST_HEIGHT) / REVIEW_ROW_HEIGHT) + REVIEW_OVERSCAN);
+	const visibleReviewKeys = useMemo(() => reviewKeys.slice(startIndex, endIndex), [endIndex, reviewKeys, startIndex]);
+	const topSpacerHeight = startIndex * REVIEW_ROW_HEIGHT;
+	const bottomSpacerHeight = Math.max(0, (keyCount - endIndex) * REVIEW_ROW_HEIGHT);
 
 	const toggleAll = () => {
-		setReviewKeys((prev) => prev.map((r) => ({ ...r, checked: !allChecked })));
+		setReviewKeys((prev) => {
+			if (!hasVaultDuplicates) {
+				const nextChecked = !prev.every((reviewKey) => reviewKey.checked);
+				return prev.map((reviewKey) => ({ ...reviewKey, checked: nextChecked }));
+			}
+
+			const everyChecked = prev.every((reviewKey) => reviewKey.checked);
+			const anyDuplicateSelected = prev.some((reviewKey) => reviewKey.alreadyInVault && reviewKey.checked);
+
+			if (everyChecked) {
+				return prev.map((reviewKey) => ({ ...reviewKey, checked: false }));
+			}
+			if (anyDuplicateSelected) {
+				return prev.map((reviewKey) => ({ ...reviewKey, checked: true }));
+			}
+			return prev.map((reviewKey) => ({ ...reviewKey, checked: !reviewKey.alreadyInVault }));
+		});
 	};
 
 	const toggleOne = (idx: number) => {
@@ -187,8 +274,7 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 			for (const { entry, checked } of reviewKeys) {
 				if (!checked) continue;
 
-				const { key, parsed } = entry;
-				const fingerprint = await computeFingerprintFromBlob(parsed.publicKeyBlob);
+				const { fingerprint, key, parsed } = entry;
 				const publicKeyStr = formatSSHPublicKeyFromBlob(parsed.publicKeyBlob, key.name);
 				const { cipherKey, encryptedCipherKeyB64 } = await encryptNewItemKey(symmetricKey);
 				const encryptedPrivateKeyB64 = await encryptPrivateKey(cipherKey, parsed.privateKeyBytes);
@@ -222,14 +308,12 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 		}
 	};
 
-	const keyCount = reviewKeys.length;
-	const keyLabel = (n: number) => (n === 1 ? "Key" : "Keys");
-
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center">
-			<div aria-hidden className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-			<div className="relative z-10 w-full max-w-md border border-border bg-card p-6 font-mono shadow-2xl">
-				<p className="mb-4 font-semibold text-lg">Import SSH Keys</p>
+		<Modal onOpenChange={(open) => !open && onClose()} open size={step === 3 ? "lg" : "sm"} title="Keys // Import">
+			<ModalBody className="gap-3">
+				<div className="space-y-1">
+					<p className="font-semibold text-lg">Import SSH Keys</p>
+				</div>
 
 				{step === 1 && (
 					<div className="flex flex-col gap-3">
@@ -248,11 +332,11 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 								<span className="text-muted-foreground text-xs">{s.subtitle}</span>
 							</button>
 						))}
-						<div className="flex justify-end pt-1">
+						<ModalFooter className="justify-end pt-1">
 							<Button onClick={onClose} type="button" variant="outline">
 								Cancel
 							</Button>
-						</div>
+						</ModalFooter>
 					</div>
 				)}
 
@@ -286,7 +370,7 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 							type="file"
 						/>
 						{error && <pre className="whitespace-pre-wrap text-destructive text-xs">{error}</pre>}
-						<div className="flex justify-between">
+						<ModalFooter>
 							<Button
 								onClick={() => {
 									setError(null);
@@ -300,7 +384,7 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 							<Button onClick={onClose} type="button" variant="outline">
 								Cancel
 							</Button>
-						</div>
+						</ModalFooter>
 					</div>
 				)}
 
@@ -308,44 +392,101 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 					<div className="flex flex-col gap-3">
 						<div className="flex items-center justify-between">
 							<p className="text-muted-foreground text-xs">
-								{keyCount} {keyLabel(keyCount).toLowerCase()} found
+								{keyCount.toLocaleString()} {keyLabel(keyCount).toLowerCase()} found
 							</p>
-							<button className="text-muted-foreground text-xs underline-offset-2 hover:underline" onClick={toggleAll} type="button">
-								{allChecked ? "Deselect all" : "Select all"}
+							<button className="text-muted-foreground text-xs underline-offset-2 transition-colors hover:text-foreground hover:underline" onClick={toggleAll} type="button">
+								{bulkToggleLabel}
 							</button>
 						</div>
-						<div className="flex max-h-64 flex-col gap-1 overflow-y-auto">
-							{reviewKeys.map((r, idx) => (
-								<label className="flex cursor-pointer items-center gap-3 border border-border p-2 hover:bg-muted/20" key={`${r.entry.key.name}-${idx}`}>
-									<input checked={r.checked} className="accent-primary" onChange={() => toggleOne(idx)} type="checkbox" />
-									<div className="flex min-w-0 flex-1 flex-col gap-0.5">
-										<span className="truncate text-sm">{r.entry.key.name}</span>
-										<div className="flex flex-wrap items-center gap-2 text-xs">
-											<span className="text-muted-foreground">{r.entry.parsed.type}</span>
-											<span className={r.entry.parsed.convertedToOpenSSH ? "text-amber-500" : "text-muted-foreground"}>{importFormatLabel(r.entry.parsed)}</span>
+						<div className="max-h-[360px] overflow-y-auto pr-1" onScroll={(event) => setScrollTop(event.currentTarget.scrollTop)}>
+							<div className="flex flex-col gap-3" style={{ paddingTop: topSpacerHeight, paddingBottom: bottomSpacerHeight }}>
+								{visibleReviewKeys.map((reviewKey, visibleIndex) => {
+									const idx = startIndex + visibleIndex;
+									const isChecked = reviewKey.checked;
+									const duplicateTooltip = "This key already exists in this vault";
+									const fingerprint = truncateMiddle(reviewKey.entry.fingerprint);
+
+									return (
+										<div
+											className={cn(
+												"flex min-h-[80px] items-center gap-3 border bg-surface px-4 py-3.5 shadow-sm transition-colors",
+												isChecked ? "border-primary/25 bg-surface-hover" : "border-border text-muted-foreground",
+												reviewKey.alreadyInVault && !isChecked && "border-info/20",
+												!isChecked && "hover:border-border",
+												isChecked && "hover:border-primary/35"
+											)}
+											key={`${reviewKey.entry.fingerprint}-${idx}`}
+										>
+											<input
+												checked={isChecked}
+												className="mt-1 size-4 shrink-0 accent-primary"
+												onChange={() => toggleOne(idx)}
+												type="checkbox"
+											/>
+											<div className="min-w-0 flex-1">
+												<div className="flex items-center justify-between gap-3">
+													<button className="min-w-0 flex-1 text-left" onClick={() => toggleOne(idx)} type="button">
+														<div className={cn("truncate text-sm", isChecked ? "text-foreground" : "text-muted-foreground")}>{reviewKey.entry.key.name}</div>
+														<div className="mt-1 truncate font-mono text-muted-foreground text-xs">{fingerprint}</div>
+													</button>
+													<div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 self-center">
+														{reviewKey.alreadyInVault && (
+															<Tooltip>
+																<TooltipTrigger
+																	className={cn(
+																		badgeVariants({ variant: "outline" }),
+																		"cursor-default border-info/25 bg-info/10 text-info hover:bg-info/10"
+																	)}
+																	render={<button type="button" />}
+																>
+																	Duplicate
+																</TooltipTrigger>
+																<TooltipContent>
+																	<span>{duplicateTooltip}</span>
+																</TooltipContent>
+															</Tooltip>
+														)}
+														{reviewKey.entry.parsed.convertedToOpenSSH && (
+															<Tooltip>
+																<TooltipTrigger
+																	className={cn(
+																		badgeVariants({ variant: "outline" }),
+																		"cursor-default border-warning/25 bg-warning/10 text-warning hover:bg-warning/10"
+																	)}
+																	render={<button type="button" />}
+																>
+																	Upgrade
+																</TooltipTrigger>
+																<TooltipContent>
+																	<span>{getUpgradeTooltip(reviewKey.entry.parsed)}</span>
+																</TooltipContent>
+															</Tooltip>
+														)}
+													</div>
+												</div>
+											</div>
 										</div>
-									</div>
-								</label>
-							))}
+									);
+								})}
+							</div>
 						</div>
-						{convertedCount > 0 && (
-							<div className="border border-amber-500/30 bg-amber-500/10 p-3 text-amber-200 text-xs">
-								<p>
-									{pkcs8ConvertedCount > 0 && legacyConvertedCount > 0
-										? `${convertedCount} PEM keys will be converted to the latest OpenSSH private key format. This includes ${pkcs8ConvertedCount} PKCS#8 PEM key${pkcs8ConvertedCount === 1 ? "" : "s"} and ${legacyConvertedCount} legacy PEM key${legacyConvertedCount === 1 ? "" : "s"}.`
-										: pkcs8ConvertedCount > 0
-											? `${pkcs8ConvertedCount} PKCS#8 PEM key${pkcs8ConvertedCount === 1 ? "" : "s"} will be converted to the latest OpenSSH private key format.`
-											: `${legacyConvertedCount} legacy PEM key${legacyConvertedCount === 1 ? "" : "s"} will be converted to the latest OpenSSH private key format.`}
-								</p>
-								<p className="mt-1 text-amber-100/90">The keypair stays the same, so existing GitHub/server setups continue to work.</p>
+						{summaryLines.length > 0 && (
+							<div className="mb-4 mt-2 border border-primary/15 bg-linear-to-b from-primary/8 to-surface/60 px-4 py-3 shadow-sm">
+								<p className="mb-1.5 text-[11px] text-primary/80 uppercase tracking-[0.16em]">Import Summary</p>
+								<div className="flex flex-col gap-0.5 text-muted-foreground text-xs leading-5">
+									{summaryLines.map((line) => (
+										<p key={line}>{line}</p>
+									))}
+								</div>
 							</div>
 						)}
 						{error && <p className="text-destructive text-xs">{error}</p>}
-						<div className="flex items-center justify-between">
+						<ModalFooter>
 							<Button
 								onClick={() => {
 									setError(null);
 									setReviewKeys([]);
+									setScrollTop(0);
 									setStep(2);
 								}}
 								type="button"
@@ -358,13 +499,13 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 									Cancel
 								</Button>
 								<Button disabled={checkedCount === 0 || isLoading} onClick={handleImport} type="button">
-									{isLoading ? "Importing..." : `Import ${checkedCount} ${keyLabel(checkedCount)}`}
+									{isLoading ? "Importing..." : primaryImportLabel}
 								</Button>
 							</div>
-						</div>
+						</ModalFooter>
 					</div>
 				)}
-			</div>
-		</div>
+			</ModalBody>
+		</Modal>
 	);
 };

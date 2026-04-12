@@ -4,6 +4,7 @@ import { motion } from "framer-motion";
 import { useEffect, useRef, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Modal, ModalBody } from "@/components/ui/modal";
 import { clearSyncKey } from "@/lib/vault-store";
 
 interface VaultUnlockProps {
@@ -86,77 +87,68 @@ export const VaultUnlock = ({ onUnlock, error }: VaultUnlockProps) => {
 	};
 
 	return (
-		<motion.div
-			animate={shake ? { x: [0, -12, 12, -8, 8, -4, 4, 0] } : { x: 0 }}
-			className="fixed top-1/2 left-1/2 z-50 w-full max-w-md -translate-x-1/2 -translate-y-1/2 overflow-hidden border border-border bg-card font-mono shadow-2xl"
-			transition={{ duration: 0.5 }}
-		>
-			<div className="flex h-[38px] items-center border-border border-b bg-surface-inset px-3.5">
-				<div className="flex items-center gap-[7px]">
-					<div aria-hidden className="h-[11px] w-[11px] rounded-full border border-destructive/20 bg-destructive/10" />
-					<div aria-hidden className="h-[11px] w-[11px] rounded-full border border-warning/20 bg-warning/10" />
-					<div aria-hidden className="h-[11px] w-[11px] rounded-full border border-success/20 bg-success/10" />
-				</div>
-				<div className="flex-1 text-center text-[10px] text-muted-foreground uppercase tracking-[0.1em]">{"Vault // Unlock"}</div>
-				<div className="w-[51px]" />
-			</div>
-			<div className="flex flex-col gap-5 p-6">
-				<div className="flex justify-center">
-					<div className="relative flex items-center justify-center">
-						<div className="absolute inset-0 rounded-full bg-primary/30 blur-md" />
-						<div className="relative text-primary">
-							<LockIcon />
+		<Modal closable={false} onOpenChange={() => {}} open size="sm" title="Vault // Unlock">
+			<ModalBody className="gap-5">
+				<motion.div animate={shake ? { x: [0, -12, 12, -8, 8, -4, 4, 0] } : { x: 0 }} transition={{ duration: 0.5 }}>
+					<div className="flex flex-col gap-5">
+						<div className="flex justify-center">
+							<div className="relative flex items-center justify-center">
+								<div className="absolute inset-0 rounded-full bg-primary/30 blur-md" />
+								<div className="relative text-primary">
+									<LockIcon />
+								</div>
+							</div>
+						</div>
+
+						<div className="space-y-1 text-center">
+							<p className="font-semibold text-lg">Unlock Vault</p>
+							<p className="text-muted-foreground text-sm">Enter your master password to decrypt your keys</p>
+						</div>
+
+						<form className="flex flex-col gap-3" onSubmit={handleSubmit}>
+							<div className="relative">
+								<Input
+									aria-invalid={error != null}
+									className={error ? "border-destructive pr-9" : "pr-9"}
+									disabled={isLoading}
+									onChange={(e) => setPassword(e.target.value)}
+									placeholder="Master password"
+									ref={inputRef}
+									type={showPassword ? "text" : "password"}
+									value={password}
+								/>
+								<button
+									className="absolute top-1/2 right-2.5 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
+									onClick={() => setShowPassword((v) => !v)}
+									tabIndex={-1}
+									type="button"
+								>
+									{showPassword ? <EyeOffIcon /> : <EyeIcon />}
+								</button>
+							</div>
+
+							{error && <p className="text-destructive text-xs">{error}</p>}
+
+							<Button className="w-full bg-primary text-primary-foreground" disabled={isLoading} type="submit">
+								{isLoading ? (
+									<>
+										<SpinnerIcon />
+										Deriving key...
+									</>
+								) : (
+									"Unlock"
+								)}
+							</Button>
+						</form>
+
+						<div className="text-center">
+							<button className="cursor-pointer text-muted-foreground text-xs transition-colors hover:text-foreground" onClick={handleLogout} type="button">
+								Sign out
+							</button>
 						</div>
 					</div>
-				</div>
-
-				<div className="space-y-1 text-center">
-					<p className="font-semibold text-lg">Unlock Vault</p>
-					<p className="text-muted-foreground text-sm">Enter your master password to decrypt your keys</p>
-				</div>
-
-				<form className="flex flex-col gap-3" onSubmit={handleSubmit}>
-					<div className="relative">
-						<Input
-							aria-invalid={error != null}
-							className={error ? "border-destructive pr-9" : "pr-9"}
-							disabled={isLoading}
-							onChange={(e) => setPassword(e.target.value)}
-							placeholder="Master password"
-							ref={inputRef}
-							type={showPassword ? "text" : "password"}
-							value={password}
-						/>
-						<button
-							className="absolute top-1/2 right-2.5 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
-							onClick={() => setShowPassword((v) => !v)}
-							tabIndex={-1}
-							type="button"
-						>
-							{showPassword ? <EyeOffIcon /> : <EyeIcon />}
-						</button>
-					</div>
-
-					{error && <p className="text-destructive text-xs">{error}</p>}
-
-					<Button className="w-full bg-primary text-primary-foreground" disabled={isLoading} type="submit">
-						{isLoading ? (
-							<>
-								<SpinnerIcon />
-								Deriving key...
-							</>
-						) : (
-							"Unlock"
-						)}
-					</Button>
-				</form>
-
-				<div className="text-center">
-					<button className="cursor-pointer text-muted-foreground text-xs transition-colors hover:text-foreground" onClick={handleLogout} type="button">
-						Sign out
-					</button>
-				</div>
-			</div>
-		</motion.div>
+				</motion.div>
+			</ModalBody>
+		</Modal>
 	);
 };

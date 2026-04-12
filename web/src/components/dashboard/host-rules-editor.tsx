@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Modal, ModalBody, ModalFooter } from "@/components/ui/modal";
 import { useVaultContext } from "@/hooks/use-vault";
 import { updateKeyInVault } from "@/lib/vault-crypto";
 
@@ -58,13 +59,14 @@ export const HostRulesEditor = ({ hostRules, keyId, keyName, onClose }: HostRule
 	};
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center">
-			<div aria-hidden className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-			<div className="relative z-10 w-full max-w-md border border-border bg-card p-6 font-mono shadow-2xl">
-				<p className="mb-1 font-semibold text-lg">Host Rules</p>
-				<p className="mb-4 text-muted-foreground text-xs">{keyName}</p>
+		<Modal onOpenChange={(open) => !open && onClose()} open size="sm" title="Hosts // Edit">
+			<ModalBody>
+				<div className="space-y-1">
+					<p className="font-semibold text-lg">Host Rules</p>
+					<p className="text-muted-foreground text-sm">{keyName}</p>
+				</div>
 
-				<div className="mb-3 flex min-h-10 flex-wrap gap-1.5">
+				<div className="flex min-h-10 flex-wrap gap-1.5">
 					{rules.length === 0 ? (
 						<span className="text-muted-foreground text-xs">No host rules</span>
 					) : (
@@ -79,7 +81,7 @@ export const HostRulesEditor = ({ hostRules, keyId, keyName, onClose }: HostRule
 					)}
 				</div>
 
-				<div className="mb-4 flex gap-2">
+				<div className="flex gap-2">
 					<Input
 						className="flex-1"
 						onChange={(e) => setInput(e.target.value)}
@@ -97,17 +99,17 @@ export const HostRulesEditor = ({ hostRules, keyId, keyName, onClose }: HostRule
 					</Button>
 				</div>
 
-				{error && <p className="mb-3 text-destructive text-xs">{error}</p>}
+				{error && <p className="text-destructive text-xs">{error}</p>}
 
-				<div className="flex justify-end gap-2">
+				<ModalFooter className="justify-end">
 					<Button onClick={onClose} type="button" variant="outline">
 						Cancel
 					</Button>
 					<Button disabled={isLoading} onClick={handleSave} type="button">
 						{isLoading ? "Saving..." : "Save"}
 					</Button>
-				</div>
-			</div>
-		</div>
+				</ModalFooter>
+			</ModalBody>
+		</Modal>
 	);
 };

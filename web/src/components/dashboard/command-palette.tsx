@@ -119,9 +119,14 @@ export const CommandPalette = ({ open, onOpenChange, keys }: CommandPaletteProps
 	const router = useRouter();
 	const { theme, setTheme } = useTheme();
 
-	const run = (fn: () => void) => {
+	const run = (fn: () => void | Promise<void>) => {
 		onOpenChange(false);
-		fn();
+		requestAnimationFrame(() => {
+			void Promise.resolve(fn()).catch((error) => {
+				console.error(error);
+				toast.error("Command failed");
+			});
+		});
 	};
 
 	const copyPublicKey = async (key: VaultKeyMetadata) => {

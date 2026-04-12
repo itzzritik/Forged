@@ -2,6 +2,7 @@
 
 import { useState } from "react";
 import { Button } from "@/components/ui/button";
+import { Modal, ModalBody, ModalFooter } from "@/components/ui/modal";
 import { useVaultContext } from "@/hooks/use-vault";
 import { decryptItemKey, decryptPrivateKey } from "@/lib/vault-crypto";
 
@@ -122,19 +123,20 @@ export const ExportModal = ({ onClose }: ExportModalProps) => {
 	};
 
 	return (
-		<div className="fixed inset-0 z-50 flex items-center justify-center">
-			<div aria-hidden className="fixed inset-0 bg-black/60 backdrop-blur-sm" onClick={onClose} />
-			<div className="relative z-10 w-full max-w-md border border-border bg-card p-6 font-mono shadow-2xl">
-				<p className="mb-4 font-semibold text-lg">Export SSH Keys</p>
-				<p className="mb-3 text-muted-foreground text-xs">Select keys to include in the export.</p>
+		<Modal onOpenChange={(open) => !open && onClose()} open size="sm" title="Keys // Export">
+			<ModalBody>
+				<div className="space-y-1">
+					<p className="font-semibold text-lg">Export SSH Keys</p>
+					<p className="text-muted-foreground text-sm">Select the keys you want to include in this export</p>
+				</div>
 
-				<div className="mb-3 flex items-center gap-2">
+				<div className="flex items-center gap-2">
 					<button className="text-primary text-xs hover:underline" onClick={toggleAll} type="button">
 						{allSelected ? "Deselect all" : "Select all"}
 					</button>
 				</div>
 
-				<div className="mb-4 max-h-[240px] overflow-y-auto border border-border">
+				<div className="max-h-[240px] overflow-y-auto border border-border">
 					{keys.map((key) => (
 						<label className="flex cursor-pointer items-center gap-3 border-border border-b px-3 py-2 last:border-b-0 hover:bg-surface" key={key.id}>
 							<input checked={selected.has(key.id)} className="accent-primary" onChange={() => toggleKey(key.id)} type="checkbox" />
@@ -146,17 +148,17 @@ export const ExportModal = ({ onClose }: ExportModalProps) => {
 					))}
 				</div>
 
-				{error && <p className="mb-3 text-destructive text-xs">{error}</p>}
+				{error && <p className="text-destructive text-xs">{error}</p>}
 
-				<div className="flex justify-end gap-2">
+				<ModalFooter className="justify-end">
 					<Button onClick={onClose} type="button" variant="outline">
 						Cancel
 					</Button>
 					<Button disabled={isLoading || selectedCount === 0} onClick={handleExport} type="button">
 						{isLoading ? "Exporting..." : `Export ${selectedCount} ${keyLabel(selectedCount)}`}
 					</Button>
-				</div>
-			</div>
-		</div>
+				</ModalFooter>
+			</ModalBody>
+		</Modal>
 	);
 };
