@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
@@ -196,10 +197,17 @@ var removeCmd = &cobra.Command{
 }
 
 var exportCmd = &cobra.Command{
-	Use:   "export <name>",
-	Short: "Export public key to stdout",
-	Args:  cobra.ExactArgs(1),
+	Use:   "export [name]",
+	Short: "Export public key to stdout, or --all for full vault export",
+	Args:  cobra.MaximumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		exportAll, _ := cmd.Flags().GetBool("all")
+		if exportAll {
+			return exportAllKeys(cmd)
+		}
+		if len(args) == 0 {
+			return fmt.Errorf("provide a key name, or use --all for full vault export")
+		}
 		resp, err := ctlClient().Call(ipc.CmdExport, map[string]string{"name": args[0]})
 		if err != nil {
 			return err
@@ -208,10 +216,78 @@ var exportCmd = &cobra.Command{
 			return printOutput(json.RawMessage(resp.Data))
 		}
 		var result map[string]string
-		if err := json.Unmarshal(resp.Data, &result); err != nil { return fmt.Errorf("parsing response: %w", err) }
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return fmt.Errorf("parsing response: %w", err)
+		}
 		fmt.Println(result["public_key"])
 		return nil
 	},
+}
+
+func exportAllKeys(cmd *cobra.Command) error {
+	resp, err := ctlClient().Call(ipc.CmdExportAll, nil)
+	if err != nil {
+		return err
+	}
+
+	var keys []struct {
+		Name        string `json:"name"`
+		Type        string `json:"type"`
+		PrivateKey  string `json:"private_key"`
+		PublicKey   string `json:"public_key"`
+		Fingerprint string `json:"fingerprint"`
+		Comment     string `json:"comment"`
+		GitSigning  bool   `json:"git_signing"`
+		HostRules   any    `json:"host_rules"`
+		CreatedAt   string `json:"created_at"`
+		UpdatedAt   string `json:"updated_at"`
+	}
+	if err := json.Unmarshal(resp.Data, &keys); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+
+	items := make([]map[string]any, 0, len(keys))
+	for _, k := range keys {
+		items = append(items, map[string]any{
+			"type": "ssh_key",
+			"name": k.Name,
+			"ssh_key": map[string]any{
+				"private_key":  k.PrivateKey,
+				"public_key":   k.PublicKey,
+				"fingerprint":  k.Fingerprint,
+				"key_type":     k.Type,
+				"comment":      k.Comment,
+				"host_rules":   k.HostRules,
+				"git_signing":  k.GitSigning,
+			},
+			"created_at": k.CreatedAt,
+			"updated_at": k.UpdatedAt,
+		})
+	}
+
+	export := map[string]any{
+		"format":      "forged-export",
+		"version":     1,
+		"exported_at": time.Now().UTC().Format("2006-01-02T15:04:05Z"),
+		"items":       items,
+	}
+
+	data, err := json.MarshalIndent(export, "", "  ")
+	if err != nil {
+		return fmt.Errorf("marshaling export: %w", err)
+	}
+
+	outPath, _ := cmd.Flags().GetString("out")
+	if outPath == "" {
+		outPath = fmt.Sprintf("forged-export-%s.json", time.Now().Format("2006-01-02"))
+	}
+
+	if err := os.WriteFile(outPath, data, 0600); err != nil {
+		return fmt.Errorf("writing export file: %w", err)
+	}
+
+	fmt.Printf("Exported %d keys to %s\n", len(keys), outPath)
+	return nil
 }
 
 var renameCmd = &cobra.Command{
@@ -235,4 +311,6 @@ func init() {
 	addCmd.Flags().StringP("file", "f", "", "path to private key file")
 	addCmd.Flags().StringP("comment", "c", "", "key comment")
 	generateCmd.Flags().StringP("comment", "c", "", "key comment")
+	exportCmd.Flags().Bool("all", false, "export all keys as Forged JSON")
+	exportCmd.Flags().StringP("out", "o", "", "output file path")
 }

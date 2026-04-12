@@ -10,6 +10,7 @@ const (
 	CmdHost        = "host"
 	CmdUnhost      = "unhost"
 	CmdHosts       = "hosts"
+	CmdExportAll   = "export-all"
 	CmdActivity    = "activity"
 	CmdSyncTrigger = "sync-trigger"
 	CmdStatus      = "status"

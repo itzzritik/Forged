@@ -114,6 +114,8 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleRename(req.Args)
 	case CmdExport:
 		return s.handleExport(req.Args)
+	case CmdExportAll:
+		return s.handleExportAll()
 	case CmdHost:
 		return s.handleHost(req.Args)
 	case CmdUnhost:
@@ -248,6 +250,45 @@ func (s *Server) handleExport(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 	return OkResponse(map[string]string{"public_key": pub})
+}
+
+func (s *Server) handleExportAll() Response {
+	if err := s.vault.DecryptAllPrivateKeys(); err != nil {
+		return ErrorResponse(fmt.Errorf("decrypting keys: %w", err))
+	}
+
+	type exportedKey struct {
+		Name        string `json:"name"`
+		Type        string `json:"type"`
+		PrivateKey  string `json:"private_key"`
+		PublicKey   string `json:"public_key"`
+		Fingerprint string `json:"fingerprint"`
+		Comment     string `json:"comment"`
+		GitSigning  bool   `json:"git_signing"`
+		HostRules   any    `json:"host_rules"`
+		CreatedAt   string `json:"created_at"`
+		UpdatedAt   string `json:"updated_at"`
+	}
+
+	keys := s.keyStore.List()
+	exported := make([]exportedKey, 0, len(keys))
+	for _, k := range keys {
+		privPEM := string(k.PrivateKey)
+		exported = append(exported, exportedKey{
+			Name:        k.Name,
+			Type:        k.Type,
+			PrivateKey:  privPEM,
+			PublicKey:   k.PublicKey,
+			Fingerprint: k.Fingerprint,
+			Comment:     k.Comment,
+			GitSigning:  k.GitSigning,
+			HostRules:   k.HostRules,
+			CreatedAt:   k.CreatedAt.Format("2006-01-02T15:04:05Z"),
+			UpdatedAt:   k.UpdatedAt.Format("2006-01-02T15:04:05Z"),
+		})
+	}
+
+	return OkResponse(exported)
 }
 
 type hostArgs struct {
