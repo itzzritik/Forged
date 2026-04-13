@@ -51,6 +51,7 @@ func init() {
 		listCmd,
 		removeCmd,
 		exportCmd,
+		viewCmd,
 		renameCmd,
 		hostCmd,
 		hostsCmd,

@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/activity"
+	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
@@ -26,6 +27,7 @@ type Server struct {
 	wg          sync.WaitGroup
 	syncBus     *forgedsync.Bus
 	syncLink    func(SyncLinkArgs) error
+	authBroker  *sensitiveauth.Broker
 }
 
 func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
@@ -34,6 +36,10 @@ func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
 
 func (s *Server) SetSyncLinkHandler(handler func(SyncLinkArgs) error) {
 	s.syncLink = handler
+}
+
+func (s *Server) SetSensitiveAuthBroker(broker *sensitiveauth.Broker) {
+	s.authBroker = broker
 }
 
 func NewServer(socketPath string, v *vault.Vault, ks *vault.KeyStore, al *activity.ActivityLog, logger *slog.Logger) *Server {
@@ -100,6 +106,11 @@ func (s *Server) handleConn(conn net.Conn) {
 		return
 	}
 
+	switch req.Command {
+	case CmdSensitiveAuth, CmdSensitivePassword:
+		conn.SetDeadline(time.Now().Add(5 * time.Minute))
+	}
+
 	s.logger.Debug("ipc request", "command", req.Command)
 
 	resp := s.dispatch(req)
@@ -120,8 +131,10 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleRename(req.Args)
 	case CmdExport:
 		return s.handleExport(req.Args)
+	case CmdView:
+		return s.handleView(req.Args)
 	case CmdExportAll:
-		return s.handleExportAll()
+		return s.handleExportAll(req.Args)
 	case CmdHost:
 		return s.handleHost(req.Args)
 	case CmdUnhost:
@@ -134,6 +147,12 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleSyncTrigger(req.Args)
 	case CmdSyncLink:
 		return s.handleSyncLink(req.Args)
+	case CmdSensitiveAuth:
+		return s.handleSensitiveAuth(req.Args)
+	case CmdSensitivePassword:
+		return s.handleSensitivePassword(req.Args)
+	case CmdSensitiveLock:
+		return s.handleSensitiveLock()
 	case "status":
 		return s.handleStatus()
 	default:
@@ -218,13 +237,18 @@ func (s *Server) handleRemove(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
 	}
-	if err := s.keyStore.Remove(a.Name); err != nil {
+
+	resolvedName, err := s.resolveKeyName(a.Name)
+	if err != nil {
+		return ErrorResponse(err)
+	}
+	if err := s.keyStore.Remove(resolvedName); err != nil {
 		return ErrorResponse(err)
 	}
 	if s.syncBus != nil {
 		s.syncBus.LocalMutation("key_removed")
 	}
-	return OkResponse(nil)
+	return OkResponse(map[string]string{"resolved_name": resolvedName})
 }
 
 type renameArgs struct {
@@ -237,13 +261,21 @@ func (s *Server) handleRename(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
 	}
-	if err := s.keyStore.Rename(a.OldName, a.NewName); err != nil {
+
+	resolvedOldName, err := s.resolveKeyName(a.OldName)
+	if err != nil {
+		return ErrorResponse(err)
+	}
+	if err := s.keyStore.Rename(resolvedOldName, a.NewName); err != nil {
 		return ErrorResponse(err)
 	}
 	if s.syncBus != nil {
 		s.syncBus.LocalMutation("key_renamed")
 	}
-	return OkResponse(nil)
+	return OkResponse(map[string]string{
+		"old_name": resolvedOldName,
+		"new_name": a.NewName,
+	})
 }
 
 type exportArgs struct {
@@ -257,15 +289,92 @@ func (s *Server) handleExport(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
 	}
-	pub, err := s.keyStore.Export(a.Name)
+
+	resolvedName, err := s.resolveKeyName(a.Name)
 	if err != nil {
 		return ErrorResponse(err)
 	}
-	return OkResponse(map[string]string{"public_key": pub})
+	pub, err := s.keyStore.Export(resolvedName)
+	if err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(map[string]string{
+		"public_key":    pub,
+		"resolved_name": resolvedName,
+	})
 }
 
-func (s *Server) handleExportAll() Response {
+type viewArgs struct {
+	Name string `json:"name"`
+	Full bool   `json:"full"`
+}
+
+func (s *Server) handleView(raw json.RawMessage) Response {
+	s.refreshForRead("view")
+
+	var a viewArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+
+	resolvedName, err := s.resolveKeyName(a.Name)
+	if err != nil {
+		return ErrorResponse(err)
+	}
+
+	key, ok := s.keyStore.Get(resolvedName)
+	if !ok {
+		return ErrorResponse(fmt.Errorf("key %q not found", resolvedName))
+	}
+
+	if a.Full {
+		if s.authBroker == nil || !s.authBroker.CanViewFull() {
+			return ErrorResponse(fmt.Errorf("sensitive private-key access requires authentication"))
+		}
+	}
+
+	out := map[string]any{
+		"resolved_name": resolvedName,
+		"name":          key.Name,
+		"type":          key.Type,
+		"fingerprint":   key.Fingerprint,
+		"public_key":    key.PublicKey,
+		"comment":       key.Comment,
+		"host_rules":    key.HostRules,
+		"created_at":    key.CreatedAt.Format(time.RFC3339),
+		"updated_at":    key.UpdatedAt.Format(time.RFC3339),
+		"version":       key.Version,
+		"device_origin": key.DeviceOrigin,
+		"git_signing":   key.GitSigning,
+	}
+	if key.LastUsedAt != nil {
+		out["last_used_at"] = key.LastUsedAt.Format(time.RFC3339)
+	}
+	if a.Full {
+		out["private_key"] = string(key.PrivateKey)
+	}
+
+	return OkResponse(out)
+}
+
+type exportAllArgs struct {
+	Token string `json:"token"`
+}
+
+func (s *Server) handleExportAll(raw json.RawMessage) Response {
 	s.refreshForRead("export_all")
+
+	if s.authBroker == nil {
+		return ErrorResponse(fmt.Errorf("sensitive auth broker unavailable"))
+	}
+
+	var a exportAllArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+	if a.Token == "" || !s.authBroker.ConsumeExportToken(a.Token) {
+		return ErrorResponse(fmt.Errorf("sensitive export requires fresh authentication"))
+	}
 
 	if err := s.vault.DecryptAllPrivateKeys(); err != nil {
 		return ErrorResponse(fmt.Errorf("decrypting keys: %w", err))
@@ -315,15 +424,20 @@ func (s *Server) handleHost(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
 	}
+
+	resolvedName, err := s.resolveKeyName(a.KeyName)
+	if err != nil {
+		return ErrorResponse(err)
+	}
 	for _, p := range a.Patterns {
-		if err := s.keyStore.AddHostRule(a.KeyName, p); err != nil {
+		if err := s.keyStore.AddHostRule(resolvedName, p); err != nil {
 			return ErrorResponse(err)
 		}
 	}
 	if s.syncBus != nil {
 		s.syncBus.LocalMutation("host_rule_added")
 	}
-	return OkResponse(nil)
+	return OkResponse(map[string]string{"resolved_name": resolvedName})
 }
 
 type unhostArgs struct {
@@ -336,13 +450,18 @@ func (s *Server) handleUnhost(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
 	}
-	if err := s.keyStore.RemoveHostRule(a.KeyName, a.Pattern); err != nil {
+
+	resolvedName, err := s.resolveKeyName(a.KeyName)
+	if err != nil {
+		return ErrorResponse(err)
+	}
+	if err := s.keyStore.RemoveHostRule(resolvedName, a.Pattern); err != nil {
 		return ErrorResponse(err)
 	}
 	if s.syncBus != nil {
 		s.syncBus.LocalMutation("host_rule_removed")
 	}
-	return OkResponse(nil)
+	return OkResponse(map[string]string{"resolved_name": resolvedName})
 }
 
 func (s *Server) handleHosts() Response {
@@ -444,6 +563,73 @@ func (s *Server) handleSyncLink(raw json.RawMessage) Response {
 	return OkResponse(nil)
 }
 
+type sensitiveAuthArgs struct {
+	Action string `json:"action"`
+}
+
+type sensitivePasswordArgs struct {
+	Action   string `json:"action"`
+	Password string `json:"password"`
+}
+
+func (s *Server) handleSensitiveAuth(raw json.RawMessage) Response {
+	if s.authBroker == nil {
+		return ErrorResponse(fmt.Errorf("sensitive auth broker unavailable"))
+	}
+
+	var a sensitiveAuthArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+
+	action, err := sensitiveauth.ParseAction(a.Action)
+	if err != nil {
+		return ErrorResponse(err)
+	}
+
+	result, err := s.authBroker.Authorize(context.Background(), action)
+	if err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(result)
+}
+
+func (s *Server) handleSensitivePassword(raw json.RawMessage) Response {
+	if s.authBroker == nil {
+		return ErrorResponse(fmt.Errorf("sensitive auth broker unavailable"))
+	}
+
+	var a sensitivePasswordArgs
+	if err := json.Unmarshal(raw, &a); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+
+	action, err := sensitiveauth.ParseAction(a.Action)
+	if err != nil {
+		return ErrorResponse(err)
+	}
+
+	password := []byte(a.Password)
+	defer func() {
+		for i := range password {
+			password[i] = 0
+		}
+	}()
+
+	result, err := s.authBroker.AuthorizeWithPassword(action, password)
+	if err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(result)
+}
+
+func (s *Server) handleSensitiveLock() Response {
+	if s.authBroker != nil {
+		s.authBroker.Invalidate("manual_lock")
+	}
+	return OkResponse(nil)
+}
+
 func (s *Server) handleStatus() Response {
 	status := map[string]any{
 		"pid":       os.Getpid(),
@@ -479,4 +665,8 @@ func (s *Server) refreshForRead(reason string) {
 	if err := s.syncBus.ForegroundRead(ctx, reason); err != nil {
 		s.logger.Debug("foreground sync refresh failed", "reason", reason, "error", err)
 	}
+}
+
+func (s *Server) resolveKeyName(input string) (string, error) {
+	return s.keyStore.ResolveName(input)
 }

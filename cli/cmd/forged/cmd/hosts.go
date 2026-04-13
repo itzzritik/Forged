@@ -13,14 +13,20 @@ var hostCmd = &cobra.Command{
 	Short: "Map a key to host patterns",
 	Args:  cobra.MinimumNArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := ctlClient().Call(ipc.CmdHost, map[string]any{
+		resp, err := ctlClient().Call(ipc.CmdHost, map[string]any{
 			"key_name": args[0],
 			"patterns": args[1:],
 		})
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Mapped %s to %v\n", args[0], args[1:])
+		var result map[string]string
+		_ = json.Unmarshal(resp.Data, &result)
+		name := result["resolved_name"]
+		if name == "" {
+			name = args[0]
+		}
+		fmt.Printf("Mapped %s to %v\n", name, args[1:])
 		return nil
 	},
 }
@@ -65,14 +71,20 @@ var unhostCmd = &cobra.Command{
 	Short: "Remove a host mapping",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := ctlClient().Call(ipc.CmdUnhost, map[string]string{
+		resp, err := ctlClient().Call(ipc.CmdUnhost, map[string]string{
 			"key_name": args[0],
 			"pattern":  args[1],
 		})
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Removed %s from %s\n", args[1], args[0])
+		var result map[string]string
+		_ = json.Unmarshal(resp.Data, &result)
+		name := result["resolved_name"]
+		if name == "" {
+			name = args[0]
+		}
+		fmt.Printf("Removed %s from %s\n", args[1], name)
 		return nil
 	},
 }

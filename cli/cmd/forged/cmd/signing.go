@@ -14,10 +14,10 @@ import (
 )
 
 type keyInfo struct {
-	Name      string `json:"name"`
-	Type      string `json:"type"`
+	Name        string `json:"name"`
+	Type        string `json:"type"`
 	Fingerprint string `json:"fingerprint"`
-	PublicKey string `json:"public_key,omitempty"`
+	PublicKey   string `json:"public_key,omitempty"`
 }
 
 var signingCmd = &cobra.Command{
@@ -136,6 +136,10 @@ func enableSigning(client *ipc.Client, keyName string) error {
 		return fmt.Errorf("parsing export response: %w", err)
 	}
 	publicKey := result["public_key"]
+	resolvedName := result["resolved_name"]
+	if resolvedName == "" {
+		resolvedName = keyName
+	}
 
 	signPath, err := findSignBinary()
 	if err != nil {
@@ -148,7 +152,7 @@ func enableSigning(client *ipc.Client, keyName string) error {
 
 	writeAllowedSigners(publicKey)
 
-	fmt.Printf("\n  Git signing enabled with key: %s\n", keyName)
+	fmt.Printf("\n  Git signing enabled with key: %s\n", resolvedName)
 	fmt.Println("  All future commits will be signed automatically.")
 	return nil
 }

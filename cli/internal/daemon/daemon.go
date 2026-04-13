@@ -18,6 +18,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/platform"
+	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
 	"github.com/itzzritik/forged/cli/internal/vault"
 	"gopkg.in/natefinch/lumberjack.v2"
@@ -32,6 +33,7 @@ type Daemon struct {
 	agentServer *forgedagent.Server
 	ipcServer   *ipc.Server
 	syncBus     *forgedsync.Bus
+	authBroker  *sensitiveauth.Broker
 	logger      *slog.Logger
 	stop        chan struct{}
 }
@@ -58,6 +60,8 @@ func (d *Daemon) Run(password []byte) error {
 		return err
 	}
 	defer d.shutdown()
+
+	d.authBroker = sensitiveauth.NewBroker(d.paths.VaultFile(), d.logger)
 
 	if err := d.writePID(); err != nil {
 		return err
@@ -185,6 +189,7 @@ func (d *Daemon) startIPC() error {
 
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
 	d.ipcServer.SetSyncLinkHandler(d.handleSyncLink)
+	d.ipcServer.SetSensitiveAuthBroker(d.authBroker)
 	if err := d.ipcServer.Start(); err != nil {
 		return fmt.Errorf("starting ipc server: %w", err)
 	}
@@ -324,6 +329,10 @@ func (d *Daemon) shutdown() {
 
 	if d.ipcServer != nil {
 		d.ipcServer.Stop()
+	}
+
+	if d.authBroker != nil {
+		d.authBroker.Close()
 	}
 
 	if d.vault != nil {

@@ -16,13 +16,20 @@ func NewClient(socketPath string) *Client {
 }
 
 func (c *Client) Call(command string, args any) (Response, error) {
+	return c.CallWithTimeout(command, args, 30*time.Second)
+}
+
+func (c *Client) CallWithTimeout(command string, args any, timeout time.Duration) (Response, error) {
 	conn, err := net.DialTimeout("unix", c.socketPath, 2*time.Second)
 	if err != nil {
 		return Response{}, fmt.Errorf("daemon is not running. Start it with: forged start")
 	}
 	defer conn.Close()
 
-	conn.SetDeadline(time.Now().Add(30 * time.Second))
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	conn.SetDeadline(time.Now().Add(timeout))
 
 	var rawArgs json.RawMessage
 	if args != nil {

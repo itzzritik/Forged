@@ -45,6 +45,48 @@ func (ks *KeyStore) Get(name string) (Key, bool) {
 	return Key{}, false
 }
 
+func (ks *KeyStore) ResolveName(input string) (string, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	normalized := normalizeKeyName(input)
+	if normalized == "" {
+		return "", &KeyNameResolveError{Query: input}
+	}
+
+	matches := rankNameMatches(ks.vault.Data.Keys, normalized)
+	if len(matches) == 0 {
+		suggestions, more := cappedSuggestions(suggestNameMatches(ks.vault.Data.Keys, normalized))
+		return "", &KeyNameResolveError{
+			Query:       input,
+			Suggestions: suggestions,
+			More:        more,
+			Ambiguous:   false,
+		}
+	}
+
+	bestKind := matches[0].kind
+	best := make([]nameMatch, 0, len(matches))
+	for _, match := range matches {
+		if match.kind != bestKind {
+			break
+		}
+		best = append(best, match)
+	}
+
+	if len(best) == 1 {
+		return best[0].key.Name, nil
+	}
+
+	suggestions, more := cappedSuggestions(best)
+	return "", &KeyNameResolveError{
+		Query:       input,
+		Suggestions: suggestions,
+		More:        more,
+		Ambiguous:   true,
+	}
+}
+
 func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()

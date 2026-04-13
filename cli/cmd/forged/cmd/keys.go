@@ -10,8 +10,10 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"github.com/itzzritik/forged/cli/internal/vault"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func ctlClient() *ipc.Client {
@@ -211,61 +213,110 @@ var removeCmd = &cobra.Command{
 	Short: "Remove a key",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := ctlClient().Call(ipc.CmdRemove, map[string]string{"name": args[0]})
+		resp, err := ctlClient().Call(ipc.CmdRemove, map[string]string{"name": args[0]})
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Removed %s\n", args[0])
+		var result map[string]string
+		_ = json.Unmarshal(resp.Data, &result)
+		name := result["resolved_name"]
+		if name == "" {
+			name = args[0]
+		}
+		fmt.Printf("Removed %s\n", name)
 		return nil
 	},
 }
 
 var exportCmd = &cobra.Command{
-	Use:   "export [name]",
-	Short: "Export public key to stdout, or --all for full vault export",
-	Args:  cobra.MaximumNArgs(1),
+	Use:   "export",
+	Short: "Export the full vault to a Forged JSON file",
+	Args:  cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if len(args) > 0 {
+			return fmt.Errorf("forged export no longer accepts a key name.\nUse `forged view <name>` to inspect a key, or `forged export` to export the full vault")
+		}
 		exportAll, _ := cmd.Flags().GetBool("all")
 		if exportAll {
-			return exportAllKeys(cmd)
+			return fmt.Errorf("forged export no longer accepts --all.\nUse `forged export` to export the full vault")
 		}
-		if len(args) == 0 {
-			return fmt.Errorf("provide a key name, or use --all for full vault export")
-		}
-		resp, err := ctlClient().Call(ipc.CmdExport, map[string]string{"name": args[0]})
-		if err != nil {
-			return err
-		}
-		if jsonOutput {
-			return printOutput(json.RawMessage(resp.Data))
-		}
-		var result map[string]string
-		if err := json.Unmarshal(resp.Data, &result); err != nil {
-			return fmt.Errorf("parsing response: %w", err)
-		}
-		fmt.Println(result["public_key"])
-		return nil
+		return exportVault(cmd)
 	},
 }
 
-func exportAllKeys(cmd *cobra.Command) error {
-	resp, err := ctlClient().Call(ipc.CmdExportAll, nil)
+var viewCmd = &cobra.Command{
+	Use:   "view <name>",
+	Short: "View key details",
+	Args:  cobra.ExactArgs(1),
+	RunE: func(cmd *cobra.Command, args []string) error {
+		full, _ := cmd.Flags().GetBool("full")
+		return viewKey(args[0], full)
+	},
+}
+
+type viewResult struct {
+	ResolvedName string           `json:"resolved_name"`
+	Name         string           `json:"name"`
+	Type         string           `json:"type"`
+	Fingerprint  string           `json:"fingerprint"`
+	PublicKey    string           `json:"public_key"`
+	PrivateKey   string           `json:"private_key,omitempty"`
+	Comment      string           `json:"comment,omitempty"`
+	HostRules    []vault.HostRule `json:"host_rules"`
+	CreatedAt    string           `json:"created_at,omitempty"`
+	UpdatedAt    string           `json:"updated_at,omitempty"`
+	LastUsedAt   string           `json:"last_used_at,omitempty"`
+	Version      int              `json:"version,omitempty"`
+	DeviceOrigin string           `json:"device_origin,omitempty"`
+	GitSigning   bool             `json:"git_signing,omitempty"`
+}
+
+type exportedKey struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	PrivateKey  string `json:"private_key"`
+	PublicKey   string `json:"public_key"`
+	Fingerprint string `json:"fingerprint"`
+	Comment     string `json:"comment"`
+	GitSigning  bool   `json:"git_signing"`
+	HostRules   any    `json:"host_rules"`
+	CreatedAt   string `json:"created_at"`
+	UpdatedAt   string `json:"updated_at"`
+}
+
+func exportVault(cmd *cobra.Command) error {
+	outPath, _ := cmd.Flags().GetString("out")
+	defaultName := fmt.Sprintf("forged-export-%s.json", time.Now().Format("2006-01-02"))
+	if outPath == "" {
+		if !terminalIsInteractive() {
+			return fmt.Errorf("forged export requires --out when not interactive")
+		}
+		if selection, ok := chooseSavePathWithPicker(defaultName); ok {
+			outPath = selection
+		} else {
+			var err error
+			outPath, err = promptForSavePath(defaultName)
+			if err != nil {
+				return fmt.Errorf("reading save path: %w", err)
+			}
+		}
+		printStepSeparator()
+	}
+
+	authResult, err := authorizeSensitiveAction(sensitiveauth.ActionExport)
+	if err != nil {
+		return err
+	}
+	if authResult.ExportToken == "" {
+		return fmt.Errorf("export authorization did not return a token")
+	}
+
+	resp, err := ctlClient().Call(ipc.CmdExportAll, map[string]string{"token": authResult.ExportToken})
 	if err != nil {
 		return err
 	}
 
-	var keys []struct {
-		Name        string `json:"name"`
-		Type        string `json:"type"`
-		PrivateKey  string `json:"private_key"`
-		PublicKey   string `json:"public_key"`
-		Fingerprint string `json:"fingerprint"`
-		Comment     string `json:"comment"`
-		GitSigning  bool   `json:"git_signing"`
-		HostRules   any    `json:"host_rules"`
-		CreatedAt   string `json:"created_at"`
-		UpdatedAt   string `json:"updated_at"`
-	}
+	var keys []exportedKey
 	if err := json.Unmarshal(resp.Data, &keys); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
 	}
@@ -301,17 +352,171 @@ func exportAllKeys(cmd *cobra.Command) error {
 		return fmt.Errorf("marshaling export: %w", err)
 	}
 
-	outPath, _ := cmd.Flags().GetString("out")
-	if outPath == "" {
-		outPath = fmt.Sprintf("forged-export-%s.json", time.Now().Format("2006-01-02"))
-	}
-
 	if err := os.WriteFile(outPath, data, 0600); err != nil {
 		return fmt.Errorf("writing export file: %w", err)
 	}
 
+	if jsonOutput {
+		return printOutput(map[string]any{
+			"path":      outPath,
+			"key_count": len(keys),
+		})
+	}
+
 	fmt.Printf("Exported %d keys to %s\n", len(keys), outPath)
 	return nil
+}
+
+func viewKey(name string, full bool) error {
+	if full {
+		if _, err := authorizeSensitiveAction(sensitiveauth.ActionView); err != nil {
+			return err
+		}
+	}
+
+	resp, err := ctlClient().Call(ipc.CmdView, map[string]any{
+		"name": name,
+		"full": full,
+	})
+	if err != nil {
+		return err
+	}
+	if jsonOutput {
+		return printOutput(json.RawMessage(resp.Data))
+	}
+
+	var result viewResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return fmt.Errorf("parsing response: %w", err)
+	}
+
+	printViewDetailBlock(result, full)
+	return nil
+}
+
+func authorizeSensitiveAction(action sensitiveauth.Action) (sensitiveauth.AuthorizeResult, error) {
+	client := ctlClient()
+
+	parseResult := func(raw json.RawMessage) (sensitiveauth.AuthorizeResult, error) {
+		var result sensitiveauth.AuthorizeResult
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return sensitiveauth.AuthorizeResult{}, fmt.Errorf("parsing auth response: %w", err)
+		}
+		return result, nil
+	}
+
+	resp, err := client.CallWithTimeout(ipc.CmdSensitiveAuth, map[string]string{
+		"action": string(action),
+	}, 5*time.Minute)
+	if err != nil {
+		return sensitiveauth.AuthorizeResult{}, err
+	}
+
+	result, err := parseResult(resp.Data)
+	if err != nil {
+		return sensitiveauth.AuthorizeResult{}, err
+	}
+	if !result.PasswordRequired {
+		return result, nil
+	}
+	if !terminalIsInteractive() {
+		return sensitiveauth.AuthorizeResult{}, fmt.Errorf("sensitive private-key access requires interactive authentication")
+	}
+
+	password, err := readSensitivePassword(result.Prompt)
+	if err != nil {
+		return sensitiveauth.AuthorizeResult{}, err
+	}
+	defer zeroPassword(password)
+
+	resp, err = client.CallWithTimeout(ipc.CmdSensitivePassword, map[string]string{
+		"action":   string(action),
+		"password": string(password),
+	}, 5*time.Minute)
+	if err != nil {
+		return sensitiveauth.AuthorizeResult{}, err
+	}
+
+	return parseResult(resp.Data)
+}
+
+func readSensitivePassword(prompt string) ([]byte, error) {
+	if prompt == "" {
+		prompt = "Enter your master password to continue:"
+	}
+
+	fd := int(os.Stdin.Fd())
+	if !term.IsTerminal(fd) {
+		return nil, fmt.Errorf("sensitive private-key access requires interactive authentication")
+	}
+
+	fmt.Fprint(os.Stderr, prompt+" ")
+	password, err := term.ReadPassword(fd)
+	fmt.Fprintln(os.Stderr)
+	if err != nil {
+		return nil, fmt.Errorf("reading password: %w", err)
+	}
+	return password, nil
+}
+
+func zeroPassword(password []byte) {
+	for i := range password {
+		password[i] = 0
+	}
+}
+
+func printViewDetailBlock(result viewResult, full bool) {
+	fmt.Printf("  %s\n", result.Name)
+	fmt.Printf("  %s\n", result.Type)
+	fmt.Printf("  %s\n", result.Fingerprint)
+	fmt.Println()
+
+	fmt.Println("  Public key")
+	fmt.Printf("    %s\n", result.PublicKey)
+	fmt.Println()
+
+	if full && result.PrivateKey != "" {
+		fmt.Println("  Private key")
+		for _, line := range strings.Split(strings.TrimRight(result.PrivateKey, "\n"), "\n") {
+			fmt.Printf("    %s\n", line)
+		}
+		fmt.Println()
+	}
+
+	fmt.Println("  Host rules")
+	if len(result.HostRules) == 0 {
+		fmt.Println("    None")
+	} else {
+		for _, rule := range result.HostRules {
+			fmt.Printf("    %s\n", rule.Match)
+		}
+	}
+	fmt.Println()
+
+	fmt.Println("  Metadata")
+	if result.CreatedAt != "" {
+		fmt.Printf("    Created:   %s\n", formatViewTimestamp(result.CreatedAt))
+	}
+	if result.UpdatedAt != "" {
+		fmt.Printf("    Updated:   %s\n", formatViewTimestamp(result.UpdatedAt))
+	}
+	if result.LastUsedAt != "" {
+		fmt.Printf("    Last used: %s\n", formatViewTimestamp(result.LastUsedAt))
+	}
+	if result.Version > 0 {
+		fmt.Printf("    Version:   %d\n", result.Version)
+	}
+	if result.DeviceOrigin != "" {
+		fmt.Printf("    Device:    %s\n", result.DeviceOrigin)
+	}
+}
+
+func formatViewTimestamp(raw string) string {
+	t, err := time.Parse(time.RFC3339, raw)
+	if err != nil {
+		return raw
+	}
+	return t.UTC().Format("2006-01-02 15:04 UTC")
 }
 
 var renameCmd = &cobra.Command{
@@ -319,14 +524,20 @@ var renameCmd = &cobra.Command{
 	Short: "Rename a key",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		_, err := ctlClient().Call(ipc.CmdRename, map[string]string{
+		resp, err := ctlClient().Call(ipc.CmdRename, map[string]string{
 			"old_name": args[0],
 			"new_name": args[1],
 		})
 		if err != nil {
 			return err
 		}
-		fmt.Printf("Renamed %s → %s\n", args[0], args[1])
+		var result map[string]string
+		_ = json.Unmarshal(resp.Data, &result)
+		oldName := result["old_name"]
+		if oldName == "" {
+			oldName = args[0]
+		}
+		fmt.Printf("Renamed %s → %s\n", oldName, args[1])
 		return nil
 	},
 }
@@ -335,6 +546,8 @@ func init() {
 	addCmd.Flags().StringP("file", "f", "", "path to private key file")
 	addCmd.Flags().StringP("comment", "c", "", "key comment")
 	generateCmd.Flags().StringP("comment", "c", "", "key comment")
-	exportCmd.Flags().Bool("all", false, "export all keys as Forged JSON")
+	exportCmd.Flags().Bool("all", false, "legacy full-vault export flag")
 	exportCmd.Flags().StringP("out", "o", "", "output file path")
+	_ = exportCmd.Flags().MarkHidden("all")
+	viewCmd.Flags().Bool("full", false, "include the private key after authentication")
 }
