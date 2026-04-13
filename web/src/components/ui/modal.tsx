@@ -1,6 +1,6 @@
 "use client";
 
-import { Content, Overlay, Portal, Root } from "@radix-ui/react-dialog";
+import { Content, Overlay, Portal, Root, Title } from "@radix-ui/react-dialog";
 import { cn } from "@/lib/utils";
 
 interface ModalProps {
@@ -48,6 +48,7 @@ export const Modal = ({ title, closable = true, open, onOpenChange, children, cl
 						"data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95",
 						className
 					)}
+					aria-describedby={undefined}
 					onEscapeKeyDown={closable ? undefined : (e) => e.preventDefault()}
 					onInteractOutside={closable ? undefined : (e) => e.preventDefault()}
 					onPointerDownOutside={closable ? undefined : (e) => e.preventDefault()}
@@ -101,7 +102,7 @@ export const Modal = ({ title, closable = true, open, onOpenChange, children, cl
 								className="modal-traffic-secondary-success h-[13px] w-[13px] rounded-full border border-modal-traffic-success/20 bg-modal-traffic-success-soft transition-[background-color,border-color]"
 							/>
 						</div>
-						<div className="flex-1 text-center text-[10px] text-muted-foreground uppercase tracking-[0.1em]">{title}</div>
+						<Title className="flex-1 text-center text-[10px] text-muted-foreground uppercase tracking-widest">{title}</Title>
 						<div className="w-[58px]" />
 					</div>
 					{children}

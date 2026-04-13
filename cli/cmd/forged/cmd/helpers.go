@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"github.com/itzzritik/forged/cli/internal/importers"
 )
 
 func findSignBinary() (string, error) {
@@ -53,10 +55,13 @@ func writeAllowedSigners(publicKey string) error {
 
 func deriveKeyName(path string) string {
 	name := filepath.Base(path)
-	name = strings.TrimSuffix(name, ".pem")
+	name = strings.TrimSuffix(name, filepath.Ext(name))
 	name = strings.TrimPrefix(name, "id_")
+	name = strings.TrimPrefix(name, "id-")
+	name = strings.ReplaceAll(name, "_", " ")
+	name = importers.SanitizeName(name)
 	if name == "" {
-		name = "default"
+		name = "Default"
 	}
 	return name
 }

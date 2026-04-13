@@ -208,7 +208,7 @@ func extractPrivateKeyBlock(value string) string {
 func deriveOnePasswordCSVName(row []string, titleIndex int, ordinal int) string {
 	if titleIndex >= 0 && titleIndex < len(row) {
 		name := SanitizeName(row[titleIndex])
-		if name != "imported" {
+		if name != DefaultImportedName {
 			return name
 		}
 	}
@@ -219,10 +219,10 @@ func deriveOnePasswordCSVName(row []string, titleIndex int, ordinal int) string 
 			continue
 		}
 		name := SanitizeName(value)
-		if name != "imported" {
+		if name != DefaultImportedName {
 			return name
 		}
 	}
 
-	return fmt.Sprintf("imported-%d", ordinal)
+	return FallbackImportedName(ordinal)
 }

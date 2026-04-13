@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/hostmatch"
@@ -117,7 +116,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 	case "forged":
 		keys, err = importers.ParseForged(data)
 	case "file":
-		name := importers.SanitizeName(strings.TrimSuffix(filepath.Base(file), filepath.Ext(file)))
+		name := deriveKeyName(file)
 		keys = []importers.ImportedKey{{Name: name, PrivateKey: string(data)}}
 	default:
 		return fmt.Errorf("unknown source: %s", from)

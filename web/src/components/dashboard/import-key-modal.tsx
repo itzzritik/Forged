@@ -8,6 +8,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import { useVaultContext } from "@/hooks/use-vault";
 import { parseBitwarden } from "@/lib/importers/bitwarden";
 import { parseForged } from "@/lib/importers/forged-format";
+import { normalizeImportedName } from "@/lib/importers/name";
 import { parse1Password } from "@/lib/importers/onepassword";
 import type { ImportedKey } from "@/lib/importers/types";
 import { parseSSHKeyFile, type ParsedSSHKey } from "@/lib/ssh-key-parser";
@@ -80,10 +81,9 @@ const SOURCES: SourceMeta[] = [
 
 const EXT_RE = /\.(pem|key|pub)$/i;
 const ID_PREFIX_RE = /^id_/;
-const NON_SLUG_RE = /[^a-z0-9_-]/gi;
 
 function deriveNameFromFile(filename: string): string {
-	return filename.replace(EXT_RE, "").replace(ID_PREFIX_RE, "").replace(NON_SLUG_RE, "-").toLowerCase() || "imported";
+	return normalizeImportedName(filename.replace(EXT_RE, "").replace(ID_PREFIX_RE, "").replace(/_/g, " "));
 }
 
 function formatParseError(msg: string): string {

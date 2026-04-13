@@ -1,6 +1,5 @@
+import { DEFAULT_IMPORTED_NAME, normalizeImportedName } from "./name";
 import type { ImportedKey } from "./types";
-
-const SANITIZE_RE = /[^a-z0-9_-]/g;
 
 export function parseBitwarden(data: string): ImportedKey[] {
 	const parsed = JSON.parse(data);
@@ -10,15 +9,11 @@ export function parseBitwarden(data: string): ImportedKey[] {
 	for (const item of parsed.items || []) {
 		if (item.type !== 5 || !item.sshKey?.privateKey) continue;
 		keys.push({
-			name: sanitizeName(item.name || "imported"),
+			name: normalizeImportedName(item.name || DEFAULT_IMPORTED_NAME),
 			privateKey: item.sshKey.privateKey,
 			publicKey: item.sshKey.publicKey,
 			fingerprint: item.sshKey.keyFingerprint,
 		});
 	}
 	return keys;
-}
-
-function sanitizeName(name: string): string {
-	return name.toLowerCase().replace(/\s+/g, "-").replace(SANITIZE_RE, "") || "imported";
 }

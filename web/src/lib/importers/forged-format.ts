@@ -1,3 +1,4 @@
+import { DEFAULT_IMPORTED_NAME, normalizeImportedName } from "./name";
 import type { ImportedKey } from "./types";
 
 export function parseForged(data: string): ImportedKey[] {
@@ -8,7 +9,7 @@ export function parseForged(data: string): ImportedKey[] {
 	for (const item of parsed.items || []) {
 		if (item.type !== "ssh_key" || !item.ssh_key?.private_key) continue;
 		keys.push({
-			name: item.name || "imported",
+			name: normalizeImportedName(item.name || DEFAULT_IMPORTED_NAME),
 			privateKey: item.ssh_key.private_key,
 			publicKey: item.ssh_key.public_key,
 			fingerprint: item.ssh_key.fingerprint,

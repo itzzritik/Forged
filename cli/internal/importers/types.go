@@ -1,6 +1,9 @@
 package importers
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
 
 type ImportedKey struct {
 	Name       string
@@ -8,17 +11,19 @@ type ImportedKey struct {
 	PublicKey  string
 }
 
+const DefaultImportedName = "Imported"
+
 func SanitizeName(name string) string {
-	name = strings.ToLower(name)
-	name = strings.ReplaceAll(name, " ", "-")
-	name = strings.Map(func(r rune) rune {
-		if (r >= 'a' && r <= 'z') || (r >= '0' && r <= '9') || r == '-' || r == '_' {
-			return r
-		}
-		return -1
-	}, name)
+	name = strings.Join(strings.Fields(strings.TrimSpace(name)), " ")
 	if name == "" {
-		name = "imported"
+		return DefaultImportedName
 	}
 	return name
+}
+
+func FallbackImportedName(ordinal int) string {
+	if ordinal <= 0 {
+		return DefaultImportedName
+	}
+	return fmt.Sprintf("%s %d", DefaultImportedName, ordinal)
 }

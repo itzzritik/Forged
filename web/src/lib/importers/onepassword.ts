@@ -1,7 +1,7 @@
 import { unzipSync } from "fflate";
+import { DEFAULT_IMPORTED_NAME, fallbackImportedName, normalizeImportedName } from "./name";
 import type { ImportedKey } from "./types";
 
-const SANITIZE_RE = /[^a-z0-9_-]/g;
 const PRIVATE_KEY_RE = /-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----[\s\S]*?-----END [A-Z0-9 ]*PRIVATE KEY-----/;
 
 export function parse1Password(data: Uint8Array): ImportedKey[] {
@@ -26,7 +26,7 @@ function parse1Password1PUX(data: Uint8Array): ImportedKey[] {
 				const privKey = extractSSHKey(item);
 				if (!privKey) continue;
 				keys.push({
-					name: sanitizeName(item.overview?.title || "imported"),
+					name: normalizeImportedName(item.overview?.title || DEFAULT_IMPORTED_NAME),
 					privateKey: privKey,
 				});
 			}
@@ -184,20 +184,16 @@ function extractPrivateKeyBlock(value: string): string | null {
 
 function deriveCSVRowName(row: string[], titleIndex: number, ordinal: number): string {
 	if (titleIndex >= 0 && titleIndex < row.length) {
-		const title = sanitizeName(row[titleIndex]);
-		if (title !== "imported") return title;
+		const title = normalizeImportedName(row[titleIndex]);
+		if (title !== DEFAULT_IMPORTED_NAME) return title;
 	}
 
 	for (const value of row) {
 		const trimmed = value.trim();
 		if (trimmed === "" || trimmed.includes("PRIVATE KEY")) continue;
-		const name = sanitizeName(trimmed);
-		if (name !== "imported") return name;
+		const name = normalizeImportedName(trimmed);
+		if (name !== DEFAULT_IMPORTED_NAME) return name;
 	}
 
-	return `imported-${ordinal}`;
-}
-
-function sanitizeName(name: string): string {
-	return name.toLowerCase().replace(/\s+/g, "-").replace(SANITIZE_RE, "") || "imported";
+	return fallbackImportedName(ordinal);
 }
