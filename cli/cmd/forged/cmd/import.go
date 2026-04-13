@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"strconv"
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/hostmatch"
@@ -21,10 +20,7 @@ type importPreview struct {
 	collapsedDuplicates int
 	converted           bool
 	fingerprint         string
-	format              string
 	key                 importers.ImportedKey
-	keyType             string
-	rawFormat           vault.PrivateKeyFormat
 	selected            bool
 }
 
@@ -90,12 +86,22 @@ func runImport(cmd *cobra.Command, args []string) error {
 	}
 
 	if file == "" {
-		fmt.Println()
-		fmt.Print("  File path: ")
-		line, _ := reader.ReadString('\n')
-		file = strings.TrimSpace(line)
+		if terminalIsInteractive() {
+			if picked, ok := chooseFileWithPicker(); ok {
+				file = picked
+			}
+		}
 		if file == "" {
-			return fmt.Errorf("file path is required")
+			fmt.Println()
+			fmt.Print("  File path: ")
+			line, _ := reader.ReadString('\n')
+			file = strings.TrimSpace(line)
+			if file == "" {
+				return fmt.Errorf("file path is required")
+			}
+		}
+		if terminalIsInteractive() {
+			clearTerminal()
 		}
 	}
 
@@ -127,7 +133,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		return nil
 	}
 
-	return reviewAndImportKeys(reader, keys)
+	return reviewAndImportKeys(reader, importSourceLabel(from), keys)
 }
 
 func importFromSSHDir() error {
@@ -160,7 +166,7 @@ func importFromSSHDir() error {
 		return nil
 	}
 
-	return reviewAndImportKeys(bufio.NewReader(os.Stdin), keys)
+	return reviewAndImportKeys(bufio.NewReader(os.Stdin), importSourceLabel("ssh-dir"), keys)
 }
 
 func doImport(keys []importers.ImportedKey) error {
@@ -217,129 +223,37 @@ func previewImportedKey(key importers.ImportedKey) (importPreview, error) {
 		return importPreview{}, formatPrivateKeyImportError(err)
 	}
 
-	preview := importPreview{
+	return importPreview{
 		key:         key,
-		keyType:     normalizeImportedKeyType(normalized.Type),
-		format:      privateKeyImportFormatLabel(normalized.Format),
 		converted:   normalized.Converted,
 		fingerprint: normalized.Fingerprint,
-		rawFormat:   normalized.Format,
-	}
-	return preview, nil
+	}, nil
 }
 
-func printImportPreview(previews []importPreview) {
-	fmt.Println()
-	fmt.Printf("  Found %d SSH key(s):\n", len(previews))
-
-	convertedFormats := make([]vault.PrivateKeyFormat, 0, len(previews))
-	hasVaultDuplicates := hasImportVaultDuplicates(previews)
-	collapsedDuplicateCount := 0
-	for i, preview := range previews {
-		if preview.converted {
-			convertedFormats = append(convertedFormats, preview.rawFormat)
-		}
-		collapsedDuplicateCount += preview.collapsedDuplicates
-
-		prefix := fmt.Sprintf("%d.", i+1)
-		if hasVaultDuplicates {
-			marker := " "
-			if preview.selected {
-				marker = "x"
-			}
-			prefix = fmt.Sprintf("%d. [%s]", i+1, marker)
-		}
-
-		fmt.Printf("    %-8s %-20s (%s) [%s]", prefix, preview.key.Name, preview.keyType, preview.format)
-		if preview.alreadyInVault {
-			fmt.Print(" [Already in Vault]")
-		}
-		fmt.Println()
-		if preview.collapsedDuplicates > 0 {
-			fmt.Printf("             %d duplicate entr%s consolidated from this import.\n", preview.collapsedDuplicates, pluralSuffix(preview.collapsedDuplicates, "y was", "ies were"))
-		}
-	}
-
-	if hasVaultDuplicates {
-		fmt.Println()
-		fmt.Println("  Existing Keys Detected")
-		fmt.Println("  Some imported keys already exist in this vault. Unique keys remain selected by default to prevent duplicate records.")
-	}
-
-	if collapsedDuplicateCount > 0 {
-		fmt.Println()
-		fmt.Println("  Duplicate entries in this import were consolidated by fingerprint before review.")
-	}
-
-	warning, ok := privateKeyConversionSummary(convertedFormats)
-	if !ok {
-		return
-	}
-
-	fmt.Println()
-	fmt.Println(warning)
-}
-
-func reviewAndImportKeys(reader *bufio.Reader, keys []importers.ImportedKey) error {
+func reviewAndImportKeys(reader *bufio.Reader, sourceLabel string, keys []importers.ImportedKey) error {
 	previews, err := buildImportPreview(keys)
 	if err != nil {
 		return err
 	}
 
-	printImportPreview(previews)
+	state := newImportReviewState(sourceLabel, previews)
+	return runImportReview(reader, state)
+}
 
-	if !hasImportVaultDuplicates(previews) {
-		fmt.Println()
-		fmt.Printf("  Import %d key(s)? [Y/n] ", len(previews))
-		confirm, _ := reader.ReadString('\n')
-		confirm = strings.TrimSpace(strings.ToLower(confirm))
-		if confirm == "n" || confirm == "no" {
-			fmt.Println("  Aborted.")
-			return nil
-		}
-		return doImport(selectedImportKeys(previews, false))
-	}
-
-	fmt.Println()
-	fmt.Print("  Toggle any keys before import (comma-separated numbers, blank to continue): ")
-	line, _ := reader.ReadString('\n')
-	line = strings.TrimSpace(line)
-	if line != "" {
-		if err := togglePreviewSelection(previews, line); err != nil {
-			return err
-		}
-		fmt.Println()
-		printImportPreview(previews)
-	}
-
-	fmt.Println()
-	fmt.Println("  Choose import mode:")
-	selectedLabel := "Import Selected Keys"
-	if usesDefaultUniqueSelection(previews) {
-		selectedLabel = "Import Unique Keys"
-	}
-	fmt.Printf("    1. %s\n", selectedLabel)
-	fmt.Println("    2. Import All Keys")
-	fmt.Println("    3. Cancel")
-	fmt.Println()
-	fmt.Print("  Choice [1-3]: ")
-
-	choice, _ := reader.ReadString('\n')
-	switch strings.TrimSpace(choice) {
-	case "1", "":
-		selected := selectedImportKeys(previews, false)
-		if len(selected) == 0 {
-			fmt.Println("  No keys selected. Aborted.")
-			return nil
-		}
-		return doImport(selected)
-	case "2":
-		return doImport(selectedImportKeys(previews, true))
-	case "3":
-		fmt.Println("  Aborted.")
-		return nil
+func importSourceLabel(from string) string {
+	switch from {
+	case "1password":
+		return "1Password import"
+	case "bitwarden":
+		return "Bitwarden import"
+	case "forged":
+		return "Forged export import"
+	case "ssh-dir":
+		return "SSH directory import"
+	case "file":
+		return "SSH key file import"
 	default:
-		return fmt.Errorf("invalid choice")
+		return "Key import"
 	}
 }
 
@@ -373,24 +287,6 @@ func containsFingerprint(fingerprints map[string]struct{}, fingerprint string) b
 	return ok
 }
 
-func hasImportVaultDuplicates(previews []importPreview) bool {
-	for _, preview := range previews {
-		if preview.alreadyInVault {
-			return true
-		}
-	}
-	return false
-}
-
-func usesDefaultUniqueSelection(previews []importPreview) bool {
-	for _, preview := range previews {
-		if preview.selected != !preview.alreadyInVault {
-			return false
-		}
-	}
-	return true
-}
-
 func selectedImportKeys(previews []importPreview, includeAll bool) []importers.ImportedKey {
 	keys := make([]importers.ImportedKey, 0, len(previews))
 	for _, preview := range previews {
@@ -399,27 +295,4 @@ func selectedImportKeys(previews []importPreview, includeAll bool) []importers.I
 		}
 	}
 	return keys
-}
-
-func togglePreviewSelection(previews []importPreview, input string) error {
-	parts := strings.Split(input, ",")
-	for _, part := range parts {
-		part = strings.TrimSpace(part)
-		if part == "" {
-			continue
-		}
-		index, err := strconv.Atoi(part)
-		if err != nil || index < 1 || index > len(previews) {
-			return fmt.Errorf("invalid selection %q", part)
-		}
-		previews[index-1].selected = !previews[index-1].selected
-	}
-	return nil
-}
-
-func pluralSuffix(n int, singular, plural string) string {
-	if n == 1 {
-		return singular
-	}
-	return plural
 }
