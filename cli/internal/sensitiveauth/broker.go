@@ -10,24 +10,26 @@ import (
 
 type Broker struct {
 	logger   *slog.Logger
-	native   NativeProvider
+	helper   *HelperClient
 	password *PasswordVerifier
 	leases   *leaseState
-	watcher  LockWatcher
 }
 
-func NewBroker(vaultPath string, logger *slog.Logger) *Broker {
+func NewBroker(vaultPath, helperPath string, logger *slog.Logger) *Broker {
 	b := &Broker{
 		logger:   logger,
-		native:   NewNativeProvider(),
 		password: NewPasswordVerifier(vaultPath),
 		leases:   newLeaseState(),
-		watcher:  NewLockWatcher(),
 	}
 
-	if b.watcher != nil {
-		if err := b.watcher.Start(func() { b.Invalidate("system_lock") }); err != nil && b.logger != nil {
-			b.logger.Debug("sensitive auth lock watcher unavailable", "error", err)
+	if helperPath != "" {
+		helper := NewHelperClient(helperPath, logger)
+		if err := helper.Start(context.Background(), func() { b.Invalidate("system_lock") }); err != nil {
+			if b.logger != nil {
+				b.logger.Debug("sensitive auth helper unavailable", "error", err, "path", helperPath)
+			}
+		} else {
+			b.helper = helper
 		}
 	}
 
@@ -35,8 +37,8 @@ func NewBroker(vaultPath string, logger *slog.Logger) *Broker {
 }
 
 func (b *Broker) Close() {
-	if b.watcher != nil {
-		_ = b.watcher.Stop()
+	if b.helper != nil {
+		_ = b.helper.Close()
 	}
 	b.Invalidate("shutdown")
 }
@@ -46,8 +48,8 @@ func (b *Broker) Authorize(ctx context.Context, action Action) (AuthorizeResult,
 		return AuthorizeResult{Authorized: true}, nil
 	}
 
-	if b.native != nil {
-		err := b.native.Authorize(ctx, action)
+	if b.helper != nil {
+		err := b.helper.Authorize(ctx, action)
 		switch {
 		case err == nil:
 			return b.grant(action), nil

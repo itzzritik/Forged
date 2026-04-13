@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/signal"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"syscall"
 
@@ -61,7 +62,7 @@ func (d *Daemon) Run(password []byte) error {
 	}
 	defer d.shutdown()
 
-	d.authBroker = sensitiveauth.NewBroker(d.paths.VaultFile(), d.logger)
+	d.authBroker = sensitiveauth.NewBroker(d.paths.VaultFile(), d.helperBinaryPath(), d.logger)
 
 	if err := d.writePID(); err != nil {
 		return err
@@ -95,6 +96,18 @@ func (d *Daemon) KeyStore() *vault.KeyStore {
 
 func (d *Daemon) Stop() {
 	close(d.stop)
+}
+
+func (d *Daemon) helperBinaryPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	name := "forged-auth"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return filepath.Join(filepath.Dir(exe), name)
 }
 
 func (d *Daemon) setupLogging() error {

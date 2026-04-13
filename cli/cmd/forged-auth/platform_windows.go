@@ -1,28 +1,26 @@
 //go:build windows
 
-package sensitiveauth
+package main
 
 import (
+	"bufio"
 	"context"
 	"encoding/base64"
 	"errors"
 	"os/exec"
 	"strings"
+	"time"
 	"unicode/utf16"
+
+	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 )
 
-type windowsNativeProvider struct{}
+func providerName() string { return "windows-hello" }
 
-func NewNativeProvider() NativeProvider {
-	return windowsNativeProvider{}
-}
-
-func (windowsNativeProvider) Name() string { return "windows-hello" }
-
-func (windowsNativeProvider) Authorize(ctx context.Context, action Action) error {
+func authorize(ctx context.Context, action sensitiveauth.Action) string {
 	shell, err := windowsPowerShellPath()
 	if err != nil {
-		return ErrNativeUnavailable
+		return "unavailable"
 	}
 
 	cmd := exec.CommandContext(
@@ -37,25 +35,32 @@ func (windowsNativeProvider) Authorize(ctx context.Context, action Action) error
 	)
 	output, err := cmd.CombinedOutput()
 	if err == nil {
-		return nil
+		return "ok"
 	}
 
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
-		return ErrNativeUnavailable
+		return "unavailable"
 	}
 
 	switch exitErr.ExitCode() {
 	case 2:
-		return ErrNativeUnavailable
+		return "unavailable"
 	case 3:
-		return ErrAuthenticationCanceled
+		return "canceled"
 	default:
 		if strings.Contains(strings.ToLower(string(output)), "notsupportedexception") {
-			return ErrNativeUnavailable
+			return "unavailable"
 		}
-		return ErrAuthenticationFailed
+		return "failed"
 	}
+}
+
+func startLockLoop(onLock func()) {
+	if onLock == nil {
+		return
+	}
+	go watchWindowsLocks(onLock)
 }
 
 func windowsPowerShellPath() (string, error) {
@@ -64,7 +69,7 @@ func windowsPowerShellPath() (string, error) {
 			return path, nil
 		}
 	}
-	return "", ErrNativeUnavailable
+	return "", exec.ErrNotFound
 }
 
 func encodePowerShellCommand(script string) string {
@@ -122,4 +127,62 @@ public static class ForgedWindowsHello {
 
 exit [ForgedWindowsHello]::Run('` + powershellQuote(reason) + `')
 `
+}
+
+func watchWindowsLocks(onLock func()) {
+	shell, err := windowsPowerShellPath()
+	if err != nil {
+		return
+	}
+
+	script := `
+$source = 'ForgedSessionLock'
+Register-WmiEvent -Class Win32_SessionChangeEvent -SourceIdentifier $source | Out-Null
+try {
+  while ($true) {
+    $event = Wait-Event -SourceIdentifier $source
+    if ($null -eq $event) { continue }
+    try {
+      if ($event.SourceEventArgs.NewEvent.Reason -eq 7) {
+        Write-Output 'LOCK'
+      }
+    } finally {
+      Remove-Event -EventIdentifier $event.EventIdentifier -ErrorAction SilentlyContinue | Out-Null
+    }
+  }
+} finally {
+  Get-EventSubscriber -SourceIdentifier $source -ErrorAction SilentlyContinue | Unregister-Event -Force -ErrorAction SilentlyContinue
+}
+`
+
+	for {
+		cmd := exec.Command(
+			shell,
+			"-NoProfile",
+			"-NonInteractive",
+			"-ExecutionPolicy",
+			"Bypass",
+			"-Command",
+			script,
+		)
+		stdout, err := cmd.StdoutPipe()
+		if err != nil {
+			time.Sleep(time.Second)
+			continue
+		}
+		if err := cmd.Start(); err != nil {
+			time.Sleep(time.Second)
+			continue
+		}
+
+		scanner := bufio.NewScanner(stdout)
+		for scanner.Scan() {
+			if strings.TrimSpace(scanner.Text()) == "LOCK" {
+				onLock()
+			}
+		}
+
+		_ = cmd.Wait()
+		time.Sleep(time.Second)
+	}
 }

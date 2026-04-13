@@ -41,3 +41,12 @@ func (a Action) PasswordPrompt() string {
 		return "Native authentication unavailable. Enter your master password to continue:"
 	}
 }
+
+func (a Action) NativeReason() string {
+	switch a {
+	case ActionExport:
+		return "Authenticate to export your Forged vault"
+	default:
+		return "Authenticate to reveal a private key in Forged"
+	}
+}
