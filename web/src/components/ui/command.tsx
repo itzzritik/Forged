@@ -36,14 +36,14 @@ function CommandDialog({
 				<DialogTitle>{title}</DialogTitle>
 				<DialogDescription>{description}</DialogDescription>
 			</DialogHeader>
-				<DialogContent
-					className={cn(
-						"top-[18%] translate-y-0 overflow-hidden rounded-none border border-command-shell-border bg-command-shell p-0 font-mono shadow-2xl ring-0 sm:max-w-xl",
-						className
-					)}
+			<DialogContent
+				className={cn(
+					"top-[18%] translate-y-0 overflow-hidden rounded-none border border-command-shell-border bg-command-shell p-0 font-mono shadow-2xl ring-0 sm:max-w-xl",
+					className
+				)}
 				showCloseButton={showCloseButton}
 			>
-				{children}
+				<Command>{children}</Command>
 			</DialogContent>
 		</Dialog>
 	);
