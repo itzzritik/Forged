@@ -16,12 +16,11 @@ import (
 )
 
 type importPreview struct {
-	alreadyInVault      bool
-	collapsedDuplicates int
-	converted           bool
-	fingerprint         string
-	key                 importers.ImportedKey
-	selected            bool
+	alreadyInVault bool
+	converted      bool
+	fingerprint    string
+	key            importers.ImportedKey
+	selected       bool
 }
 
 var importCmd = &cobra.Command{
@@ -79,6 +78,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 		default:
 			return fmt.Errorf("invalid choice")
 		}
+		printStepSeparator()
 	}
 
 	if from == "ssh-dir" {
@@ -99,9 +99,7 @@ func runImport(cmd *cobra.Command, args []string) error {
 			if file == "" {
 				return fmt.Errorf("file path is required")
 			}
-		}
-		if terminalIsInteractive() {
-			clearTerminal()
+			printStepSeparator()
 		}
 	}
 
@@ -205,8 +203,7 @@ func buildImportPreview(keys []importers.ImportedKey) ([]importPreview, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", key.Name, err)
 		}
-		if idx, ok := byFingerprint[preview.fingerprint]; ok {
-			previews[idx].collapsedDuplicates++
+		if _, ok := byFingerprint[preview.fingerprint]; ok {
 			continue
 		}
 		preview.alreadyInVault = containsFingerprint(existingFingerprints, preview.fingerprint)

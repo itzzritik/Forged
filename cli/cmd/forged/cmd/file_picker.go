@@ -6,6 +6,8 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+
+	"golang.org/x/term"
 )
 
 func terminalIsInteractive() bool {
@@ -20,11 +22,32 @@ func terminalIsInteractive() bool {
 	return (stdinInfo.Mode()&os.ModeCharDevice) != 0 && (stdoutInfo.Mode()&os.ModeCharDevice) != 0
 }
 
-func clearTerminal() {
+func printStepSeparator() {
 	if !terminalIsInteractive() {
 		return
 	}
-	fmt.Print("\033[2J\033[H")
+
+	const (
+		indentWidth       = 2
+		fallbackLineWidth = 56
+		minLineWidth      = 48
+		maxLineWidth      = 88
+	)
+
+	lineWidth := fallbackLineWidth
+	if width, _, err := term.GetSize(int(os.Stdout.Fd())); err == nil && width > indentWidth {
+		lineWidth = width - indentWidth
+		if lineWidth < minLineWidth {
+			lineWidth = minLineWidth
+		}
+		if lineWidth > maxLineWidth {
+			lineWidth = maxLineWidth
+		}
+	}
+
+	fmt.Println()
+	fmt.Printf("  \033[2m%s\033[0m\n", strings.Repeat("─", lineWidth))
+	fmt.Println()
 }
 
 func chooseFileWithPicker() (string, bool) {
