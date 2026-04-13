@@ -92,6 +92,9 @@
 	--data-view-shell: var(--card);
 	--data-view-border: var(--border);
 	--data-view-sticky: var(--surface-inset);
+	--key-details-surface: color-mix(in srgb, var(--surface-inset) 82%, var(--card) 18%);
+	--key-details-surface-strong: color-mix(in srgb, var(--surface) 86%, var(--foreground) 14%);
+	--key-details-border: var(--border);
 }
 
 /* ------------------------------------------------------------------ */
@@ -180,6 +183,9 @@
 	--data-view-shell: var(--card);
 	--data-view-border: var(--border);
 	--data-view-sticky: var(--surface-inset);
+	--key-details-surface: color-mix(in srgb, var(--surface-inset) 90%, var(--card) 10%);
+	--key-details-surface-strong: color-mix(in srgb, var(--surface) 82%, var(--foreground) 18%);
+	--key-details-border: var(--border);
 }
 
 /* ------------------------------------------------------------------ */
@@ -245,6 +251,9 @@
 	--color-data-view-shell: var(--data-view-shell);
 	--color-data-view-border: var(--data-view-border);
 	--color-data-view-sticky: var(--data-view-sticky);
+	--color-key-details-surface: var(--key-details-surface);
+	--color-key-details-surface-strong: var(--key-details-surface-strong);
+	--color-key-details-border: var(--key-details-border);
 
 	/* Charts */
 	--color-chart-1: var(--chart-1);

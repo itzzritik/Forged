@@ -12,10 +12,17 @@ export interface VaultKeyMetadata {
 	gitSigning: boolean;
 	hostRules: Array<{ match: string; type: string }>;
 	id: string;
+	lastUsedAt?: string;
 	name: string;
 	publicKey: string;
 	type: string;
 	updatedAt: string;
+	version?: number;
+}
+
+export interface VaultKeyDetails extends VaultKeyMetadata {
+	encryptedCipherKey: string;
+	encryptedPrivateKey: string;
 }
 
 export interface VaultData {
@@ -195,6 +202,30 @@ export function updateKeyInVault(data: VaultData, keyId: string, updates: Record
 	return vaultDataFromRaw(raw);
 }
 
+export function getVaultKeyDetails(data: VaultData, keyId: string): VaultKeyDetails | null {
+	const parsed = JSON.parse(data.raw) as Record<string, unknown>;
+	const rawKeys = (parsed.keys as Record<string, unknown>[]) ?? [];
+	const rawKey = rawKeys.find((entry) => entry.id === keyId);
+	if (!rawKey) return null;
+
+	return {
+		id: rawKey.id as string,
+		name: rawKey.name as string,
+		type: rawKey.type as string,
+		publicKey: rawKey.public_key as string,
+		fingerprint: rawKey.fingerprint as string,
+		comment: (rawKey.comment as string) || "",
+		createdAt: (rawKey.created_at as string) || "",
+		updatedAt: (rawKey.updated_at as string) || "",
+		lastUsedAt: (rawKey.last_used_at as string) || undefined,
+		version: Number(rawKey.version ?? 0) || undefined,
+		hostRules: (rawKey.host_rules as VaultKeyMetadata["hostRules"]) || [],
+		gitSigning: Boolean(rawKey.git_signing),
+		encryptedCipherKey: (rawKey.encrypted_cipher_key as string) || "",
+		encryptedPrivateKey: (rawKey.encrypted_private_key as string) || "",
+	};
+}
+
 function decryptBlobSync(parsed: Record<string, unknown>): Omit<VaultData, "raw"> {
 	const keys: VaultKeyMetadata[] = ((parsed.keys as Record<string, unknown>[]) || []).map((k) => ({
 		id: k.id as string,
@@ -205,8 +236,10 @@ function decryptBlobSync(parsed: Record<string, unknown>): Omit<VaultData, "raw"
 		comment: (k.comment as string) || "",
 		createdAt: k.created_at as string,
 		updatedAt: k.updated_at as string,
+		lastUsedAt: (k.last_used_at as string) || undefined,
 		hostRules: (k.host_rules as VaultKeyMetadata["hostRules"]) || [],
 		gitSigning: Boolean(k.git_signing),
+		version: Number(k.version ?? 0) || undefined,
 	}));
 	const meta = parsed.metadata as Record<string, unknown> | undefined;
 	return {
@@ -295,6 +328,15 @@ export async function decryptPrivateKey(cipherKey: CryptoKey, encryptedPrivateKe
 	const plaintext = await crypto.subtle.decrypt({ name: "AES-GCM", iv: nonce }, cipherKey, ciphertext);
 
 	return new Uint8Array(plaintext);
+}
+
+export async function decryptVaultKeyPrivateKey(key: VaultKeyDetails, symmetricKey: CryptoKey): Promise<string> {
+	if (!key.encryptedCipherKey || !key.encryptedPrivateKey) {
+		throw new Error("Private key is unavailable for this item");
+	}
+	const cipherKey = await decryptItemKey(symmetricKey, key.encryptedCipherKey);
+	const privateKeyBytes = await decryptPrivateKey(cipherKey, key.encryptedPrivateKey);
+	return new TextDecoder().decode(privateKeyBytes);
 }
 
 export async function encryptNewItemKey(symmetricKey: CryptoKey): Promise<{ cipherKey: CryptoKey; encryptedCipherKeyB64: string }> {

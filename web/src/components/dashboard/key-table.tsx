@@ -1,25 +1,38 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useMemo, useState } from "react";
 import { toast } from "sonner";
-import { Input } from "@/components/ui/input";
 import { useVaultContext } from "@/hooks/use-vault";
-import { removeKeyFromVault, updateKeyInVault, type VaultKeyMetadata } from "@/lib/vault-crypto";
+import { getVaultKeyDetails, removeKeyFromVault, updateKeyInVault, type VaultKeyMetadata } from "@/lib/vault-crypto";
 import { BulkDeleteKeysModal } from "./bulk-delete-keys-modal";
 import { DataView, type DataViewAction, type DataViewColumn } from "./data-view";
 import { DeleteKeyModal } from "./delete-key-modal";
-import { HostRulesEditor } from "./host-rules-editor";
+import { KeyDetailsModal } from "./key-details-modal";
 
 export const KeyTable = () => {
-	const { deviceId, pushVault, status, vaultData } = useVaultContext();
+	const { deviceId, pushVault, status, vaultData, symmetricKeyRef } = useVaultContext();
 	const keys = vaultData?.keys ?? [];
 
-	const [editingId, setEditingId] = useState<string | null>(null);
-	const [editName, setEditName] = useState("");
-	const [hostRulesKey, setHostRulesKey] = useState<VaultKeyMetadata | null>(null);
+	const [activeKeyId, setActiveKeyId] = useState<string | null>(null);
+	const [keyModalMode, setKeyModalMode] = useState<"view" | "edit">("view");
+	const [isSavingName, setIsSavingName] = useState(false);
 	const [deleteKey, setDeleteKey] = useState<VaultKeyMetadata | null>(null);
 	const [bulkDeleteKeys, setBulkDeleteKeys] = useState<VaultKeyMetadata[]>([]);
-	const inputRef = useRef<HTMLInputElement>(null);
+
+	const openKeyModal = (keyId: string, mode: "view" | "edit" = "view") => {
+		setActiveKeyId(keyId);
+		setKeyModalMode(mode);
+	};
+
+	const closeKeyModal = () => {
+		setActiveKeyId(null);
+		setKeyModalMode("view");
+	};
+
+	const activeKeyDetails = useMemo(() => {
+		if (!vaultData || !activeKeyId) return null;
+		return getVaultKeyDetails(vaultData, activeKeyId);
+	}, [activeKeyId, vaultData]);
 
 	const handleCopy = async (key: VaultKeyMetadata) => {
 		try {
@@ -27,25 +40,6 @@ export const KeyTable = () => {
 			toast.success("Public key copied to clipboard");
 		} catch {
 			toast.error("Failed to copy to clipboard");
-		}
-	};
-
-	const startRename = (key: VaultKeyMetadata) => {
-		setEditingId(key.id);
-		setEditName(key.name);
-		setTimeout(() => inputRef.current?.focus(), 0);
-	};
-
-	const commitRename = async (key: VaultKeyMetadata) => {
-		const trimmed = editName.trim();
-		setEditingId(null);
-		if (!trimmed || trimmed === key.name || !vaultData) return;
-		try {
-			const updated = updateKeyInVault(vaultData, key.id, { name: trimmed }, deviceId);
-			await pushVault(updated);
-			toast.success("Key renamed");
-		} catch {
-			toast.error("Failed to rename key");
 		}
 	};
 
@@ -73,18 +67,45 @@ export const KeyTable = () => {
 		}
 	};
 
+	const handleSaveKeyDetails = async (updates: { hostRules: VaultKeyMetadata["hostRules"]; name: string }) => {
+		if (!vaultData || !activeKeyId) return;
+		const trimmed = updates.name.trim();
+		if (!trimmed) return;
+
+		const current = vaultData.keys.find((key) => key.id === activeKeyId);
+		if (
+			!current ||
+			(current.name === trimmed && JSON.stringify(current.hostRules ?? []) === JSON.stringify(updates.hostRules ?? []))
+		) {
+			setKeyModalMode("view");
+			return;
+		}
+
+		try {
+			setIsSavingName(true);
+			const updated = updateKeyInVault(vaultData, activeKeyId, { host_rules: updates.hostRules, name: trimmed }, deviceId);
+			await pushVault(updated);
+			toast.success("Key updated");
+			setKeyModalMode("view");
+		} catch {
+			toast.error("Failed to update key");
+		} finally {
+			setIsSavingName(false);
+		}
+	};
+
 	const actions = useMemo(
 		() =>
 			(key: VaultKeyMetadata): DataViewAction<VaultKeyMetadata>[] => [
 				{
+					id: `edit-${key.id}`,
+					label: "Edit",
+					onClick: () => openKeyModal(key.id, "edit"),
+				},
+				{
 					id: `copy-${key.id}`,
 					label: "Copy Public Key",
 					onClick: () => void handleCopy(key),
-				},
-				{
-					id: `hosts-${key.id}`,
-					label: "Edit Host Rules",
-					onClick: () => setHostRulesKey(key),
 				},
 				{
 					id: `delete-${key.id}`,
@@ -105,23 +126,7 @@ export const KeyTable = () => {
 					const key = row.original;
 					return (
 						<div className="min-w-0">
-							{editingId === key.id ? (
-								<Input
-									className="h-7 w-40 font-mono text-sm"
-									onBlur={() => void commitRename(key)}
-									onChange={(event) => setEditName(event.target.value)}
-									onKeyDown={(event) => {
-										if (event.key === "Enter") void commitRename(key);
-										if (event.key === "Escape") setEditingId(null);
-									}}
-									ref={inputRef}
-									value={editName}
-								/>
-							) : (
-								<button className="cursor-pointer truncate font-medium text-foreground hover:text-primary" onClick={() => startRename(key)} type="button">
-									{key.name}
-								</button>
-							)}
+							<span className="block truncate font-medium text-foreground">{key.name}</span>
 						</div>
 					);
 				},
@@ -152,7 +157,7 @@ export const KeyTable = () => {
 				},
 			},
 		],
-		[editName, editingId]
+		[]
 	);
 
 	return (
@@ -174,6 +179,7 @@ export const KeyTable = () => {
 				globalFilterPlaceholder="Search keys, fingerprints, or hosts"
 				initialSorting={[{ id: "name", desc: false }]}
 				isLoading={status === "loading"}
+				onRowClick={(key) => openKeyModal(key.id, "view")}
 				rowHeight={46}
 				selectionToolbar={{
 					label: (selectedRows) => `${selectedRows.length} key${selectedRows.length === 1 ? "" : "s"} selected`,
@@ -182,9 +188,16 @@ export const KeyTable = () => {
 				}}
 			/>
 
-			{hostRulesKey && (
-				<HostRulesEditor hostRules={hostRulesKey.hostRules} keyId={hostRulesKey.id} keyName={hostRulesKey.name} onClose={() => setHostRulesKey(null)} />
-			)}
+			<KeyDetailsModal
+				isSaving={isSavingName}
+				keyDetails={activeKeyDetails}
+				mode={keyModalMode}
+				onClose={closeKeyModal}
+				onModeChange={setKeyModalMode}
+				onSaveChanges={handleSaveKeyDetails}
+				open={Boolean(activeKeyId && activeKeyDetails)}
+				symmetricKey={symmetricKeyRef.current}
+			/>
 
 			<DeleteKeyModal
 				fingerprint={deleteKey?.fingerprint ?? ""}
