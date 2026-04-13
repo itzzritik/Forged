@@ -1,36 +1,25 @@
 "use client";
 
-import { useRef, useState } from "react";
+import { useMemo, useRef, useState } from "react";
 import { toast } from "sonner";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
-import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import { useVaultContext } from "@/hooks/use-vault";
 import { removeKeyFromVault, updateKeyInVault, type VaultKeyMetadata } from "@/lib/vault-crypto";
+import { BulkDeleteKeysModal } from "./bulk-delete-keys-modal";
+import { DataView, type DataViewAction, type DataViewColumn } from "./data-view";
+import { DeleteKeyModal } from "./delete-key-modal";
 import { HostRulesEditor } from "./host-rules-editor";
 
 export const KeyTable = () => {
-	const { deviceId, vaultData, pushVault } = useVaultContext();
+	const { deviceId, pushVault, status, vaultData } = useVaultContext();
 	const keys = vaultData?.keys ?? [];
 
 	const [editingId, setEditingId] = useState<string | null>(null);
 	const [editName, setEditName] = useState("");
 	const [hostRulesKey, setHostRulesKey] = useState<VaultKeyMetadata | null>(null);
-	const [pendingDeleteId, setPendingDeleteId] = useState<string | null>(null);
+	const [deleteKey, setDeleteKey] = useState<VaultKeyMetadata | null>(null);
+	const [bulkDeleteKeys, setBulkDeleteKeys] = useState<VaultKeyMetadata[]>([]);
 	const inputRef = useRef<HTMLInputElement>(null);
-
-	if (keys.length === 0) {
-		return (
-			<div className="flex flex-col items-center justify-center gap-2 py-16 text-center">
-				<p className="text-muted-foreground text-sm">No keys in vault</p>
-				<p className="font-mono text-muted-foreground text-xs">
-					Generate a key or add one via CLI: <span className="text-primary">forged add &lt;name&gt;</span>
-				</p>
-			</div>
-		);
-	}
 
 	const handleCopy = async (key: VaultKeyMetadata) => {
 		try {
@@ -60,124 +49,157 @@ export const KeyTable = () => {
 		}
 	};
 
-	const handleDelete = async (key: VaultKeyMetadata) => {
-		if (pendingDeleteId !== key.id) {
-			setPendingDeleteId(key.id);
-			return;
-		}
-		setPendingDeleteId(null);
+	const confirmDeleteKey = async (key: VaultKeyMetadata) => {
 		if (!vaultData) return;
 		try {
 			const updated = removeKeyFromVault(vaultData, key.id, deviceId);
 			await pushVault(updated);
+			setDeleteKey(null);
 			toast.success("Key deleted");
 		} catch {
 			toast.error("Failed to delete key");
 		}
 	};
 
+	const confirmBulkDelete = async () => {
+		if (!vaultData || bulkDeleteKeys.length === 0) return;
+		try {
+			const updated = bulkDeleteKeys.reduce((current, key) => removeKeyFromVault(current, key.id, deviceId), vaultData);
+			await pushVault(updated);
+			setBulkDeleteKeys([]);
+			toast.success(`${bulkDeleteKeys.length} key${bulkDeleteKeys.length === 1 ? "" : "s"} deleted`);
+		} catch {
+			toast.error("Failed to delete selected keys");
+		}
+	};
+
+	const actions = useMemo(
+		() =>
+			(key: VaultKeyMetadata): DataViewAction<VaultKeyMetadata>[] => [
+				{
+					id: `copy-${key.id}`,
+					label: "Copy Public Key",
+					onClick: () => void handleCopy(key),
+				},
+				{
+					id: `hosts-${key.id}`,
+					label: "Edit Host Rules",
+					onClick: () => setHostRulesKey(key),
+				},
+				{
+					id: `delete-${key.id}`,
+					label: "Delete",
+					onClick: () => setDeleteKey(key),
+					variant: "destructive",
+				},
+			],
+		[]
+	);
+
+	const columns = useMemo<DataViewColumn<VaultKeyMetadata>[]>(
+		() => [
+			{
+				accessorKey: "name",
+				header: "Key",
+				cell: ({ row }) => {
+					const key = row.original;
+					return (
+						<div className="min-w-0">
+							{editingId === key.id ? (
+								<Input
+									className="h-7 w-40 font-mono text-sm"
+									onBlur={() => void commitRename(key)}
+									onChange={(event) => setEditName(event.target.value)}
+									onKeyDown={(event) => {
+										if (event.key === "Enter") void commitRename(key);
+										if (event.key === "Escape") setEditingId(null);
+									}}
+									ref={inputRef}
+									value={editName}
+								/>
+							) : (
+								<button className="cursor-pointer truncate font-medium text-foreground hover:text-primary" onClick={() => startRename(key)} type="button">
+									{key.name}
+								</button>
+							)}
+						</div>
+					);
+				},
+				meta: {
+					cellClassName: "min-w-[14rem]",
+					headerClassName: "min-w-[14rem]",
+					toggleable: false,
+				},
+			},
+			{
+				accessorKey: "type",
+				header: "Type",
+				cell: ({ row }) => <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-muted-foreground text-xs">{row.original.type}</span>,
+				meta: {
+					cellClassName: "w-[10rem]",
+					headerClassName: "w-[10rem]",
+					responsive: "sm",
+				},
+			},
+			{
+				accessorKey: "fingerprint",
+				header: "Fingerprint",
+				cell: ({ row }) => <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-muted-foreground text-xs">{row.original.fingerprint}</span>,
+				meta: {
+					cellClassName: "min-w-[20rem]",
+					headerClassName: "min-w-[20rem]",
+					responsive: "md",
+				},
+			},
+		],
+		[editName, editingId]
+	);
+
 	return (
 		<>
-			<TooltipProvider>
-				<Table>
-					<TableHeader>
-						<TableRow>
-							<TableHead>Name</TableHead>
-							<TableHead className="hidden sm:table-cell">Fingerprint</TableHead>
-							<TableHead>Hosts</TableHead>
-							<TableHead className="hidden sm:table-cell">Signing</TableHead>
-							<TableHead>Actions</TableHead>
-						</TableRow>
-					</TableHeader>
-					<TableBody>
-						{keys.map((key) => (
-							<TableRow key={key.id}>
-								<TableCell>
-									{editingId === key.id ? (
-										<Input
-											className="h-7 w-36 font-mono text-sm"
-											onBlur={() => commitRename(key)}
-											onChange={(e) => setEditName(e.target.value)}
-											onKeyDown={(e) => {
-												if (e.key === "Enter") commitRename(key);
-												if (e.key === "Escape") setEditingId(null);
-											}}
-											ref={inputRef}
-											value={editName}
-										/>
-									) : (
-										<>
-											<button
-												className="cursor-pointer font-medium text-foreground hover:text-primary"
-												onClick={() => startRename(key)}
-												title="Click to rename"
-												type="button"
-											>
-												{key.name}
-											</button>
-											<div className="text-muted-foreground text-xs">{key.type}</div>
-										</>
-									)}
-								</TableCell>
-								<TableCell className="hidden sm:table-cell">
-									<Tooltip>
-										<TooltipTrigger className="block max-w-45 cursor-default truncate font-mono text-muted-foreground text-sm" render={<span />}>
-											{key.fingerprint}
-										</TooltipTrigger>
-										<TooltipContent>
-											<span className="font-mono">{key.fingerprint}</span>
-										</TooltipContent>
-									</Tooltip>
-								</TableCell>
-								<TableCell>
-									<div className="flex flex-wrap gap-1">
-										{key.hostRules.length > 0 ? (
-											key.hostRules.map((rule, i) => (
-												<Badge className="border border-primary/20 bg-primary/10 text-primary hover:bg-primary/10" key={i}>
-													{rule.match}
-												</Badge>
-											))
-										) : (
-											<span className="text-muted-foreground text-xs">--</span>
-										)}
-									</div>
-								</TableCell>
-								<TableCell className="hidden sm:table-cell">
-									{key.gitSigning ? (
-										<span className="flex items-center gap-1.5 text-sm text-success">
-											<span className="size-1.5 shrink-0 rounded-full bg-success" />
-											Active
-										</span>
-									) : (
-										<span className="text-muted-foreground text-sm">Off</span>
-									)}
-								</TableCell>
-								<TableCell>
-									<div className="flex items-center gap-2">
-										<Button onClick={() => handleCopy(key)} size="sm" variant="outline">
-											Copy
-										</Button>
-										<Button onClick={() => setHostRulesKey(key)} size="sm" variant="ghost">
-											Hosts
-										</Button>
-										<Button
-											onBlur={() => setPendingDeleteId(null)}
-											onClick={() => handleDelete(key)}
-											size="sm"
-											variant={pendingDeleteId === key.id ? "destructive" : "ghost"}
-										>
-											{pendingDeleteId === key.id ? "Confirm?" : "Delete"}
-										</Button>
-									</div>
-								</TableCell>
-							</TableRow>
-						))}
-					</TableBody>
-				</Table>
-			</TooltipProvider>
+			<DataView
+				actions={actions}
+				columns={columns}
+				data={keys}
+				emptyState={{
+					title: "No keys in vault",
+					description: "Generate a key or add one via CLI: forged add <name>",
+				}}
+				enableSelection
+				entityLabel="keys"
+				getRowId={(key) => key.id}
+				getSearchText={(key) =>
+					[key.name, key.type, key.fingerprint, key.comment, key.publicKey, key.hostRules.map((rule) => rule.match).join(" "), key.gitSigning ? "active signing" : "signing off"].join(" ")
+				}
+				globalFilterPlaceholder="Search keys, fingerprints, or hosts"
+				initialSorting={[{ id: "name", desc: false }]}
+				isLoading={status === "loading"}
+				rowHeight={46}
+				selectionToolbar={{
+					label: (selectedRows) => `${selectedRows.length} key${selectedRows.length === 1 ? "" : "s"} selected`,
+					onPrimaryAction: (selectedRows) => setBulkDeleteKeys(selectedRows),
+					primaryActionLabel: (selectedRows) => `Delete ${selectedRows.length} Key${selectedRows.length === 1 ? "" : "s"}`,
+				}}
+			/>
+
 			{hostRulesKey && (
 				<HostRulesEditor hostRules={hostRulesKey.hostRules} keyId={hostRulesKey.id} keyName={hostRulesKey.name} onClose={() => setHostRulesKey(null)} />
 			)}
+
+			<DeleteKeyModal
+				fingerprint={deleteKey?.fingerprint ?? ""}
+				keyName={deleteKey?.name ?? ""}
+				onClose={() => setDeleteKey(null)}
+				onConfirm={() => (deleteKey ? confirmDeleteKey(deleteKey) : Promise.resolve())}
+				open={Boolean(deleteKey)}
+			/>
+
+			<BulkDeleteKeysModal
+				keyNames={bulkDeleteKeys.map((key) => key.name)}
+				onClose={() => setBulkDeleteKeys([])}
+				onConfirm={confirmBulkDelete}
+				open={bulkDeleteKeys.length > 0}
+			/>
 		</>
 	);
 };

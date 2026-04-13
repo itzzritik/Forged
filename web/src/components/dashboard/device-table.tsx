@@ -1,9 +1,8 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { Skeleton } from "@/components/ui/skeleton";
-import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { DataView, type DataViewColumn } from "./data-view";
 
 interface Device {
 	approved: boolean;
@@ -37,67 +36,75 @@ export const DeviceTable = () => {
 			.finally(() => setLoading(false));
 	}, []);
 
+	const columns = useMemo<DataViewColumn<Device>[]>(
+		() => [
+			{
+				accessorKey: "name",
+				header: "Device",
+				cell: ({ row }) => (
+					<div className="min-w-0">
+						<p className="truncate font-semibold text-sm">{row.original.name}</p>
+						<p className="truncate text-muted-foreground text-xs">{row.original.platform}</p>
+					</div>
+				),
+				meta: {
+					cellClassName: "min-w-[12rem]",
+					headerClassName: "min-w-[12rem]",
+					toggleable: false,
+				},
+			},
+			{
+				accessorKey: "hostname",
+				header: "Hostname",
+				cell: ({ row }) => <span className="font-mono text-muted-foreground text-xs">{row.original.hostname}</span>,
+				meta: {
+					cellClassName: "min-w-[14rem]",
+					headerClassName: "min-w-[14rem]",
+					responsive: "sm",
+				},
+			},
+			{
+				accessorKey: "last_seen_at",
+				header: "Last Seen",
+				cell: ({ row }) => <span className="text-muted-foreground text-sm">{relativeTime(row.original.last_seen_at)}</span>,
+				meta: {
+					cellClassName: "w-[8rem]",
+					headerClassName: "w-[8rem]",
+				},
+			},
+			{
+				accessorKey: "approved",
+				header: "Status",
+				cell: ({ row }) =>
+					row.original.approved ? (
+						<Badge className="border-success/20 bg-success/10 text-success hover:bg-success/10">Approved</Badge>
+					) : (
+						<Badge className="border-warning/20 bg-warning/10 text-warning hover:bg-warning/10">Pending</Badge>
+					),
+				meta: {
+					cellClassName: "w-[8rem]",
+					headerClassName: "w-[8rem]",
+				},
+			},
+		],
+		[]
+	);
+
 	return (
-		<Table>
-			<TableHeader>
-				<TableRow>
-					<TableHead>Device</TableHead>
-					<TableHead>Hostname</TableHead>
-					<TableHead>Last Seen</TableHead>
-					<TableHead>Status</TableHead>
-				</TableRow>
-			</TableHeader>
-			<TableBody>
-				{loading &&
-					Array.from({ length: 3 }).map((_, i) => (
-						<TableRow key={i}>
-							<TableCell>
-								<div className="space-y-1">
-									<Skeleton className="h-4 w-32" />
-									<Skeleton className="h-3 w-20" />
-								</div>
-							</TableCell>
-							<TableCell>
-								<Skeleton className="h-4 w-40" />
-							</TableCell>
-							<TableCell>
-								<Skeleton className="h-4 w-20" />
-							</TableCell>
-							<TableCell>
-								<Skeleton className="h-5 w-16 rounded-full" />
-							</TableCell>
-						</TableRow>
-					))}
-				{!loading && devices.length === 0 && (
-					<TableRow>
-						<TableCell className="py-12 text-center" colSpan={4}>
-							<p className="font-medium text-sm">No devices registered</p>
-							<p className="mt-1 text-muted-foreground text-xs">
-								Devices are registered when you run <code className="font-mono">`forged sync`</code> from a new machine.
-							</p>
-						</TableCell>
-					</TableRow>
-				)}
-				{!loading &&
-					devices.length > 0 &&
-					devices.map((device) => (
-						<TableRow key={device.id}>
-							<TableCell>
-								<p className="font-semibold text-sm">{device.name}</p>
-								<p className="text-muted-foreground text-xs">{device.platform}</p>
-							</TableCell>
-							<TableCell className="font-mono text-muted-foreground text-xs">{device.hostname}</TableCell>
-							<TableCell className="text-muted-foreground text-sm">{relativeTime(device.last_seen_at)}</TableCell>
-							<TableCell>
-								{device.approved ? (
-									<Badge className="border-success/20 bg-success/10 text-success hover:bg-success/10">Approved</Badge>
-								) : (
-									<Badge className="border-yellow-500/20 bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/10">Pending</Badge>
-								)}
-							</TableCell>
-						</TableRow>
-					))}
-			</TableBody>
-		</Table>
+		<DataView
+			columns={columns}
+			data={devices}
+			emptyState={{
+				title: "No devices registered",
+				description: "Devices are registered when you run forged sync from a new machine.",
+			}}
+			entityLabel="devices"
+			getRowId={(device) => device.id}
+			getSearchText={(device) => [device.name, device.hostname, device.platform, device.approved ? "approved" : "pending", relativeTime(device.last_seen_at)].join(" ")}
+			globalFilterPlaceholder="Search devices, hostnames, or platforms"
+			initialSorting={[{ id: "name", desc: false }]}
+			isLoading={loading}
+			rowHeight={46}
+		/>
 	);
 };

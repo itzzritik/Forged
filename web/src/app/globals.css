@@ -88,6 +88,10 @@
 	--command-item-hover: var(--surface-hover);
 	--command-item-selected: var(--brand-glow);
 	--command-shortcut: var(--muted-foreground);
+
+	--data-view-shell: var(--card);
+	--data-view-border: var(--border);
+	--data-view-sticky: var(--surface-inset);
 }
 
 /* ------------------------------------------------------------------ */
@@ -172,6 +176,10 @@
 	--command-item-hover: var(--surface-hover);
 	--command-item-selected: var(--brand-glow);
 	--command-shortcut: var(--muted-foreground);
+
+	--data-view-shell: var(--card);
+	--data-view-border: var(--border);
+	--data-view-sticky: var(--surface-inset);
 }
 
 /* ------------------------------------------------------------------ */
@@ -234,6 +242,9 @@
 	--color-command-item-hover: var(--command-item-hover);
 	--color-command-item-selected: var(--command-item-selected);
 	--color-command-shortcut: var(--command-shortcut);
+	--color-data-view-shell: var(--data-view-shell);
+	--color-data-view-border: var(--data-view-border);
+	--color-data-view-sticky: var(--data-view-sticky);
 
 	/* Charts */
 	--color-chart-1: var(--chart-1);

@@ -154,6 +154,11 @@ func (d *Daemon) openVault(password []byte) error {
 		return fmt.Errorf("vault: %w", err)
 	}
 
+	if err := v.DecryptAllPrivateKeys(); err != nil {
+		v.Close()
+		return fmt.Errorf("hydrating private keys: %w", err)
+	}
+
 	d.vault = v
 	d.keyStore = vault.NewKeyStore(v)
 

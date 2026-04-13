@@ -1,6 +1,7 @@
 "use client";
 
 import { motion } from "framer-motion";
+import { usePathname } from "next/navigation";
 import { useState } from "react";
 import { CommandPalette } from "@/components/dashboard/command-palette";
 import { Sidebar } from "@/components/dashboard/sidebar";
@@ -22,6 +23,8 @@ export const DashboardShell = ({ user, children }: DashboardShellProps) => {
 	const sidebar = useSidebar();
 	const commandPalette = useCommandPalette();
 	const [mobileOpen, setMobileOpen] = useState(false);
+	const pathname = usePathname();
+	const prefersTableLoading = pathname === "/dashboard" || pathname === "/dashboard/devices";
 
 	return (
 		<VaultContext.Provider value={vault}>
@@ -53,12 +56,12 @@ export const DashboardShell = ({ user, children }: DashboardShellProps) => {
 					<main className="flex-1 overflow-auto">
 						{vault.status === "no-vault" && <NoVault />}
 						{vault.status === "error" && <VaultError message={vault.error} />}
-						{vault.status === "unlocked" && (
+						{(vault.status === "unlocked" || (vault.status === "loading" && prefersTableLoading)) && (
 							<motion.div animate={{ opacity: 1 }} initial={{ opacity: 0 }} transition={{ duration: 0.3 }}>
 								{children}
 							</motion.div>
 						)}
-						{vault.status === "loading" && <LoadingSkeleton />}
+						{vault.status === "loading" && !prefersTableLoading && <LoadingSkeleton />}
 					</main>
 				</div>
 				{vault.status === "locked" && <VaultUnlock error={vault.error} onUnlock={vault.unlock} />}
