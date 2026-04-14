@@ -23,6 +23,7 @@ on:
       - proto/**
       - scripts/build-forged-auth-release.sh
       - scripts/build-npm-packages.sh
+      - scripts/publish-npm-packages.sh
 
 permissions:
   contents: write
@@ -113,21 +114,10 @@ jobs:
           VERSION: ${{ steps.version.outputs.tag }}
         run: ./scripts/build-npm-packages.sh "$VERSION"
 
-      - name: Publish npm platform packages
-        run: |
-          for package in \
-            @getforged/cli-darwin-x64 \
-            @getforged/cli-darwin-arm64 \
-            @getforged/cli-linux-x64 \
-            @getforged/cli-linux-arm64 \
-            @getforged/cli-win32-x64 \
-            @getforged/cli-win32-arm64
-          do
-            npm publish --access public --provenance "dist/npm/$package"
-          done
-
-      - name: Publish npm wrapper package
-        run: npm publish --access public --provenance dist/npm/cli
+      - name: Publish npm packages
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        run: ./scripts/publish-npm-packages.sh "$VERSION"
 
       - name: Push release tag
         run: git push origin "${{ steps.version.outputs.tag }}"
