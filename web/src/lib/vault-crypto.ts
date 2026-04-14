@@ -10,7 +10,6 @@ export interface VaultKeyMetadata {
 	createdAt: string;
 	fingerprint: string;
 	gitSigning: boolean;
-	hostRules: Array<{ match: string; type: string }>;
 	id: string;
 	lastUsedAt?: string;
 	name: string;
@@ -142,28 +141,29 @@ export async function decryptBlob(symmetricKey: CryptoKey, blob: Uint8Array): Pr
 // Mutation helpers that operate on the raw JSON (snake_case, preserves encrypted fields)
 
 export function vaultDataFromRaw(rawJson: string): VaultData {
-	return { ...decryptBlobSync(JSON.parse(rawJson) as Record<string, unknown>), raw: rawJson };
+	const normalized = normalizeVaultDocument(JSON.parse(rawJson) as Record<string, unknown>);
+	return { ...decryptBlobSync(normalized), raw: JSON.stringify(normalized) };
 }
 
 export function addKeyToVault(data: VaultData, snakeCaseKey: Record<string, unknown>, deviceId?: string): VaultData {
-	const parsed = JSON.parse(data.raw) as Record<string, unknown>;
+	const parsed = normalizeVaultDocument(JSON.parse(data.raw) as Record<string, unknown>);
 	const now = new Date().toISOString();
 	const currentDeviceId = applyLocalDeviceMetadata(parsed, deviceId);
-	const key = {
+	const key = normalizeRawKey({
 		...snakeCaseKey,
 		created_at: snakeCaseKey.created_at ?? now,
 		device_origin: snakeCaseKey.device_origin && snakeCaseKey.device_origin !== "web" ? snakeCaseKey.device_origin : currentDeviceId,
 		updated_at: snakeCaseKey.updated_at ?? now,
 		version: snakeCaseKey.version ?? 1,
-	};
+	});
 	parsed.keys = [...(((parsed.keys as Record<string, unknown>[]) ?? [])), key];
 	bumpVersionVector(parsed, currentDeviceId);
-	const raw = JSON.stringify(parsed);
+	const raw = JSON.stringify(normalizeVaultDocument(parsed));
 	return vaultDataFromRaw(raw);
 }
 
 export function removeKeyFromVault(data: VaultData, keyId: string, deviceId?: string): VaultData {
-	const parsed = JSON.parse(data.raw) as Record<string, unknown>;
+	const parsed = normalizeVaultDocument(JSON.parse(data.raw) as Record<string, unknown>);
 	const keys = (parsed.keys as Record<string, unknown>[]) ?? [];
 	const removed = keys.find((key) => key.id === keyId);
 	parsed.keys = keys.filter((key) => key.id !== keyId);
@@ -172,12 +172,12 @@ export function removeKeyFromVault(data: VaultData, keyId: string, deviceId?: st
 		upsertTombstone(parsed, keyId, currentDeviceId, new Date().toISOString());
 		bumpVersionVector(parsed, currentDeviceId);
 	}
-	const raw = JSON.stringify(parsed);
+	const raw = JSON.stringify(normalizeVaultDocument(parsed));
 	return vaultDataFromRaw(raw);
 }
 
 export function updateKeyInVault(data: VaultData, keyId: string, updates: Record<string, unknown>, deviceId?: string): VaultData {
-	const parsed = JSON.parse(data.raw) as Record<string, unknown>;
+	const parsed = normalizeVaultDocument(JSON.parse(data.raw) as Record<string, unknown>);
 	const keys = ((parsed.keys as Record<string, unknown>[]) ?? []).map((key) => {
 		if (key.id !== keyId) {
 			return key;
@@ -193,12 +193,12 @@ export function updateKeyInVault(data: VaultData, keyId: string, updates: Record
 		};
 	});
 	const changed = keys.some((key) => key.id === keyId);
-	parsed.keys = keys;
+	parsed.keys = keys.map((key) => normalizeRawKey(key));
 	if (changed) {
 		const currentDeviceId = applyLocalDeviceMetadata(parsed, deviceId);
 		bumpVersionVector(parsed, currentDeviceId);
 	}
-	const raw = JSON.stringify(parsed);
+	const raw = JSON.stringify(normalizeVaultDocument(parsed));
 	return vaultDataFromRaw(raw);
 }
 
@@ -219,7 +219,6 @@ export function getVaultKeyDetails(data: VaultData, keyId: string): VaultKeyDeta
 		updatedAt: (rawKey.updated_at as string) || "",
 		lastUsedAt: (rawKey.last_used_at as string) || undefined,
 		version: Number(rawKey.version ?? 0) || undefined,
-		hostRules: (rawKey.host_rules as VaultKeyMetadata["hostRules"]) || [],
 		gitSigning: Boolean(rawKey.git_signing),
 		encryptedCipherKey: (rawKey.encrypted_cipher_key as string) || "",
 		encryptedPrivateKey: (rawKey.encrypted_private_key as string) || "",
@@ -237,7 +236,6 @@ function decryptBlobSync(parsed: Record<string, unknown>): Omit<VaultData, "raw"
 		createdAt: k.created_at as string,
 		updatedAt: k.updated_at as string,
 		lastUsedAt: (k.last_used_at as string) || undefined,
-		hostRules: (k.host_rules as VaultKeyMetadata["hostRules"]) || [],
 		gitSigning: Boolean(k.git_signing),
 		version: Number(k.version ?? 0) || undefined,
 	}));
@@ -251,6 +249,19 @@ function decryptBlobSync(parsed: Record<string, unknown>): Omit<VaultData, "raw"
 		},
 		keyGeneration: (parsed.key_generation as number) || 1,
 	};
+}
+
+function normalizeVaultDocument(parsed: Record<string, unknown>): Record<string, unknown> {
+	return {
+		...parsed,
+		keys: (((parsed.keys as Record<string, unknown>[]) ?? []).map((key) => normalizeRawKey(key))),
+	};
+}
+
+function normalizeRawKey(key: Record<string, unknown>): Record<string, unknown> {
+	const normalized = { ...key };
+	delete normalized.host_rules;
+	return normalized;
 }
 
 function applyLocalDeviceMetadata(parsed: Record<string, unknown>, deviceId?: string): string {

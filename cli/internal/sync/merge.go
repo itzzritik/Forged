@@ -188,7 +188,6 @@ func mergeKey(base, local, remote *vault.Key, localDeviceID, remoteDeviceID stri
 	merged.Version = maxInt(keyVersion(base), local.Version, remote.Version)
 	merged.DeviceOrigin = firstNonEmpty(merged.DeviceOrigin, local.DeviceOrigin, remote.DeviceOrigin)
 	merged.Tags = mergeStringSet(keyTags(base), local.Tags, remote.Tags)
-	merged.HostRules = mergeHostRules(keyHostRules(base), local.HostRules, remote.HostRules)
 	preservePrivateKey(&merged, base, local, remote, loser)
 	return merged
 }
@@ -249,48 +248,6 @@ func mergeStringSet(base, local, remote []string) []string {
 	return result
 }
 
-func mergeHostRules(base, local, remote []vault.HostRule) []vault.HostRule {
-	baseSet := hostRuleSet(base)
-	localSet := hostRuleSet(local)
-	remoteSet := hostRuleSet(remote)
-
-	all := make(map[string]vault.HostRule, len(baseSet)+len(localSet)+len(remoteSet))
-	for key, value := range baseSet {
-		all[key] = value
-	}
-	for key, value := range localSet {
-		all[key] = value
-	}
-	for key, value := range remoteSet {
-		all[key] = value
-	}
-
-	result := make([]vault.HostRule, 0, len(all))
-	for key, rule := range all {
-		_, inBase := baseSet[key]
-		_, inLocal := localSet[key]
-		_, inRemote := remoteSet[key]
-
-		if inBase {
-			if inLocal && inRemote {
-				result = append(result, rule)
-			}
-			continue
-		}
-		if inLocal || inRemote {
-			result = append(result, rule)
-		}
-	}
-
-	sort.Slice(result, func(i, j int) bool {
-		if result[i].Match == result[j].Match {
-			return result[i].Type < result[j].Type
-		}
-		return result[i].Match < result[j].Match
-	})
-	return result
-}
-
 func preservePrivateKey(merged *vault.Key, candidates ...*vault.Key) {
 	for _, candidate := range candidates {
 		if candidate == nil || len(candidate.PrivateKey) == 0 {
@@ -315,7 +272,6 @@ func cloneKey(key vault.Key) vault.Key {
 	cloned := key
 	cloned.PrivateKey = append([]byte(nil), key.PrivateKey...)
 	cloned.Tags = append([]string(nil), key.Tags...)
-	cloned.HostRules = append([]vault.HostRule(nil), key.HostRules...)
 	if key.LastUsedAt != nil {
 		lastUsedAt := *key.LastUsedAt
 		cloned.LastUsedAt = &lastUsedAt
@@ -387,30 +343,11 @@ func stringSet(values []string) map[string]struct{} {
 	return set
 }
 
-func hostRuleSet(rules []vault.HostRule) map[string]vault.HostRule {
-	set := make(map[string]vault.HostRule, len(rules))
-	for _, rule := range rules {
-		set[hostRuleKey(rule)] = rule
-	}
-	return set
-}
-
-func hostRuleKey(rule vault.HostRule) string {
-	return rule.Type + "\x00" + rule.Match
-}
-
 func keyTags(key *vault.Key) []string {
 	if key == nil {
 		return nil
 	}
 	return key.Tags
-}
-
-func keyHostRules(key *vault.Key) []vault.HostRule {
-	if key == nil {
-		return nil
-	}
-	return key.HostRules
 }
 
 func keyVersion(key *vault.Key) int {

@@ -26,10 +26,6 @@ type ForgedSSHKey struct {
 	Fingerprint string   `json:"fingerprint"`
 	KeyType     string   `json:"key_type"`
 	Comment     string   `json:"comment"`
-	HostRules   []struct {
-		Pattern string `json:"pattern"`
-		Match   string `json:"match"`
-	} `json:"host_rules"`
 	GitSigning bool `json:"git_signing"`
 }
 

@@ -50,7 +50,6 @@ export const GenerateKeyModal = ({ onClose }: GenerateKeyModalProps) => {
 				comment: "",
 				created_at: now,
 				updated_at: now,
-				host_rules: [],
 				git_signing: false,
 				tags: [],
 				version: 1,

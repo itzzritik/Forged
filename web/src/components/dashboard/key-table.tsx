@@ -67,23 +67,20 @@ export const KeyTable = () => {
 		}
 	};
 
-	const handleSaveKeyDetails = async (updates: { hostRules: VaultKeyMetadata["hostRules"]; name: string }) => {
+	const handleSaveKeyDetails = async (updates: { name: string }) => {
 		if (!vaultData || !activeKeyId) return;
 		const trimmed = updates.name.trim();
 		if (!trimmed) return;
 
 		const current = vaultData.keys.find((key) => key.id === activeKeyId);
-		if (
-			!current ||
-			(current.name === trimmed && JSON.stringify(current.hostRules ?? []) === JSON.stringify(updates.hostRules ?? []))
-		) {
+		if (!current || current.name === trimmed) {
 			setKeyModalMode("view");
 			return;
 		}
 
 		try {
 			setIsSavingName(true);
-			const updated = updateKeyInVault(vaultData, activeKeyId, { host_rules: updates.hostRules, name: trimmed }, deviceId);
+			const updated = updateKeyInVault(vaultData, activeKeyId, { name: trimmed }, deviceId);
 			await pushVault(updated);
 			toast.success("Key updated");
 			setKeyModalMode("view");
@@ -173,10 +170,8 @@ export const KeyTable = () => {
 				enableSelection
 				entityLabel="keys"
 				getRowId={(key) => key.id}
-				getSearchText={(key) =>
-					[key.name, key.type, key.fingerprint, key.comment, key.publicKey, key.hostRules.map((rule) => rule.match).join(" "), key.gitSigning ? "active signing" : "signing off"].join(" ")
-				}
-				globalFilterPlaceholder="Search keys, fingerprints, or hosts"
+				getSearchText={(key) => [key.name, key.type, key.fingerprint, key.comment, key.publicKey, key.gitSigning ? "active signing" : "signing off"].join(" ")}
+				globalFilterPlaceholder="Search keys or fingerprints"
 				initialSorting={[{ id: "name", desc: false }]}
 				isLoading={status === "loading"}
 				onRowClick={(key) => openKeyModal(key.id, "view")}

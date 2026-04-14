@@ -43,7 +43,6 @@ async function buildExportItems(raw: string, selected: Set<string>, symmetricKey
 				fingerprint: rawKey.fingerprint || "",
 				key_type: rawKey.type || "",
 				comment: rawKey.comment || "",
-				host_rules: rawKey.host_rules || [],
 				git_signing: Boolean(rawKey.git_signing),
 			},
 			created_at: (rawKey.created_at as string) || "",

@@ -151,7 +151,6 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 		CreatedAt:           now,
 		UpdatedAt:           now,
 		Tags:                []string{},
-		HostRules:           []HostRule{},
 		Version:             1,
 		DeviceOrigin:        ks.vault.DeviceID(),
 	}
@@ -220,7 +219,6 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 		CreatedAt:           now,
 		UpdatedAt:           now,
 		Tags:                []string{},
-		HostRules:           []HostRule{},
 		Version:             1,
 		DeviceOrigin:        ks.vault.DeviceID(),
 	}
@@ -328,78 +326,6 @@ func (ks *KeyStore) RecordUsage(name string) {
 	ks.vault.Data.Keys[idx].LastUsedAt = &now
 }
 
-func (ks *KeyStore) AddHostRule(keyName, pattern string) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-
-	idx := ks.indexOf(keyName)
-	if idx < 0 {
-		return fmt.Errorf("key %q not found", keyName)
-	}
-
-	patternType := classifyPattern(pattern)
-
-	for _, r := range ks.vault.Data.Keys[idx].HostRules {
-		if r.Match == pattern {
-			return fmt.Errorf("pattern %q already mapped to %q", pattern, keyName)
-		}
-	}
-
-	original := cloneKey(ks.vault.Data.Keys[idx])
-	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
-	ks.vault.Data.Keys[idx].HostRules = append(ks.vault.Data.Keys[idx].HostRules, HostRule{
-		Match: pattern,
-		Type:  patternType,
-	})
-	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
-	ks.vault.Data.Keys[idx].Version++
-	ks.bumpVersionVector()
-
-	if err := ks.vault.Save(); err != nil {
-		ks.vault.Data.Keys[idx] = original
-		ks.vault.Data.VersionVector = originalVersionVector
-		return err
-	}
-	return nil
-}
-
-func (ks *KeyStore) RemoveHostRule(keyName, pattern string) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
-
-	idx := ks.indexOf(keyName)
-	if idx < 0 {
-		return fmt.Errorf("key %q not found", keyName)
-	}
-
-	original := cloneKey(ks.vault.Data.Keys[idx])
-	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
-	rules := ks.vault.Data.Keys[idx].HostRules
-	found := false
-	for i, r := range rules {
-		if r.Match == pattern {
-			ks.vault.Data.Keys[idx].HostRules = append(rules[:i], rules[i+1:]...)
-			found = true
-			break
-		}
-	}
-
-	if !found {
-		return fmt.Errorf("pattern %q not found on key %q", pattern, keyName)
-	}
-
-	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
-	ks.vault.Data.Keys[idx].Version++
-	ks.bumpVersionVector()
-
-	if err := ks.vault.Save(); err != nil {
-		ks.vault.Data.Keys[idx] = original
-		ks.vault.Data.VersionVector = originalVersionVector
-		return err
-	}
-	return nil
-}
-
 func (ks *KeyStore) SetGitSigning(keyName string, enabled bool) error {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
@@ -454,16 +380,6 @@ func (ks *KeyStore) GetGitSigningKey() (Key, bool) {
 		}
 	}
 	return Key{}, false
-}
-
-func classifyPattern(pattern string) string {
-	if strings.HasPrefix(pattern, "~") {
-		return "regex"
-	}
-	if strings.Contains(pattern, "*") {
-		return "wildcard"
-	}
-	return "exact"
 }
 
 func (ks *KeyStore) nameExists(name string) bool {
@@ -523,7 +439,6 @@ func cloneKey(key Key) Key {
 	cloned := key
 	cloned.PrivateKey = append([]byte(nil), key.PrivateKey...)
 	cloned.Tags = append([]string(nil), key.Tags...)
-	cloned.HostRules = append([]HostRule(nil), key.HostRules...)
 	if key.LastUsedAt != nil {
 		lastUsedAt := *key.LastUsedAt
 		cloned.LastUsedAt = &lastUsedAt

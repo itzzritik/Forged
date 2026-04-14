@@ -4,11 +4,6 @@ interface RawVaultMetadata {
 	device_name?: string;
 }
 
-interface RawHostRule {
-	match: string;
-	type: string;
-}
-
 interface RawTombstone {
 	deleted_at: string;
 	deleted_by_device?: string;
@@ -23,7 +18,6 @@ interface RawVaultKey {
 	encrypted_private_key?: string;
 	fingerprint?: string;
 	git_signing?: boolean;
-	host_rules?: RawHostRule[];
 	id: string;
 	last_used_at?: string | null;
 	name?: string;
@@ -141,7 +135,6 @@ function mergeKey(base: RawVaultKey | undefined, local: RawVaultKey, remote: Raw
 
 	merged.created_at = earliestTime(base?.created_at, local.created_at, remote.created_at);
 	merged.device_origin = firstNonEmpty(merged.device_origin, local.device_origin, remote.device_origin, localDeviceId);
-	merged.host_rules = mergeHostRules(base?.host_rules, local.host_rules, remote.host_rules);
 	merged.tags = mergeStringSets(base?.tags, local.tags, remote.tags);
 	merged.version = maxNumber(base?.version ?? 0, local.version ?? 0, remote.version ?? 0);
 
@@ -188,31 +181,6 @@ function mergeStringSets(baseValues: string[] | undefined, localValues: string[]
 	return [...merged].sort((left, right) => left.localeCompare(right));
 }
 
-function mergeHostRules(baseRules: RawHostRule[] | undefined, localRules: RawHostRule[] | undefined, remoteRules: RawHostRule[] | undefined): RawHostRule[] {
-	const base = hostRuleMap(baseRules);
-	const local = hostRuleMap(localRules);
-	const remote = hostRuleMap(remoteRules);
-	const merged = new Map<string, RawHostRule>();
-
-	for (const [key, rule] of new Map([...base, ...local, ...remote])) {
-		const inBase = base.has(key);
-		const inLocal = local.has(key);
-		const inRemote = remote.has(key);
-
-		if (inBase) {
-			if (inLocal && inRemote) {
-				merged.set(key, rule);
-			}
-			continue;
-		}
-		if (inLocal || inRemote) {
-			merged.set(key, rule);
-		}
-	}
-
-	return [...merged.values()].sort((left, right) => left.match.localeCompare(right.match) || left.type.localeCompare(right.type));
-}
-
 function enforceGitSigningInvariant(keys: RawVaultKey[], localDeviceId: string, remoteDeviceId: string): RawVaultKey[] {
 	let winnerIndex = -1;
 
@@ -234,14 +202,6 @@ function enforceGitSigningInvariant(keys: RawVaultKey[], localDeviceId: string, 
 
 function indexKeys(keys: RawVaultKey[] | undefined): Map<string, RawVaultKey> {
 	return new Map((keys ?? []).filter((key) => Boolean(key.id)).map((key) => [key.id, cloneKey(key)]));
-}
-
-function hostRuleMap(rules: RawHostRule[] | undefined): Map<string, RawHostRule> {
-	return new Map((rules ?? []).map((rule) => [hostRuleKey(rule), { ...rule }]));
-}
-
-function hostRuleKey(rule: RawHostRule): string {
-	return `${rule.type}\u0000${rule.match}`;
 }
 
 function compareKeyNames(left: RawVaultKey, right: RawVaultKey): number {
@@ -298,11 +258,12 @@ function tieBreakId(key: RawVaultKey, fallback: string): string {
 }
 
 function cloneKey(key: RawVaultKey): RawVaultKey {
-	return {
+	const clone: RawVaultKey = {
 		...key,
-		host_rules: key.host_rules?.map((rule) => ({ ...rule })) ?? [],
 		tags: [...(key.tags ?? [])],
 	};
+	delete clone.host_rules;
+	return clone;
 }
 
 function parseDocument(raw: string): RawVaultDocument {

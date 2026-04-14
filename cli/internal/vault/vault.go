@@ -43,15 +43,9 @@ type Key struct {
 	UpdatedAt           time.Time  `json:"updated_at"`
 	LastUsedAt          *time.Time `json:"last_used_at,omitempty"`
 	Tags                []string   `json:"tags"`
-	HostRules           []HostRule `json:"host_rules"`
 	GitSigning          bool       `json:"git_signing"`
 	Version             int        `json:"version"`
 	DeviceOrigin        string     `json:"device_origin"`
-}
-
-type HostRule struct {
-	Match string `json:"match"`
-	Type  string `json:"type"`
 }
 
 type Metadata struct {

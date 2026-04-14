@@ -1,6 +1,6 @@
 "use client";
 
-import { ChevronDownIcon, ChevronRightIcon, CopyIcon, EyeIcon, EyeOffIcon, PencilIcon, PlusIcon, XIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CopyIcon, EyeIcon, EyeOffIcon, PencilIcon } from "lucide-react";
 import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
@@ -11,7 +11,6 @@ import { cn } from "@/lib/utils";
 import { decryptVaultKeyPrivateKey, type VaultKeyDetails } from "@/lib/vault-crypto";
 
 type KeyDetailsMode = "view" | "edit";
-type DraftHostRule = VaultKeyDetails["hostRules"][number];
 
 interface KeyDetailsModalProps {
 	isSaving?: boolean;
@@ -19,7 +18,7 @@ interface KeyDetailsModalProps {
 	mode: KeyDetailsMode;
 	onClose: () => void;
 	onModeChange: (mode: KeyDetailsMode) => void;
-	onSaveChanges: (updates: { hostRules: DraftHostRule[]; name: string }) => Promise<void> | void;
+	onSaveChanges: (updates: { name: string }) => Promise<void> | void;
 	open: boolean;
 	symmetricKey: CryptoKey | null;
 }
@@ -68,18 +67,19 @@ function buildTimelineEvents(keyDetails: VaultKeyDetails): TimelineEvent[] {
 		});
 	}
 
+	if (keyDetails.lastUsedAt) {
+		events.push({
+			id: "last-used",
+			title: `Last used ${formatTimestamp(keyDetails.lastUsedAt, "detail")}`,
+		});
+	}
+
 	events.push({
 		id: "created",
 		title: `Added ${formatTimestamp(keyDetails.createdAt, "detail")}`,
 	});
 
 	return events;
-}
-
-function detectHostRuleType(pattern: string): string {
-	if (pattern.includes("/")) return "cidr";
-	if (pattern.includes("*")) return "wildcard";
-	return "exact";
 }
 
 function IconButton({
@@ -171,98 +171,16 @@ function TimelineSection({ events, open, onToggle }: { events: TimelineEvent[]; 
 	);
 }
 
-function HostRulesSummary({ rules }: { rules: DraftHostRule[] }) {
-	if (rules.length === 0) {
-		return <span className="text-muted-foreground">No host rules</span>;
-	}
-
-	return <span className="block overflow-hidden text-ellipsis whitespace-nowrap">{rules.map((rule) => rule.match).join(", ")}</span>;
-}
-
-function HostRulesExpandedList({ rules }: { rules: DraftHostRule[] }) {
-	return (
-		<div className="space-y-2">
-			{rules.length === 0 ? <p className="font-mono text-[12px] text-muted-foreground">No host rules</p> : null}
-			{rules.map((rule) => (
-				<div className="font-mono text-[12px] leading-6 text-foreground" key={`${rule.type}:${rule.match}`}>
-					{rule.match}
-				</div>
-			))}
-		</div>
-	);
-}
-
-function HostRulesEditorSection({
-	input,
-	onAdd,
-	onChangeInput,
-	onRemove,
-	rules,
-}: {
-	input: string;
-	onAdd: () => void;
-	onChangeInput: (value: string) => void;
-	onRemove: (match: string) => void;
-	rules: DraftHostRule[];
-}) {
-	return (
-		<div className="space-y-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
-			<div className="flex gap-2">
-				<Input
-					className="h-10 flex-1 border-key-details-border bg-key-details-surface font-mono text-sm"
-					onChange={(event) => onChangeInput(event.target.value)}
-					onKeyDown={(event) => {
-						if (event.key === "Enter") {
-							event.preventDefault();
-							onAdd();
-						}
-					}}
-					placeholder="e.g. github.com, *.github.com, 10.0.0.0/8"
-					value={input}
-				/>
-				<Button className="h-10 shrink-0 px-4" onClick={onAdd} type="button" variant="outline">
-					<PlusIcon className="size-4" />
-					Add
-				</Button>
-			</div>
-
-			<div className="min-h-[4.25rem] rounded-lg border border-key-details-border bg-key-details-surface px-3 py-3 shadow-[inset_0_1px_0_rgba(255,255,255,0.02)]">
-				<div className="flex min-h-8 flex-wrap gap-2">
-					{rules.length === 0 ? (
-						<div className="flex min-h-10 w-full items-center justify-center font-mono text-[11px] text-muted-foreground/80 tracking-[0.06em] uppercase">
-							No host rules yet
-						</div>
-					) : (
-						rules.map((rule) => (
-							<Badge className="gap-2 border-key-details-border bg-key-details-surface px-2.5 py-1 text-foreground hover:bg-key-details-surface" key={`${rule.type}:${rule.match}`} variant="outline">
-								<span className="max-w-[16rem] overflow-hidden text-ellipsis whitespace-nowrap font-mono text-[11px]">{rule.match}</span>
-								<button className="text-muted-foreground transition-colors hover:text-foreground" onClick={() => onRemove(rule.match)} type="button">
-									<XIcon className="size-3" />
-								</button>
-							</Badge>
-						))
-					)}
-				</div>
-			</div>
-		</div>
-	);
-}
-
 export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange, onSaveChanges, symmetricKey, isSaving }: KeyDetailsModalProps) {
 	const [draftName, setDraftName] = useState("");
-	const [draftRules, setDraftRules] = useState<DraftHostRule[]>([]);
-	const [hostRuleInput, setHostRuleInput] = useState("");
 	const [revealedPrivateKey, setRevealedPrivateKey] = useState<string | null>(null);
 	const [isRevealing, setIsRevealing] = useState(false);
 	const [privateKeyError, setPrivateKeyError] = useState<string | null>(null);
 	const [timelineOpen, setTimelineOpen] = useState(false);
-	const [hostRulesOpen, setHostRulesOpen] = useState(false);
 
 	useEffect(() => {
 		setDraftName(keyDetails?.name ?? "");
-		setDraftRules(keyDetails?.hostRules ?? []);
-		setHostRuleInput("");
-	}, [keyDetails?.id, keyDetails?.name, keyDetails?.hostRules, mode]);
+	}, [keyDetails?.id, keyDetails?.name, mode]);
 
 	useEffect(() => {
 		if (!open) {
@@ -270,8 +188,6 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 			setPrivateKeyError(null);
 			setIsRevealing(false);
 			setTimelineOpen(false);
-			setHostRulesOpen(false);
-			setHostRuleInput("");
 		}
 	}, [open]);
 
@@ -280,8 +196,6 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 		setPrivateKeyError(null);
 		setIsRevealing(false);
 		setTimelineOpen(false);
-		setHostRulesOpen(false);
-		setHostRuleInput("");
 	}, [keyDetails?.id, mode]);
 
 	const handleCopy = useCallback(async (value: string, successMessage: string) => {
@@ -312,35 +226,16 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 		setPrivateKeyError(null);
 		setIsRevealing(false);
 		setTimelineOpen(false);
-		setHostRulesOpen(false);
-		setHostRuleInput("");
 		onClose();
 	}, [onClose]);
 
 	const handleSave = useCallback(async () => {
 		const trimmed = draftName.trim();
 		if (!trimmed) return;
-		await onSaveChanges({ name: trimmed, hostRules: draftRules });
-	}, [draftName, draftRules, onSaveChanges]);
-
-	const handleAddHostRule = useCallback(() => {
-		const trimmed = hostRuleInput.trim();
-		if (!trimmed) return;
-		if (draftRules.some((rule) => rule.match === trimmed)) {
-			setHostRuleInput("");
-			return;
-		}
-		setDraftRules((current) => [...current, { match: trimmed, type: detectHostRuleType(trimmed) }]);
-		setHostRuleInput("");
-	}, [draftRules, hostRuleInput]);
-
-	const handleRemoveHostRule = useCallback((match: string) => {
-		setDraftRules((current) => current.filter((rule) => rule.match !== match));
-	}, []);
+		await onSaveChanges({ name: trimmed });
+	}, [draftName, onSaveChanges]);
 
 	const timelineEvents = useMemo(() => (keyDetails ? buildTimelineEvents(keyDetails) : []), [keyDetails]);
-	const hostRulesSummary = useMemo(() => draftRules.map((rule) => rule.match).join(", "), [draftRules]);
-	const shouldRevealHostRules = mode === "edit" || draftRules.length > 1 || hostRulesSummary.length > 52;
 
 	if (!keyDetails) {
 		return (
@@ -426,22 +321,6 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 
 							{privateKeyError ? <p className="-mt-2 text-destructive text-xs">{privateKeyError}</p> : null}
 
-							<DetailRow
-								action={
-									shouldRevealHostRules ? (
-										hostRulesOpen ? (
-											<IconButton icon={<ChevronDownIcon className="size-4" />} label="Hide host rules" onClick={() => setHostRulesOpen(false)} />
-										) : (
-											<IconButton icon={<ChevronRightIcon className="size-4" />} label="Reveal host rules" onClick={() => setHostRulesOpen(true)} />
-										)
-									) : undefined
-								}
-								expanded={hostRulesOpen ? <HostRulesExpandedList rules={draftRules} /> : null}
-								label="Host rules"
-								mono
-								value={<HostRulesSummary rules={draftRules} />}
-							/>
-
 							<TimelineSection events={timelineEvents} onToggle={() => setTimelineOpen((openState) => !openState)} open={timelineOpen} />
 						</div>
 					) : (
@@ -474,19 +353,6 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 										value={draftName}
 									/>
 								</div>
-							</div>
-
-							<div className="rounded-lg border border-key-details-border bg-key-details-surface px-5 py-5 shadow-[0_24px_60px_-40px_rgba(0,0,0,0.55)] transition-colors duration-200 animate-in fade-in-0 slide-in-from-bottom-2">
-								<div className="mb-3">
-									<label className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.12em]">Host rules</label>
-								</div>
-								<HostRulesEditorSection
-									input={hostRuleInput}
-									onAdd={handleAddHostRule}
-									onChangeInput={setHostRuleInput}
-									onRemove={handleRemoveHostRule}
-									rules={draftRules}
-								/>
 							</div>
 
 							<ModalFooter className="justify-end">

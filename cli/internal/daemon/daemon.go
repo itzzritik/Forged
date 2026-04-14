@@ -13,7 +13,6 @@ import (
 	"sort"
 	"strconv"
 	"syscall"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/itzzritik/forged/cli/internal/activity"
@@ -217,10 +216,6 @@ func (d *Daemon) loadRoutingState() error {
 		return nil
 	}
 
-	now := time.Now().UTC()
-	for _, hint := range sshrouting.LegacyHints(d.keyStore.List()) {
-		d.routingState.RecordSuccess(hint.Host, 22, hint.KeyID, now)
-	}
 	return d.routingStore.Save(d.routingState)
 }
 

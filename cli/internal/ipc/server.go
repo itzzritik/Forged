@@ -140,12 +140,6 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleView(req.Args)
 	case CmdExportAll:
 		return s.handleExportAll(req.Args)
-	case CmdHost:
-		return s.handleHost(req.Args)
-	case CmdUnhost:
-		return s.handleUnhost(req.Args)
-	case CmdHosts:
-		return s.handleHosts()
 	case CmdActivity:
 		return s.handleActivity(req.Args)
 	case CmdSyncTrigger:
@@ -337,7 +331,6 @@ func (s *Server) handleView(raw json.RawMessage) Response {
 		"fingerprint":   key.Fingerprint,
 		"public_key":    key.PublicKey,
 		"comment":       key.Comment,
-		"host_rules":    key.HostRules,
 		"created_at":    key.CreatedAt.Format(time.RFC3339),
 		"updated_at":    key.UpdatedAt.Format(time.RFC3339),
 		"version":       key.Version,
@@ -385,7 +378,6 @@ func (s *Server) handleExportAll(raw json.RawMessage) Response {
 		Fingerprint string `json:"fingerprint"`
 		Comment     string `json:"comment"`
 		GitSigning  bool   `json:"git_signing"`
-		HostRules   any    `json:"host_rules"`
 		CreatedAt   string `json:"created_at"`
 		UpdatedAt   string `json:"updated_at"`
 	}
@@ -402,76 +394,12 @@ func (s *Server) handleExportAll(raw json.RawMessage) Response {
 			Fingerprint: k.Fingerprint,
 			Comment:     k.Comment,
 			GitSigning:  k.GitSigning,
-			HostRules:   k.HostRules,
 			CreatedAt:   k.CreatedAt.Format("2006-01-02T15:04:05Z"),
 			UpdatedAt:   k.UpdatedAt.Format("2006-01-02T15:04:05Z"),
 		})
 	}
 
 	return OkResponse(exported)
-}
-
-type hostArgs struct {
-	KeyName  string   `json:"key_name"`
-	Patterns []string `json:"patterns"`
-}
-
-func (s *Server) handleHost(raw json.RawMessage) Response {
-	var a hostArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
-	}
-
-	resolvedName, err := s.resolveKeyName(a.KeyName)
-	if err != nil {
-		return ErrorResponse(err)
-	}
-	for _, p := range a.Patterns {
-		if err := s.keyStore.AddHostRule(resolvedName, p); err != nil {
-			return ErrorResponse(err)
-		}
-	}
-	s.afterKeyMutation("host_rule_added")
-	return OkResponse(map[string]string{"resolved_name": resolvedName})
-}
-
-type unhostArgs struct {
-	KeyName string `json:"key_name"`
-	Pattern string `json:"pattern"`
-}
-
-func (s *Server) handleUnhost(raw json.RawMessage) Response {
-	var a unhostArgs
-	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
-	}
-
-	resolvedName, err := s.resolveKeyName(a.KeyName)
-	if err != nil {
-		return ErrorResponse(err)
-	}
-	if err := s.keyStore.RemoveHostRule(resolvedName, a.Pattern); err != nil {
-		return ErrorResponse(err)
-	}
-	s.afterKeyMutation("host_rule_removed")
-	return OkResponse(map[string]string{"resolved_name": resolvedName})
-}
-
-func (s *Server) handleHosts() Response {
-	s.refreshForRead("hosts")
-
-	keys := s.keyStore.List()
-	type mapping struct {
-		KeyName string           `json:"key_name"`
-		Rules   []vault.HostRule `json:"rules"`
-	}
-	var mappings []mapping
-	for _, k := range keys {
-		if len(k.HostRules) > 0 {
-			mappings = append(mappings, mapping{KeyName: k.Name, Rules: k.HostRules})
-		}
-	}
-	return OkResponse(map[string]any{"mappings": mappings})
 }
 
 type activityArgs struct {

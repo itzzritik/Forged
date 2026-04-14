@@ -10,7 +10,6 @@ import (
 type Config struct {
 	Agent AgentConfig `toml:"agent"`
 	Sync  SyncConfig  `toml:"sync"`
-	Hosts []HostRule  `toml:"hosts"`
 }
 
 type AgentConfig struct {
@@ -22,13 +21,6 @@ type SyncConfig struct {
 	Server   string `toml:"server"`
 	Interval string `toml:"interval"`
 	Enabled  bool   `toml:"enabled"`
-}
-
-type HostRule struct {
-	Name       string   `toml:"name"`
-	Match      []string `toml:"match"`
-	Key        string   `toml:"key"`
-	GitSigning bool     `toml:"git_signing"`
 }
 
 func Load(path string) (Config, error) {

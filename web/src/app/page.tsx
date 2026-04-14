@@ -67,21 +67,6 @@ const ROUTING_DEMO: TerminalStep[] = [
 		pauseAfter: 2500,
 	},
 	{
-		command: 'forged host github "github.com" "*.github.com"',
-		output: ["Mapped github to [github.com *.github.com]"],
-		pauseAfter: 1800,
-	},
-	{
-		command: 'forged host deploy "*.prod.company.com" "10.0.*"',
-		output: ["Mapped deploy to [*.prod.company.com 10.0.*]"],
-		pauseAfter: 2200,
-	},
-	{
-		command: "forged hosts",
-		output: ["  github\tgithub.com\t(exact)", "  github\t*.github.com\t(wildcard)", "  deploy\t*.prod.company.com\t(wildcard)", "  deploy\t10.0.*\t(wildcard)"],
-		pauseAfter: 2800,
-	},
-	{
 		command: "ssh git@github.com",
 		output: ["Hi user! You've successfully authenticated.", "Connection to github.com closed."],
 		pauseAfter: 2200,
@@ -188,12 +173,12 @@ function GridFeatures() {
 		},
 		{
 			icon: "M12 8v4m0 4h.01M21 12a9 9 0 1 1-18 0 9 9 0 0 1 18 0z",
-			title: "Intelligent Binding",
-			subtitle: "Pattern-matched routing",
-			desc: "SSH throws every key at the server until banned. Forged binds specific keys to specific hosts using wildcard and regex patterns.",
-			bullets: ["Wildcard host matching", "Regex pattern support", "Eliminates auth failures"],
-			cta: "Configure Hosts",
-			href: "/docs#host-matching",
+			title: "Adaptive Routing",
+			subtitle: "Low-touch key selection",
+			desc: "SSH throws every key at the server until banned. Forged learns which key works for each host and keeps advanced provider routing local to the device.",
+			bullets: ["Learns host affinity", "Keeps routing local", "Eliminates auth failures"],
+			cta: "View SSH Docs",
+			href: "/docs#ssh-integration",
 		},
 		{
 			icon: "M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 1 1 3.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z",

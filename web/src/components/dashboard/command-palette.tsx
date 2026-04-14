@@ -151,20 +151,16 @@ export const CommandPalette = ({ open, onOpenChange, keys }: CommandPaletteProps
 
 				{keys.length > 0 && (
 					<>
-						<CommandGroup heading="SSH Keys">
-							{keys.map((key) => {
-								const hosts = key.hostRules.map((r) => r.match).join(", ");
-								return (
-									<CommandItem key={key.id} onSelect={() => run(() => copyPublicKey(key))} value={`key-${key.name}-${key.type}`}>
-										<KeyIcon />
-										<span className="flex-1 truncate">{key.name}</span>
-										<span className="max-w-50 truncate text-muted-foreground text-xs">
-											{key.type}
-											{hosts ? ` · ${hosts}` : ""}
-										</span>
-										<CommandShortcut>Copy</CommandShortcut>
-									</CommandItem>
-								);
+				<CommandGroup heading="SSH Keys">
+					{keys.map((key) => {
+						return (
+							<CommandItem key={key.id} onSelect={() => run(() => copyPublicKey(key))} value={`key-${key.name}-${key.type}`}>
+								<KeyIcon />
+								<span className="flex-1 truncate">{key.name}</span>
+								<span className="max-w-50 truncate text-muted-foreground text-xs">{key.type}</span>
+								<CommandShortcut>Copy</CommandShortcut>
+							</CommandItem>
+						);
 							})}
 						</CommandGroup>
 						<CommandSeparator />

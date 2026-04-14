@@ -285,7 +285,6 @@ type viewResult struct {
 	PublicKey    string           `json:"public_key"`
 	PrivateKey   string           `json:"private_key,omitempty"`
 	Comment      string           `json:"comment,omitempty"`
-	HostRules    []vault.HostRule `json:"host_rules"`
 	CreatedAt    string           `json:"created_at,omitempty"`
 	UpdatedAt    string           `json:"updated_at,omitempty"`
 	LastUsedAt   string           `json:"last_used_at,omitempty"`
@@ -302,7 +301,6 @@ type exportedKey struct {
 	Fingerprint string `json:"fingerprint"`
 	Comment     string `json:"comment"`
 	GitSigning  bool   `json:"git_signing"`
-	HostRules   any    `json:"host_rules"`
 	CreatedAt   string `json:"created_at"`
 	UpdatedAt   string `json:"updated_at"`
 }
@@ -358,7 +356,6 @@ func exportVault(cmd *cobra.Command) error {
 				"fingerprint": k.Fingerprint,
 				"key_type":    k.Type,
 				"comment":     k.Comment,
-				"host_rules":  k.HostRules,
 				"git_signing": k.GitSigning,
 			},
 			"created_at": k.CreatedAt,
@@ -510,16 +507,6 @@ func printViewDetailBlock(result viewResult, full bool) {
 		}
 		fmt.Println()
 	}
-
-	printViewSection("Host rules")
-	if len(result.HostRules) == 0 {
-		fmt.Println("    None")
-	} else {
-		for _, rule := range result.HostRules {
-			fmt.Printf("    %s\n", rule.Match)
-		}
-	}
-	fmt.Println()
 
 	printViewSection("Metadata")
 	printOptionalMetadata("Created", formatViewTimestamp(result.CreatedAt))

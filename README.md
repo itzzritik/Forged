@@ -53,16 +53,6 @@ forged view my-key                              # inspect a key
 forged remove old-key                           # delete a key
 ```
 
-## Host hints
-
-Forged learns from successful SSH use locally. You can still add optional host hints when you want to bias routing or describe a key's intended use.
-
-```bash
-forged host my-key "github.com" "*.github.com"
-forged host deploy "*.prod.company.com" "10.0.*"
-forged hosts                                    # list all mappings
-```
-
 ## How it works
 
 Forged runs as a background daemon. It speaks the standard SSH agent protocol, so every SSH client already supports it. Your keys are encrypted at rest and only decrypted in locked memory while the daemon runs.
@@ -120,10 +110,6 @@ forged remove <name>             delete a key
 forged view <name> [--full]      inspect a key
 forged export [--out <path>]     export the full vault
 forged rename <old> <new>        rename a key
-
-forged host <key> <patterns>     map key to hosts
-forged hosts                     list all mappings
-forged unhost <key> <pattern>    remove a mapping
 
 forged lock / unlock             clear or restore keys in memory
 forged logs                      tail daemon logs
