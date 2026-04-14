@@ -13,6 +13,10 @@
   },
   "os": ["__NPM_OS__"],
   "cpu": ["__NPM_CPU__"],
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org/"
+  },
   "files": [
     "bin"
   ]

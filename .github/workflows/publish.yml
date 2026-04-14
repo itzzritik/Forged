@@ -1,0 +1,131 @@
+name: Publish
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: Release bump
+        required: true
+        default: patch
+        type: choice
+        options:
+          - patch
+          - minor
+          - major
+  push:
+    branches:
+      - main
+    paths:
+      - .github/workflows/publish.yml
+      - .goreleaser.yml
+      - cli/**
+      - npm/**
+      - proto/**
+      - scripts/build-forged-auth-release.sh
+      - scripts/build-npm-packages.sh
+
+permissions:
+  contents: write
+  id-token: write
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  publish:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: "1.25"
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v6
+        with:
+          node-version: 24
+          registry-url: https://registry.npmjs.org
+
+      - name: Configure git
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+      - name: Fetch tags
+        run: git fetch --force --tags origin
+
+      - name: Determine next version
+        id: version
+        env:
+          RELEASE_TYPE: ${{ github.event.inputs.version || 'patch' }}
+        run: |
+          latest_tag="$(git tag --list 'v*' --sort=version:refname | tail -n 1)"
+
+          if [[ -z "$latest_tag" ]]; then
+            next_tag="v0.1.0"
+          else
+            version="${latest_tag#v}"
+            IFS='.' read -r major minor patch <<< "$version"
+
+            case "$RELEASE_TYPE" in
+              patch)
+                patch=$((patch + 1))
+                ;;
+              minor)
+                minor=$((minor + 1))
+                patch=0
+                ;;
+              major)
+                major=$((major + 1))
+                minor=0
+                patch=0
+                ;;
+              *)
+                echo "unsupported release type: $RELEASE_TYPE" >&2
+                exit 1
+                ;;
+            esac
+
+            next_tag="v${major}.${minor}.${patch}"
+          fi
+
+          echo "tag=$next_tag" >> "$GITHUB_OUTPUT"
+          echo "version=${next_tag#v}" >> "$GITHUB_OUTPUT"
+
+      - name: Create local release tag
+        run: git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+
+      - name: Build release artifacts
+        uses: goreleaser/goreleaser-action@v7
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: release --clean --skip=announce,publish,homebrew,nfpm,scoop
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build npm packages
+        env:
+          VERSION: ${{ steps.version.outputs.tag }}
+        run: ./scripts/build-npm-packages.sh "$VERSION"
+
+      - name: Publish npm platform packages
+        run: |
+          npm publish --provenance dist/npm/@getforged/cli-darwin-x64
+          npm publish --provenance dist/npm/@getforged/cli-darwin-arm64
+          npm publish --provenance dist/npm/@getforged/cli-linux-x64
+          npm publish --provenance dist/npm/@getforged/cli-linux-arm64
+          npm publish --provenance dist/npm/@getforged/cli-win32-x64
+          npm publish --provenance dist/npm/@getforged/cli-win32-arm64
+
+      - name: Publish npm wrapper package
+        run: npm publish --provenance dist/npm/cli
+
+      - name: Push release tag
+        run: git push origin "${{ steps.version.outputs.tag }}"
