@@ -2,6 +2,10 @@ version: 2
 
 project_name: forged
 
+before:
+  hooks:
+    - ./scripts/build-forged-auth-release.sh
+
 builds:
   - id: forged
     main: ./cli/cmd/forged
@@ -37,6 +41,9 @@ builds:
 
 archives:
   - format: tar.gz
+    files:
+      - src: dist/helpers/{{ .Os }}_{{ .Arch }}/forged-auth{{ if eq .Os "windows" }}.exe{{ end }}
+        strip_parent: true
     format_overrides:
       - goos: windows
         format: zip
@@ -50,6 +57,7 @@ brews:
     install: |
       bin.install "forged"
       bin.install "forged-sign"
+      bin.install "forged-auth"
 
 nfpms:
   - package_name: forged
@@ -60,6 +68,11 @@ nfpms:
     formats:
       - deb
       - rpm
+    contents:
+      - src: dist/helpers/linux_{{ .Arch }}/forged-auth
+        dst: /usr/bin/forged-auth
+        file_info:
+          mode: 0755
 
 scoops:
   - repository:

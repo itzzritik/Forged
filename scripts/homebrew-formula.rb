@@ -33,5 +33,6 @@ class Forged < Formula
   def install
     bin.install "forged"
     bin.install "forged-sign"
+    bin.install "forged-auth"
   end
 end

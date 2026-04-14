@@ -6,11 +6,11 @@
   "architecture": {
     "64bit": {
       "url": "https://github.com/itzzritik/forged/releases/download/v0.1.0/forged-windows-amd64.zip",
-      "bin": ["forged.exe", "forged-sign.exe"]
+      "bin": ["forged.exe", "forged-sign.exe", "forged-auth.exe"]
     },
     "arm64": {
       "url": "https://github.com/itzzritik/forged/releases/download/v0.1.0/forged-windows-arm64.zip",
-      "bin": ["forged.exe", "forged-sign.exe"]
+      "bin": ["forged.exe", "forged-sign.exe", "forged-auth.exe"]
     }
   },
   "checkver": "github",

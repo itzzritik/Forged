@@ -38,6 +38,7 @@ jobs:
           cd cli
           go build -o ../scripts/msi/forged.exe ./cmd/forged
           go build -o ../scripts/msi/forged-sign.exe ./cmd/forged-sign
+          go build -o ../scripts/msi/forged-auth.exe ./cmd/forged-auth
 
       - name: Install WiX
         run: dotnet tool install --global wix

@@ -31,6 +31,9 @@
       <Component Id="ForgedSignComponent">
         <File Id="ForgedSignExe" Source="forged-sign.exe" />
       </Component>
+      <Component Id="ForgedAuthComponent">
+        <File Id="ForgedAuthExe" Source="forged-auth.exe" />
+      </Component>
     </ComponentGroup>
 
     <ComponentGroup Id="PathEntry" Directory="INSTALLFOLDER">

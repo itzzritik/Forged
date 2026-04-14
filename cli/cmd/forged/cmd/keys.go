@@ -231,7 +231,18 @@ var removeCmd = &cobra.Command{
 var exportCmd = &cobra.Command{
 	Use:   "export",
 	Short: "Export the full vault to a Forged JSON file",
-	Args:  cobra.ArbitraryArgs,
+	Long: strings.TrimSpace(`
+Export the full Forged vault, including private keys, to a JSON file.
+
+This command always requires sensitive authentication. In an interactive
+terminal, Forged opens a native save picker first and falls back to a
+"Save path:" prompt if needed. In non-interactive use, pass --out.
+	`),
+	Example: strings.TrimSpace(`
+  forged export
+  forged export --out ~/Desktop/forged-export.json
+	`),
+	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
 			return fmt.Errorf("forged export no longer accepts a key name.\nUse `forged view <name>` to inspect a key, or `forged export` to export the full vault")
@@ -247,7 +258,19 @@ var exportCmd = &cobra.Command{
 var viewCmd = &cobra.Command{
 	Use:   "view <name>",
 	Short: "View key details",
-	Args:  cobra.ExactArgs(1),
+	Long: strings.TrimSpace(`
+View details for a single key in the vault.
+
+By default, this shows safe metadata only. Use --full to include the
+private key after sensitive authentication. Successful --full access
+reuses a 4-hour view lease until it expires, the daemon restarts,
+Forged is locked, or the OS session lock is detected.
+	`),
+	Example: strings.TrimSpace(`
+  forged view "Github (ItzzRitik)"
+  forged view github --full
+	`),
+	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		full, _ := cmd.Flags().GetBool("full")
 		return viewKey(args[0], full)
@@ -291,6 +314,17 @@ func exportVault(cmd *cobra.Command) error {
 		if !terminalIsInteractive() {
 			return fmt.Errorf("forged export requires --out when not interactive")
 		}
+	}
+
+	authResult, err := authorizeSensitiveAction(sensitiveauth.ActionExport)
+	if err != nil {
+		return err
+	}
+	if authResult.ExportToken == "" {
+		return fmt.Errorf("export authorization did not return a token")
+	}
+
+	if outPath == "" {
 		if selection, ok := chooseSavePathWithPicker(defaultName); ok {
 			outPath = selection
 		} else {
@@ -301,14 +335,6 @@ func exportVault(cmd *cobra.Command) error {
 			}
 		}
 		printStepSeparator()
-	}
-
-	authResult, err := authorizeSensitiveAction(sensitiveauth.ActionExport)
-	if err != nil {
-		return err
-	}
-	if authResult.ExportToken == "" {
-		return fmt.Errorf("export authorization did not return a token")
 	}
 
 	resp, err := ctlClient().Call(ipc.CmdExportAll, map[string]string{"token": authResult.ExportToken})
@@ -466,24 +492,26 @@ func zeroPassword(password []byte) {
 }
 
 func printViewDetailBlock(result viewResult, full bool) {
-	fmt.Printf("  %s\n", result.Name)
-	fmt.Printf("  %s\n", result.Type)
-	fmt.Printf("  %s\n", result.Fingerprint)
+	const labelWidth = 11
+
+	printViewIdentity(labelWidth, "Name", result.Name)
+	printViewIdentity(labelWidth, "Type", result.Type)
+	printViewIdentity(labelWidth, "Fingerprint", result.Fingerprint)
 	fmt.Println()
 
-	fmt.Println("  Public key")
+	printViewSection("Public key")
 	fmt.Printf("    %s\n", result.PublicKey)
 	fmt.Println()
 
 	if full && result.PrivateKey != "" {
-		fmt.Println("  Private key")
+		printViewSection("Private key")
 		for _, line := range strings.Split(strings.TrimRight(result.PrivateKey, "\n"), "\n") {
 			fmt.Printf("    %s\n", line)
 		}
 		fmt.Println()
 	}
 
-	fmt.Println("  Host rules")
+	printViewSection("Host rules")
 	if len(result.HostRules) == 0 {
 		fmt.Println("    None")
 	} else {
@@ -493,30 +521,42 @@ func printViewDetailBlock(result viewResult, full bool) {
 	}
 	fmt.Println()
 
-	fmt.Println("  Metadata")
-	if result.CreatedAt != "" {
-		fmt.Printf("    Created:   %s\n", formatViewTimestamp(result.CreatedAt))
-	}
-	if result.UpdatedAt != "" {
-		fmt.Printf("    Updated:   %s\n", formatViewTimestamp(result.UpdatedAt))
-	}
-	if result.LastUsedAt != "" {
-		fmt.Printf("    Last used: %s\n", formatViewTimestamp(result.LastUsedAt))
-	}
+	printViewSection("Metadata")
+	printOptionalMetadata("Created", formatViewTimestamp(result.CreatedAt))
+	printOptionalMetadata("Updated", formatViewTimestamp(result.UpdatedAt))
+	printOptionalMetadata("Last used", formatViewTimestamp(result.LastUsedAt))
 	if result.Version > 0 {
-		fmt.Printf("    Version:   %d\n", result.Version)
+		fmt.Printf("    %-10s %d\n", "Version:", result.Version)
 	}
 	if result.DeviceOrigin != "" {
-		fmt.Printf("    Device:    %s\n", result.DeviceOrigin)
+		fmt.Printf("    %-10s %s\n", "Device:", result.DeviceOrigin)
 	}
 }
 
 func formatViewTimestamp(raw string) string {
+	if raw == "" {
+		return ""
+	}
 	t, err := time.Parse(time.RFC3339, raw)
 	if err != nil {
 		return raw
 	}
 	return t.UTC().Format("2006-01-02 15:04 UTC")
+}
+
+func printViewIdentity(width int, label, value string) {
+	fmt.Printf("  \x1b[2m%-*s\x1b[0m  %s\n", width, label, value)
+}
+
+func printViewSection(title string) {
+	fmt.Printf("  \x1b[2m%s\x1b[0m\n", title)
+}
+
+func printOptionalMetadata(label, value string) {
+	if value == "" {
+		return
+	}
+	fmt.Printf("    %-10s %s\n", label+":", value)
 }
 
 var renameCmd = &cobra.Command{
@@ -547,7 +587,7 @@ func init() {
 	addCmd.Flags().StringP("comment", "c", "", "key comment")
 	generateCmd.Flags().StringP("comment", "c", "", "key comment")
 	exportCmd.Flags().Bool("all", false, "legacy full-vault export flag")
-	exportCmd.Flags().StringP("out", "o", "", "output file path")
+	exportCmd.Flags().StringP("out", "o", "", "write the export to this file path")
 	_ = exportCmd.Flags().MarkHidden("all")
-	viewCmd.Flags().Bool("full", false, "include the private key after authentication")
+	viewCmd.Flags().Bool("full", false, "include the private key after sensitive authentication")
 }

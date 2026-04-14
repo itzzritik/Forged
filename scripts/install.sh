@@ -36,7 +36,8 @@ tar xzf "$TMPDIR/forged.tar.gz" -C "$TMPDIR"
 
 cp "$TMPDIR/forged" "$INSTALL_DIR/forged"
 cp "$TMPDIR/forged-sign" "$INSTALL_DIR/forged-sign"
-chmod +x "$INSTALL_DIR/forged" "$INSTALL_DIR/forged-sign"
+cp "$TMPDIR/forged-auth" "$INSTALL_DIR/forged-auth"
+chmod +x "$INSTALL_DIR/forged" "$INSTALL_DIR/forged-sign" "$INSTALL_DIR/forged-auth"
 
 echo "Installed to $INSTALL_DIR"
 echo ""
