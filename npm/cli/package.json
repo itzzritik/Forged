@@ -1,0 +1,31 @@
+{
+  "name": "@getforged/cli",
+  "version": "0.0.0-dev",
+  "description": "Forged CLI",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/itzzritik/Forged.git"
+  },
+  "homepage": "https://github.com/itzzritik/Forged#readme",
+  "bugs": {
+    "url": "https://github.com/itzzritik/Forged/issues"
+  },
+  "bin": {
+    "forged": "bin/forged.js"
+  },
+  "optionalDependencies": {
+    "@getforged/cli-darwin-x64": "0.0.0-dev",
+    "@getforged/cli-darwin-arm64": "0.0.0-dev",
+    "@getforged/cli-linux-x64": "0.0.0-dev",
+    "@getforged/cli-linux-arm64": "0.0.0-dev",
+    "@getforged/cli-win32-x64": "0.0.0-dev",
+    "@getforged/cli-win32-arm64": "0.0.0-dev"
+  },
+  "files": [
+    "bin"
+  ],
+  "engines": {
+    "node": ">=18"
+  }
+}

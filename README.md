@@ -21,8 +21,12 @@ Forged fixes all of this in a single binary.
 
 ## Install
 
-```
+```bash
 brew install forged
+```
+
+```bash
+npm i -g @getforged/cli
 ```
 
 ## Quick start
@@ -45,7 +49,7 @@ git push origin main             # commits signed, automatically
 forged generate my-key                          # new Ed25519 key
 forged add work-key --file ~/.ssh/id_ed25519    # import existing
 forged list                                     # show all keys
-forged export my-key                            # public key to stdout
+forged view my-key                              # inspect a key
 forged remove old-key                           # delete a key
 ```
 
@@ -105,7 +109,8 @@ forged generate <name>           new Ed25519 key pair
 forged add <name> --file <path>  import existing key
 forged list                      all keys in vault
 forged remove <name>             delete a key
-forged export <name>             public key to stdout
+forged view <name> [--full]      inspect a key
+forged export [--out <path>]     export the full vault
 forged rename <old> <new>        rename a key
 
 forged host <key> <patterns>     map key to hosts
