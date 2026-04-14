@@ -42,7 +42,7 @@ builds:
 archives:
   - format: tar.gz
     files:
-      - src: dist/helpers/{{ .Os }}_{{ .Arch }}/forged-auth{{ if eq .Os "windows" }}.exe{{ end }}
+      - src: build/forged-auth-release/{{ .Os }}_{{ .Arch }}/forged-auth{{ if eq .Os "windows" }}.exe{{ end }}
         strip_parent: true
     format_overrides:
       - goos: windows
@@ -69,7 +69,7 @@ nfpms:
       - deb
       - rpm
     contents:
-      - src: dist/helpers/linux_{{ .Arch }}/forged-auth
+      - src: build/forged-auth-release/linux_{{ .Arch }}/forged-auth
         dst: /usr/bin/forged-auth
         file_info:
           mode: 0755

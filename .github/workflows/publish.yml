@@ -107,8 +107,6 @@ jobs:
           distribution: goreleaser
           version: "~> v2"
           args: release --clean --skip=announce,publish,homebrew,nfpm,scoop
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Build npm packages
         env:
@@ -117,15 +115,19 @@ jobs:
 
       - name: Publish npm platform packages
         run: |
-          npm publish --provenance dist/npm/@getforged/cli-darwin-x64
-          npm publish --provenance dist/npm/@getforged/cli-darwin-arm64
-          npm publish --provenance dist/npm/@getforged/cli-linux-x64
-          npm publish --provenance dist/npm/@getforged/cli-linux-arm64
-          npm publish --provenance dist/npm/@getforged/cli-win32-x64
-          npm publish --provenance dist/npm/@getforged/cli-win32-arm64
+          for package in \
+            @getforged/cli-darwin-x64 \
+            @getforged/cli-darwin-arm64 \
+            @getforged/cli-linux-x64 \
+            @getforged/cli-linux-arm64 \
+            @getforged/cli-win32-x64 \
+            @getforged/cli-win32-arm64
+          do
+            npm publish --access public --provenance "dist/npm/$package"
+          done
 
       - name: Publish npm wrapper package
-        run: npm publish --provenance dist/npm/cli
+        run: npm publish --access public --provenance dist/npm/cli
 
       - name: Push release tag
         run: git push origin "${{ steps.version.outputs.tag }}"

@@ -7,7 +7,7 @@ repo_root=$(
 
 cd "$repo_root/cli"
 
-helpers_dir="$repo_root/dist/helpers"
+helpers_dir="$repo_root/build/forged-auth-release"
 rm -rf "$helpers_dir"
 mkdir -p "$helpers_dir"
 
