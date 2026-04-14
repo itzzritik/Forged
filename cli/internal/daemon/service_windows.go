@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 )
@@ -91,6 +92,38 @@ func UninstallService() error {
 func ServiceInstalled() bool {
 	cmd := exec.Command("schtasks", "/Query", "/TN", taskName)
 	return cmd.Run() == nil
+}
+
+func InspectService(paths config.Paths) (ServiceStatus, error) {
+	status := DefaultServiceStatus()
+	if !ServiceInstalled() {
+		status.Detail = "not installed"
+		return status, nil
+	}
+
+	status.Installed = true
+	status.ConfigValid = true
+
+	cmd := exec.Command("schtasks", "/Query", "/TN", taskName, "/FO", "LIST")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		status.Detail = string(out)
+		if status.Detail == "" {
+			status.Detail = err.Error()
+		}
+		return status, nil
+	}
+
+	detail := strings.TrimSpace(string(out))
+	status.Loaded = true
+	status.Running = strings.Contains(detail, "Status: Running")
+	if status.Running {
+		status.Detail = "running"
+	} else {
+		status.Detail = "installed"
+	}
+
+	return status, nil
 }
 
 func findBinary() (string, error) {

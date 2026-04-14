@@ -22,6 +22,9 @@ var rootCmd = &cobra.Command{
 	Short: "SSH key management — forge your keys, take them anywhere",
 	Long:  "Forged is a cross-platform SSH key manager with zero-knowledge encrypted sync and Git commit signing.",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if shouldLaunchBareForged(args) {
+			return runBareForged(cmd)
+		}
 		return statusRun(cmd, args)
 	},
 	SilenceUsage:  true,

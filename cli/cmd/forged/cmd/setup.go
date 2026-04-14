@@ -34,13 +34,11 @@ var setupCmd = &cobra.Command{
 			return err
 		}
 
-		v, err := vault.Create(paths.VaultFile(), password)
+		v, ks, err := createVaultAtPaths(paths, password)
 		if err != nil {
-			return fmt.Errorf("creating vault: %w", err)
+			return err
 		}
 		defer v.Close()
-
-		ks := vault.NewKeyStore(v)
 
 		discovered := hostmatch.DiscoverSSHKeys()
 		if len(discovered) > 0 {
@@ -54,7 +52,7 @@ var setupCmd = &cobra.Command{
 			}
 		}
 
-		if err := writeDefaultConfig(paths); err != nil {
+		if err := ensureDefaultConfig(paths); err != nil {
 			fmt.Printf("Warning: could not write config: %v\n", err)
 		}
 
@@ -73,18 +71,13 @@ var setupCmd = &cobra.Command{
 		}
 
 		fmt.Println("\nInstalling daemon service...")
-		if err := daemon.InstallService(paths, string(password)); err != nil {
-			fmt.Printf("Warning: could not install service: %v\n", err)
+		if err := ensureLocalService(paths, password); err != nil {
+			fmt.Printf("Warning: could not install or start service: %v\n", err)
 			fmt.Println("You can start manually with: forged daemon")
 		} else {
-			if err := daemon.StartService(); err != nil {
-				fmt.Printf("Warning: could not start service: %v\n", err)
-				fmt.Println("Start manually with: forged start")
-			} else {
-				time.Sleep(2 * time.Second)
-				if pid, running := daemon.IsRunning(paths); running {
-					fmt.Printf("Daemon running (PID %d)\n", pid)
-				}
+			time.Sleep(2 * time.Second)
+			if pid, running := daemon.IsRunning(paths); running {
+				fmt.Printf("Daemon running (PID %d)\n", pid)
 			}
 		}
 
@@ -113,7 +106,8 @@ func createPassword() ([]byte, error) {
 		}
 
 		if len(pass1) < 8 {
-			fmt.Println("  Password must be at least 8 characters. Try again.\n")
+			fmt.Println("  Password must be at least 8 characters. Try again.")
+			fmt.Println()
 			continue
 		}
 
@@ -125,7 +119,8 @@ func createPassword() ([]byte, error) {
 		}
 
 		if string(pass1) != string(pass2) {
-			fmt.Println("  Passwords do not match. Try again.\n")
+			fmt.Println("  Passwords do not match. Try again.")
+			fmt.Println()
 			continue
 		}
 
@@ -150,26 +145,6 @@ func importKeys(ks *vault.KeyStore, paths []string) {
 		}
 		fmt.Printf("  Imported %s as %q\n", filepath.Base(p), name)
 	}
-}
-
-func writeDefaultConfig(paths config.Paths) error {
-	if err := os.MkdirAll(filepath.Dir(paths.ConfigFile()), 0700); err != nil {
-		return err
-	}
-
-	if _, err := os.Stat(paths.ConfigFile()); err == nil {
-		return nil
-	}
-
-	content := fmt.Sprintf(`[agent]
-socket = %q
-log_level = "info"
-
-[sync]
-enabled = false
-`, paths.AgentSocket())
-
-	return os.WriteFile(paths.ConfigFile(), []byte(content), 0600)
 }
 
 func configureGitSigning(ks *vault.KeyStore, keyName string) error {

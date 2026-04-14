@@ -78,7 +78,8 @@ var signingCmd = &cobra.Command{
 			return nil
 		}
 
-		fmt.Println("  Switch signing key to:\n")
+		fmt.Println("  Switch signing key to:")
+		fmt.Println()
 		for i, k := range available {
 			fmt.Printf("    %d. %s (%s)\n", i+1, k.Name, k.Fingerprint)
 		}

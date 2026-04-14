@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -107,6 +108,50 @@ func UninstallService() error {
 func ServiceInstalled() bool {
 	_, err := os.Stat(unitPath())
 	return err == nil
+}
+
+func InspectService(paths config.Paths) (ServiceStatus, error) {
+	status := DefaultServiceStatus()
+	if !ServiceInstalled() {
+		status.Detail = "not installed"
+		return status, nil
+	}
+
+	status.Installed = true
+	status.ConfigValid = true
+
+	cmd := exec.Command("systemctl", "--user", "show", serviceName, "--property=LoadState,ActiveState,SubState", "--value")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		status.Detail = strings.TrimSpace(string(out))
+		if status.Detail == "" {
+			status.Detail = err.Error()
+		}
+		return status, nil
+	}
+
+	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
+	if len(lines) > 0 {
+		status.Loaded = strings.TrimSpace(lines[0]) == "loaded"
+	}
+	if len(lines) > 1 {
+		active := strings.TrimSpace(lines[1])
+		status.Running = active == "active"
+		if status.Detail == "" {
+			status.Detail = active
+		}
+	}
+	if len(lines) > 2 {
+		sub := strings.TrimSpace(lines[2])
+		if sub != "" {
+			status.Detail = sub
+		}
+	}
+	if status.Detail == "" {
+		status.Detail = "installed"
+	}
+
+	return status, nil
 }
 
 func findBinary() (string, error) {

@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"bytes"
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -16,15 +17,24 @@ import (
 
 const launchdLabel = "me.ritik.forged"
 
-var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.0" encoding="UTF-8"?>
+type launchdTemplateData struct {
+	Label          string
+	Binary         string
+	LogFile        string
+	MasterPassword string
+}
+
+var plistTemplate = template.Must(template.New("plist").Funcs(template.FuncMap{
+	"xml": xmlEscape,
+}).Parse(`<?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>{{ .Label }}</string>
+    <string>{{ xml .Label }}</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{{ .Binary }}</string>
+        <string>{{ xml .Binary }}</string>
         <string>daemon</string>
     </array>
     <key>RunAtLoad</key>
@@ -32,13 +42,13 @@ var plistTemplate = template.Must(template.New("plist").Parse(`<?xml version="1.
     <key>KeepAlive</key>
     <true/>
     <key>StandardOutPath</key>
-    <string>{{ .LogFile }}</string>
+    <string>{{ xml .LogFile }}</string>
     <key>StandardErrorPath</key>
-    <string>{{ .LogFile }}</string>
+    <string>{{ xml .LogFile }}</string>
     <key>EnvironmentVariables</key>
     <dict>
         <key>FORGED_MASTER_PASSWORD</key>
-        <string>{{ .MasterPassword }}</string>
+        <string>{{ xml .MasterPassword }}</string>
     </dict>
 </dict>
 </plist>
@@ -65,26 +75,38 @@ func InstallService(paths config.Paths, masterPassword string) error {
 		return err
 	}
 
-	f, err := os.Create(plist)
-	if err != nil {
-		return fmt.Errorf("creating plist: %w", err)
-	}
-	defer f.Close()
-
-	data := struct {
-		Label          string
-		Binary         string
-		LogFile        string
-		MasterPassword string
-	}{
+	data := launchdTemplateData{
 		Label:          launchdLabel,
 		Binary:         binaryPath,
 		LogFile:        paths.LogFile(),
 		MasterPassword: masterPassword,
 	}
 
-	if err := plistTemplate.Execute(f, data); err != nil {
+	raw, err := renderLaunchdPlist(data)
+	if err != nil {
+		return err
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(plist), launchdLabel+".*.plist")
+	if err != nil {
+		return fmt.Errorf("creating plist: %w", err)
+	}
+	defer os.Remove(tmp.Name())
+
+	if _, err := tmp.Write(raw); err != nil {
+		tmp.Close()
 		return fmt.Errorf("writing plist: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing plist: %w", err)
+	}
+
+	if err := validateLaunchdPlist(tmp.Name()); err != nil {
+		return err
+	}
+
+	if err := os.Rename(tmp.Name(), plist); err != nil {
+		return fmt.Errorf("installing plist: %w", err)
 	}
 
 	return nil
@@ -139,6 +161,47 @@ func UninstallService() error {
 func ServiceInstalled() bool {
 	_, err := os.Stat(plistPath())
 	return err == nil
+}
+
+func InspectService(paths config.Paths) (ServiceStatus, error) {
+	status := DefaultServiceStatus()
+	if !ServiceInstalled() {
+		status.Detail = "not installed"
+		return status, nil
+	}
+
+	status.Installed = true
+
+	if err := validateLaunchdPlist(plistPath()); err != nil {
+		status.Detail = err.Error()
+		return status, nil
+	}
+	status.ConfigValid = true
+
+	out, err := exec.Command("launchctl", "print", launchdServiceTarget()).CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(out))
+		if message == "" {
+			message = err.Error()
+		}
+		lower := strings.ToLower(message)
+		if strings.Contains(lower, "could not find service") || strings.Contains(lower, "not found") {
+			status.Detail = "installed but not loaded"
+			return status, nil
+		}
+		status.Detail = message
+		return status, nil
+	}
+
+	status.Loaded = true
+	status.Running = launchdPrintIndicatesRunning(string(out))
+	if status.Running {
+		status.Detail = "running"
+	} else {
+		status.Detail = "loaded but not running"
+	}
+
+	return status, nil
 }
 
 func launchdDomain() string {
@@ -197,4 +260,33 @@ func isIgnorableLaunchdError(message string, ignorable []string) bool {
 		}
 	}
 	return false
+}
+
+func renderLaunchdPlist(data launchdTemplateData) ([]byte, error) {
+	var buf bytes.Buffer
+	if err := plistTemplate.Execute(&buf, data); err != nil {
+		return nil, fmt.Errorf("rendering plist: %w", err)
+	}
+	return buf.Bytes(), nil
+}
+
+func validateLaunchdPlist(path string) error {
+	cmd := exec.Command("plutil", "-lint", path)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		return fmt.Errorf("validating plist: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func xmlEscape(value string) string {
+	var buf bytes.Buffer
+	if err := xml.EscapeText(&buf, []byte(value)); err != nil {
+		return value
+	}
+	return buf.String()
+}
+
+func launchdPrintIndicatesRunning(out string) bool {
+	lower := strings.ToLower(out)
+	return strings.Contains(lower, "pid =") && !strings.Contains(lower, "pid = 0")
 }

@@ -1,12 +1,10 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"github.com/itzzritik/forged/cli/internal/config"
-	"github.com/itzzritik/forged/cli/internal/daemon"
-	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/spf13/cobra"
 )
 
@@ -15,71 +13,43 @@ var statusCmd = &cobra.Command{
 	Short: "Show daemon status, key count, sync status",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
-		pid, running := daemon.IsRunning(paths)
-
-		if !running {
-			if jsonOutput {
-				return printOutput(map[string]any{
-					"running": false,
-					"socket":  paths.AgentSocket(),
-				})
-			}
-			fmt.Println("Daemon: not running")
-			fmt.Printf("Socket: %s\n", paths.AgentSocket())
-			return nil
-		}
-
-		resp, err := ctlClient().Call(ipc.CmdStatus, nil)
+		snapshot, err := readiness.New(paths).Assess()
 		if err != nil {
-			if jsonOutput {
-				return printOutput(map[string]any{
-					"running": true,
-					"pid":     pid,
-					"socket":  paths.AgentSocket(),
-				})
-			}
-			fmt.Printf("Daemon: running (PID %d)\n", pid)
-			fmt.Printf("Socket: %s\n", paths.AgentSocket())
-			return nil
+			return err
 		}
 
 		if jsonOutput {
-			var data map[string]any
-			json.Unmarshal(resp.Data, &data)
-			data["running"] = true
-			data["socket"] = paths.AgentSocket()
-			return printOutput(data)
+			return printOutput(map[string]any{
+				"state":              snapshot.State,
+				"running":            snapshot.Service.Running,
+				"key_count":          snapshot.KeyCount,
+				"logged_in":          snapshot.LoggedIn,
+				"ipc_socket_ready":   snapshot.IPCSocketReady,
+				"agent_socket_ready": snapshot.AgentSocketReady,
+				"ipc_socket":         paths.CtlSocket(),
+				"agent_socket":       paths.AgentSocket(),
+				"pid":                snapshot.DaemonPID,
+			})
 		}
 
-		var data struct {
-			PID      int `json:"pid"`
-			KeyCount int `json:"key_count"`
-			Sync     struct {
-				Dirty                  bool   `json:"dirty"`
-				LastError              string `json:"last_error"`
-				LastKnownServerVersion int64  `json:"last_known_server_version"`
-				Linked                 bool   `json:"linked"`
-				LinkedUserID           string `json:"linked_user_id"`
-				ServerURL              string `json:"server_url"`
-			} `json:"sync"`
+		fmt.Printf("State:  %s\n", snapshot.State)
+		if snapshot.DaemonPID > 0 {
+			fmt.Printf("Daemon: PID %d\n", snapshot.DaemonPID)
 		}
-		json.Unmarshal(resp.Data, &data)
-
-		fmt.Printf("Daemon: running (PID %d)\n", data.PID)
-		fmt.Printf("Keys:   %d loaded\n", data.KeyCount)
-		if data.Sync.Linked {
-			syncState := "clean"
-			if data.Sync.Dirty {
-				syncState = "dirty"
-			}
-			fmt.Printf("Sync:   linked (%s), version %d\n", syncState, data.Sync.LastKnownServerVersion)
-			if data.Sync.LastError != "" {
-				fmt.Printf("Sync:   last error: %s\n", data.Sync.LastError)
-			}
+		if snapshot.Service.Detail != "" && snapshot.State != readiness.StateReady && snapshot.State != readiness.StateReadyEmpty {
+			fmt.Printf("Issue:  %s\n", snapshot.Service.Detail)
+		}
+		fmt.Printf("Keys:   %d loaded\n", snapshot.KeyCount)
+		if snapshot.LoggedIn {
+			fmt.Println("Sync:   linked")
 		} else {
 			fmt.Println("Sync:   not linked")
 		}
-		fmt.Printf("Socket: %s\n", paths.AgentSocket())
+		if snapshot.State == readiness.StateDegraded || snapshot.State == readiness.StateBlocked {
+			fmt.Println("Action: run `forged` to repair interactively or `forged doctor --fix`")
+		}
+		fmt.Printf("IPC:    %s\n", paths.CtlSocket())
+		fmt.Printf("Agent:  %s\n", paths.AgentSocket())
 		return nil
 	},
 }
