@@ -34,12 +34,11 @@ func RefreshAdvancedProviderRouting(paths ManagedPaths, state *State, keys []vau
 
 	for _, group := range conflicts {
 		for _, candidate := range group {
-			alias := providerAlias(candidate.Provider, candidate.AccountSlug)
+			alias := providerAlias(candidate.Provider, candidate.KeyID)
 			hintPath := filepath.Join(paths.ManagedKeysDir, alias+".pub")
-			state.UpsertProviderIdentity(ProviderIdentity{
+			state.UpsertProviderKey(ProviderKey{
 				Provider:        candidate.Provider,
 				KeyID:           candidate.KeyID,
-				AccountSlug:     candidate.AccountSlug,
 				MatchHost:       candidate.MatchHost,
 				Alias:           alias,
 				HintPath:        hintPath,
@@ -50,14 +49,14 @@ func RefreshAdvancedProviderRouting(paths ManagedPaths, state *State, keys []vau
 			entries = append(entries, ProviderRouteEntry{
 				MatchHost:    candidate.MatchHost,
 				Provider:     candidate.Provider,
-				AccountSlug:  candidate.AccountSlug,
+				KeyID:        candidate.KeyID,
 				IdentityFile: hintPath,
-				MatchExec:    renderMatchExec(paths.HelperBinary, candidate.Provider, candidate.AccountSlug),
+				MatchExec:    renderMatchExec(paths.HelperBinary, candidate.Provider, candidate.KeyID),
 			})
 		}
 	}
 
-	state.RemoveMissingProviderIdentities(wantedProviderKeys)
+	state.RemoveMissingProviderKeys(wantedProviderKeys)
 
 	if err := syncHintFiles(paths.ManagedKeysDir, wantedHints); err != nil {
 		return err
@@ -66,13 +65,34 @@ func RefreshAdvancedProviderRouting(paths ManagedPaths, state *State, keys []vau
 	return os.WriteFile(paths.AdvancedConfigPath, []byte(RenderAdvancedConfig(entries)), 0o600)
 }
 
-func providerAlias(provider, slug string) string {
-	return provider + "-forged-" + slug
+func providerAlias(provider, keyID string) string {
+	return provider + "-forged-" + aliasComponent(keyID)
 }
 
-func renderMatchExec(helperPath, provider, account string) string {
-	cmd := shellQuote(helperPath) + " __ssh-route-match --provider " + provider + " --account " + account
+func renderMatchExec(helperPath, provider, keyID string) string {
+	cmd := shellQuote(helperPath) + " __ssh-route-match --provider " + provider + " --key-id " + shellQuote(keyID)
 	return strconv.Quote(cmd)
+}
+
+func aliasComponent(value string) string {
+	var b strings.Builder
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+			b.WriteRune(r)
+		case r >= 'A' && r <= 'Z':
+			b.WriteRune(r + ('a' - 'A'))
+		case r >= '0' && r <= '9':
+			b.WriteRune(r)
+		default:
+			b.WriteByte('-')
+		}
+	}
+	alias := strings.Trim(b.String(), "-")
+	if alias == "" {
+		return "key"
+	}
+	return alias
 }
 
 func shellQuote(value string) string {

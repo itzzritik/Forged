@@ -9,9 +9,10 @@ import (
 )
 
 type RepoContext struct {
-	Host  string
-	Owner string
-	Repo  string
+	Host      string
+	Owner     string
+	Repo      string
+	RemoteURL string
 }
 
 func DetectRepoContext(cwd string) (RepoContext, bool) {
@@ -31,24 +32,11 @@ func DetectRepoContext(cwd string) (RepoContext, bool) {
 	}
 
 	return RepoContext{
-		Host:  host,
-		Owner: owner,
-		Repo:  repo,
+		Host:      host,
+		Owner:     owner,
+		Repo:      repo,
+		RemoteURL: remoteURL,
 	}, true
-}
-
-func MatchProviderAccount(cwd, provider, account string) bool {
-	ctx, ok := DetectRepoContext(cwd)
-	if !ok {
-		return false
-	}
-
-	switch provider {
-	case "github":
-		return strings.EqualFold(ctx.Host, "github.com") && slugifyProviderLabel(ctx.Owner) == slugifyProviderLabel(account)
-	default:
-		return false
-	}
 }
 
 func locateGitConfig(cwd string) (string, bool) {

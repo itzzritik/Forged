@@ -3,13 +3,14 @@ package cmd
 import (
 	"os"
 
+	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/sshrouting"
 	"github.com/spf13/cobra"
 )
 
 var (
 	sshRouteProvider string
-	sshRouteAccount  string
+	sshRouteKeyID    string
 )
 
 var sshRouteMatchCmd = &cobra.Command{
@@ -22,10 +23,16 @@ var sshRouteMatchCmd = &cobra.Command{
 		if err != nil {
 			os.Exit(1)
 		}
-		if sshRouteProvider == "" || sshRouteAccount == "" {
+		if sshRouteProvider == "" || sshRouteKeyID == "" {
 			os.Exit(1)
 		}
-		if sshrouting.MatchProviderAccount(cwd, sshRouteProvider, sshRouteAccount) {
+		paths := config.DefaultPaths()
+		runtime := sshrouting.MatchRuntime{
+			StatePath:      paths.SSHRoutingStateFile(),
+			ManagedKeysDir: paths.SSHManagedKeysDir(),
+			AgentSocket:    paths.AgentSocket(),
+		}
+		if sshrouting.MatchProviderKey(cwd, sshRouteProvider, sshRouteKeyID, runtime) {
 			os.Exit(0)
 		}
 		os.Exit(1)
@@ -34,5 +41,5 @@ var sshRouteMatchCmd = &cobra.Command{
 
 func init() {
 	sshRouteMatchCmd.Flags().StringVar(&sshRouteProvider, "provider", "", "provider name")
-	sshRouteMatchCmd.Flags().StringVar(&sshRouteAccount, "account", "", "provider account slug")
+	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyID, "key-id", "", "provider key id")
 }

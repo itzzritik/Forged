@@ -17,25 +17,35 @@ type HostAffinity struct {
 	ManualOverride bool      `json:"manual_override,omitempty"`
 }
 
-type ProviderIdentity struct {
+type ProviderKey struct {
 	Provider        string    `json:"provider"`
 	KeyID           string    `json:"key_id"`
-	AccountSlug     string    `json:"account_slug"`
 	MatchHost       string    `json:"match_host"`
 	Alias           string    `json:"alias"`
 	HintPath        string    `json:"hint_path"`
 	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
 }
 
+type RepoRoute struct {
+	Provider       string    `json:"provider"`
+	MatchHost      string    `json:"match_host"`
+	RepoKey        string    `json:"repo_key"`
+	KeyID          string    `json:"key_id"`
+	LastVerifiedAt time.Time `json:"last_verified_at,omitempty"`
+	SuccessCount   int       `json:"success_count,omitempty"`
+}
+
 type State struct {
-	Hosts              map[string]HostAffinity     `json:"hosts"`
-	ProviderIdentities map[string]ProviderIdentity `json:"provider_identities,omitempty"`
+	Hosts        map[string]HostAffinity `json:"hosts"`
+	ProviderKeys map[string]ProviderKey  `json:"provider_keys,omitempty"`
+	RepoRoutes   map[string]RepoRoute    `json:"repo_routes,omitempty"`
 }
 
 func DefaultState() State {
 	return State{
-		Hosts:              map[string]HostAffinity{},
-		ProviderIdentities: map[string]ProviderIdentity{},
+		Hosts:        map[string]HostAffinity{},
+		ProviderKeys: map[string]ProviderKey{},
+		RepoRoutes:   map[string]RepoRoute{},
 	}
 }
 
@@ -57,22 +67,40 @@ func (s *State) RecordSuccess(host string, port int, keyID string, now time.Time
 	s.Hosts[key] = entry
 }
 
-func (s *State) UpsertProviderIdentity(identity ProviderIdentity) {
-	if s.ProviderIdentities == nil {
-		s.ProviderIdentities = map[string]ProviderIdentity{}
+func (s *State) UpsertProviderKey(key ProviderKey) {
+	if s.ProviderKeys == nil {
+		s.ProviderKeys = map[string]ProviderKey{}
 	}
-	s.ProviderIdentities[identity.KeyID] = identity
+	s.ProviderKeys[key.KeyID] = key
 }
 
-func (s *State) RemoveMissingProviderIdentities(valid map[string]struct{}) {
-	if s.ProviderIdentities == nil {
+func (s *State) RemoveMissingProviderKeys(valid map[string]struct{}) {
+	if s.ProviderKeys == nil {
 		return
 	}
-	for keyID := range s.ProviderIdentities {
+	for keyID := range s.ProviderKeys {
 		if _, ok := valid[keyID]; !ok {
-			delete(s.ProviderIdentities, keyID)
+			delete(s.ProviderKeys, keyID)
 		}
 	}
+	if s.RepoRoutes == nil {
+		return
+	}
+	for repoKey, route := range s.RepoRoutes {
+		if _, ok := valid[route.KeyID]; !ok {
+			delete(s.RepoRoutes, repoKey)
+		}
+	}
+}
+
+func (s *State) UpsertRepoRoute(route RepoRoute) {
+	if s.RepoRoutes == nil {
+		s.RepoRoutes = map[string]RepoRoute{}
+	}
+	existing := s.RepoRoutes[route.RepoKey]
+	route.SuccessCount = existing.SuccessCount + 1
+	route.LastVerifiedAt = route.LastVerifiedAt.UTC()
+	s.RepoRoutes[route.RepoKey] = route
 }
 
 type Store struct {
@@ -100,8 +128,11 @@ func (s *Store) Load() (*State, error) {
 	if state.Hosts == nil {
 		state.Hosts = map[string]HostAffinity{}
 	}
-	if state.ProviderIdentities == nil {
-		state.ProviderIdentities = map[string]ProviderIdentity{}
+	if state.ProviderKeys == nil {
+		state.ProviderKeys = map[string]ProviderKey{}
+	}
+	if state.RepoRoutes == nil {
+		state.RepoRoutes = map[string]RepoRoute{}
 	}
 	return &state, nil
 }

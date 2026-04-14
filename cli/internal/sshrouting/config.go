@@ -9,7 +9,7 @@ import (
 type ProviderRouteEntry struct {
 	MatchHost    string
 	Provider     string
-	AccountSlug  string
+	KeyID        string
 	IdentityFile string
 	MatchExec    string
 }
@@ -30,7 +30,7 @@ func RenderAdvancedConfig(entries []ProviderRouteEntry) string {
 		if entries[i].Provider != entries[j].Provider {
 			return entries[i].Provider < entries[j].Provider
 		}
-		return entries[i].AccountSlug < entries[j].AccountSlug
+		return entries[i].KeyID < entries[j].KeyID
 	})
 
 	var b strings.Builder
