@@ -5,136 +5,181 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/itzzritik/forged/cli/internal/sshrouting"
 )
 
-const sshConfigMarker = "# Added by Forged"
+const (
+	sshConfigMarker   = "# Added by Forged"
+	sshIncludeComment = "# Forged SSH integration"
+)
 
 func SSHConfigPath() string {
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".ssh", "config")
+	return DefaultPaths().SSHUserConfig()
 }
 
 func IsSSHAgentEnabled(paths Paths) bool {
-	data, err := os.ReadFile(SSHConfigPath())
+	data, err := os.ReadFile(paths.SSHUserConfig())
 	if err != nil {
 		return false
 	}
-	return strings.Contains(string(data), paths.AgentSocket())
+
+	content := string(data)
+	return strings.Contains(content, includeLine(paths.SSHBaseInclude())) ||
+		strings.Contains(content, sshConfigMarker) ||
+		strings.Contains(content, paths.AgentSocket())
 }
 
 func EnableSSHAgent(paths Paths) error {
-	configPath := SSHConfigPath()
-	agentLine := fmt.Sprintf("    IdentityAgent %q", paths.AgentSocket())
-	block := fmt.Sprintf("%s\nHost *\n%s\n", sshConfigMarker, agentLine)
-
-	if err := os.MkdirAll(filepath.Dir(configPath), 0700); err != nil {
+	configPath := paths.SSHUserConfig()
+	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(paths.SSHManagedDir(), 0o700); err != nil {
 		return err
 	}
 
-	data, err := os.ReadFile(configPath)
+	baseContent := sshrouting.RenderBaseConfig(paths.AgentSocket(), paths.SSHAdvancedConfig())
+	if err := os.WriteFile(paths.SSHBaseInclude(), []byte(baseContent), 0o600); err != nil {
+		return err
+	}
+	if _, err := os.Stat(paths.SSHAdvancedConfig()); os.IsNotExist(err) {
+		if err := os.WriteFile(paths.SSHAdvancedConfig(), []byte(""), 0o600); err != nil {
+			return err
+		}
+	}
+
+	content, err := readConfigFile(configPath)
 	if err != nil {
-		return os.WriteFile(configPath, []byte(block), 0600)
+		return err
 	}
 
-	content := string(data)
-	if strings.Contains(content, paths.AgentSocket()) {
-		return nil
-	}
+	content = removeForgedInclude(content, paths.SSHBaseInclude())
+	content = removeForgedBlock(content)
 
-	cleaned := removeForgedBlock(content)
-	cleaned = removeWildcardIdentityAgent(cleaned)
-	result := strings.TrimRight(cleaned, "\n") + "\n\n" + block
-	return os.WriteFile(configPath, []byte(result), 0600)
+	block := strings.Join([]string{
+		sshIncludeComment,
+		includeLine(paths.SSHBaseInclude()),
+	}, "\n")
+
+	body := strings.TrimRight(content, "\n")
+	if body != "" {
+		body += "\n\n"
+	}
+	body += block + "\n"
+
+	return os.WriteFile(configPath, []byte(body), 0o600)
 }
 
 func DisableSSHAgent(paths Paths) error {
-	configPath := SSHConfigPath()
-	data, err := os.ReadFile(configPath)
+	configPath := paths.SSHUserConfig()
+	content, err := readConfigFile(configPath)
 	if err != nil {
+		return err
+	}
+	if content == "" {
+		_ = os.Remove(paths.SSHBaseInclude())
+		_ = os.Remove(paths.SSHAdvancedConfig())
+		_ = os.Remove(paths.SSHManagedDir())
 		return nil
 	}
 
-	content := string(data)
-	if !strings.Contains(content, sshConfigMarker) && !strings.Contains(content, paths.AgentSocket()) {
-		return nil
+	cleaned := removeForgedInclude(content, paths.SSHBaseInclude())
+	cleaned = removeForgedBlock(cleaned)
+	cleaned = strings.TrimRight(cleaned, "\n ")
+	if cleaned != "" {
+		cleaned += "\n"
 	}
 
-	cleaned := removeForgedBlock(content)
-	result := strings.TrimRight(cleaned, "\n ") + "\n"
-	return os.WriteFile(configPath, []byte(result), 0600)
+	if err := os.WriteFile(configPath, []byte(cleaned), 0o600); err != nil {
+		return err
+	}
+
+	_ = os.Remove(paths.SSHBaseInclude())
+	_ = os.Remove(paths.SSHAdvancedConfig())
+	_ = os.Remove(paths.SSHManagedDir())
+
+	return nil
+}
+
+func includeLine(path string) string {
+	return "Include " + path
+}
+
+func readConfigFile(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err == nil {
+		return string(data), nil
+	}
+	if os.IsNotExist(err) {
+		return "", nil
+	}
+	return "", err
+}
+
+func removeForgedInclude(content, includePath string) string {
+	lines := strings.Split(content, "\n")
+	include := includeLine(includePath)
+	quotedInclude := fmt.Sprintf("Include %q", includePath)
+
+	result := make([]string, 0, len(lines))
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == sshIncludeComment || trimmed == include || trimmed == quotedInclude {
+			continue
+		}
+		result = append(result, line)
+	}
+
+	return trimTrailingBlankLines(strings.Join(result, "\n"))
 }
 
 func removeForgedBlock(content string) string {
 	lines := strings.Split(content, "\n")
-	var result []string
-	inForgedBlock := false
+	result := make([]string, 0, len(lines))
 
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if trimmed == sshConfigMarker {
-			inForgedBlock = true
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != sshConfigMarker {
+			result = append(result, lines[i])
 			continue
 		}
 
-		if inForgedBlock {
-			if strings.HasPrefix(trimmed, "Host ") || strings.HasPrefix(trimmed, "#") || strings.HasPrefix(trimmed, "Include") || trimmed == "" {
-				if trimmed != "" {
-					inForgedBlock = false
-					result = append(result, line)
-				}
+		for i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == "" {
+			i++
+		}
+
+		if i+1 >= len(lines) {
+			break
+		}
+
+		if strings.TrimSpace(lines[i+1]) != "Host *" {
+			continue
+		}
+
+		i++
+		for i+1 < len(lines) {
+			next := lines[i+1]
+			trimmed := strings.TrimSpace(next)
+			if trimmed == "" {
+				i++
 				continue
 			}
-			continue
+			if strings.HasPrefix(next, " ") || strings.HasPrefix(next, "\t") {
+				i++
+				continue
+			}
+			break
 		}
-
-		result = append(result, line)
 	}
 
-	return strings.Join(result, "\n")
+	return trimTrailingBlankLines(strings.Join(result, "\n"))
 }
 
-func removeWildcardIdentityAgent(content string) string {
+func trimTrailingBlankLines(content string) string {
 	lines := strings.Split(content, "\n")
-	var result []string
-	inWildcardHost := false
-
-	for _, line := range lines {
-		trimmed := strings.TrimSpace(line)
-
-		if strings.HasPrefix(trimmed, "Host ") {
-			inWildcardHost = trimmed == "Host *"
-		}
-
-		if inWildcardHost && strings.HasPrefix(trimmed, "IdentityAgent") {
-			continue
-		}
-
-		result = append(result, line)
+	end := len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
 	}
-
-	var final []string
-	for i, line := range result {
-		trimmed := strings.TrimSpace(line)
-		if trimmed == "Host *" {
-			hasContent := false
-			for j := i + 1; j < len(result); j++ {
-				t := strings.TrimSpace(result[j])
-				if t == "" {
-					continue
-				}
-				if strings.HasPrefix(t, "Host ") || strings.HasPrefix(t, "#") || strings.HasPrefix(t, "Include") {
-					break
-				}
-				hasContent = true
-				break
-			}
-			if !hasContent {
-				continue
-			}
-		}
-		final = append(final, line)
-	}
-
-	return strings.Join(final, "\n")
+	return strings.Join(lines[:end], "\n")
 }

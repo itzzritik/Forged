@@ -18,7 +18,7 @@ var enableCmd = &cobra.Command{
 		}
 
 		fmt.Println("Forged SSH agent enabled")
-		fmt.Printf("  IdentityAgent set to %s\n", paths.AgentSocket())
+		fmt.Printf("  Forged SSH include configured at %s\n", paths.SSHBaseInclude())
 		return nil
 	},
 }
@@ -34,7 +34,7 @@ var disableCmd = &cobra.Command{
 		}
 
 		fmt.Println("Forged SSH agent disabled")
-		fmt.Println("  Removed IdentityAgent from ~/.ssh/config")
+		fmt.Println("  Removed Forged include from ~/.ssh/config")
 		return nil
 	},
 }

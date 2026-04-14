@@ -10,8 +10,10 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strconv"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/itzzritik/forged/cli/internal/activity"
@@ -20,23 +22,26 @@ import (
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
+	"github.com/itzzritik/forged/cli/internal/sshrouting"
 	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
 	"github.com/itzzritik/forged/cli/internal/vault"
 	"gopkg.in/natefinch/lumberjack.v2"
 )
 
 type Daemon struct {
-	paths       config.Paths
-	vault       *vault.Vault
-	keyStore    *vault.KeyStore
-	activityLog *activity.ActivityLog
-	agent       *forgedagent.ForgedAgent
-	agentServer *forgedagent.Server
-	ipcServer   *ipc.Server
-	syncBus     *forgedsync.Bus
-	authBroker  *sensitiveauth.Broker
-	logger      *slog.Logger
-	stop        chan struct{}
+	paths        config.Paths
+	vault        *vault.Vault
+	keyStore     *vault.KeyStore
+	activityLog  *activity.ActivityLog
+	agent        *forgedagent.ForgedAgent
+	agentServer  *forgedagent.Server
+	ipcServer    *ipc.Server
+	syncBus      *forgedsync.Bus
+	authBroker   *sensitiveauth.Broker
+	routingStore *sshrouting.Store
+	routingState *sshrouting.State
+	logger       *slog.Logger
+	stop         chan struct{}
 }
 
 func New(paths config.Paths) *Daemon {
@@ -61,6 +66,10 @@ func (d *Daemon) Run(password []byte) error {
 		return err
 	}
 	defer d.shutdown()
+
+	if err := d.loadRoutingState(); err != nil {
+		return fmt.Errorf("loading ssh routing state: %w", err)
+	}
 
 	d.authBroker = sensitiveauth.NewBroker(d.paths.VaultFile(), d.helperBinaryPath(), d.logger)
 
@@ -186,6 +195,24 @@ func (d *Daemon) openVault(password []byte) error {
 	return nil
 }
 
+func (d *Daemon) loadRoutingState() error {
+	d.routingStore = sshrouting.NewStore(d.paths.SSHRoutingStateFile())
+	state, err := d.routingStore.Load()
+	if err != nil {
+		return err
+	}
+	d.routingState = state
+	if len(d.routingState.Hosts) != 0 {
+		return nil
+	}
+
+	now := time.Now().UTC()
+	for _, hint := range sshrouting.LegacyHints(d.keyStore.List()) {
+		d.routingState.RecordSuccess(hint.Host, 22, hint.KeyID, now)
+	}
+	return d.routingStore.Save(d.routingState)
+}
+
 func (d *Daemon) writePID() error {
 	pidPath := d.paths.PIDFile()
 	if err := os.MkdirAll(filepath.Dir(pidPath), 0700); err != nil {
@@ -219,6 +246,7 @@ func (d *Daemon) startAgent() error {
 
 	d.agent = forgedagent.New(d.keyStore)
 	d.agent.SetSyncCoordinator(d.syncBus)
+	d.agent.SetRouteCoordinator(d)
 	d.agentServer = forgedagent.NewServer(agentPath, d.agent, d.logger)
 	if err := d.agentServer.Start(); err != nil {
 		return fmt.Errorf("starting agent server: %w", err)
@@ -363,6 +391,42 @@ func (d *Daemon) shutdown() {
 	os.Remove(d.paths.PIDFile())
 
 	d.logger.Info("daemon stopped")
+}
+
+func (d *Daemon) OrderedKeys(keys []vault.Key) []vault.Key {
+	ordered := append([]vault.Key(nil), keys...)
+	sort.SliceStable(ordered, func(i, j int) bool {
+		score := func(k vault.Key) int {
+			if d.routingState == nil {
+				return 0
+			}
+			best := 0
+			for _, entry := range d.routingState.Hosts {
+				if entry.KeyID == k.ID && entry.SuccessCount > best {
+					best = entry.SuccessCount
+				}
+			}
+			return best
+		}
+
+		si, sj := score(ordered[i]), score(ordered[j])
+		if si != sj {
+			return si > sj
+		}
+
+		iUsed, jUsed := ordered[i].LastUsedAt, ordered[j].LastUsedAt
+		if iUsed != nil && jUsed != nil {
+			return iUsed.After(*jUsed)
+		}
+		if iUsed != nil {
+			return true
+		}
+		if jUsed != nil {
+			return false
+		}
+		return ordered[i].Name < ordered[j].Name
+	})
+	return ordered
 }
 
 func IsRunning(paths config.Paths) (int, bool) {

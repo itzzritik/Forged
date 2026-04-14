@@ -59,17 +59,17 @@ var doctorCmd = &cobra.Command{
 		}
 
 		if config.IsSSHAgentEnabled(paths) {
-			pass("SSH agent", "IdentityAgent pointing to Forged")
+			pass("SSH agent", "Forged managed SSH files are configured")
 		} else {
 			if fix {
 				if err := config.EnableSSHAgent(paths); err == nil {
-					fixed("SSH agent", "IdentityAgent configured for Forged")
+					fixed("SSH agent", "Forged SSH include configured")
 				} else {
 					fail("SSH agent", fmt.Sprintf("could not fix: %v", err))
 					issues++
 				}
 			} else {
-				fail("SSH agent", "IdentityAgent not pointing to Forged. Run: forged doctor --fix")
+				fail("SSH agent", "Forged SSH include not configured. Run: forged doctor --fix")
 				issues++
 			}
 		}

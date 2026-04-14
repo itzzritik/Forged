@@ -59,7 +59,7 @@ var setupCmd = &cobra.Command{
 		}
 
 		if err := config.EnableSSHAgent(paths); err != nil {
-			fmt.Printf("Warning: could not update ~/.ssh/config: %v\n", err)
+			fmt.Printf("Warning: could not configure Forged SSH include: %v\n", err)
 		}
 
 		keys := ks.List()
@@ -90,9 +90,10 @@ var setupCmd = &cobra.Command{
 
 		fmt.Println()
 		fmt.Println("Setup complete!")
-		fmt.Printf("  Vault:  %s\n", paths.VaultFile())
-		fmt.Printf("  Config: %s\n", paths.ConfigFile())
-		fmt.Printf("  Socket: %s\n", paths.AgentSocket())
+		fmt.Printf("  Vault:       %s\n", paths.VaultFile())
+		fmt.Printf("  Config:      %s\n", paths.ConfigFile())
+		fmt.Printf("  Agent:       %s\n", paths.AgentSocket())
+		fmt.Printf("  SSH include: %s\n", paths.SSHBaseInclude())
 		return nil
 	},
 }

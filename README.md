@@ -77,6 +77,12 @@ forged daemon
 
 No browser. No Electron. No local web server. Just a Unix socket and a CLI.
 
+## SSH integration
+
+Forged keeps SSH integration low-touch. By default it manages its own files under `~/.ssh/forged/` and adds at most one `Include` line to your main `~/.ssh/config`.
+
+Forged does not rewrite your existing host blocks. Advanced routing, when needed, is generated only inside the Forged-managed include files.
+
 ## Security
 
 Keys are encrypted with Argon2id (64MB memory-hard KDF) and XChaCha20-Poly1305. The vault file is written atomically to prevent corruption and locked to prevent concurrent access. Private keys live in mlock'd memory pages and are explicitly zeroed on shutdown.

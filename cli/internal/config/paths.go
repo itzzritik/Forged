@@ -19,6 +19,28 @@ func (p Paths) VaultFile() string       { return filepath.Join(p.DataDir, "vault
 func (p Paths) CredentialsFile() string { return filepath.Join(p.ConfigDir, "credentials.json") }
 func (p Paths) SyncStateFile() string   { return filepath.Join(p.DataDir, "sync-state.json") }
 func (p Paths) SyncDirtyFile() string   { return filepath.Join(p.DataDir, "sync.dirty") }
+func (p Paths) SSHRoutingStateFile() string {
+	return filepath.Join(p.StateDir, "ssh-routing.json")
+}
+
+func (p Paths) SSHManagedDir() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".ssh", "forged")
+}
+
+func (p Paths) SSHUserConfig() string {
+	home, _ := os.UserHomeDir()
+	return filepath.Join(home, ".ssh", "config")
+}
+
+func (p Paths) SSHBaseInclude() string {
+	return filepath.Join(p.SSHManagedDir(), "base.conf")
+}
+
+func (p Paths) SSHAdvancedConfig() string {
+	return filepath.Join(p.SSHManagedDir(), "config")
+}
+
 func (p Paths) AgentSocket() string {
 	if runtime.GOOS == "windows" {
 		return `\\.\pipe\forged-agent`
