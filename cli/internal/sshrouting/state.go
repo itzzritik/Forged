@@ -75,6 +75,14 @@ func (s *RoutingState) prune(validKeyIDs map[string]struct{}) {
 	}
 }
 
+func (s *RoutingState) migrateRefs(idToRef map[string]string) {
+	for routeKey, value := range s.Routes {
+		if ref, ok := idToRef[value]; ok {
+			s.Routes[routeKey] = ref
+		}
+	}
+}
+
 func newState() RoutingState {
 	return RoutingState{
 		Routes: map[string]string{},

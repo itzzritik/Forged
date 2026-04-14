@@ -48,6 +48,6 @@ func ProbeGitHubAccount(agentSocket, identityFile string) (string, error) {
 	return "", fmt.Errorf("%s", text)
 }
 
-func HintFilePath(dir, keyID string) string {
-	return filepath.Join(dir, keyID+".pub")
+func HintFilePath(dir, keyRef string) string {
+	return filepath.Join(dir, keyRef+".pub")
 }

@@ -8,16 +8,17 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var sshRouteKeyID string
+var sshRouteKeyRef string
 
 var sshRouteMatchCmd = &cobra.Command{
-	Use:                "__ssh-route-match",
+	Use:                "__ssh-match",
+	Aliases:            []string{"__ssh-route-match"},
 	Hidden:             true,
 	SilenceUsage:       true,
 	SilenceErrors:      true,
 	DisableFlagParsing: false,
 	Run: func(cmd *cobra.Command, args []string) {
-		if sshRouteKeyID == "" {
+		if sshRouteKeyRef == "" {
 			os.Exit(1)
 		}
 
@@ -32,8 +33,8 @@ var sshRouteMatchCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if keyID, ok := state.Routes[remote.RouteKey]; ok {
-			if keyID == sshRouteKeyID {
+		if keyRef, ok := state.Routes[remote.RouteKey]; ok {
+			if keyRef == sshRouteKeyRef {
 				os.Exit(0)
 			}
 			os.Exit(1)
@@ -41,7 +42,7 @@ var sshRouteMatchCmd = &cobra.Command{
 
 		account, err := sshrouting.ProbeGitHubAccount(
 			paths.AgentSocket(),
-			sshrouting.HintFilePath(paths.SSHManagedKeysDir(), sshRouteKeyID),
+			sshrouting.HintFilePath(paths.SSHManagedKeysDir(), sshRouteKeyRef),
 		)
 		if err != nil {
 			os.Exit(1)
@@ -51,7 +52,7 @@ var sshRouteMatchCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		state.Routes[remote.RouteKey] = sshRouteKeyID
+		state.Routes[remote.RouteKey] = sshRouteKeyRef
 		if err := sshrouting.SaveState(paths.SSHRoutingStateFile(), state); err != nil {
 			os.Exit(1)
 		}
@@ -60,6 +61,7 @@ var sshRouteMatchCmd = &cobra.Command{
 }
 
 func init() {
-	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyID, "key-id", "", "internal key route matcher")
+	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyRef, "key", "", "internal key route matcher")
+	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyRef, "key-id", "", "internal key route matcher")
 	rootCmd.AddCommand(sshRouteMatchCmd)
 }

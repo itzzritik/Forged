@@ -8,8 +8,10 @@ import (
 )
 
 const (
-	sshConfigMarker   = "# Added by Forged"
+	legacySSHConfigMarker = "# Added by Forged"
 	sshIncludeComment = "# Forged SSH integration"
+	sshAgentComment   = "# Forged SSH Agent"
+	sshRoutesComment  = "# Forged Git Remote Routes"
 )
 
 func SSHConfigPath() string {
@@ -25,7 +27,6 @@ func IsSSHAgentEnabled(paths Paths) bool {
 	content := string(data)
 	return strings.Contains(content, includeLine(paths.SSHManagedConfig())) ||
 		strings.Contains(content, includeLine(paths.LegacySSHBaseInclude())) ||
-		strings.Contains(content, sshConfigMarker) ||
 		strings.Contains(content, paths.AgentSocket())
 }
 
@@ -41,17 +42,7 @@ func EnableSSHAgent(paths Paths) error {
 	if err := cleanupLegacySSHArtifacts(paths); err != nil {
 		return err
 	}
-
-	if _, err := os.Stat(paths.SSHAdvancedConfig()); err != nil {
-		if !os.IsNotExist(err) {
-			return err
-		}
-		if err := os.WriteFile(paths.SSHAdvancedConfig(), []byte(renderAdvancedSSHConfig()), 0o600); err != nil {
-			return err
-		}
-	}
-
-	baseContent := renderManagedSSHConfig(paths)
+	baseContent := RenderManagedSSHConfig(paths, "")
 	if err := os.WriteFile(paths.SSHManagedConfig(), []byte(baseContent), 0o600); err != nil {
 		return err
 	}
@@ -62,7 +53,7 @@ func EnableSSHAgent(paths Paths) error {
 	}
 
 	content = removeForgedIncludes(content, paths)
-	content = removeForgedBlock(content)
+	content = removeLegacyForgedBlock(content)
 
 	block := strings.Join([]string{
 		sshIncludeComment,
@@ -86,7 +77,7 @@ func DisableSSHAgent(paths Paths) error {
 	}
 
 	cleaned := removeForgedIncludes(content, paths)
-	cleaned = removeForgedBlock(cleaned)
+	cleaned = removeLegacyForgedBlock(cleaned)
 	cleaned = strings.TrimRight(cleaned, "\n ")
 	if cleaned != "" {
 		cleaned += "\n"
@@ -140,12 +131,12 @@ func removeForgedIncludes(content string, paths Paths) string {
 	return trimTrailingBlankLines(strings.Join(result, "\n"))
 }
 
-func removeForgedBlock(content string) string {
+func removeLegacyForgedBlock(content string) string {
 	lines := strings.Split(content, "\n")
 	result := make([]string, 0, len(lines))
 
 	for i := 0; i < len(lines); i++ {
-		if strings.TrimSpace(lines[i]) != sshConfigMarker {
+		if strings.TrimSpace(lines[i]) != legacySSHConfigMarker {
 			result = append(result, lines[i])
 			continue
 		}
@@ -153,11 +144,9 @@ func removeForgedBlock(content string) string {
 		for i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == "" {
 			i++
 		}
-
 		if i+1 >= len(lines) {
 			break
 		}
-
 		if strings.TrimSpace(lines[i+1]) != "Host *" {
 			continue
 		}
@@ -222,21 +211,25 @@ func insertForgedInclude(content, block string) string {
 	return strings.Join(parts, "\n\n") + "\n"
 }
 
-func renderManagedSSHConfig(paths Paths) string {
-	return fmt.Sprintf(
-		"# Added by Forged\nInclude %q\nHost *\n    IdentityAgent %q\n",
-		paths.SSHAdvancedConfig(),
-		paths.AgentSocket(),
-	)
-}
+func RenderManagedSSHConfig(paths Paths, routes string) string {
+	lines := []string{
+		sshAgentComment,
+		"Host *",
+		fmt.Sprintf("    IdentityAgent %q", paths.AgentSocket()),
+	}
 
-func renderAdvancedSSHConfig() string {
-	return "# Managed by Forged\n"
+	routes = strings.TrimSpace(routes)
+	if routes != "" {
+		lines = append(lines, "", sshRoutesComment, routes)
+	}
+
+	return strings.Join(lines, "\n") + "\n"
 }
 
 func cleanupLegacySSHArtifacts(paths Paths) error {
 	_ = os.RemoveAll(paths.LegacySSHManagedDir())
 	_ = os.Remove(filepath.Join(paths.StateDir, "ssh-routing.json"))
+	_ = os.Remove(paths.SSHLegacyAdvancedConfig())
 	return nil
 }
 

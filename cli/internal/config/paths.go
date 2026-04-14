@@ -37,7 +37,7 @@ func (p Paths) SSHManagedConfig() string {
 	return filepath.Join(p.SSHManagedDir(), "forged.conf")
 }
 
-func (p Paths) SSHAdvancedConfig() string {
+func (p Paths) SSHLegacyAdvancedConfig() string {
 	return filepath.Join(p.SSHManagedDir(), "config")
 }
 
