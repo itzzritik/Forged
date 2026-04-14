@@ -35,6 +35,8 @@ concurrency:
 
 jobs:
   publish:
+    if: github.actor != 'github-actions[bot]'
+    name: Publish new ${{ github.event_name == 'push' && 'patch' || github.event.inputs.version }} version
     runs-on: macos-latest
     steps:
       - name: Checkout
@@ -51,56 +53,49 @@ jobs:
         uses: actions/setup-node@v6
         with:
           node-version: 24
-          registry-url: https://registry.npmjs.org
 
-      - name: Configure git
+      - name: Setup Git & SSH signing
         run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "ritik.jarvis@gmail.com"
+          git config user.name "Jarvis"
 
-      - name: Fetch tags
-        run: git fetch --force --tags origin
+          mkdir -p ~/.ssh/
+          echo "${{ secrets.JARVIS_SSH_KEY }}" > ~/.ssh/id_rsa
+          chmod 600 ~/.ssh/id_rsa
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
 
-      - name: Determine next version
+          git config gpg.format ssh
+          git config user.signingkey ~/.ssh/id_rsa
+          git config commit.gpgsign true
+          git config tag.gpgsign true
+
+      - name: Generate new version
         id: version
         env:
           RELEASE_TYPE: ${{ github.event.inputs.version || 'patch' }}
         run: |
-          latest_tag="$(git tag --list 'v*' --sort=version:refname | tail -n 1)"
+          TAG="$(npm version "$RELEASE_TYPE" --prefix npm/cli --no-git-tag-version)"
+          node - <<'NODE' "npm/cli/package.json"
+          const fs = require("node:fs");
 
-          if [[ -z "$latest_tag" ]]; then
-            next_tag="v0.1.0"
-          else
-            version="${latest_tag#v}"
-            IFS='.' read -r major minor patch <<< "$version"
+          const [path] = process.argv.slice(2);
+          const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
 
-            case "$RELEASE_TYPE" in
-              patch)
-                patch=$((patch + 1))
-                ;;
-              minor)
-                minor=$((minor + 1))
-                patch=0
-                ;;
-              major)
-                major=$((major + 1))
-                minor=0
-                patch=0
-                ;;
-              *)
-                echo "unsupported release type: $RELEASE_TYPE" >&2
-                exit 1
-                ;;
-            esac
+          for (const dependency of Object.keys(pkg.optionalDependencies || {})) {
+            pkg.optionalDependencies[dependency] = pkg.version;
+          }
 
-            next_tag="v${major}.${minor}.${patch}"
-          fi
+          fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
+          NODE
 
-          echo "tag=$next_tag" >> "$GITHUB_OUTPUT"
-          echo "version=${next_tag#v}" >> "$GITHUB_OUTPUT"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-      - name: Create local release tag
-        run: git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+      - name: Create release commit and tag
+        run: |
+          git add npm/cli/package.json
+          git commit -m "chore: release ${{ steps.version.outputs.tag }}"
+          git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
 
       - name: Build release artifacts
         uses: goreleaser/goreleaser-action@v7
@@ -110,14 +105,10 @@ jobs:
           args: release --clean --skip=announce,publish,homebrew,nfpm,scoop
 
       - name: Build npm packages
-        env:
-          VERSION: ${{ steps.version.outputs.tag }}
-        run: ./scripts/build-npm-packages.sh "$VERSION"
+        run: ./scripts/build-npm-packages.sh "${{ steps.version.outputs.version }}"
 
       - name: Publish npm packages
-        env:
-          VERSION: ${{ steps.version.outputs.version }}
-        run: ./scripts/publish-npm-packages.sh "$VERSION"
+        run: ./scripts/publish-npm-packages.sh "${{ steps.version.outputs.version }}"
 
-      - name: Push release tag
-        run: git push origin "${{ steps.version.outputs.tag }}"
+      - name: Push release commit and tag
+        run: git push --follow-tags origin HEAD:main
