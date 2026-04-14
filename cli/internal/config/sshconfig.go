@@ -187,20 +187,14 @@ func insertForgedInclude(content, block string) string {
 	}
 
 	lines := strings.Split(body, "\n")
-	insertAt := len(lines)
-	for i, line := range lines {
-		trimmed := strings.TrimSpace(line)
-		if strings.HasPrefix(trimmed, "Host ") || strings.HasPrefix(trimmed, "Match ") {
-			insertAt = i
-			break
+	insertAt := 0
+	for insertAt < len(lines) {
+		trimmed := strings.TrimSpace(lines[insertAt])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			insertAt++
+			continue
 		}
-	}
-
-	if insertAt == len(lines) {
-		if body != "" {
-			body += "\n\n"
-		}
-		return body + block + "\n"
+		break
 	}
 
 	prefix := strings.TrimRight(strings.Join(lines[:insertAt], "\n"), "\n")

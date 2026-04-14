@@ -108,6 +108,27 @@ var doctorCmd = &cobra.Command{
 			}
 		}
 
+		if owner, err := config.DetectSSHAgentOwner(paths); err == nil {
+			switch {
+			case owner.IsForged():
+				pass("IdentityAgent owner", "Forged")
+			case owner.Name == "None":
+				warn("IdentityAgent owner", "no active IdentityAgent is configured")
+			default:
+				detail := owner.Name
+				if owner.Path != "" {
+					detail += " (" + owner.Path + ")"
+				}
+				if sshReady {
+					warn("IdentityAgent owner", detail+" currently resolves first")
+				} else {
+					warn("IdentityAgent owner", detail)
+				}
+			}
+		} else {
+			warn("IdentityAgent owner", "could not inspect the active ssh configuration")
+		}
+
 		if daemon.ServiceInstalled() {
 			pass("System service", "installed")
 		} else {

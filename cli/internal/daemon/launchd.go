@@ -3,10 +3,12 @@
 package daemon
 
 import (
+	"bytes"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"text/template"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -89,11 +91,35 @@ func InstallService(paths config.Paths, masterPassword string) error {
 }
 
 func StartService() error {
-	return launchctl("load", "-w", plistPath())
+	if err := launchctlIgnore(
+		[]string{"bootout", launchdServiceTarget()},
+		[]string{"could not find service", "service is disabled", "not found", "no such process"},
+	); err != nil {
+		return err
+	}
+	if err := launchctlRun(
+		[]string{"bootstrap", launchdDomain(), plistPath()},
+		nil,
+	); err != nil {
+		return err
+	}
+	if err := launchctlRun(
+		[]string{"enable", launchdServiceTarget()},
+		[]string{"already enabled"},
+	); err != nil {
+		return err
+	}
+	return launchctlRun(
+		[]string{"kickstart", "-k", launchdServiceTarget()},
+		nil,
+	)
 }
 
 func StopService() error {
-	return launchctl("unload", plistPath())
+	return launchctlIgnore(
+		[]string{"bootout", launchdServiceTarget()},
+		[]string{"could not find service", "not found", "no such process"},
+	)
 }
 
 func RestartService() error {
@@ -115,6 +141,14 @@ func ServiceInstalled() bool {
 	return err == nil
 }
 
+func launchdDomain() string {
+	return fmt.Sprintf("gui/%d", os.Getuid())
+}
+
+func launchdServiceTarget() string {
+	return launchdDomain() + "/" + launchdLabel
+}
+
 func findBinary() (string, error) {
 	self, err := os.Executable()
 	if err != nil {
@@ -131,9 +165,36 @@ func findBinary() (string, error) {
 	return resolved, nil
 }
 
-func launchctl(args ...string) error {
+func launchctlRun(args []string, ignorable []string) error {
 	cmd := exec.Command("launchctl", args...)
+	var stderr bytes.Buffer
 	cmd.Stdout = os.Stdout
-	cmd.Stderr = os.Stderr
-	return cmd.Run()
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if err == nil {
+		return nil
+	}
+
+	message := strings.TrimSpace(stderr.String())
+	if isIgnorableLaunchdError(message, ignorable) {
+		return nil
+	}
+	if message == "" {
+		return err
+	}
+	return fmt.Errorf("%s", message)
+}
+
+func launchctlIgnore(args []string, ignorable []string) error {
+	return launchctlRun(args, ignorable)
+}
+
+func isIgnorableLaunchdError(message string, ignorable []string) bool {
+	lower := strings.ToLower(message)
+	for _, needle := range ignorable {
+		if strings.Contains(lower, strings.ToLower(needle)) {
+			return true
+		}
+	}
+	return false
 }

@@ -9,7 +9,7 @@ import (
 
 var enableCmd = &cobra.Command{
 	Use:   "enable",
-	Short: "Enable Forged as the system SSH agent",
+	Short: "Enable Forged as the active SSH agent",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
 
@@ -18,14 +18,14 @@ var enableCmd = &cobra.Command{
 		}
 
 		fmt.Println("Forged SSH agent enabled")
-		fmt.Printf("  Forged SSH include configured at %s\n", paths.SSHBaseInclude())
+		fmt.Println("  New SSH connections will use Forged.")
 		return nil
 	},
 }
 
 var disableCmd = &cobra.Command{
 	Use:   "disable",
-	Short: "Disable Forged as the system SSH agent",
+	Short: "Disable Forged and remove its managed SSH config",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
 
@@ -34,7 +34,7 @@ var disableCmd = &cobra.Command{
 		}
 
 		fmt.Println("Forged SSH agent disabled")
-		fmt.Println("  Removed Forged include from ~/.ssh/config")
+		fmt.Println("  Removed Forged-managed SSH config.")
 		return nil
 	},
 }

@@ -75,6 +75,8 @@ The base include only points SSH at the Forged agent. Forged does not rewrite yo
 
 Forged never needs repo-local Git config for this flow. Advanced routing stays local to the machine and disappears cleanly when you disable Forged.
 
+Use `forged doctor` to see which SSH agent currently owns `IdentityAgent`. If you want to switch to another tool or uninstall Forged, run `forged disable` first. That removes only Forged-managed SSH config and leaves the rest of your `~/.ssh` setup alone.
+
 ## Security
 
 Keys are encrypted with Argon2id (64MB memory-hard KDF) and XChaCha20-Poly1305. The vault file is written atomically to prevent corruption and locked to prevent concurrent access. Private keys live in mlock'd memory pages and are explicitly zeroed on shutdown.
@@ -90,7 +92,7 @@ Cloud sync (coming soon) is zero-knowledge. The server stores opaque encrypted b
 | Standalone | Yes | No | No | Yes | Yes |
 | Cross-platform | Mac/Linux/Win | Mac/Linux/Win | Mac/Linux/Win | Mac only | Mac/Linux |
 | Key sync | Yes | Bundled | Bundled | No | No |
-| Host matching | Smart | Basic | No | No | No |
+| SSH routing | Adaptive local | Basic | No | No | No |
 | Git signing | Built-in | Yes | No | Yes | Manual |
 | Auth model | Login once | Per use | Per use | Per use | Per session |
 | Open source | Yes | No | Yes | Yes | Yes |
