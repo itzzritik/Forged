@@ -8,7 +8,8 @@ before:
 
 builds:
   - id: forged
-    main: ./cli/cmd/forged
+    dir: ./cli
+    main: ./cmd/forged
     binary: forged
     env:
       - CGO_ENABLED=0
@@ -25,7 +26,8 @@ builds:
       - -X github.com/itzzritik/forged/cli/cmd/forged/cmd.commit={{.Commit}}
 
   - id: forged-sign
-    main: ./cli/cmd/forged-sign
+    dir: ./cli
+    main: ./cmd/forged-sign
     binary: forged-sign
     env:
       - CGO_ENABLED=0
