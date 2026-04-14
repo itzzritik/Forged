@@ -70,6 +70,9 @@ func (d *Daemon) Run(password []byte) error {
 	if err := d.loadRoutingState(); err != nil {
 		return fmt.Errorf("loading ssh routing state: %w", err)
 	}
+	if err := d.refreshAdvancedSSHRouting(); err != nil {
+		d.logger.Warn("refreshing advanced ssh routing failed", "error", err)
+	}
 
 	d.authBroker = sensitiveauth.NewBroker(d.paths.VaultFile(), d.helperBinaryPath(), d.logger)
 
@@ -117,6 +120,14 @@ func (d *Daemon) helperBinaryPath() string {
 		name += ".exe"
 	}
 	return filepath.Join(filepath.Dir(exe), name)
+}
+
+func (d *Daemon) routeHelperBinaryPath() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	return exe
 }
 
 func (d *Daemon) setupLogging() error {
@@ -213,6 +224,27 @@ func (d *Daemon) loadRoutingState() error {
 	return d.routingStore.Save(d.routingState)
 }
 
+func (d *Daemon) refreshAdvancedSSHRouting() error {
+	if d.routingStore == nil || d.routingState == nil || d.keyStore == nil {
+		return nil
+	}
+
+	helperBinary := d.routeHelperBinaryPath()
+	if helperBinary == "" {
+		return fmt.Errorf("resolving forged executable path")
+	}
+
+	if err := sshrouting.RefreshAdvancedProviderRouting(sshrouting.ManagedPaths{
+		AdvancedConfigPath: d.paths.SSHAdvancedConfig(),
+		ManagedKeysDir:     d.paths.SSHManagedKeysDir(),
+		HelperBinary:       helperBinary,
+	}, d.routingState, d.keyStore.List()); err != nil {
+		return err
+	}
+
+	return d.routingStore.Save(d.routingState)
+}
+
 func (d *Daemon) writePID() error {
 	pidPath := d.paths.PIDFile()
 	if err := os.MkdirAll(filepath.Dir(pidPath), 0700); err != nil {
@@ -230,6 +262,7 @@ func (d *Daemon) startIPC() error {
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
 	d.ipcServer.SetSyncLinkHandler(d.handleSyncLink)
 	d.ipcServer.SetSensitiveAuthBroker(d.authBroker)
+	d.ipcServer.SetRoutingRefreshHandler(d.refreshAdvancedSSHRouting)
 	if err := d.ipcServer.Start(); err != nil {
 		return fmt.Errorf("starting ipc server: %w", err)
 	}

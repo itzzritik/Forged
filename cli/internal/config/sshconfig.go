@@ -62,11 +62,7 @@ func EnableSSHAgent(paths Paths) error {
 		includeLine(paths.SSHBaseInclude()),
 	}, "\n")
 
-	body := strings.TrimRight(content, "\n")
-	if body != "" {
-		body += "\n\n"
-	}
-	body += block + "\n"
+	body := insertForgedInclude(content, block)
 
 	return os.WriteFile(configPath, []byte(body), 0o600)
 }
@@ -80,7 +76,7 @@ func DisableSSHAgent(paths Paths) error {
 	if content == "" {
 		_ = os.Remove(paths.SSHBaseInclude())
 		_ = os.Remove(paths.SSHAdvancedConfig())
-		_ = os.Remove(paths.SSHManagedDir())
+		_ = os.RemoveAll(paths.SSHManagedDir())
 		return nil
 	}
 
@@ -97,7 +93,7 @@ func DisableSSHAgent(paths Paths) error {
 
 	_ = os.Remove(paths.SSHBaseInclude())
 	_ = os.Remove(paths.SSHAdvancedConfig())
-	_ = os.Remove(paths.SSHManagedDir())
+	_ = os.RemoveAll(paths.SSHManagedDir())
 
 	return nil
 }
@@ -182,4 +178,42 @@ func trimTrailingBlankLines(content string) string {
 		end--
 	}
 	return strings.Join(lines[:end], "\n")
+}
+
+func insertForgedInclude(content, block string) string {
+	body := strings.TrimRight(content, "\n")
+	if body == "" {
+		return block + "\n"
+	}
+
+	lines := strings.Split(body, "\n")
+	insertAt := len(lines)
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "Host ") || strings.HasPrefix(trimmed, "Match ") {
+			insertAt = i
+			break
+		}
+	}
+
+	if insertAt == len(lines) {
+		if body != "" {
+			body += "\n\n"
+		}
+		return body + block + "\n"
+	}
+
+	prefix := strings.TrimRight(strings.Join(lines[:insertAt], "\n"), "\n")
+	suffix := strings.TrimLeft(strings.Join(lines[insertAt:], "\n"), "\n")
+
+	parts := make([]string, 0, 3)
+	if prefix != "" {
+		parts = append(parts, prefix)
+	}
+	parts = append(parts, block)
+	if suffix != "" {
+		parts = append(parts, suffix)
+	}
+
+	return strings.Join(parts, "\n\n") + "\n"
 }

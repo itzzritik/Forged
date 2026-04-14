@@ -18,16 +18,17 @@ import (
 )
 
 type Server struct {
-	socketPath  string
-	vault       *vault.Vault
-	keyStore    *vault.KeyStore
-	activityLog *activity.ActivityLog
-	listener    net.Listener
-	logger      *slog.Logger
-	wg          sync.WaitGroup
-	syncBus     *forgedsync.Bus
-	syncLink    func(SyncLinkArgs) error
-	authBroker  *sensitiveauth.Broker
+	socketPath     string
+	vault          *vault.Vault
+	keyStore       *vault.KeyStore
+	activityLog    *activity.ActivityLog
+	listener       net.Listener
+	logger         *slog.Logger
+	wg             sync.WaitGroup
+	syncBus        *forgedsync.Bus
+	syncLink       func(SyncLinkArgs) error
+	authBroker     *sensitiveauth.Broker
+	routingRefresh func() error
 }
 
 func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
@@ -40,6 +41,10 @@ func (s *Server) SetSyncLinkHandler(handler func(SyncLinkArgs) error) {
 
 func (s *Server) SetSensitiveAuthBroker(broker *sensitiveauth.Broker) {
 	s.authBroker = broker
+}
+
+func (s *Server) SetRoutingRefreshHandler(handler func() error) {
+	s.routingRefresh = handler
 }
 
 func NewServer(socketPath string, v *vault.Vault, ks *vault.KeyStore, al *activity.ActivityLog, logger *slog.Logger) *Server {
@@ -192,9 +197,7 @@ func (s *Server) handleAdd(raw json.RawMessage) Response {
 	if err != nil {
 		return ErrorResponse(err)
 	}
-	if s.syncBus != nil {
-		s.syncBus.LocalMutation("key_added")
-	}
+	s.afterKeyMutation("key_added")
 	return OkResponse(map[string]string{
 		"name":        key.Name,
 		"type":        key.Type,
@@ -217,9 +220,7 @@ func (s *Server) handleGenerate(raw json.RawMessage) Response {
 	if err != nil {
 		return ErrorResponse(err)
 	}
-	if s.syncBus != nil {
-		s.syncBus.LocalMutation("key_generated")
-	}
+	s.afterKeyMutation("key_generated")
 	return OkResponse(map[string]string{
 		"name":        key.Name,
 		"type":        key.Type,
@@ -245,9 +246,7 @@ func (s *Server) handleRemove(raw json.RawMessage) Response {
 	if err := s.keyStore.Remove(resolvedName); err != nil {
 		return ErrorResponse(err)
 	}
-	if s.syncBus != nil {
-		s.syncBus.LocalMutation("key_removed")
-	}
+	s.afterKeyMutation("key_removed")
 	return OkResponse(map[string]string{"resolved_name": resolvedName})
 }
 
@@ -269,9 +268,7 @@ func (s *Server) handleRename(raw json.RawMessage) Response {
 	if err := s.keyStore.Rename(resolvedOldName, a.NewName); err != nil {
 		return ErrorResponse(err)
 	}
-	if s.syncBus != nil {
-		s.syncBus.LocalMutation("key_renamed")
-	}
+	s.afterKeyMutation("key_renamed")
 	return OkResponse(map[string]string{
 		"old_name": resolvedOldName,
 		"new_name": a.NewName,
@@ -434,9 +431,7 @@ func (s *Server) handleHost(raw json.RawMessage) Response {
 			return ErrorResponse(err)
 		}
 	}
-	if s.syncBus != nil {
-		s.syncBus.LocalMutation("host_rule_added")
-	}
+	s.afterKeyMutation("host_rule_added")
 	return OkResponse(map[string]string{"resolved_name": resolvedName})
 }
 
@@ -458,9 +453,7 @@ func (s *Server) handleUnhost(raw json.RawMessage) Response {
 	if err := s.keyStore.RemoveHostRule(resolvedName, a.Pattern); err != nil {
 		return ErrorResponse(err)
 	}
-	if s.syncBus != nil {
-		s.syncBus.LocalMutation("host_rule_removed")
-	}
+	s.afterKeyMutation("host_rule_removed")
 	return OkResponse(map[string]string{"resolved_name": resolvedName})
 }
 
@@ -664,6 +657,17 @@ func (s *Server) refreshForRead(reason string) {
 
 	if err := s.syncBus.ForegroundRead(ctx, reason); err != nil {
 		s.logger.Debug("foreground sync refresh failed", "reason", reason, "error", err)
+	}
+}
+
+func (s *Server) afterKeyMutation(reason string) {
+	if s.syncBus != nil {
+		s.syncBus.LocalMutation(reason)
+	}
+	if s.routingRefresh != nil {
+		if err := s.routingRefresh(); err != nil {
+			s.logger.Warn("advanced ssh routing refresh failed", "reason", reason, "error", err)
+		}
 	}
 }
 

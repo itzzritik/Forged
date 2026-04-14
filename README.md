@@ -2,7 +2,7 @@
 
 > Forge your keys. Take them anywhere.
 
-Your SSH keys deserve better than sitting unencrypted in `~/.ssh/`. Forged is a standalone SSH key manager that encrypts your keys, syncs them across machines, and automatically picks the right key for each host.
+Your SSH keys deserve better than sitting unencrypted in `~/.ssh/`. Forged is a standalone SSH key manager that encrypts your keys, syncs them across machines, and keeps SSH routing low-touch while learning which key works for each host.
 
 Open-source replacement for 1Password and Bitwarden's SSH agent.
 
@@ -40,7 +40,7 @@ forged daemon
 
 # That's it. SSH and Git just work now.
 ssh myserver                     # right key, automatically
-git push origin main             # commits signed, automatically
+git push origin main             # same-host provider conflicts handled automatically
 ```
 
 ## Key management
@@ -53,9 +53,9 @@ forged view my-key                              # inspect a key
 forged remove old-key                           # delete a key
 ```
 
-## Host matching
+## Host hints
 
-Tell Forged which key to use for which host. No more trial-and-error.
+Forged learns from successful SSH use locally. You can still add optional host hints when you want to bias routing or describe a key's intended use.
 
 ```bash
 forged host my-key "github.com" "*.github.com"
@@ -71,7 +71,7 @@ Forged runs as a background daemon. It speaks the standard SSH agent protocol, s
 forged daemon
 ├── SSH Agent          standard protocol, ssh-add works
 ├── Encrypted Vault    Argon2id + XChaCha20-Poly1305
-├── Host Matcher       right key for each host, automatically
+├── Local Routing      learns host affinity + advanced provider routing locally
 └── Key Store          in-memory, mlock'd, zeroed on shutdown
 ```
 
@@ -81,7 +81,9 @@ No browser. No Electron. No local web server. Just a Unix socket and a CLI.
 
 Forged keeps SSH integration low-touch. By default it manages its own files under `~/.ssh/forged/` and adds at most one `Include` line to your main `~/.ssh/config`.
 
-Forged does not rewrite your existing host blocks. Advanced routing, when needed, is generated only inside the Forged-managed include files.
+The base include only points SSH at the Forged agent. Forged does not rewrite your existing host blocks. If it detects an advanced same-host provider conflict, like multiple GitHub identities on `github.com`, it generates local routing rules only inside `~/.ssh/forged/config`.
+
+Forged never needs repo-local Git config for this flow. Advanced routing stays local to the machine and disappears cleanly when you disable Forged.
 
 ## Security
 

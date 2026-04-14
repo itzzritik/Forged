@@ -61,6 +61,7 @@ func init() {
 		loginCmd,
 		logoutCmd,
 		registerCmd,
+		sshRouteMatchCmd,
 		lockCmd,
 		unlockCmd,
 		configCmd,

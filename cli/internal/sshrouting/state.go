@@ -17,12 +17,26 @@ type HostAffinity struct {
 	ManualOverride bool      `json:"manual_override,omitempty"`
 }
 
+type ProviderIdentity struct {
+	Provider        string    `json:"provider"`
+	KeyID           string    `json:"key_id"`
+	AccountSlug     string    `json:"account_slug"`
+	MatchHost       string    `json:"match_host"`
+	Alias           string    `json:"alias"`
+	HintPath        string    `json:"hint_path"`
+	LastRefreshedAt time.Time `json:"last_refreshed_at,omitempty"`
+}
+
 type State struct {
-	Hosts map[string]HostAffinity `json:"hosts"`
+	Hosts              map[string]HostAffinity     `json:"hosts"`
+	ProviderIdentities map[string]ProviderIdentity `json:"provider_identities,omitempty"`
 }
 
 func DefaultState() State {
-	return State{Hosts: map[string]HostAffinity{}}
+	return State{
+		Hosts:              map[string]HostAffinity{},
+		ProviderIdentities: map[string]ProviderIdentity{},
+	}
 }
 
 func hostKey(host string, port int) string {
@@ -41,6 +55,24 @@ func (s *State) RecordSuccess(host string, port int, keyID string, now time.Time
 	entry.SuccessCount++
 	entry.LastFailureAt = time.Time{}
 	s.Hosts[key] = entry
+}
+
+func (s *State) UpsertProviderIdentity(identity ProviderIdentity) {
+	if s.ProviderIdentities == nil {
+		s.ProviderIdentities = map[string]ProviderIdentity{}
+	}
+	s.ProviderIdentities[identity.KeyID] = identity
+}
+
+func (s *State) RemoveMissingProviderIdentities(valid map[string]struct{}) {
+	if s.ProviderIdentities == nil {
+		return
+	}
+	for keyID := range s.ProviderIdentities {
+		if _, ok := valid[keyID]; !ok {
+			delete(s.ProviderIdentities, keyID)
+		}
+	}
 }
 
 type Store struct {
@@ -67,6 +99,9 @@ func (s *Store) Load() (*State, error) {
 	}
 	if state.Hosts == nil {
 		state.Hosts = map[string]HostAffinity{}
+	}
+	if state.ProviderIdentities == nil {
+		state.ProviderIdentities = map[string]ProviderIdentity{}
 	}
 	return &state, nil
 }

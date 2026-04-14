@@ -28,6 +28,10 @@ func (p Paths) SSHManagedDir() string {
 	return filepath.Join(home, ".ssh", "forged")
 }
 
+func (p Paths) SSHManagedKeysDir() string {
+	return filepath.Join(p.SSHManagedDir(), "keys")
+}
+
 func (p Paths) SSHUserConfig() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".ssh", "config")

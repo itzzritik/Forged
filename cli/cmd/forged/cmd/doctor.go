@@ -18,6 +18,9 @@ var doctorCmd = &cobra.Command{
 		paths := config.DefaultPaths()
 		fix, _ := cmd.Flags().GetBool("fix")
 		issues := 0
+		ensureSSH := func() error {
+			return config.EnableSSHAgent(paths)
+		}
 
 		fmt.Println("Forged Doctor")
 		fmt.Println()
@@ -58,18 +61,49 @@ var doctorCmd = &cobra.Command{
 			issues++
 		}
 
+		sshReady := false
 		if config.IsSSHAgentEnabled(paths) {
-			pass("SSH agent", "Forged managed SSH files are configured")
+			pass("SSH agent", "Forged managed SSH include is configured")
+			sshReady = true
+		} else if fix {
+			if err := ensureSSH(); err == nil {
+				fixed("SSH agent", "Forged SSH include configured")
+				sshReady = true
+			} else {
+				fail("SSH agent", fmt.Sprintf("could not fix: %v", err))
+				issues++
+			}
 		} else {
-			if fix {
-				if err := config.EnableSSHAgent(paths); err == nil {
-					fixed("SSH agent", "Forged SSH include configured")
+			fail("SSH agent", "Forged SSH include not configured. Run: forged doctor --fix")
+			issues++
+		}
+
+		if sshReady {
+			if _, err := os.Stat(paths.SSHBaseInclude()); err == nil {
+				pass("SSH include", paths.SSHBaseInclude())
+			} else if fix {
+				if err := ensureSSH(); err == nil {
+					fixed("SSH include", paths.SSHBaseInclude())
 				} else {
-					fail("SSH agent", fmt.Sprintf("could not fix: %v", err))
+					fail("SSH include", fmt.Sprintf("could not fix: %v", err))
 					issues++
 				}
 			} else {
-				fail("SSH agent", "Forged SSH include not configured. Run: forged doctor --fix")
+				fail("SSH include", "missing managed include file. Run: forged doctor --fix")
+				issues++
+			}
+
+			if _, err := os.Stat(paths.SSHAdvancedConfig()); err == nil {
+				pass("Advanced routes", paths.SSHAdvancedConfig())
+			} else if fix {
+				if err := ensureSSH(); err == nil {
+					fixed("Advanced routes", paths.SSHAdvancedConfig())
+				} else {
+					fail("Advanced routes", fmt.Sprintf("could not fix: %v", err))
+					issues++
+				}
+			} else {
+				fail("Advanced routes", "missing Forged routing file. Run: forged doctor --fix")
 				issues++
 			}
 		}
