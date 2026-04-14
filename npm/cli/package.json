@@ -1,6 +1,6 @@
 {
   "name": "@getforged/cli",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "Forged CLI",
   "license": "MIT",
   "repository": {
@@ -15,12 +15,12 @@
     "forged": "bin/forged.js"
   },
   "optionalDependencies": {
-    "@getforged/cli-darwin-x64": "0.1.1",
-    "@getforged/cli-darwin-arm64": "0.1.1",
-    "@getforged/cli-linux-x64": "0.1.1",
-    "@getforged/cli-linux-arm64": "0.1.1",
-    "@getforged/cli-win32-x64": "0.1.1",
-    "@getforged/cli-win32-arm64": "0.1.1"
+    "@getforged/cli-darwin-x64": "0.1.2",
+    "@getforged/cli-darwin-arm64": "0.1.2",
+    "@getforged/cli-linux-x64": "0.1.2",
+    "@getforged/cli-linux-arm64": "0.1.2",
+    "@getforged/cli-win32-x64": "0.1.2",
+    "@getforged/cli-win32-arm64": "0.1.2"
   },
   "files": [
     "bin"
