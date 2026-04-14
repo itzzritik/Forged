@@ -8,38 +8,65 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var (
-	sshRouteProvider string
-	sshRouteKeyID    string
-)
+var sshRouteKeyID string
 
 var sshRouteMatchCmd = &cobra.Command{
-	Use:          "__ssh-route-match",
-	Short:        "Internal SSH routing helper",
-	Hidden:       true,
-	SilenceUsage: true,
+	Use:                "__ssh-route-match",
+	Hidden:             true,
+	SilenceUsage:       true,
+	SilenceErrors:      true,
+	DisableFlagParsing: false,
 	Run: func(cmd *cobra.Command, args []string) {
-		cwd, err := os.Getwd()
+		if sshRouteKeyID == "" {
+			os.Exit(1)
+		}
+
+		paths := config.DefaultPaths()
+		remote, err := sshrouting.CurrentRemote()
+		if err != nil || remote.Host != "github.com" || remote.Owner == "" {
+			os.Exit(1)
+		}
+
+		state, err := sshrouting.LoadState(paths.SSHRoutingStateFile())
 		if err != nil {
 			os.Exit(1)
 		}
-		if sshRouteProvider == "" || sshRouteKeyID == "" {
+
+		if keyID, ok := state.RepoRoutes[remote.RouteKey]; ok {
+			if keyID == sshRouteKeyID {
+				os.Exit(0)
+			}
 			os.Exit(1)
 		}
-		paths := config.DefaultPaths()
-		runtime := sshrouting.MatchRuntime{
-			StatePath:      paths.SSHRoutingStateFile(),
-			ManagedKeysDir: paths.SSHManagedKeysDir(),
-			AgentSocket:    paths.AgentSocket(),
+
+		account, ok := state.GitHubAccounts[sshRouteKeyID]
+		if !ok || account == "" {
+			account, err = sshrouting.ProbeGitHubAccount(
+				paths.AgentSocket(),
+				sshrouting.HintFilePath(paths.SSHManagedKeysDir(), sshRouteKeyID),
+			)
+			if err != nil {
+				os.Exit(1)
+			}
+			state.GitHubAccounts[sshRouteKeyID] = account
+			if err := sshrouting.SaveState(paths.SSHRoutingStateFile(), state); err != nil {
+				os.Exit(1)
+			}
 		}
-		if sshrouting.MatchProviderKey(cwd, sshRouteProvider, sshRouteKeyID, runtime) {
-			os.Exit(0)
+
+		if account != remote.Owner {
+			os.Exit(1)
 		}
-		os.Exit(1)
+
+		state.RepoRoutes[remote.RouteKey] = sshRouteKeyID
+		if err := sshrouting.SaveState(paths.SSHRoutingStateFile(), state); err != nil {
+			os.Exit(1)
+		}
+		os.Exit(0)
 	},
 }
 
 func init() {
-	sshRouteMatchCmd.Flags().StringVar(&sshRouteProvider, "provider", "", "provider name")
-	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyID, "key-id", "", "provider key id")
+	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyID, "key-id", "", "internal key route matcher")
+	rootCmd.AddCommand(sshRouteMatchCmd)
 }

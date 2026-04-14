@@ -10,7 +10,6 @@ import (
 	"os/signal"
 	"path/filepath"
 	"runtime"
-	"sort"
 	"strconv"
 	"syscall"
 
@@ -28,19 +27,18 @@ import (
 )
 
 type Daemon struct {
-	paths        config.Paths
-	vault        *vault.Vault
-	keyStore     *vault.KeyStore
-	activityLog  *activity.ActivityLog
-	agent        *forgedagent.ForgedAgent
-	agentServer  *forgedagent.Server
-	ipcServer    *ipc.Server
-	syncBus      *forgedsync.Bus
-	authBroker   *sensitiveauth.Broker
-	routingStore *sshrouting.Store
-	routingState *sshrouting.State
-	logger       *slog.Logger
-	stop         chan struct{}
+	paths       config.Paths
+	vault       *vault.Vault
+	keyStore    *vault.KeyStore
+	activityLog *activity.ActivityLog
+	agent       *forgedagent.ForgedAgent
+	agentServer *forgedagent.Server
+	ipcServer   *ipc.Server
+	syncBus     *forgedsync.Bus
+	authBroker  *sensitiveauth.Broker
+	sshRouting  *sshrouting.Manager
+	logger      *slog.Logger
+	stop        chan struct{}
 }
 
 func New(paths config.Paths) *Daemon {
@@ -66,14 +64,8 @@ func (d *Daemon) Run(password []byte) error {
 	}
 	defer d.shutdown()
 
-	if err := d.loadRoutingState(); err != nil {
-		return fmt.Errorf("loading ssh routing state: %w", err)
-	}
-	if err := d.refreshAdvancedSSHRouting(); err != nil {
-		d.logger.Warn("refreshing advanced ssh routing failed", "error", err)
-	}
-
 	d.authBroker = sensitiveauth.NewBroker(d.paths.VaultFile(), d.helperBinaryPath(), d.logger)
+	d.sshRouting = sshrouting.NewManager(d.paths, d.keyStore, d.selfBinaryPath())
 
 	if err := d.writePID(); err != nil {
 		return err
@@ -86,6 +78,10 @@ func (d *Daemon) Run(password []byte) error {
 	}
 
 	d.initSync()
+
+	if err := d.refreshSSHRouting(); err != nil {
+		return err
+	}
 
 	if err := d.startAgent(); err != nil {
 		return err
@@ -110,23 +106,34 @@ func (d *Daemon) Stop() {
 }
 
 func (d *Daemon) helperBinaryPath() string {
-	exe, err := os.Executable()
-	if err != nil {
-		return ""
-	}
-	name := "forged-auth"
-	if runtime.GOOS == "windows" {
-		name += ".exe"
-	}
-	return filepath.Join(filepath.Dir(exe), name)
+	return filepath.Join(filepath.Dir(d.selfBinaryPath()), helperBinaryName())
 }
 
-func (d *Daemon) routeHelperBinaryPath() string {
+func (d *Daemon) selfBinaryPath() string {
 	exe, err := os.Executable()
 	if err != nil {
 		return ""
 	}
 	return exe
+}
+
+func helperBinaryName() string {
+	name := "forged-auth"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	return name
+}
+
+func (d *Daemon) refreshSSHRouting() error {
+	if d.sshRouting == nil {
+		return nil
+	}
+	if err := d.sshRouting.Refresh(); err != nil {
+		d.logger.Warn("refreshing ssh routing failed", "error", err)
+		return fmt.Errorf("refreshing ssh routing: %w", err)
+	}
+	return nil
 }
 
 func (d *Daemon) setupLogging() error {
@@ -205,41 +212,6 @@ func (d *Daemon) openVault(password []byte) error {
 	return nil
 }
 
-func (d *Daemon) loadRoutingState() error {
-	d.routingStore = sshrouting.NewStore(d.paths.SSHRoutingStateFile())
-	state, err := d.routingStore.Load()
-	if err != nil {
-		return err
-	}
-	d.routingState = state
-	if len(d.routingState.Hosts) != 0 {
-		return nil
-	}
-
-	return d.routingStore.Save(d.routingState)
-}
-
-func (d *Daemon) refreshAdvancedSSHRouting() error {
-	if d.routingStore == nil || d.routingState == nil || d.keyStore == nil {
-		return nil
-	}
-
-	helperBinary := d.routeHelperBinaryPath()
-	if helperBinary == "" {
-		return fmt.Errorf("resolving forged executable path")
-	}
-
-	if err := sshrouting.RefreshAdvancedProviderRouting(sshrouting.ManagedPaths{
-		AdvancedConfigPath: d.paths.SSHAdvancedConfig(),
-		ManagedKeysDir:     d.paths.SSHManagedKeysDir(),
-		HelperBinary:       helperBinary,
-	}, d.routingState, d.keyStore.List()); err != nil {
-		return err
-	}
-
-	return d.routingStore.Save(d.routingState)
-}
-
 func (d *Daemon) writePID() error {
 	pidPath := d.paths.PIDFile()
 	if err := os.MkdirAll(filepath.Dir(pidPath), 0700); err != nil {
@@ -257,7 +229,16 @@ func (d *Daemon) startIPC() error {
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
 	d.ipcServer.SetSyncLinkHandler(d.handleSyncLink)
 	d.ipcServer.SetSensitiveAuthBroker(d.authBroker)
-	d.ipcServer.SetRoutingRefreshHandler(d.refreshAdvancedSSHRouting)
+	d.ipcServer.SetOnKeyChange(func() {
+		if err := d.refreshSSHRouting(); err != nil {
+			d.logger.Warn("refreshing ssh routing after key change failed", "error", err)
+		}
+	})
+	d.ipcServer.SetOnReadSync(func() {
+		if err := d.refreshSSHRouting(); err != nil {
+			d.logger.Warn("refreshing ssh routing after sync failed", "error", err)
+		}
+	})
 	if err := d.ipcServer.Start(); err != nil {
 		return fmt.Errorf("starting ipc server: %w", err)
 	}
@@ -274,7 +255,6 @@ func (d *Daemon) startAgent() error {
 
 	d.agent = forgedagent.New(d.keyStore)
 	d.agent.SetSyncCoordinator(d.syncBus)
-	d.agent.SetRouteCoordinator(d)
 	d.agentServer = forgedagent.NewServer(agentPath, d.agent, d.logger)
 	if err := d.agentServer.Start(); err != nil {
 		return fmt.Errorf("starting agent server: %w", err)
@@ -419,42 +399,6 @@ func (d *Daemon) shutdown() {
 	os.Remove(d.paths.PIDFile())
 
 	d.logger.Info("daemon stopped")
-}
-
-func (d *Daemon) OrderedKeys(keys []vault.Key) []vault.Key {
-	ordered := append([]vault.Key(nil), keys...)
-	sort.SliceStable(ordered, func(i, j int) bool {
-		score := func(k vault.Key) int {
-			if d.routingState == nil {
-				return 0
-			}
-			best := 0
-			for _, entry := range d.routingState.Hosts {
-				if entry.KeyID == k.ID && entry.SuccessCount > best {
-					best = entry.SuccessCount
-				}
-			}
-			return best
-		}
-
-		si, sj := score(ordered[i]), score(ordered[j])
-		if si != sj {
-			return si > sj
-		}
-
-		iUsed, jUsed := ordered[i].LastUsedAt, ordered[j].LastUsedAt
-		if iUsed != nil && jUsed != nil {
-			return iUsed.After(*jUsed)
-		}
-		if iUsed != nil {
-			return true
-		}
-		if jUsed != nil {
-			return false
-		}
-		return ordered[i].Name < ordered[j].Name
-	})
-	return ordered
 }
 
 func IsRunning(paths config.Paths) (int, bool) {

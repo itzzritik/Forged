@@ -5,8 +5,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-
-	"github.com/itzzritik/forged/cli/internal/sshrouting"
 )
 
 const (
@@ -25,7 +23,8 @@ func IsSSHAgentEnabled(paths Paths) bool {
 	}
 
 	content := string(data)
-	return strings.Contains(content, includeLine(paths.SSHBaseInclude())) ||
+	return strings.Contains(content, includeLine(paths.SSHManagedConfig())) ||
+		strings.Contains(content, includeLine(paths.LegacySSHBaseInclude())) ||
 		strings.Contains(content, sshConfigMarker) ||
 		strings.Contains(content, paths.AgentSocket())
 }
@@ -39,14 +38,22 @@ func EnableSSHAgent(paths Paths) error {
 		return err
 	}
 
-	baseContent := sshrouting.RenderBaseConfig(paths.AgentSocket(), paths.SSHAdvancedConfig())
-	if err := os.WriteFile(paths.SSHBaseInclude(), []byte(baseContent), 0o600); err != nil {
+	if err := cleanupLegacySSHArtifacts(paths); err != nil {
 		return err
 	}
-	if _, err := os.Stat(paths.SSHAdvancedConfig()); os.IsNotExist(err) {
-		if err := os.WriteFile(paths.SSHAdvancedConfig(), []byte(""), 0o600); err != nil {
+
+	if _, err := os.Stat(paths.SSHAdvancedConfig()); err != nil {
+		if !os.IsNotExist(err) {
 			return err
 		}
+		if err := os.WriteFile(paths.SSHAdvancedConfig(), []byte(renderAdvancedSSHConfig()), 0o600); err != nil {
+			return err
+		}
+	}
+
+	baseContent := renderManagedSSHConfig(paths)
+	if err := os.WriteFile(paths.SSHManagedConfig(), []byte(baseContent), 0o600); err != nil {
+		return err
 	}
 
 	content, err := readConfigFile(configPath)
@@ -54,12 +61,12 @@ func EnableSSHAgent(paths Paths) error {
 		return err
 	}
 
-	content = removeForgedInclude(content, paths.SSHBaseInclude())
+	content = removeForgedIncludes(content, paths)
 	content = removeForgedBlock(content)
 
 	block := strings.Join([]string{
 		sshIncludeComment,
-		includeLine(paths.SSHBaseInclude()),
+		includeLine(paths.SSHManagedConfig()),
 	}, "\n")
 
 	body := insertForgedInclude(content, block)
@@ -74,13 +81,11 @@ func DisableSSHAgent(paths Paths) error {
 		return err
 	}
 	if content == "" {
-		_ = os.Remove(paths.SSHBaseInclude())
-		_ = os.Remove(paths.SSHAdvancedConfig())
-		_ = os.RemoveAll(paths.SSHManagedDir())
+		_ = cleanupAllSSHArtifacts(paths)
 		return nil
 	}
 
-	cleaned := removeForgedInclude(content, paths.SSHBaseInclude())
+	cleaned := removeForgedIncludes(content, paths)
 	cleaned = removeForgedBlock(cleaned)
 	cleaned = strings.TrimRight(cleaned, "\n ")
 	if cleaned != "" {
@@ -91,9 +96,7 @@ func DisableSSHAgent(paths Paths) error {
 		return err
 	}
 
-	_ = os.Remove(paths.SSHBaseInclude())
-	_ = os.Remove(paths.SSHAdvancedConfig())
-	_ = os.RemoveAll(paths.SSHManagedDir())
+	_ = cleanupAllSSHArtifacts(paths)
 
 	return nil
 }
@@ -113,15 +116,22 @@ func readConfigFile(path string) (string, error) {
 	return "", err
 }
 
-func removeForgedInclude(content, includePath string) string {
+func removeForgedIncludes(content string, paths Paths) string {
 	lines := strings.Split(content, "\n")
-	include := includeLine(includePath)
-	quotedInclude := fmt.Sprintf("Include %q", includePath)
+	includes := map[string]struct{}{
+		includeLine(paths.SSHManagedConfig()):                   {},
+		includeLine(paths.LegacySSHBaseInclude()):               {},
+		fmt.Sprintf("Include %q", paths.SSHManagedConfig()):     {},
+		fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()): {},
+	}
 
 	result := make([]string, 0, len(lines))
 	for _, line := range lines {
 		trimmed := strings.TrimSpace(line)
-		if trimmed == sshIncludeComment || trimmed == include || trimmed == quotedInclude {
+		if trimmed == sshIncludeComment {
+			continue
+		}
+		if _, ok := includes[trimmed]; ok {
 			continue
 		}
 		result = append(result, line)
@@ -210,4 +220,31 @@ func insertForgedInclude(content, block string) string {
 	}
 
 	return strings.Join(parts, "\n\n") + "\n"
+}
+
+func renderManagedSSHConfig(paths Paths) string {
+	return fmt.Sprintf(
+		"# Added by Forged\nInclude %q\nHost *\n    IdentityAgent %q\n",
+		paths.SSHAdvancedConfig(),
+		paths.AgentSocket(),
+	)
+}
+
+func renderAdvancedSSHConfig() string {
+	return "# Managed by Forged\n"
+}
+
+func cleanupLegacySSHArtifacts(paths Paths) error {
+	_ = os.RemoveAll(paths.LegacySSHManagedDir())
+	_ = os.Remove(filepath.Join(paths.StateDir, "ssh-routing.json"))
+	return nil
+}
+
+func cleanupAllSSHArtifacts(paths Paths) error {
+	if err := cleanupLegacySSHArtifacts(paths); err != nil {
+		return err
+	}
+	_ = os.Remove(paths.SSHManagedConfig())
+	_ = os.RemoveAll(paths.SSHManagedDir())
+	return nil
 }

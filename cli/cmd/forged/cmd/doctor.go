@@ -63,11 +63,11 @@ var doctorCmd = &cobra.Command{
 
 		sshReady := false
 		if config.IsSSHAgentEnabled(paths) {
-			pass("SSH agent", "Forged managed SSH include is configured")
+			pass("SSH agent", "Forged SSH config is configured")
 			sshReady = true
 		} else if fix {
 			if err := ensureSSH(); err == nil {
-				fixed("SSH agent", "Forged SSH include configured")
+				fixed("SSH agent", "Forged SSH config configured")
 				sshReady = true
 			} else {
 				fail("SSH agent", fmt.Sprintf("could not fix: %v", err))
@@ -79,31 +79,17 @@ var doctorCmd = &cobra.Command{
 		}
 
 		if sshReady {
-			if _, err := os.Stat(paths.SSHBaseInclude()); err == nil {
-				pass("SSH include", paths.SSHBaseInclude())
+			if _, err := os.Stat(paths.SSHManagedConfig()); err == nil {
+				pass("SSH config", paths.SSHManagedConfig())
 			} else if fix {
 				if err := ensureSSH(); err == nil {
-					fixed("SSH include", paths.SSHBaseInclude())
+					fixed("SSH config", paths.SSHManagedConfig())
 				} else {
-					fail("SSH include", fmt.Sprintf("could not fix: %v", err))
+					fail("SSH config", fmt.Sprintf("could not fix: %v", err))
 					issues++
 				}
 			} else {
-				fail("SSH include", "missing managed include file. Run: forged doctor --fix")
-				issues++
-			}
-
-			if _, err := os.Stat(paths.SSHAdvancedConfig()); err == nil {
-				pass("Advanced routes", paths.SSHAdvancedConfig())
-			} else if fix {
-				if err := ensureSSH(); err == nil {
-					fixed("Advanced routes", paths.SSHAdvancedConfig())
-				} else {
-					fail("Advanced routes", fmt.Sprintf("could not fix: %v", err))
-					issues++
-				}
-			} else {
-				fail("Advanced routes", "missing Forged routing file. Run: forged doctor --fix")
+				fail("SSH config", "missing Forged-managed SSH config. Run: forged doctor --fix")
 				issues++
 			}
 		}

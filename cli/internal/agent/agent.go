@@ -14,20 +14,15 @@ import (
 )
 
 type ForgedAgent struct {
-	mu               sync.RWMutex
-	keyStore         *vault.KeyStore
-	locked           bool
-	syncBus          SyncCoordinator
-	routeCoordinator RouteCoordinator
+	mu       sync.RWMutex
+	keyStore *vault.KeyStore
+	locked   bool
+	syncBus  SyncCoordinator
 }
 
 type SyncCoordinator interface {
 	AgentAccess(reason string)
 	RefreshMissingKey(ctx context.Context, reason string) error
-}
-
-type RouteCoordinator interface {
-	OrderedKeys(keys []vault.Key) []vault.Key
 }
 
 func New(ks *vault.KeyStore) *ForgedAgent {
@@ -38,12 +33,6 @@ func (a *ForgedAgent) SetSyncCoordinator(syncBus SyncCoordinator) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.syncBus = syncBus
-}
-
-func (a *ForgedAgent) SetRouteCoordinator(routeCoordinator RouteCoordinator) {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.routeCoordinator = routeCoordinator
 }
 
 func (a *ForgedAgent) List() ([]*agent.Key, error) {
@@ -57,10 +46,6 @@ func (a *ForgedAgent) List() ([]*agent.Key, error) {
 	}
 
 	keys := a.keyStore.List()
-	if a.routeCoordinator != nil {
-		keys = a.routeCoordinator.OrderedKeys(keys)
-	}
-
 	out := make([]*agent.Key, 0, len(keys))
 	for _, k := range keys {
 		pub, err := parsePublicKey(k.PublicKey)
@@ -167,9 +152,6 @@ func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
 	}
 
 	keys := a.keyStore.List()
-	if a.routeCoordinator != nil {
-		keys = a.routeCoordinator.OrderedKeys(keys)
-	}
 	var signers []ssh.Signer
 	for _, k := range keys {
 		signer, err := ssh.ParsePrivateKey(k.PrivateKey)

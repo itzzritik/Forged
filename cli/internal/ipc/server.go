@@ -18,17 +18,18 @@ import (
 )
 
 type Server struct {
-	socketPath     string
-	vault          *vault.Vault
-	keyStore       *vault.KeyStore
-	activityLog    *activity.ActivityLog
-	listener       net.Listener
-	logger         *slog.Logger
-	wg             sync.WaitGroup
-	syncBus        *forgedsync.Bus
-	syncLink       func(SyncLinkArgs) error
-	authBroker     *sensitiveauth.Broker
-	routingRefresh func() error
+	socketPath  string
+	vault       *vault.Vault
+	keyStore    *vault.KeyStore
+	activityLog *activity.ActivityLog
+	listener    net.Listener
+	logger      *slog.Logger
+	wg          sync.WaitGroup
+	syncBus     *forgedsync.Bus
+	syncLink    func(SyncLinkArgs) error
+	authBroker  *sensitiveauth.Broker
+	onKeyChange func()
+	onReadSync  func()
 }
 
 func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
@@ -43,8 +44,12 @@ func (s *Server) SetSensitiveAuthBroker(broker *sensitiveauth.Broker) {
 	s.authBroker = broker
 }
 
-func (s *Server) SetRoutingRefreshHandler(handler func() error) {
-	s.routingRefresh = handler
+func (s *Server) SetOnKeyChange(fn func()) {
+	s.onKeyChange = fn
+}
+
+func (s *Server) SetOnReadSync(fn func()) {
+	s.onReadSync = fn
 }
 
 func NewServer(socketPath string, v *vault.Vault, ks *vault.KeyStore, al *activity.ActivityLog, logger *slog.Logger) *Server {
@@ -586,16 +591,17 @@ func (s *Server) refreshForRead(reason string) {
 	if err := s.syncBus.ForegroundRead(ctx, reason); err != nil {
 		s.logger.Debug("foreground sync refresh failed", "reason", reason, "error", err)
 	}
+	if s.onReadSync != nil {
+		s.onReadSync()
+	}
 }
 
 func (s *Server) afterKeyMutation(reason string) {
 	if s.syncBus != nil {
 		s.syncBus.LocalMutation(reason)
 	}
-	if s.routingRefresh != nil {
-		if err := s.routingRefresh(); err != nil {
-			s.logger.Warn("advanced ssh routing refresh failed", "reason", reason, "error", err)
-		}
+	if s.onKeyChange != nil {
+		s.onKeyChange()
 	}
 }
 

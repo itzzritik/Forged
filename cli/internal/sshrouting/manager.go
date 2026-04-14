@@ -1,126 +1,105 @@
 package sshrouting
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
-	"time"
 
+	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
-type ManagedPaths struct {
-	AdvancedConfigPath string
-	ManagedKeysDir     string
-	HelperBinary       string
+type Manager struct {
+	paths    config.Paths
+	keyStore *vault.KeyStore
+	selfPath string
 }
 
-func RefreshAdvancedProviderRouting(paths ManagedPaths, state *State, keys []vault.Key) error {
-	candidates := DetectProviderCandidates(keys)
-	conflicts := GroupProviderConflicts(candidates)
-
-	if err := os.MkdirAll(paths.ManagedKeysDir, 0o700); err != nil {
-		return err
+func NewManager(paths config.Paths, keyStore *vault.KeyStore, selfPath string) *Manager {
+	return &Manager{
+		paths:    paths,
+		keyStore: keyStore,
+		selfPath: selfPath,
 	}
-	if err := os.MkdirAll(filepath.Dir(paths.AdvancedConfigPath), 0o700); err != nil {
-		return err
-	}
+}
 
-	wantedHints := map[string]string{}
-	wantedProviderKeys := map[string]struct{}{}
-	entries := make([]ProviderRouteEntry, 0)
-	now := time.Now().UTC()
-
-	for _, group := range conflicts {
-		for _, candidate := range group {
-			alias := providerAlias(candidate.Provider, candidate.KeyID)
-			hintPath := filepath.Join(paths.ManagedKeysDir, alias+".pub")
-			state.UpsertProviderKey(ProviderKey{
-				Provider:        candidate.Provider,
-				KeyID:           candidate.KeyID,
-				MatchHost:       candidate.MatchHost,
-				Alias:           alias,
-				HintPath:        hintPath,
-				LastRefreshedAt: now,
-			})
-			wantedProviderKeys[candidate.KeyID] = struct{}{}
-			wantedHints[hintPath] = candidate.PublicKey + "\n"
-			entries = append(entries, ProviderRouteEntry{
-				MatchHost:    candidate.MatchHost,
-				Provider:     candidate.Provider,
-				KeyID:        candidate.KeyID,
-				IdentityFile: hintPath,
-				MatchExec:    renderMatchExec(paths.HelperBinary, candidate.Provider, candidate.KeyID),
-			})
-		}
-	}
-
-	state.RemoveMissingProviderKeys(wantedProviderKeys)
-
-	if err := syncHintFiles(paths.ManagedKeysDir, wantedHints); err != nil {
+func (m *Manager) Refresh() error {
+	if err := os.MkdirAll(m.paths.SSHManagedDir(), 0o700); err != nil {
 		return err
 	}
 
-	return os.WriteFile(paths.AdvancedConfigPath, []byte(RenderAdvancedConfig(entries)), 0o600)
-}
-
-func providerAlias(provider, keyID string) string {
-	return provider + "-forged-" + aliasComponent(keyID)
-}
-
-func renderMatchExec(helperPath, provider, keyID string) string {
-	cmd := shellQuote(helperPath) + " __ssh-route-match --provider " + provider + " --key-id " + shellQuote(keyID)
-	return strconv.Quote(cmd)
-}
-
-func aliasComponent(value string) string {
-	var b strings.Builder
-	for _, r := range value {
-		switch {
-		case r >= 'a' && r <= 'z':
-			b.WriteRune(r)
-		case r >= 'A' && r <= 'Z':
-			b.WriteRune(r + ('a' - 'A'))
-		case r >= '0' && r <= '9':
-			b.WriteRune(r)
-		default:
-			b.WriteByte('-')
-		}
-	}
-	alias := strings.Trim(b.String(), "-")
-	if alias == "" {
-		return "key"
-	}
-	return alias
-}
-
-func shellQuote(value string) string {
-	return "'" + strings.ReplaceAll(value, "'", `'\"'\"'`) + "'"
-}
-
-func syncHintFiles(dir string, wanted map[string]string) error {
-	if err := os.MkdirAll(dir, 0o700); err != nil {
-		return err
+	keys := m.keyStore.List()
+	validKeyIDs := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		validKeyIDs[key.ID] = struct{}{}
 	}
 
-	existing, err := filepath.Glob(filepath.Join(dir, "*.pub"))
+	state, err := LoadState(m.paths.SSHRoutingStateFile())
 	if err != nil {
 		return err
 	}
-	for _, path := range existing {
-		if _, ok := wanted[path]; !ok {
-			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-				return err
-			}
-		}
+	state.prune(validKeyIDs)
+	if err := SaveState(m.paths.SSHRoutingStateFile(), state); err != nil {
+		return err
 	}
 
-	for path, content := range wanted {
-		if err := os.WriteFile(path, []byte(content), 0o600); err != nil {
+	if err := os.MkdirAll(m.paths.SSHManagedKeysDir(), 0o700); err != nil {
+		return err
+	}
+	if err := syncHintFiles(m.paths.SSHManagedKeysDir(), keys); err != nil {
+		return err
+	}
+
+	content := renderAdvancedConfig(m.paths, m.selfPath, keys)
+	return os.WriteFile(m.paths.SSHAdvancedConfig(), []byte(content), 0o600)
+}
+
+func syncHintFiles(dir string, keys []vault.Key) error {
+	valid := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		path := HintFilePath(dir, key.ID)
+		valid[path] = struct{}{}
+		if err := os.WriteFile(path, []byte(strings.TrimSpace(key.PublicKey)+"\n"), 0o600); err != nil {
 			return err
 		}
 	}
 
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return err
+	}
+	for _, entry := range entries {
+		path := filepath.Join(dir, entry.Name())
+		if _, ok := valid[path]; ok {
+			continue
+		}
+		_ = os.RemoveAll(path)
+	}
 	return nil
+}
+
+func renderAdvancedConfig(paths config.Paths, selfPath string, keys []vault.Key) string {
+	if len(keys) < 2 {
+		return "# Managed by Forged\n"
+	}
+
+	sort.SliceStable(keys, func(i, j int) bool {
+		return keys[i].CreatedAt.Before(keys[j].CreatedAt)
+	})
+
+	lines := []string{"# Managed by Forged"}
+	for _, key := range keys {
+		command := fmt.Sprintf("\"%s\" __ssh-route-match --key-id %s", selfPath, key.ID)
+		lines = append(lines,
+			fmt.Sprintf("Match host github.com exec %s", strconv.Quote(command)),
+			"    User git",
+			"    IdentitiesOnly yes",
+			fmt.Sprintf("    IdentityFile %q", HintFilePath(paths.SSHManagedKeysDir(), key.ID)),
+			"",
+		)
+	}
+	return strings.Join(lines, "\n")
 }

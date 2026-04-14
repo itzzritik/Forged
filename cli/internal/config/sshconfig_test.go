@@ -20,11 +20,11 @@ func TestEnableSSHAgentWritesSingleIncludeAndBaseFile(t *testing.T) {
 	if err != nil {
 		t.Fatalf("read main config: %v", err)
 	}
-	if !strings.Contains(string(mainConfig), "Include "+paths.SSHBaseInclude()) {
+	if !strings.Contains(string(mainConfig), "Include "+paths.SSHManagedConfig()) {
 		t.Fatalf("missing include: %s", string(mainConfig))
 	}
 
-	baseConfig, err := os.ReadFile(paths.SSHBaseInclude())
+	baseConfig, err := os.ReadFile(paths.SSHManagedConfig())
 	if err != nil {
 		t.Fatalf("read base include: %v", err)
 	}
@@ -58,7 +58,7 @@ func TestEnableSSHAgentMigratesOldInlineForgedBlock(t *testing.T) {
 	if strings.Contains(string(mainConfig), "# Added by Forged") {
 		t.Fatalf("legacy inline block still present: %s", string(mainConfig))
 	}
-	if !strings.Contains(string(mainConfig), "Include "+paths.SSHBaseInclude()) {
+	if !strings.Contains(string(mainConfig), "Include "+paths.SSHManagedConfig()) {
 		t.Fatalf("expected include after migration: %s", string(mainConfig))
 	}
 }
@@ -94,7 +94,7 @@ func TestEnableSSHAgentPlacesIncludeBeforeExistingHostBlocks(t *testing.T) {
 	}
 
 	got := string(mainConfig)
-	includeIdx := strings.Index(got, "Include "+paths.SSHBaseInclude())
+	includeIdx := strings.Index(got, "Include "+paths.SSHManagedConfig())
 	hostIdx := strings.Index(got, "Host 144.24.124.129")
 	if includeIdx < 0 {
 		t.Fatalf("missing forged include: %s", got)
@@ -131,7 +131,7 @@ func TestDisableSSHAgentRemovesIncludeButLeavesUserConfig(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(mainConfig), "Include "+paths.SSHBaseInclude()) {
+	if strings.Contains(string(mainConfig), "Include "+paths.SSHManagedConfig()) {
 		t.Fatalf("include should be removed: %s", string(mainConfig))
 	}
 	if !strings.Contains(string(mainConfig), "Host github.com") {

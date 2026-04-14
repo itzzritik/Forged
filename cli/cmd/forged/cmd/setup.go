@@ -93,9 +93,7 @@ var setupCmd = &cobra.Command{
 		fmt.Printf("  Vault:        %s\n", paths.VaultFile())
 		fmt.Printf("  Config:       %s\n", paths.ConfigFile())
 		fmt.Printf("  Agent:        %s\n", paths.AgentSocket())
-		fmt.Printf("  SSH include:  %s\n", paths.SSHBaseInclude())
-		fmt.Printf("  SSH routes:   %s\n", paths.SSHAdvancedConfig())
-		fmt.Println("  Advanced provider routing is generated only when Forged needs it.")
+		fmt.Printf("  SSH config:   %s\n", paths.SSHManagedConfig())
 		return nil
 	},
 }
