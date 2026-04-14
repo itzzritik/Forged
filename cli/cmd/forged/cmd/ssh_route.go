@@ -32,33 +32,26 @@ var sshRouteMatchCmd = &cobra.Command{
 			os.Exit(1)
 		}
 
-		if keyID, ok := state.RepoRoutes[remote.RouteKey]; ok {
+		if keyID, ok := state.Routes[remote.RouteKey]; ok {
 			if keyID == sshRouteKeyID {
 				os.Exit(0)
 			}
 			os.Exit(1)
 		}
 
-		account, ok := state.GitHubAccounts[sshRouteKeyID]
-		if !ok || account == "" {
-			account, err = sshrouting.ProbeGitHubAccount(
-				paths.AgentSocket(),
-				sshrouting.HintFilePath(paths.SSHManagedKeysDir(), sshRouteKeyID),
-			)
-			if err != nil {
-				os.Exit(1)
-			}
-			state.GitHubAccounts[sshRouteKeyID] = account
-			if err := sshrouting.SaveState(paths.SSHRoutingStateFile(), state); err != nil {
-				os.Exit(1)
-			}
+		account, err := sshrouting.ProbeGitHubAccount(
+			paths.AgentSocket(),
+			sshrouting.HintFilePath(paths.SSHManagedKeysDir(), sshRouteKeyID),
+		)
+		if err != nil {
+			os.Exit(1)
 		}
 
 		if account != remote.Owner {
 			os.Exit(1)
 		}
 
-		state.RepoRoutes[remote.RouteKey] = sshRouteKeyID
+		state.Routes[remote.RouteKey] = sshRouteKeyID
 		if err := sshrouting.SaveState(paths.SSHRoutingStateFile(), state); err != nil {
 			os.Exit(1)
 		}

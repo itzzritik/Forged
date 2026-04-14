@@ -8,8 +8,7 @@ import (
 )
 
 type RoutingState struct {
-	RepoRoutes     map[string]string `json:"repo_routes,omitempty"`
-	GitHubAccounts map[string]string `json:"github_accounts,omitempty"`
+	Routes map[string]string `json:"routes,omitempty"`
 }
 
 func LoadState(path string) (RoutingState, error) {
@@ -24,8 +23,16 @@ func LoadState(path string) (RoutingState, error) {
 	if len(data) == 0 {
 		return newState(), nil
 	}
-	if err := json.Unmarshal(data, &state); err != nil {
+	var payload struct {
+		Routes     map[string]string `json:"routes,omitempty"`
+		RepoRoutes map[string]string `json:"repo_routes,omitempty"`
+	}
+	if err := json.Unmarshal(data, &payload); err != nil {
 		return newState(), nil
+	}
+	state.Routes = payload.Routes
+	if len(state.Routes) == 0 && len(payload.RepoRoutes) > 0 {
+		state.Routes = payload.RepoRoutes
 	}
 	state.ensure()
 	return state, nil
@@ -55,30 +62,21 @@ func SaveState(path string, state RoutingState) error {
 }
 
 func (s *RoutingState) ensure() {
-	if s.RepoRoutes == nil {
-		s.RepoRoutes = map[string]string{}
-	}
-	if s.GitHubAccounts == nil {
-		s.GitHubAccounts = map[string]string{}
+	if s.Routes == nil {
+		s.Routes = map[string]string{}
 	}
 }
 
 func (s *RoutingState) prune(validKeyIDs map[string]struct{}) {
-	for routeKey, keyID := range s.RepoRoutes {
+	for routeKey, keyID := range s.Routes {
 		if _, ok := validKeyIDs[keyID]; !ok {
-			delete(s.RepoRoutes, routeKey)
-		}
-	}
-	for keyID := range s.GitHubAccounts {
-		if _, ok := validKeyIDs[keyID]; !ok {
-			delete(s.GitHubAccounts, keyID)
+			delete(s.Routes, routeKey)
 		}
 	}
 }
 
 func newState() RoutingState {
 	return RoutingState{
-		RepoRoutes:     map[string]string{},
-		GitHubAccounts: map[string]string{},
+		Routes: map[string]string{},
 	}
 }
