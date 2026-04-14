@@ -42,24 +42,24 @@ builds:
       - -s -w
 
 archives:
-  - format: tar.gz
+  - formats: [tar.gz]
     files:
       - src: build/forged-auth-release/{{ .Os }}_{{ .Arch }}/forged-auth{{ if eq .Os "windows" }}.exe{{ end }}
         strip_parent: true
     format_overrides:
       - goos: windows
-        format: zip
+        formats: [zip]
 
-brews:
+homebrew_casks:
   - repository:
       owner: itzzritik
       name: homebrew-tap
     homepage: https://forged.ritik.me
     description: "SSH key management — forge your keys, take them anywhere"
-    install: |
-      bin.install "forged"
-      bin.install "forged-sign"
-      bin.install "forged-auth"
+    binaries:
+      - forged
+      - forged-sign
+      - forged-auth
 
 nfpms:
   - package_name: forged
