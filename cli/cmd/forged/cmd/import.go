@@ -25,6 +25,11 @@ type importPreview struct {
 var importCmd = &cobra.Command{
 	Use:   "import",
 	Short: "Import SSH keys from 1Password, Bitwarden, or files",
+	Example: strings.TrimSpace(`
+  forged key import
+  forged key import --from ssh-dir
+  forged key import --from file --file ~/.ssh/id_ed25519
+	`),
 	RunE:  runImport,
 }
 

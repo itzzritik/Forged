@@ -14,6 +14,7 @@ type managerItem struct {
 
 type managerModel struct {
 	title string
+	body  string
 	items []managerItem
 
 	width     int
@@ -22,9 +23,10 @@ type managerModel struct {
 	cancelled bool
 }
 
-func newManagerModel(title string, items []managerItem) *managerModel {
+func newManagerModel(title, body string, items []managerItem) *managerModel {
 	return &managerModel{
 		title:    title,
+		body:     body,
 		items:    items,
 		selected: -1,
 	}
@@ -63,13 +65,16 @@ func (m *managerModel) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m *managerModel) View() string {
-	lines := []string{
-		commandui.TitleStyle.Render(m.title),
+	lines := []string{commandui.TitleStyle.Render(m.title)}
+	if m.body != "" {
+		lines = append(lines, "", commandui.MutedStyle.Render(m.body))
+	}
+	lines = append(lines,
 		"",
 		renderManagerItems(m.items, m.cursor),
 		"",
 		commandui.MutedStyle.Render("↑/↓ move  Enter select  Esc quit"),
-	}
+	)
 
 	return commandui.RenderContainer(m.width, strings.Join(lines, "\n"))
 }
@@ -87,7 +92,11 @@ func renderManagerItems(items []managerItem, cursor int) string {
 }
 
 func runManagerProgram(title string, items []managerItem) error {
-	final, err := tea.NewProgram(newManagerModel(title, items)).Run()
+	return runFramedManagerProgram(title, "", items)
+}
+
+func runFramedManagerProgram(title, body string, items []managerItem) error {
+	final, err := tea.NewProgram(newManagerModel(title, body, items)).Run()
 	if err != nil {
 		return err
 	}

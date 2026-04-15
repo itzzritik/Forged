@@ -14,7 +14,10 @@ func newKeyCmd() *cobra.Command {
 		},
 	}
 
+	cmd.CompletionOptions.HiddenDefaultCmd = true
 	cmd.AddCommand(
+		importCmd,
+		exportCmd,
 		generateCmd,
 		listCmd,
 		viewCmd,
@@ -25,6 +28,8 @@ func newKeyCmd() *cobra.Command {
 	configureGroupHelp(cmd, "Manage keys", []string{
 		"forged key",
 		"forged key generate",
+		"forged key import",
+		"forged key export",
 		"forged key view github",
 	})
 

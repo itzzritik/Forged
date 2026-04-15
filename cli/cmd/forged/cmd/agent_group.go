@@ -14,6 +14,7 @@ func newAgentCmd() *cobra.Command {
 		},
 	}
 
+	cmd.CompletionOptions.HiddenDefaultCmd = true
 	cmd.AddCommand(enableCmd, disableCmd, signingCmd)
 	cmd.InitDefaultHelpCmd()
 	configureGroupHelp(cmd, "Use Forged for SSH and Git signing", []string{

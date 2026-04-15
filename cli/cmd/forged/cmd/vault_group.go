@@ -14,6 +14,7 @@ func newVaultCmd() *cobra.Command {
 		},
 	}
 
+	cmd.CompletionOptions.HiddenDefaultCmd = true
 	cmd.AddCommand(lockCmd, unlockCmd, changePasswordCmd)
 	cmd.InitDefaultHelpCmd()
 	configureGroupHelp(cmd, "Manage vault access", []string{

@@ -20,12 +20,20 @@ type helpSection struct {
 
 func configureHelp(root *cobra.Command) {
 	root.SetHelpFunc(func(cmd *cobra.Command, _ []string) {
+		if cmd != root {
+			renderCommandHelp(cmd.OutOrStdout(), cmd)
+			return
+		}
 		renderRootHelp(cmd.OutOrStdout())
 	})
 }
 
 func configureGroupHelp(cmd *cobra.Command, purpose string, examples []string) {
 	cmd.SetHelpFunc(func(current *cobra.Command, _ []string) {
+		if current != cmd {
+			renderCommandHelp(current.OutOrStdout(), current)
+			return
+		}
 		renderGroupHelp(current.OutOrStdout(), current, purpose, examples)
 	})
 }
@@ -36,8 +44,6 @@ func renderRootHelp(w io.Writer) {
 			Title: "Get Started",
 			Entries: []helpEntry{
 				{Name: "forged", Description: "open Forged"},
-				{Name: "import", Description: "bring keys into Forged"},
-				{Name: "export", Description: "export your vault"},
 			},
 		},
 		{
@@ -67,9 +73,10 @@ func renderRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "Examples:")
 	for _, example := range []string{
 		"  forged",
-		"  forged import",
 		"  forged key",
 		"  forged key generate",
+		"  forged key import",
+		"  forged key export",
 		"  forged vault change-password",
 		"  forged agent signing",
 		"  forged doctor --fix",
@@ -110,6 +117,35 @@ func renderGroupHelp(w io.Writer, cmd *cobra.Command, purpose string, examples [
 	fmt.Fprintf(w, "Flags:\n  -h, --help   help for %s\n", strings.ReplaceAll(cmd.CommandPath(), "forged ", ""))
 }
 
+func renderCommandHelp(w io.Writer, cmd *cobra.Command) {
+	description := cmd.Long
+	if description == "" {
+		description = cmd.Short
+	}
+	if description != "" {
+		fmt.Fprintln(w, description)
+		fmt.Fprintln(w)
+	}
+
+	fmt.Fprintln(w, "Usage:")
+	fmt.Fprintf(w, "  %s\n", cmd.UseLine())
+
+	if cmd.Example != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Examples:")
+		for _, line := range strings.Split(strings.TrimSpace(cmd.Example), "\n") {
+			fmt.Fprintf(w, "  %s\n", strings.TrimSpace(line))
+		}
+	}
+
+	flagUsages := strings.TrimSpace(cmd.Flags().FlagUsagesWrapped(80))
+	if flagUsages != "" {
+		fmt.Fprintln(w)
+		fmt.Fprintln(w, "Flags:")
+		fmt.Fprintln(w, indentFlagUsages(flagUsages))
+	}
+}
+
 func writeHelpSections(w io.Writer, sections []helpSection) {
 	for _, section := range sections {
 		fmt.Fprintf(w, "%s:\n", section.Title)
@@ -118,4 +154,12 @@ func writeHelpSections(w io.Writer, sections []helpSection) {
 		}
 		fmt.Fprintln(w)
 	}
+}
+
+func indentFlagUsages(usages string) string {
+	lines := strings.Split(usages, "\n")
+	for i, line := range lines {
+		lines[i] = "  " + line
+	}
+	return strings.Join(lines, "\n")
 }

@@ -25,6 +25,8 @@ var retiredCommandHints = map[string]string{
 	"view":     "Run `forged key view <name>`.",
 	"rename":   "Run `forged key rename <old> <new>`.",
 	"remove":   "Run `forged key delete <name>`.",
+	"import":   "Run `forged key import`.",
+	"export":   "Run `forged key export`.",
 	"setup":    "Run `forged`.",
 	"start":    "Run `forged` or `forged doctor --fix`.",
 	"stop":     "Forged now manages the service automatically.",
@@ -32,7 +34,7 @@ var retiredCommandHints = map[string]string{
 	"daemon":   "Forged now manages the service automatically.",
 	"config":   "Run `forged` or `forged doctor`.",
 	"register": "Run `forged login`.",
-	"add":      "Run `forged import`.",
+	"add":      "Run `forged key import`.",
 	"version":  "Run `forged --version`.",
 }
 
@@ -85,8 +87,6 @@ func installRootSubcommands(cmd *cobra.Command) {
 	sshRouteMatchCmd.Hidden = true
 
 	cmd.AddCommand(
-		importCmd,
-		exportCmd,
 		loginCmd,
 		logoutCmd,
 		syncCmd,

@@ -239,17 +239,17 @@ terminal, Forged opens a native save picker first and falls back to a
 "Save path:" prompt if needed. In non-interactive use, pass --out.
 	`),
 	Example: strings.TrimSpace(`
-  forged export
-  forged export --out ~/Desktop/forged-export.json
+  forged key export
+  forged key export --out ~/Desktop/forged-export.json
 	`),
 	Args: cobra.ArbitraryArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if len(args) > 0 {
-			return fmt.Errorf("forged export no longer accepts a key name.\nUse `forged view <name>` to inspect a key, or `forged export` to export the full vault")
+			return fmt.Errorf("forged key export no longer accepts a key name.\nUse `forged key view <name>` to inspect a key, or `forged key export` to export the full vault")
 		}
 		exportAll, _ := cmd.Flags().GetBool("all")
 		if exportAll {
-			return fmt.Errorf("forged export no longer accepts --all.\nUse `forged export` to export the full vault")
+			return fmt.Errorf("forged key export no longer accepts --all.\nUse `forged key export` to export the full vault")
 		}
 		return exportVault(cmd)
 	},
@@ -267,8 +267,8 @@ reuses a 4-hour view lease until it expires, the daemon restarts,
 Forged is locked, or the OS session lock is detected.
 	`),
 	Example: strings.TrimSpace(`
-  forged view "Github (ItzzRitik)"
-  forged view github --full
+  forged key view "Github (ItzzRitik)"
+  forged key view github --full
 	`),
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
@@ -310,7 +310,7 @@ func exportVault(cmd *cobra.Command) error {
 	defaultName := fmt.Sprintf("forged-export-%s.json", time.Now().Format("2006-01-02"))
 	if outPath == "" {
 		if !terminalIsInteractive() {
-			return fmt.Errorf("forged export requires --out when not interactive")
+			return fmt.Errorf("forged key export requires --out when not interactive")
 		}
 	}
 
