@@ -28,7 +28,7 @@ func (e *Engine) Repair(snapshot Snapshot) (Snapshot, RepairSummary, error) {
 		}
 	}
 
-	if (!current.SSHEnabled || !current.ManagedConfigReady) && len(summary.Failed) == 0 {
+	if (!current.SSHEnabled || !current.ManagedConfigReady || !current.IdentityAgentOwner.IsForged()) && len(summary.Failed) == 0 {
 		if err := e.enableSSHConfig(e.Paths); err != nil {
 			summary.Failed = append(summary.Failed, "ssh")
 		} else {
@@ -37,7 +37,7 @@ func (e *Engine) Repair(snapshot Snapshot) (Snapshot, RepairSummary, error) {
 				return updated, summary, err
 			}
 			current = updated
-			if current.SSHEnabled && current.ManagedConfigReady {
+			if current.SSHEnabled && current.ManagedConfigReady && current.IdentityAgentOwner.IsForged() {
 				summary.Fixed = append(summary.Fixed, "ssh")
 			} else {
 				summary.Failed = append(summary.Failed, "ssh")

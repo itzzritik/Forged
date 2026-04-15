@@ -24,10 +24,26 @@ func IsSSHAgentEnabled(paths Paths) bool {
 		return false
 	}
 
-	content := string(data)
-	return strings.Contains(content, includeLine(paths.SSHManagedConfig())) ||
-		strings.Contains(content, includeLine(paths.LegacySSHBaseInclude())) ||
-		strings.Contains(content, paths.AgentSocket())
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+
+		switch trimmed {
+		case includeLine(paths.SSHManagedConfig()),
+			includeLine(paths.LegacySSHBaseInclude()),
+			fmt.Sprintf("Include %q", paths.SSHManagedConfig()),
+			fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()):
+			return true
+		}
+
+		if strings.Contains(trimmed, "IdentityAgent") && strings.Contains(trimmed, paths.AgentSocket()) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func EnableSSHAgent(paths Paths) error {
@@ -42,8 +58,7 @@ func EnableSSHAgent(paths Paths) error {
 	if err := cleanupLegacySSHArtifacts(paths); err != nil {
 		return err
 	}
-	baseContent := RenderManagedSSHConfig(paths, "")
-	if err := os.WriteFile(paths.SSHManagedConfig(), []byte(baseContent), 0o600); err != nil {
+	if err := ensureManagedSSHConfig(paths); err != nil {
 		return err
 	}
 
@@ -66,28 +81,32 @@ func EnableSSHAgent(paths Paths) error {
 }
 
 func DisableSSHAgent(paths Paths) error {
+	if err := cleanupLegacySSHArtifacts(paths); err != nil {
+		return err
+	}
+
 	configPath := paths.SSHUserConfig()
 	content, err := readConfigFile(configPath)
 	if err != nil {
 		return err
 	}
 	if content == "" {
-		_ = cleanupAllSSHArtifacts(paths)
-		return nil
+		if _, err := os.Stat(paths.SSHManagedConfig()); os.IsNotExist(err) {
+			return nil
+		}
 	}
 
 	cleaned := removeForgedIncludes(content, paths)
 	cleaned = removeLegacyForgedBlock(cleaned)
-	cleaned = strings.TrimRight(cleaned, "\n ")
-	if cleaned != "" {
-		cleaned += "\n"
-	}
+	block := strings.Join([]string{
+		sshIncludeComment,
+		"# " + includeLine(paths.SSHManagedConfig()),
+	}, "\n")
+	cleaned = insertForgedInclude(cleaned, block)
 
 	if err := os.WriteFile(configPath, []byte(cleaned), 0o600); err != nil {
 		return err
 	}
-
-	_ = cleanupAllSSHArtifacts(paths)
 
 	return nil
 }
@@ -114,6 +133,10 @@ func removeForgedIncludes(content string, paths Paths) string {
 		includeLine(paths.LegacySSHBaseInclude()):               {},
 		fmt.Sprintf("Include %q", paths.SSHManagedConfig()):     {},
 		fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()): {},
+		"# " + includeLine(paths.SSHManagedConfig()):            {},
+		"# " + includeLine(paths.LegacySSHBaseInclude()):        {},
+		"# " + fmt.Sprintf("Include %q", paths.SSHManagedConfig()):     {},
+		"# " + fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()): {},
 	}
 
 	result := make([]string, 0, len(lines))
@@ -240,4 +263,13 @@ func cleanupAllSSHArtifacts(paths Paths) error {
 	_ = os.Remove(paths.SSHManagedConfig())
 	_ = os.RemoveAll(paths.SSHManagedDir())
 	return nil
+}
+
+func ensureManagedSSHConfig(paths Paths) error {
+	if _, err := os.Stat(paths.SSHManagedConfig()); err == nil {
+		return nil
+	}
+
+	baseContent := RenderManagedSSHConfig(paths, "")
+	return os.WriteFile(paths.SSHManagedConfig(), []byte(baseContent), 0o600)
 }

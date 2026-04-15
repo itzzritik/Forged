@@ -106,7 +106,8 @@ func classifyState(s Snapshot) State {
 		s.IPCSocketReady &&
 		s.AgentSocketReady &&
 		s.SSHEnabled &&
-		s.ManagedConfigReady
+		s.ManagedConfigReady &&
+		s.IdentityAgentOwner.IsForged()
 	if healthy {
 		if s.KeyCount == 0 {
 			return StateReadyEmpty

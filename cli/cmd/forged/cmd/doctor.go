@@ -36,7 +36,7 @@ var doctorCmd = &cobra.Command{
 		renderDoctorConfig(snapshot, summary)
 		renderDoctorRuntime(snapshot, summary)
 		renderDoctorSSH(snapshot, summary, paths)
-		renderDoctorIdentityOwner(snapshot)
+		renderDoctorIdentityOwner(snapshot, summary)
 		renderDoctorService(snapshot)
 		renderDoctorLogin(snapshot)
 
@@ -127,24 +127,22 @@ func renderDoctorSSH(snapshot readiness.Snapshot, summary readiness.RepairSummar
 	}
 }
 
-func renderDoctorIdentityOwner(snapshot readiness.Snapshot) {
+func renderDoctorIdentityOwner(snapshot readiness.Snapshot, summary readiness.RepairSummary) {
 	switch {
+	case snapshot.IdentityAgentOwner.IsForged() && containsFix(summary, "ssh"):
+		fixed("IdentityAgent owner", "Forged")
 	case snapshot.IdentityAgentOwner.IsForged():
 		pass("IdentityAgent owner", "Forged")
 	case snapshot.IdentityAgentOwner.Name == "None":
-		warn("IdentityAgent owner", "no active IdentityAgent is configured")
+		fail("IdentityAgent owner", "no active IdentityAgent is configured")
 	case snapshot.IdentityAgentOwner.Name == "":
-		warn("IdentityAgent owner", "could not inspect the active ssh configuration")
+		fail("IdentityAgent owner", "could not inspect the active ssh configuration")
 	default:
 		detail := snapshot.IdentityAgentOwner.Name
 		if snapshot.IdentityAgentOwner.Path != "" {
 			detail += " (" + snapshot.IdentityAgentOwner.Path + ")"
 		}
-		if snapshot.SSHEnabled {
-			warn("IdentityAgent owner", detail+" currently resolves first")
-		} else {
-			warn("IdentityAgent owner", detail)
-		}
+		fail("IdentityAgent owner", detail+" currently resolves first")
 	}
 }
 
@@ -188,6 +186,9 @@ func doctorIssueCount(snapshot readiness.Snapshot) int {
 		issues++
 	}
 	if !snapshot.ManagedConfigReady {
+		issues++
+	}
+	if !snapshot.IdentityAgentOwner.IsForged() {
 		issues++
 	}
 	if snapshot.Service.Installed && !snapshot.Service.ConfigValid {
