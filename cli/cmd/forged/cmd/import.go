@@ -1,7 +1,6 @@
 package cmd
 
 import (
-	"bufio"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -15,12 +14,23 @@ import (
 )
 
 type importPreview struct {
-	alreadyInVault bool
-	converted      bool
-	fingerprint    string
-	key            importers.ImportedKey
-	selected       bool
+	alreadyInVault      bool
+	collapsedDuplicates int
+	converted           bool
+	fingerprint         string
+	key                 importers.ImportedKey
+	selected            bool
 }
+
+type importMode string
+
+const (
+	importModeTUI      importMode = "tui"
+	importModeScripted importMode = "scripted"
+	importModeInvalid  importMode = "invalid"
+)
+
+var loadExistingVaultFingerprintsFunc = loadExistingVaultFingerprints
 
 var importCmd = &cobra.Command{
 	Use:   "import",
@@ -30,7 +40,7 @@ var importCmd = &cobra.Command{
   forged key import --from ssh-dir
   forged key import --from file --file ~/.ssh/id_ed25519
 	`),
-	RunE:  runImport,
+	RunE: runImport,
 }
 
 func init() {
@@ -38,67 +48,58 @@ func init() {
 	importCmd.Flags().String("file", "", "path to import file")
 }
 
+func determineImportMode(interactive bool, from, file string) importMode {
+	if interactive {
+		return importModeTUI
+	}
+	if from != "" || file != "" {
+		return importModeScripted
+	}
+	return importModeInvalid
+}
+
 func runImport(cmd *cobra.Command, args []string) error {
 	from, _ := cmd.Flags().GetString("from")
 	file, _ := cmd.Flags().GetString("file")
 
-	reader := bufio.NewReader(os.Stdin)
+	switch determineImportMode(terminalIsInteractive() && !jsonOutput, from, file) {
+	case importModeTUI:
+		return runImportTUI(cmd, from, file, false)
+	case importModeScripted:
+		return runImportScripted(from, file)
+	default:
+		return fmt.Errorf("forged key import requires an interactive terminal or both --from / --file in scripted use")
+	}
+}
 
+func runImportScripted(from, file string) error {
+	keys, _, err := loadImportedKeys(from, file)
+	if err != nil {
+		return err
+	}
+	if len(keys) == 0 {
+		fmt.Println("  No SSH keys found.")
+		return nil
+	}
+	return doImport(keys)
+}
+
+func loadImportedKeys(from, file string) ([]importers.ImportedKey, string, error) {
+	sourceLabel := importSourceLabel(from)
 	if from == "" {
-		fmt.Println()
-		fmt.Println("  Select a source:")
-		fmt.Println()
-		fmt.Println("    1. 1Password (.1pux, .csv)")
-		fmt.Println("    2. Bitwarden (.json)")
-		fmt.Println("    3. Forged export (.json)")
-		fmt.Println("    4. SSH directory (~/.ssh/)")
-		fmt.Println("    5. SSH key file")
-		fmt.Println()
-		fmt.Print("  Choice [1-5]: ")
-
-		line, _ := reader.ReadString('\n')
-		switch strings.TrimSpace(line) {
-		case "1":
-			from = "1password"
-		case "2":
-			from = "bitwarden"
-		case "3":
-			from = "forged"
-		case "4":
-			from = "ssh-dir"
-		case "5":
-			from = "file"
-		default:
-			return fmt.Errorf("invalid choice")
-		}
-		printStepSeparator()
+		return nil, "", fmt.Errorf("import source is required")
 	}
-
 	if from == "ssh-dir" {
-		return importFromSSHDir()
+		keys, err := importFromSSHDir()
+		return keys, sourceLabel, err
 	}
-
 	if file == "" {
-		if terminalIsInteractive() {
-			if picked, ok := chooseFileWithPicker(); ok {
-				file = picked
-			}
-		}
-		if file == "" {
-			fmt.Println()
-			fmt.Print("  File path: ")
-			line, _ := reader.ReadString('\n')
-			file = strings.TrimSpace(line)
-			if file == "" {
-				return fmt.Errorf("file path is required")
-			}
-			printStepSeparator()
-		}
+		return nil, sourceLabel, fmt.Errorf("file path is required")
 	}
 
 	data, err := os.ReadFile(file)
 	if err != nil {
-		return fmt.Errorf("reading file: %w", err)
+		return nil, sourceLabel, fmt.Errorf("reading file: %w", err)
 	}
 
 	var keys []importers.ImportedKey
@@ -113,32 +114,25 @@ func runImport(cmd *cobra.Command, args []string) error {
 		name := deriveKeyName(file)
 		keys = []importers.ImportedKey{{Name: name, PrivateKey: string(data)}}
 	default:
-		return fmt.Errorf("unknown source: %s", from)
+		return nil, sourceLabel, fmt.Errorf("unknown source: %s", from)
 	}
 	if err != nil {
-		return fmt.Errorf("parsing file: %w", err)
+		return nil, sourceLabel, fmt.Errorf("parsing file: %w", err)
 	}
 
-	if len(keys) == 0 {
-		fmt.Println("  No SSH keys found.")
-		return nil
-	}
-
-	return reviewAndImportKeys(reader, importSourceLabel(from), keys)
+	return keys, sourceLabel, nil
 }
 
-func importFromSSHDir() error {
+func importFromSSHDir() ([]importers.ImportedKey, error) {
 	paths := hostmatch.DiscoverSSHKeys()
 	if len(paths) == 0 {
-		fmt.Println("  No SSH keys found in ~/.ssh/")
-		return nil
+		return nil, nil
 	}
 
 	var keys []importers.ImportedKey
 	for _, p := range paths {
 		data, err := os.ReadFile(p)
 		if err != nil {
-			fmt.Printf("  Skipped %s: %v\n", p, err)
 			continue
 		}
 		key := importers.ImportedKey{
@@ -146,23 +140,22 @@ func importFromSSHDir() error {
 			PrivateKey: string(data),
 		}
 		if _, err := previewImportedKey(key); err != nil {
-			fmt.Printf("  Skipped %s: %v\n", p, err)
 			continue
 		}
 		keys = append(keys, key)
 	}
 
-	if len(keys) == 0 {
-		fmt.Println("  No SSH keys found in ~/.ssh/")
-		return nil
-	}
-
-	return reviewAndImportKeys(bufio.NewReader(os.Stdin), importSourceLabel("ssh-dir"), keys)
+	return keys, nil
 }
 
-func doImport(keys []importers.ImportedKey) error {
+type importExecutionResult struct {
+	Imported int
+	Skipped  int
+}
+
+func executeImport(keys []importers.ImportedKey) (importExecutionResult, error) {
 	client := ctlClient()
-	imported := 0
+	result := importExecutionResult{}
 
 	for _, k := range keys {
 		_, err := client.Call(ipc.CmdAdd, map[string]string{
@@ -171,20 +164,35 @@ func doImport(keys []importers.ImportedKey) error {
 			"comment":     "",
 		})
 		if err != nil {
-			fmt.Printf("  Skipped %s: %v\n", k.Name, err)
+			result.Skipped++
 			continue
 		}
-		fmt.Printf("  Imported %s\n", k.Name)
-		imported++
+		result.Imported++
+	}
+
+	return result, nil
+}
+
+func doImport(keys []importers.ImportedKey) error {
+	result, err := executeImport(keys)
+	if err != nil {
+		return err
 	}
 
 	fmt.Println()
-	fmt.Printf("  %d key(s) imported.\n", imported)
+	fmt.Printf("  %d key(s) imported.\n", result.Imported)
+	if result.Skipped > 0 {
+		fmt.Printf("  %d key(s) skipped.\n", result.Skipped)
+	}
 	return nil
 }
 
 func buildImportPreview(keys []importers.ImportedKey) ([]importPreview, error) {
-	existingFingerprints, err := loadExistingVaultFingerprints()
+	if len(keys) == 0 {
+		return nil, nil
+	}
+
+	existingFingerprints, err := loadExistingVaultFingerprintsFunc()
 	if err != nil {
 		return nil, err
 	}
@@ -196,7 +204,8 @@ func buildImportPreview(keys []importers.ImportedKey) ([]importPreview, error) {
 		if err != nil {
 			return nil, fmt.Errorf("%s: %w", key.Name, err)
 		}
-		if _, ok := byFingerprint[preview.fingerprint]; ok {
+		if idx, ok := byFingerprint[preview.fingerprint]; ok {
+			previews[idx].collapsedDuplicates++
 			continue
 		}
 		preview.alreadyInVault = containsFingerprint(existingFingerprints, preview.fingerprint)
@@ -218,16 +227,6 @@ func previewImportedKey(key importers.ImportedKey) (importPreview, error) {
 		converted:   normalized.Converted,
 		fingerprint: normalized.Fingerprint,
 	}, nil
-}
-
-func reviewAndImportKeys(reader *bufio.Reader, sourceLabel string, keys []importers.ImportedKey) error {
-	previews, err := buildImportPreview(keys)
-	if err != nil {
-		return err
-	}
-
-	state := newImportReviewState(sourceLabel, previews)
-	return runImportReview(reader, state)
 }
 
 func importSourceLabel(from string) string {
@@ -275,14 +274,4 @@ func loadExistingVaultFingerprints() (map[string]struct{}, error) {
 func containsFingerprint(fingerprints map[string]struct{}, fingerprint string) bool {
 	_, ok := fingerprints[fingerprint]
 	return ok
-}
-
-func selectedImportKeys(previews []importPreview, includeAll bool) []importers.ImportedKey {
-	keys := make([]importers.ImportedKey, 0, len(previews))
-	for _, preview := range previews {
-		if includeAll || preview.selected {
-			keys = append(keys, preview.key)
-		}
-	}
-	return keys
 }

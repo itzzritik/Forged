@@ -123,7 +123,13 @@ func (m *Model) View() string {
 	}
 	lines = append(lines, mutedStyle.Render(m.stateSubtitle()), "")
 	lines = append(lines, m.renderMenu())
-	lines = append(lines, "", mutedStyle.Render("↑/↓ move  Enter select  Esc quit"))
+	lines = append(lines, "",
+		commandui.RenderFooter(
+			commandui.FooterAction("↑/↓", "Move"),
+			commandui.FooterAction("Enter", "Select"),
+			commandui.FooterAction("Esc", "Exit"),
+		),
+	)
 
 	return m.renderContainer(strings.Join(lines, "\n"))
 }

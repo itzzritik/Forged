@@ -8,8 +8,8 @@ import (
 )
 
 type textPromptModel struct {
-	title string
-	body  string
+	title       string
+	body        string
 	placeholder string
 
 	value string
@@ -82,7 +82,12 @@ func (m *textPromptModel) View() string {
 	if m.errText != "" {
 		lines = append(lines, commandui.ErrorStyle.Render(m.errText))
 	}
-	lines = append(lines, "", commandui.MutedStyle.Render("Enter save  Esc cancel"))
+	lines = append(lines, "",
+		commandui.RenderFooter(
+			commandui.FooterAction("Enter", "Save"),
+			commandui.FooterAction("Esc", "Cancel"),
+		),
+	)
 
 	return commandui.RenderContainer(m.width, strings.Join(lines, "\n"))
 }

@@ -1,11 +1,14 @@
 package cmd
 
 import (
+	"errors"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/itzzritik/forged/cli/internal/commandui"
 )
+
+var errManagerContinue = errors.New("continue manager")
 
 type managerItem struct {
 	Label string
@@ -73,7 +76,11 @@ func (m *managerModel) View() string {
 		"",
 		renderManagerItems(m.items, m.cursor),
 		"",
-		commandui.MutedStyle.Render("↑/↓ move  Enter select  Esc quit"),
+		commandui.RenderFooter(
+			commandui.FooterAction("↑/↓", "Move"),
+			commandui.FooterAction("Enter", "Select"),
+			commandui.FooterAction("Esc", "Exit"),
+		),
 	)
 
 	return commandui.RenderContainer(m.width, strings.Join(lines, "\n"))
@@ -95,19 +102,31 @@ func runManagerProgram(title string, items []managerItem) error {
 	return runFramedManagerProgram(title, "", items)
 }
 
+func runManagerSelectionProgram(title string, items []managerItem) (int, bool, error) {
+	return runFramedManagerSelectionProgram(title, "", items)
+}
+
 func runFramedManagerProgram(title, body string, items []managerItem) error {
-	final, err := tea.NewProgram(newManagerModel(title, body, items)).Run()
+	selected, cancelled, err := runFramedManagerSelectionProgram(title, body, items)
 	if err != nil {
 		return err
+	}
+	if cancelled || selected < 0 || selected >= len(items) {
+		return nil
+	}
+
+	return items[selected].Run()
+}
+
+func runFramedManagerSelectionProgram(title, body string, items []managerItem) (int, bool, error) {
+	final, err := tea.NewProgram(newManagerModel(title, body, items)).Run()
+	if err != nil {
+		return -1, false, err
 	}
 
 	model, ok := final.(*managerModel)
 	if !ok {
-		return nil
+		return -1, false, nil
 	}
-	if model.cancelled || model.selected < 0 || model.selected >= len(items) {
-		return nil
-	}
-
-	return items[model.selected].Run()
+	return model.selected, model.cancelled, nil
 }

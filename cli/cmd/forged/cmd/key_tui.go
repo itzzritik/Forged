@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/itzzritik/forged/cli/internal/ipc"
@@ -13,7 +14,22 @@ func shouldLaunchKeyManager(args []string) bool {
 }
 
 func runKeyManager(cmd *cobra.Command) error {
-	return runManagerProgram("Keys", keyManagerItems())
+	items := keyManagerItems()
+	for {
+		selected, cancelled, err := runManagerSelectionProgram("Keys", items)
+		if err != nil {
+			return err
+		}
+		if cancelled || selected < 0 || selected >= len(items) {
+			return nil
+		}
+
+		err = items[selected].Run()
+		if errors.Is(err, errManagerContinue) {
+			continue
+		}
+		return err
+	}
 }
 
 func keyManagerItems() []managerItem {
@@ -44,9 +60,7 @@ func keyManagerItems() []managerItem {
 		},
 		{
 			Label: "Import keys",
-			Run: func() error {
-				return importCmd.RunE(importCmd, nil)
-			},
+			Run:   runImportFromKeyManager,
 		},
 		{
 			Label: "Export keys",
@@ -55,6 +69,13 @@ func keyManagerItems() []managerItem {
 			},
 		},
 	}
+}
+
+func runImportFromKeyManager() error {
+	if err := runImportTUI(importCmd, "", "", true); err != nil {
+		return err
+	}
+	return errManagerContinue
 }
 
 type keySelection struct {
