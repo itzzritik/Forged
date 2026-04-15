@@ -209,8 +209,8 @@ var listCmd = &cobra.Command{
 }
 
 var removeCmd = &cobra.Command{
-	Use:   "remove <name>",
-	Short: "Remove a key",
+	Use:   "delete <name>",
+	Short: "Delete a key",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		resp, err := ctlClient().Call(ipc.CmdRemove, map[string]string{"name": args[0]})

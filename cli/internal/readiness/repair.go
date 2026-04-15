@@ -1,6 +1,8 @@
 package readiness
 
 import (
+	"time"
+
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 )
@@ -50,7 +52,7 @@ func (e *Engine) Repair(snapshot Snapshot) (Snapshot, RepairSummary, error) {
 		if err := e.restartUserService(); err != nil {
 			summary.Failed = append(summary.Failed, "service")
 		} else {
-			updated, err := e.Assess()
+			updated, err := e.waitForServiceReady()
 			if err != nil {
 				return updated, summary, err
 			}
@@ -86,4 +88,37 @@ func (e *Engine) restartUserService() error {
 		return e.restartService()
 	}
 	return daemon.RestartService()
+}
+
+func (e *Engine) waitForServiceReady() (Snapshot, error) {
+	retries := 1
+	if e != nil && e.serviceRetries > 0 {
+		retries = e.serviceRetries
+	}
+
+	var last Snapshot
+	for attempt := 0; attempt < retries; attempt++ {
+		updated, err := e.Assess()
+		if err != nil {
+			return updated, err
+		}
+		last = updated
+		if updated.Service.Running && updated.IPCSocketReady && updated.AgentSocketReady {
+			return updated, nil
+		}
+		if attempt == retries-1 {
+			break
+		}
+		e.pauseForServiceRetry()
+	}
+
+	return last, nil
+}
+
+func (e *Engine) pauseForServiceRetry() {
+	if e != nil && e.sleep != nil {
+		e.sleep()
+		return
+	}
+	time.Sleep(500 * time.Millisecond)
 }

@@ -182,5 +182,4 @@ func getCurrentSigningKey() string {
 
 func init() {
 	signingCmd.Flags().Bool("off", false, "disable Git commit signing")
-	rootCmd.AddCommand(signingCmd)
 }

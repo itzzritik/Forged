@@ -31,17 +31,6 @@ var importCmd = &cobra.Command{
 func init() {
 	importCmd.Flags().String("from", "", "import source: 1password, bitwarden, forged, ssh-dir, file")
 	importCmd.Flags().String("file", "", "path to import file")
-
-	rootCmd.AddCommand(importCmd)
-
-	migrateAlias := &cobra.Command{
-		Use:    "migrate",
-		Hidden: true,
-		RunE:   importCmd.RunE,
-	}
-	migrateAlias.Flags().String("from", "", "import source")
-	migrateAlias.Flags().String("file", "", "path to import file")
-	rootCmd.AddCommand(migrateAlias)
 }
 
 func runImport(cmd *cobra.Command, args []string) error {

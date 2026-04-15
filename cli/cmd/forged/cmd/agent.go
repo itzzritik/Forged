@@ -38,8 +38,3 @@ var disableCmd = &cobra.Command{
 		return nil
 	},
 }
-
-func init() {
-	rootCmd.AddCommand(enableCmd)
-	rootCmd.AddCommand(disableCmd)
-}

@@ -15,13 +15,21 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 )
 
-const launchdLabel = "me.ritik.forged"
+const launchdLabel = "me.ritik.forged.daemon"
+
+var legacyLaunchdLabels = []string{"me.ritik.forged"}
 
 type launchdTemplateData struct {
 	Label          string
 	Binary         string
 	LogFile        string
 	MasterPassword string
+}
+
+type launchdServiceFile struct {
+	Label  string
+	Path   string
+	Legacy bool
 }
 
 var plistTemplate = template.Must(template.New("plist").Funcs(template.FuncMap{
@@ -55,8 +63,20 @@ var plistTemplate = template.Must(template.New("plist").Funcs(template.FuncMap{
 `))
 
 func plistPath() string {
+	return plistPathForLabel(launchdLabel)
+}
+
+func plistPathForLabel(label string) string {
 	home, _ := os.UserHomeDir()
-	return filepath.Join(home, "Library", "LaunchAgents", launchdLabel+".plist")
+	return filepath.Join(home, "Library", "LaunchAgents", label+".plist")
+}
+
+func legacyPlistPaths() []string {
+	paths := make([]string, 0, len(legacyLaunchdLabels))
+	for _, label := range legacyLaunchdLabels {
+		paths = append(paths, plistPathForLabel(label))
+	}
+	return paths
 }
 
 func InstallService(paths config.Paths, masterPassword string) error {
@@ -113,6 +133,10 @@ func InstallService(paths config.Paths, masterPassword string) error {
 }
 
 func StartService() error {
+	paths := config.DefaultPaths()
+	if err := migrateLegacyLaunchdService(paths); err != nil {
+		return err
+	}
 	if err := launchctlIgnore(
 		[]string{"bootout", launchdServiceTarget()},
 		[]string{"could not find service", "service is disabled", "not found", "no such process"},
@@ -131,17 +155,34 @@ func StartService() error {
 	); err != nil {
 		return err
 	}
-	return launchctlRun(
+	if err := launchctlRun(
 		[]string{"kickstart", "-k", launchdServiceTarget()},
 		nil,
-	)
+	); err != nil {
+		return err
+	}
+
+	_ = removeLegacyLaunchdPlists()
+	return nil
 }
 
 func StopService() error {
-	return launchctlIgnore(
-		[]string{"bootout", launchdServiceTarget()},
-		[]string{"could not find service", "not found", "no such process"},
-	)
+	var firstErr error
+
+	for _, service := range existingLaunchdServiceFiles() {
+		ignorable := []string{"could not find service", "not found", "no such process"}
+		if service.Legacy {
+			ignorable = append(ignorable, "input/output error")
+		}
+		if err := launchctlIgnore(
+			[]string{"bootout", launchdServiceTargetForLabel(service.Label)},
+			ignorable,
+		); err != nil && firstErr == nil {
+			firstErr = err
+		}
+	}
+
+	return firstErr
 }
 
 func RestartService() error {
@@ -151,54 +192,70 @@ func RestartService() error {
 
 func UninstallService() error {
 	StopService()
-	path := plistPath()
-	if _, err := os.Stat(path); err == nil {
-		return os.Remove(path)
+	for _, service := range existingLaunchdServiceFiles() {
+		if err := os.Remove(service.Path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }
 
 func ServiceInstalled() bool {
-	_, err := os.Stat(plistPath())
-	return err == nil
+	return len(existingLaunchdServiceFiles()) > 0
 }
 
 func InspectService(paths config.Paths) (ServiceStatus, error) {
 	status := DefaultServiceStatus()
-	if !ServiceInstalled() {
+	services := existingLaunchdServiceFiles()
+	if len(services) == 0 {
 		status.Detail = "not installed"
 		return status, nil
 	}
 
 	status.Installed = true
 
-	if err := validateLaunchdPlist(plistPath()); err != nil {
-		status.Detail = err.Error()
-		return status, nil
+	for _, service := range services {
+		if err := validateLaunchdPlist(service.Path); err != nil {
+			status.Detail = err.Error()
+			return status, nil
+		}
 	}
 	status.ConfigValid = true
 
-	out, err := exec.Command("launchctl", "print", launchdServiceTarget()).CombinedOutput()
-	if err != nil {
-		message := strings.TrimSpace(string(out))
-		if message == "" {
-			message = err.Error()
-		}
-		lower := strings.ToLower(message)
-		if strings.Contains(lower, "could not find service") || strings.Contains(lower, "not found") {
-			status.Detail = "installed but not loaded"
+	for _, service := range services {
+		out, err := exec.Command("launchctl", "print", launchdServiceTargetForLabel(service.Label)).CombinedOutput()
+		if err != nil {
+			message := strings.TrimSpace(string(out))
+			if message == "" {
+				message = err.Error()
+			}
+			lower := strings.ToLower(message)
+			if strings.Contains(lower, "could not find service") || strings.Contains(lower, "not found") {
+				continue
+			}
+			status.Detail = message
 			return status, nil
 		}
-		status.Detail = message
+
+		status.Loaded = true
+		status.Running = launchdPrintIndicatesRunning(string(out))
+		switch {
+		case service.Legacy && status.Running:
+			status.Detail = "legacy service running"
+		case service.Legacy:
+			status.Detail = "legacy service loaded but not running"
+		case status.Running:
+			status.Detail = "running"
+		default:
+			status.Detail = "loaded but not running"
+		}
 		return status, nil
 	}
 
-	status.Loaded = true
-	status.Running = launchdPrintIndicatesRunning(string(out))
-	if status.Running {
-		status.Detail = "running"
+	if services[0].Legacy {
+		status.Detail = "legacy service installed; will migrate on next start"
 	} else {
-		status.Detail = "loaded but not running"
+		status.Detail = "installed but not loaded"
 	}
 
 	return status, nil
@@ -209,7 +266,11 @@ func launchdDomain() string {
 }
 
 func launchdServiceTarget() string {
-	return launchdDomain() + "/" + launchdLabel
+	return launchdServiceTargetForLabel(launchdLabel)
+}
+
+func launchdServiceTargetForLabel(label string) string {
+	return launchdDomain() + "/" + label
 }
 
 func findBinary() (string, error) {
@@ -260,6 +321,80 @@ func isIgnorableLaunchdError(message string, ignorable []string) bool {
 		}
 	}
 	return false
+}
+
+func existingLaunchdServiceFiles() []launchdServiceFile {
+	var services []launchdServiceFile
+
+	current := plistPath()
+	if _, err := os.Stat(current); err == nil {
+		services = append(services, launchdServiceFile{
+			Label: launchdLabel,
+			Path:  current,
+		})
+	}
+
+	for _, label := range legacyLaunchdLabels {
+		path := plistPathForLabel(label)
+		if _, err := os.Stat(path); err == nil {
+			services = append(services, launchdServiceFile{
+				Label:  label,
+				Path:   path,
+				Legacy: true,
+			})
+		}
+	}
+
+	return services
+}
+
+func migrateLegacyLaunchdService(paths config.Paths) error {
+	if _, err := os.Stat(plistPath()); err == nil {
+		return nil
+	}
+
+	for _, path := range legacyPlistPaths() {
+		if _, err := os.Stat(path); err != nil {
+			continue
+		}
+
+		password, err := loadLaunchdMasterPassword(path)
+		if err != nil {
+			return fmt.Errorf("reading legacy launchd service %s: %w", path, err)
+		}
+		if err := InstallService(paths, password); err != nil {
+			return fmt.Errorf("installing migrated launchd service: %w", err)
+		}
+		return nil
+	}
+
+	return nil
+}
+
+func loadLaunchdMasterPassword(path string) (string, error) {
+	out, err := exec.Command("plutil", "-extract", "EnvironmentVariables.FORGED_MASTER_PASSWORD", "raw", "-o", "-", path).CombinedOutput()
+	if err != nil {
+		message := strings.TrimSpace(string(out))
+		if message == "" {
+			message = err.Error()
+		}
+		return "", fmt.Errorf("%s", message)
+	}
+
+	password := strings.TrimSuffix(string(out), "\n")
+	if password == "" {
+		return "", fmt.Errorf("FORGED_MASTER_PASSWORD is empty")
+	}
+	return password, nil
+}
+
+func removeLegacyLaunchdPlists() error {
+	for _, path := range legacyPlistPaths() {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func renderLaunchdPlist(data launchdTemplateData) ([]byte, error) {

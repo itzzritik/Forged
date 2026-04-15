@@ -1,22 +1,13 @@
 package launcher
 
-import "github.com/charmbracelet/lipgloss"
+import "github.com/itzzritik/forged/cli/internal/commandui"
 
 var (
-	titleStyle = lipgloss.NewStyle().
-			Bold(true).
-			Foreground(lipgloss.Color("255"))
-	mutedStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("241"))
-	accentStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("110"))
-	successStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("42"))
-	warnStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("214"))
-	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color("203"))
-	selectedItemStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.Color("110")).
-				Bold(true)
+	titleStyle        = commandui.TitleStyle
+	mutedStyle        = commandui.MutedStyle
+	accentStyle       = commandui.AccentStyle
+	successStyle      = commandui.SuccessStyle
+	warnStyle         = commandui.WarnStyle
+	errorStyle        = commandui.ErrorStyle
+	selectedItemStyle = commandui.SelectedItemStyle
 )

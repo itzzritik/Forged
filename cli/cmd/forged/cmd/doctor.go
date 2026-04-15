@@ -207,7 +207,6 @@ func containsFix(summary readiness.RepairSummary, target string) bool {
 
 func init() {
 	doctorCmd.Flags().Bool("fix", false, "auto-fix issues where possible")
-	rootCmd.AddCommand(doctorCmd)
 }
 
 func pass(label, detail string) {

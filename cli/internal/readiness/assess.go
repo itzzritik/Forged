@@ -28,6 +28,8 @@ type Engine struct {
 	ensureConfig    func(config.Paths) error
 	enableSSH       func(config.Paths) error
 	restartService  func() error
+	sleep           func()
+	serviceRetries  int
 }
 
 func New(paths config.Paths) *Engine {
@@ -40,11 +42,15 @@ func New(paths config.Paths) *Engine {
 		isSSHEnabled:    config.IsSSHAgentEnabled,
 		detectOwner:     config.DetectSSHAgentOwner,
 		loadCredentials: defaultCredentialsValid,
-		loadKeyCount:    defaultLoadKeyCount,
-		ensureConfig:    ensureDefaultConfigFile,
-		enableSSH:       config.EnableSSHAgent,
-		restartService:  daemon.RestartService,
-	}
+			loadKeyCount:    defaultLoadKeyCount,
+			ensureConfig:    ensureDefaultConfigFile,
+			enableSSH:       config.EnableSSHAgent,
+			restartService:  daemon.RestartService,
+			sleep: func() {
+				time.Sleep(500 * time.Millisecond)
+			},
+			serviceRetries: 6,
+		}
 }
 
 func (e *Engine) Assess() (Snapshot, error) {

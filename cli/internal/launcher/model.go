@@ -6,7 +6,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"github.com/itzzritik/forged/cli/internal/commandui"
 	"github.com/itzzritik/forged/cli/internal/readiness"
 )
 
@@ -145,24 +145,7 @@ func (m *Model) renderMenu() string {
 }
 
 func (m *Model) renderContainer(content string) string {
-	width := m.width
-	if width <= 0 {
-		width = 80
-	}
-	bodyWidth := width - 6
-	if bodyWidth > 72 {
-		bodyWidth = 72
-	}
-	if bodyWidth < 40 {
-		bodyWidth = 40
-	}
-
-	style := lipgloss.NewStyle().
-		PaddingLeft(2).
-		PaddingRight(2).
-		Width(bodyWidth)
-
-	return "\n" + style.Render(content) + "\n"
+	return commandui.RenderContainer(m.width, content)
 }
 
 func (m *Model) stateSubtitle() string {

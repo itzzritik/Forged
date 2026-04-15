@@ -63,5 +63,4 @@ var sshRouteMatchCmd = &cobra.Command{
 func init() {
 	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyRef, "key", "", "internal key route matcher")
 	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyRef, "key-id", "", "internal key route matcher")
-	rootCmd.AddCommand(sshRouteMatchCmd)
 }
