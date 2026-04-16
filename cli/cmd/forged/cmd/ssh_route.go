@@ -3,64 +3,58 @@ package cmd
 import (
 	"os"
 
-	"github.com/itzzritik/forged/cli/internal/config"
-	"github.com/itzzritik/forged/cli/internal/sshrouting"
+	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/spf13/cobra"
 )
 
-var sshRouteKeyRef string
+var (
+	sshRouteAttempt string
+	sshRouteHost    string
+	sshRouteUser    string
+	sshRoutePort    string
+)
 
-var sshRouteMatchCmd = &cobra.Command{
-	Use:                "__ssh-match",
-	Aliases:            []string{"__ssh-route-match"},
-	Hidden:             true,
-	SilenceUsage:       true,
-	SilenceErrors:      true,
-	DisableFlagParsing: false,
-	Run: func(cmd *cobra.Command, args []string) {
-		if sshRouteKeyRef == "" {
-			os.Exit(1)
-		}
-
-		paths := config.DefaultPaths()
-		remote, err := sshrouting.CurrentRemote()
-		if err != nil || remote.Host != "github.com" || remote.Owner == "" {
-			os.Exit(1)
-		}
-
-		state, err := sshrouting.LoadState(paths.SSHRoutingStateFile())
+var sshRoutePrepareCmd = &cobra.Command{
+	Use:           "__ssh-route-prepare",
+	Hidden:        true,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		cwd, err := os.Getwd()
 		if err != nil {
-			os.Exit(1)
+			return err
 		}
 
-		if keyRef, ok := state.Routes[remote.RouteKey]; ok {
-			if keyRef == sshRouteKeyRef {
-				os.Exit(0)
-			}
-			os.Exit(1)
-		}
+		_, err = ctlClient().Call(ipc.CmdSSHRoutePrepare, ipc.SSHRoutePrepareArgs{
+			Attempt:   sshRouteAttempt,
+			ClientPID: os.Getppid(),
+			CWD:       cwd,
+			Host:      sshRouteHost,
+			User:      sshRouteUser,
+			Port:      sshRoutePort,
+		})
+		return err
+	},
+}
 
-		account, err := sshrouting.ProbeGitHubAccount(
-			paths.AgentSocket(),
-			sshrouting.HintFilePath(paths.SSHManagedKeysDir(), sshRouteKeyRef),
-		)
-		if err != nil {
-			os.Exit(1)
-		}
-
-		if account != remote.Owner {
-			os.Exit(1)
-		}
-
-		state.Routes[remote.RouteKey] = sshRouteKeyRef
-		if err := sshrouting.SaveState(paths.SSHRoutingStateFile(), state); err != nil {
-			os.Exit(1)
-		}
-		os.Exit(0)
+var sshRouteSuccessCmd = &cobra.Command{
+	Use:           "__ssh-route-success",
+	Hidden:        true,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	RunE: func(cmd *cobra.Command, args []string) error {
+		_, err := ctlClient().Call(ipc.CmdSSHRouteSuccess, ipc.SSHRouteSuccessArgs{
+			Attempt: sshRouteAttempt,
+		})
+		return err
 	},
 }
 
 func init() {
-	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyRef, "key", "", "internal key route matcher")
-	sshRouteMatchCmd.Flags().StringVar(&sshRouteKeyRef, "key-id", "", "internal key route matcher")
+	for _, routeCmd := range []*cobra.Command{sshRoutePrepareCmd, sshRouteSuccessCmd} {
+		routeCmd.Flags().StringVar(&sshRouteAttempt, "attempt", "", "routing attempt token")
+		routeCmd.Flags().StringVar(&sshRouteHost, "host", "", "effective host")
+		routeCmd.Flags().StringVar(&sshRouteUser, "user", "", "target user")
+		routeCmd.Flags().StringVar(&sshRoutePort, "port", "22", "target port")
+	}
 }

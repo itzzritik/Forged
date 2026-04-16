@@ -18,6 +18,9 @@ func MergeThreeWay(base, local, remote vault.VaultData, localDeviceID, remoteDev
 	merged := vault.VaultData{
 		Metadata:      mergeMetadata(base.Metadata, local.Metadata, remote.Metadata),
 		KeyGeneration: maxInt(base.KeyGeneration, local.KeyGeneration, remote.KeyGeneration),
+		SSH: vault.SSHData{
+			Routes: mergeSSHRoutes(base.SSH.Routes, local.SSH.Routes, remote.SSH.Routes),
+		},
 	}
 
 	merged.VersionVector = mergeVersionVectors(base.VersionVector, local.VersionVector, remote.VersionVector)
@@ -78,6 +81,9 @@ func BootstrapMerge(local, remote vault.VaultData, localDeviceID, remoteDeviceID
 		KeyGeneration: maxInt(local.KeyGeneration, remote.KeyGeneration),
 		VersionVector: mergeVersionVectors(local.VersionVector, remote.VersionVector),
 		Tombstones:    mergeTombstones(local.Tombstones, remote.Tombstones),
+		SSH: vault.SSHData{
+			Routes: mergeSSHRoutes(nil, local.SSH.Routes, remote.SSH.Routes),
+		},
 	}
 
 	tombstoneSet := make(map[string]struct{}, len(merged.Tombstones))
@@ -402,4 +408,65 @@ func tieBreakID(key vault.Key, fallback string) string {
 		return strings.Repeat("~", 32)
 	}
 	return value
+}
+
+func mergeSSHRoutes(base, local, remote map[string]vault.SSHRoute) map[string]vault.SSHRoute {
+	ids := make(map[string]struct{}, len(base)+len(local)+len(remote))
+	for target := range base {
+		ids[target] = struct{}{}
+	}
+	for target := range local {
+		ids[target] = struct{}{}
+	}
+	for target := range remote {
+		ids[target] = struct{}{}
+	}
+
+	out := make(map[string]vault.SSHRoute, len(ids))
+	for target := range ids {
+		route, ok := newestRoute(
+			local[target],
+			remote[target],
+			base[target],
+			local == nil || !routeExists(local, target),
+			remote == nil || !routeExists(remote, target),
+			base == nil || !routeExists(base, target),
+		)
+		if ok {
+			out[target] = route
+		}
+	}
+	return out
+}
+
+func newestRoute(local, remote, base vault.SSHRoute, localMissing, remoteMissing, baseMissing bool) (vault.SSHRoute, bool) {
+	candidates := make([]vault.SSHRoute, 0, 3)
+	if !baseMissing {
+		candidates = append(candidates, base)
+	}
+	if !remoteMissing {
+		candidates = append(candidates, remote)
+	}
+	if !localMissing {
+		candidates = append(candidates, local)
+	}
+	if len(candidates) == 0 {
+		return vault.SSHRoute{}, false
+	}
+
+	newest := candidates[0]
+	for _, candidate := range candidates[1:] {
+		if candidate.Updated.After(newest.Updated) || candidate.Updated.Equal(newest.Updated) {
+			newest = candidate
+		}
+	}
+	return newest, true
+}
+
+func routeExists(routes map[string]vault.SSHRoute, target string) bool {
+	if routes == nil {
+		return false
+	}
+	_, ok := routes[target]
+	return ok
 }

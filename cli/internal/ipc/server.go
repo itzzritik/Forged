@@ -13,9 +13,15 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/activity"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
+	"github.com/itzzritik/forged/cli/internal/sshrouting"
 	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
+
+type SSHRouteHandler interface {
+	Prepare(sshrouting.PrepareRequest) error
+	Success(attempt string) error
+}
 
 type Server struct {
 	socketPath  string
@@ -30,6 +36,7 @@ type Server struct {
 	authBroker  *sensitiveauth.Broker
 	onKeyChange func()
 	onReadSync  func()
+	sshRoutes   SSHRouteHandler
 }
 
 func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
@@ -50,6 +57,10 @@ func (s *Server) SetOnKeyChange(fn func()) {
 
 func (s *Server) SetOnReadSync(fn func()) {
 	s.onReadSync = fn
+}
+
+func (s *Server) SetSSHRouteHandler(handler SSHRouteHandler) {
+	s.sshRoutes = handler
 }
 
 func NewServer(socketPath string, v *vault.Vault, ks *vault.KeyStore, al *activity.ActivityLog, logger *slog.Logger) *Server {
@@ -151,6 +162,10 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleSyncTrigger(req.Args)
 	case CmdSyncLink:
 		return s.handleSyncLink(req.Args)
+	case CmdSSHRoutePrepare:
+		return s.handleSSHRoutePrepare(req.Args)
+	case CmdSSHRouteSuccess:
+		return s.handleSSHRouteSuccess(req.Args)
 	case CmdSensitiveAuth:
 		return s.handleSensitiveAuth(req.Args)
 	case CmdSensitivePassword:
@@ -162,6 +177,47 @@ func (s *Server) dispatch(req Request) Response {
 	default:
 		return ErrorResponse(fmt.Errorf("unknown command: %s", req.Command))
 	}
+}
+
+func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
+	if s.sshRoutes == nil {
+		return ErrorResponse(fmt.Errorf("ssh routing unavailable"))
+	}
+
+	var args SSHRoutePrepareArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+
+	if err := s.sshRoutes.Prepare(sshrouting.PrepareRequest{
+		Attempt:   args.Attempt,
+		ClientPID: args.ClientPID,
+		CWD:       args.CWD,
+		Host:      args.Host,
+		User:      args.User,
+		Port:      args.Port,
+	}); err != nil {
+		return ErrorResponse(err)
+	}
+
+	return OkResponse(nil)
+}
+
+func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
+	if s.sshRoutes == nil {
+		return ErrorResponse(fmt.Errorf("ssh routing unavailable"))
+	}
+
+	var args SSHRouteSuccessArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+	}
+
+	if err := s.sshRoutes.Success(args.Attempt); err != nil {
+		return ErrorResponse(err)
+	}
+
+	return OkResponse(nil)
 }
 
 func (s *Server) handleList() Response {

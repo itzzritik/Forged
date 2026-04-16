@@ -84,7 +84,8 @@ func installRootSubcommands(cmd *cobra.Command) {
 
 	logsCmd.Hidden = true
 	signCmd.Hidden = true
-	sshRouteMatchCmd.Hidden = true
+	sshRoutePrepareCmd.Hidden = true
+	sshRouteSuccessCmd.Hidden = true
 
 	cmd.AddCommand(
 		loginCmd,
@@ -96,7 +97,8 @@ func installRootSubcommands(cmd *cobra.Command) {
 		newAgentCmd(),
 		logsCmd,
 		signCmd,
-		sshRouteMatchCmd,
+		sshRoutePrepareCmd,
+		sshRouteSuccessCmd,
 	)
 }
 

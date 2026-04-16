@@ -27,18 +27,19 @@ import (
 )
 
 type Daemon struct {
-	paths       config.Paths
-	vault       *vault.Vault
-	keyStore    *vault.KeyStore
-	activityLog *activity.ActivityLog
-	agent       *forgedagent.ForgedAgent
-	agentServer *forgedagent.Server
-	ipcServer   *ipc.Server
-	syncBus     *forgedsync.Bus
-	authBroker  *sensitiveauth.Broker
-	sshRouting  *sshrouting.Manager
-	logger      *slog.Logger
-	stop        chan struct{}
+	paths        config.Paths
+	vault        *vault.Vault
+	keyStore     *vault.KeyStore
+	activityLog  *activity.ActivityLog
+	agent        *forgedagent.ForgedAgent
+	agentServer  *forgedagent.Server
+	ipcServer    *ipc.Server
+	syncBus      *forgedsync.Bus
+	authBroker   *sensitiveauth.Broker
+	sshRouting   *sshrouting.Manager
+	routeService *sshrouting.Service
+	logger       *slog.Logger
+	stop         chan struct{}
 }
 
 func New(paths config.Paths) *Daemon {
@@ -65,7 +66,8 @@ func (d *Daemon) Run(password []byte) error {
 	defer d.shutdown()
 
 	d.authBroker = sensitiveauth.NewBroker(d.paths.VaultFile(), d.helperBinaryPath(), d.logger)
-	d.sshRouting = sshrouting.NewManager(d.paths, d.keyStore, d.selfBinaryPath())
+	d.routeService = sshrouting.NewService(d.paths, d.keyStore)
+	d.sshRouting = sshrouting.NewManager(d.paths, d.selfBinaryPath())
 
 	if err := d.writePID(); err != nil {
 		return err
@@ -239,6 +241,7 @@ func (d *Daemon) startIPC() error {
 			d.logger.Warn("refreshing ssh routing after sync failed", "error", err)
 		}
 	})
+	d.ipcServer.SetSSHRouteHandler(d.routeService)
 	if err := d.ipcServer.Start(); err != nil {
 		return fmt.Errorf("starting ipc server: %w", err)
 	}
@@ -255,6 +258,7 @@ func (d *Daemon) startAgent() error {
 
 	d.agent = forgedagent.New(d.keyStore)
 	d.agent.SetSyncCoordinator(d.syncBus)
+	d.agent.SetRouteSessions(d.routeService)
 	d.agentServer = forgedagent.NewServer(agentPath, d.agent, d.logger)
 	if err := d.agentServer.Start(); err != nil {
 		return fmt.Errorf("starting agent server: %w", err)

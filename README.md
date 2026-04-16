@@ -71,7 +71,9 @@ No browser. No Electron. No local web server. Just a Unix socket and a CLI.
 
 Forged keeps SSH integration low-touch. It manages its own SSH file under `~/.forged/ssh/forged.conf` and adds at most one `Include` line to your main `~/.ssh/config`.
 
-The managed config only points SSH at the Forged agent. Forged does not rewrite your existing host blocks or repo-local Git config.
+When the same host accepts multiple keys, Forged narrows each SSH or Git connection to a small ordered subset of keys instead of guessing from repo owner names or key labels. Exact successful routes are remembered in the encrypted vault and synced across devices. Broader same-host history is used only as a hint for ordering.
+
+Forged does not rewrite your existing host blocks or repo-local Git config.
 
 Use `forged doctor` to see which SSH agent currently owns `IdentityAgent`. If you want to switch to another tool or uninstall Forged, run `forged disable` first. That removes only Forged-managed SSH config and leaves the rest of your `~/.ssh` setup alone.
 

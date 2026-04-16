@@ -7,6 +7,7 @@ import (
 	"os"
 	"sync"
 
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"golang.org/x/crypto/ssh/agent"
 )
 
@@ -64,12 +65,18 @@ func (s *Server) acceptLoop() {
 			return
 		}
 		s.wg.Add(1)
-		go func() {
+		go func(conn net.Conn) {
 			defer s.wg.Done()
 			defer conn.Close()
-			if err := agent.ServeAgent(s.agent, conn); err != nil {
+
+			var scoped agent.ExtendedAgent = s.agent
+			if pid, err := platform.AgentPeerPID(conn); err == nil {
+				scoped = s.agent.ForClientPID(pid)
+			}
+
+			if err := agent.ServeAgent(scoped, conn); err != nil {
 				s.logger.Debug("agent connection closed", "error", err)
 			}
-		}()
+		}(conn)
 	}
 }

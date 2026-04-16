@@ -18,6 +18,7 @@ type ForgedAgent struct {
 	keyStore *vault.KeyStore
 	locked   bool
 	syncBus  SyncCoordinator
+	routes   RouteSessions
 }
 
 type SyncCoordinator interface {
@@ -33,6 +34,26 @@ func (a *ForgedAgent) SetSyncCoordinator(syncBus SyncCoordinator) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.syncBus = syncBus
+}
+
+func (a *ForgedAgent) SetRouteSessions(routes RouteSessions) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.routes = routes
+}
+
+func (a *ForgedAgent) ForClientPID(clientPID int) agent.ExtendedAgent {
+	a.mu.RLock()
+	routes := a.routes
+	a.mu.RUnlock()
+	if routes == nil {
+		return a
+	}
+	return &sessionAgent{
+		base:      a,
+		clientPID: clientPID,
+		routes:    routes,
+	}
 }
 
 func (a *ForgedAgent) List() ([]*agent.Key, error) {
@@ -75,12 +96,12 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 		return nil, fmt.Errorf("agent is locked")
 	}
 
-	signer, name, err := a.findSigner(key)
+	signer, name, _, err := a.findSigner(key)
 	if err != nil {
 		a.mu.RUnlock()
 		if refreshErr := a.refreshMissingKey("sign_missing_key"); refreshErr == nil {
 			a.mu.RLock()
-			signer, name, err = a.findSigner(key)
+			signer, name, _, err = a.findSigner(key)
 		} else {
 			a.mu.RLock()
 		}
@@ -167,7 +188,7 @@ func (a *ForgedAgent) Extension(extensionType string, contents []byte) ([]byte, 
 	return nil, agent.ErrExtensionUnsupported
 }
 
-func (a *ForgedAgent) findSigner(pub ssh.PublicKey) (ssh.Signer, string, error) {
+func (a *ForgedAgent) findSigner(pub ssh.PublicKey) (ssh.Signer, string, string, error) {
 	wanted := pub.Marshal()
 	for _, k := range a.keyStore.List() {
 		parsed, err := parsePublicKey(k.PublicKey)
@@ -177,12 +198,12 @@ func (a *ForgedAgent) findSigner(pub ssh.PublicKey) (ssh.Signer, string, error) 
 		if bytes.Equal(parsed.Marshal(), wanted) {
 			signer, err := ssh.ParsePrivateKey(k.PrivateKey)
 			if err != nil {
-				return nil, "", fmt.Errorf("parsing private key for %s: %w", k.Name, err)
+				return nil, "", "", fmt.Errorf("parsing private key for %s: %w", k.Name, err)
 			}
-			return signer, k.Name, nil
+			return signer, k.Name, k.Fingerprint, nil
 		}
 	}
-	return nil, "", fmt.Errorf("key not found in vault")
+	return nil, "", "", fmt.Errorf("key not found in vault")
 }
 
 func parsePublicKey(authorizedKey string) (ssh.PublicKey, error) {

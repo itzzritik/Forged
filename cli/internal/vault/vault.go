@@ -27,6 +27,16 @@ type VaultData struct {
 	VersionVector map[string]int64 `json:"version_vector"`
 	Tombstones    []Tombstone      `json:"tombstones"`
 	KeyGeneration int              `json:"key_generation"`
+	SSH           SSHData          `json:"ssh,omitempty"`
+}
+
+type SSHData struct {
+	Routes map[string]SSHRoute `json:"routes,omitempty"`
+}
+
+type SSHRoute struct {
+	Key     string    `json:"key,omitempty"`
+	Updated time.Time `json:"updated"`
 }
 
 type Key struct {
@@ -120,6 +130,9 @@ func Create(path string, password []byte) (*Vault, error) {
 			VersionVector: map[string]int64{},
 			Tombstones:    []Tombstone{},
 			KeyGeneration: 1,
+			SSH: SSHData{
+				Routes: map[string]SSHRoute{},
+			},
 		},
 	}
 

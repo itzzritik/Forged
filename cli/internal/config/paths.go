@@ -41,14 +41,6 @@ func (p Paths) SSHLegacyAdvancedConfig() string {
 	return filepath.Join(p.SSHManagedDir(), "config")
 }
 
-func (p Paths) SSHManagedKeysDir() string {
-	return filepath.Join(p.SSHManagedDir(), "keys")
-}
-
-func (p Paths) SSHRoutingStateFile() string {
-	return filepath.Join(p.SSHManagedDir(), "routing.json")
-}
-
 func (p Paths) LegacySSHManagedDir() string {
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".ssh", "forged")

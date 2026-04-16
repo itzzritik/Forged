@@ -9,9 +9,9 @@ import (
 
 const (
 	legacySSHConfigMarker = "# Added by Forged"
-	sshIncludeComment = "# Forged SSH integration"
-	sshAgentComment   = "# Forged SSH Agent"
-	sshRoutesComment  = "# Forged Git Remote Routes"
+	sshIncludeComment     = "# Forged SSH integration"
+	sshAgentComment       = "# Forged SSH Agent"
+	sshRoutesComment      = "# Forged SSH Routing"
 )
 
 func SSHConfigPath() string {
@@ -129,12 +129,12 @@ func readConfigFile(path string) (string, error) {
 func removeForgedIncludes(content string, paths Paths) string {
 	lines := strings.Split(content, "\n")
 	includes := map[string]struct{}{
-		includeLine(paths.SSHManagedConfig()):                   {},
-		includeLine(paths.LegacySSHBaseInclude()):               {},
-		fmt.Sprintf("Include %q", paths.SSHManagedConfig()):     {},
-		fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()): {},
-		"# " + includeLine(paths.SSHManagedConfig()):            {},
-		"# " + includeLine(paths.LegacySSHBaseInclude()):        {},
+		includeLine(paths.SSHManagedConfig()):                          {},
+		includeLine(paths.LegacySSHBaseInclude()):                      {},
+		fmt.Sprintf("Include %q", paths.SSHManagedConfig()):            {},
+		fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()):        {},
+		"# " + includeLine(paths.SSHManagedConfig()):                   {},
+		"# " + includeLine(paths.LegacySSHBaseInclude()):               {},
 		"# " + fmt.Sprintf("Include %q", paths.SSHManagedConfig()):     {},
 		"# " + fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()): {},
 	}
@@ -243,6 +243,7 @@ func RenderManagedSSHConfig(paths Paths, routes string) string {
 
 	routes = strings.TrimSpace(routes)
 	if routes != "" {
+		lines = append(lines, "    PermitLocalCommand yes")
 		lines = append(lines, "", sshRoutesComment, routes)
 	}
 
@@ -253,6 +254,8 @@ func cleanupLegacySSHArtifacts(paths Paths) error {
 	_ = os.RemoveAll(paths.LegacySSHManagedDir())
 	_ = os.Remove(filepath.Join(paths.StateDir, "ssh-routing.json"))
 	_ = os.Remove(paths.SSHLegacyAdvancedConfig())
+	_ = os.Remove(filepath.Join(paths.SSHManagedDir(), "routing.json"))
+	_ = os.RemoveAll(filepath.Join(paths.SSHManagedDir(), "keys"))
 	return nil
 }
 
