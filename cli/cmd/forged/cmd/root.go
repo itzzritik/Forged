@@ -6,6 +6,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/spf13/cobra"
 )
 
@@ -27,11 +29,6 @@ var retiredCommandHints = map[string]string{
 	"remove":   "Run `forged key delete <name>`.",
 	"import":   "Run `forged key import`.",
 	"export":   "Run `forged key export`.",
-	"setup":    "Run `forged`.",
-	"start":    "Run `forged` or `forged doctor --fix`.",
-	"stop":     "Forged now manages the service automatically.",
-	"status":   "Run `forged`.",
-	"daemon":   "Forged now manages the service automatically.",
 	"config":   "Run `forged` or `forged doctor`.",
 	"register": "Run `forged login`.",
 	"add":      "Run `forged key import`.",
@@ -82,12 +79,18 @@ func installPersistentFlags(cmd *cobra.Command) {
 func installRootSubcommands(cmd *cobra.Command) {
 	cmd.CompletionOptions.HiddenDefaultCmd = true
 
-	logsCmd.Hidden = true
-	signCmd.Hidden = true
-	sshRoutePrepareCmd.Hidden = true
-	sshRouteSuccessCmd.Hidden = true
+	for _, hiddenCmd := range []*cobra.Command{
+		daemonCmd,
+		logsCmd,
+		signCmd,
+		sshRoutePrepareCmd,
+		sshRouteSuccessCmd,
+	} {
+		hiddenCmd.Hidden = true
+	}
 
 	cmd.AddCommand(
+		daemonCmd,
 		loginCmd,
 		logoutCmd,
 		syncCmd,
@@ -103,13 +106,21 @@ func installRootSubcommands(cmd *cobra.Command) {
 }
 
 func runRootCommand(cmd *cobra.Command, args []string) error {
+	paths := config.DefaultPaths()
+	engine := readiness.New(paths)
+
 	if versionOutput {
 		return printVersion(cmd)
 	}
 	if shouldLaunchBareForged(args) {
 		return runBareForged(cmd)
 	}
-	return runRootSummary()
+
+	result, err := engine.Run(readiness.RunOptions{Mode: readiness.ModeAssessOnly})
+	if err != nil {
+		return err
+	}
+	return renderRootSummary(result.Snapshot, result.Next)
 }
 
 func rewriteCLIError(err error) error {

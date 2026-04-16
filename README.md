@@ -32,11 +32,11 @@ npm i -g @getforged/cli
 ## Quick start
 
 ```bash
-# One-time setup: creates encrypted vault, imports your ~/.ssh/ keys
-forged setup
+# First run: creates or restores your vault, repairs SSH wiring, and starts the background service
+forged
 
-# Start the daemon
-forged daemon
+# Terminal-only repair flow
+forged doctor --fix
 
 # That's it. SSH and Git now use the Forged agent.
 ssh myserver
@@ -46,16 +46,16 @@ git push origin main
 ## Key management
 
 ```bash
-forged generate my-key                          # new Ed25519 key
-forged add work-key --file ~/.ssh/id_ed25519    # import existing
-forged list                                     # show all keys
-forged view my-key                              # inspect a key
-forged remove old-key                           # delete a key
+forged key generate my-key                       # new Ed25519 key
+forged key import --file ~/.ssh/id_ed25519       # import existing
+forged key list                                  # show all keys
+forged key view my-key                           # inspect a key
+forged key delete old-key                        # delete a key
 ```
 
 ## How it works
 
-Forged runs as a background daemon. It speaks the standard SSH agent protocol, so every SSH client already supports it. Your keys are encrypted at rest and only decrypted in locked memory while the daemon runs.
+Forged runs as a background daemon. `forged` and `forged doctor --fix` repair and start that daemon for you, while `forged daemon` remains available for foreground debugging. It speaks the standard SSH agent protocol, so every SSH client already supports it. Your keys are encrypted at rest and only decrypted in locked memory while the daemon runs.
 
 ```
 forged daemon
@@ -75,7 +75,7 @@ When the same host accepts multiple keys, Forged narrows each SSH or Git connect
 
 Forged does not rewrite your existing host blocks or repo-local Git config.
 
-Use `forged doctor` to see which SSH agent currently owns `IdentityAgent`. If you want to switch to another tool or uninstall Forged, run `forged disable` first. That removes only Forged-managed SSH config and leaves the rest of your `~/.ssh` setup alone.
+Use `forged doctor` to see which SSH agent currently owns `IdentityAgent`. If you want to switch to another tool or uninstall Forged, run `forged agent disable` first. That removes only Forged-managed SSH config and leaves the rest of your `~/.ssh` setup alone.
 
 ## Security
 
@@ -100,22 +100,22 @@ Cloud sync (coming soon) is zero-knowledge. The server stores opaque encrypted b
 ## All commands
 
 ```
-forged setup                     first-time wizard
-forged daemon                    start in foreground
-forged start / stop              manage via system service
-forged status                    daemon info + key count
+forged                           open Forged and auto-repair this machine
+forged doctor --fix              diagnose and repair from the terminal
+forged daemon                    start daemon in foreground (debug/service entrypoint)
 
-forged generate <name>           new Ed25519 key pair
-forged add <name> --file <path>  import existing key
-forged list                      all keys in vault
-forged remove <name>             delete a key
-forged view <name> [--full]      inspect a key
-forged export [--out <path>]     export the full vault
-forged rename <old> <new>        rename a key
+forged key generate <name>       new Ed25519 key pair
+forged key import --file <path>  import an existing key
+forged key list                  all keys in vault
+forged key delete <name>         delete a key
+forged key view <name>           inspect a key
+forged key export                export the full vault
+forged key rename <old> <new>    rename a key
 
-forged lock / unlock             clear or restore keys in memory
+forged vault                     manage vault access
+forged agent                     manage SSH and Git signing
+forged login / logout / sync     manage cloud linking and sync
 forged logs                      tail daemon logs
-forged config                    manage configuration
 ```
 
 All commands support `--json` for scripting.

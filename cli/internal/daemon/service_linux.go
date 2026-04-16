@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 
@@ -21,7 +22,7 @@ After=default.target
 
 [Service]
 Type=simple
-ExecStart={{ .Binary }} daemon
+ExecStart={{ .ExecStart }}
 Restart=always
 RestartSec=5
 Environment=FORGED_MASTER_PASSWORD={{ .MasterPassword }}
@@ -35,8 +36,8 @@ func unitPath() string {
 	return filepath.Join(home, ".config", "systemd", "user", serviceName+".service")
 }
 
-func InstallService(paths config.Paths, masterPassword string) error {
-	binaryPath, err := findBinary()
+func InstallService(paths config.Paths, masterPassword string, runtime RuntimeSpec) error {
+	runtime, err := normalizeRuntimeSpec(runtime)
 	if err != nil {
 		return err
 	}
@@ -53,10 +54,12 @@ func InstallService(paths config.Paths, masterPassword string) error {
 	defer f.Close()
 
 	data := struct {
+		ExecStart      string
 		Binary         string
 		MasterPassword string
 	}{
-		Binary:         binaryPath,
+		ExecStart:      formatSystemdExecStart(runtime),
+		Binary:         runtime.Binary,
 		MasterPassword: masterPassword,
 	}
 
@@ -68,6 +71,22 @@ func InstallService(paths config.Paths, masterPassword string) error {
 	exec.Command("systemctl", "--user", "enable", serviceName).Run()
 
 	return nil
+}
+
+func ReadInstalledServicePassword() (string, error) {
+	data, err := os.ReadFile(unitPath())
+	if err != nil {
+		return "", err
+	}
+
+	const prefix = "Environment=FORGED_MASTER_PASSWORD="
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
+			return strings.TrimPrefix(strings.TrimSpace(line), prefix), nil
+		}
+	}
+
+	return "", fmt.Errorf("installed service password not found")
 }
 
 func StartService() error {
@@ -160,4 +179,13 @@ func findBinary() (string, error) {
 		return "", fmt.Errorf("cannot find forged binary: %w", err)
 	}
 	return filepath.Abs(self)
+}
+
+func formatSystemdExecStart(runtime RuntimeSpec) string {
+	parts := make([]string, 0, len(runtime.Args)+1)
+	parts = append(parts, strconv.Quote(runtime.Binary))
+	for _, arg := range runtime.Args {
+		parts = append(parts, strconv.Quote(arg))
+	}
+	return strings.Join(parts, " ")
 }

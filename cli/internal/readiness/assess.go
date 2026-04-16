@@ -17,40 +17,44 @@ import (
 type Engine struct {
 	Paths config.Paths
 
-	statPath        func(string) bool
-	inspectService  func(config.Paths) (daemon.ServiceStatus, error)
-	isRunning       func(config.Paths) (int, bool)
-	socketReady     func(string) bool
-	isSSHEnabled    func(config.Paths) bool
-	detectOwner     func(config.Paths) (config.SSHAgentOwner, error)
-	loadCredentials func(string) (bool, error)
-	loadKeyCount    func(string) (int, error)
-	ensureConfig    func(config.Paths) error
-	enableSSH       func(config.Paths) error
-	restartService  func() error
-	sleep           func()
-	serviceRetries  int
+	statPath                     func(string) bool
+	inspectService               func(config.Paths) (daemon.ServiceStatus, error)
+	isRunning                    func(config.Paths) (int, bool)
+	socketReady                  func(string) bool
+	isSSHEnabled                 func(config.Paths) bool
+	detectOwner                  func(config.Paths) (config.SSHAgentOwner, error)
+	loadCredentials              func(string) (bool, error)
+	loadKeyCount                 func(string) (int, error)
+	ensureConfig                 func(config.Paths) error
+	enableSSH                    func(config.Paths) error
+	ensureService                func(config.Paths, daemon.ServiceCredentials, daemon.RuntimeSpec) error
+	readInstalledServicePassword func() (string, error)
+	serviceRuntime               func() (daemon.RuntimeSpec, error)
+	sleep                        func()
+	serviceRetries               int
 }
 
 func New(paths config.Paths) *Engine {
 	return &Engine{
-		Paths:           paths,
-		statPath:        fileExists,
-		inspectService:  daemon.InspectService,
-		isRunning:       daemon.IsRunning,
-		socketReady:     defaultSocketReady,
-		isSSHEnabled:    config.IsSSHAgentEnabled,
-		detectOwner:     config.DetectSSHAgentOwner,
-		loadCredentials: defaultCredentialsValid,
-			loadKeyCount:    defaultLoadKeyCount,
-			ensureConfig:    ensureDefaultConfigFile,
-			enableSSH:       config.EnableSSHAgent,
-			restartService:  daemon.RestartService,
-			sleep: func() {
-				time.Sleep(500 * time.Millisecond)
-			},
-			serviceRetries: 6,
-		}
+		Paths:                        paths,
+		statPath:                     fileExists,
+		inspectService:               daemon.InspectService,
+		isRunning:                    daemon.IsRunning,
+		socketReady:                  defaultSocketReady,
+		isSSHEnabled:                 config.IsSSHAgentEnabled,
+		detectOwner:                  config.DetectSSHAgentOwner,
+		loadCredentials:              defaultCredentialsValid,
+		loadKeyCount:                 defaultLoadKeyCount,
+		ensureConfig:                 ensureDefaultConfigFile,
+		enableSSH:                    config.EnableSSHAgent,
+		ensureService:                daemon.EnsureService,
+		readInstalledServicePassword: daemon.ReadInstalledServicePassword,
+		serviceRuntime:               daemon.DefaultRuntimeSpec,
+		sleep: func() {
+			time.Sleep(500 * time.Millisecond)
+		},
+		serviceRetries: 6,
+	}
 }
 
 func (e *Engine) Assess() (Snapshot, error) {

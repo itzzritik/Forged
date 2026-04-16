@@ -40,7 +40,7 @@ var startCmd = &cobra.Command{
 		}
 
 		if !daemon.ServiceInstalled() {
-			return fmt.Errorf("service not installed. Run: forged setup")
+			return fmt.Errorf("service not installed. Run: forged doctor --fix")
 		}
 
 		if err := daemon.StartService(); err != nil {

@@ -1,73 +1,14 @@
 package readiness
 
 import (
+	"fmt"
+	"strings"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
+	"github.com/itzzritik/forged/cli/internal/vault"
 )
-
-func (e *Engine) Repair(snapshot Snapshot) (Snapshot, RepairSummary, error) {
-	current := snapshot
-	var summary RepairSummary
-
-	if !current.ConfigExists {
-		if err := e.ensureConfigFile(e.Paths); err != nil {
-			summary.Failed = append(summary.Failed, "config")
-		} else {
-			updated, err := e.Assess()
-			if err != nil {
-				return updated, summary, err
-			}
-			current = updated
-			if current.ConfigExists {
-				summary.Fixed = append(summary.Fixed, "config")
-			} else {
-				summary.Failed = append(summary.Failed, "config")
-			}
-		}
-	}
-
-	if (!current.SSHEnabled || !current.ManagedConfigReady || !current.IdentityAgentOwner.IsForged()) && len(summary.Failed) == 0 {
-		if err := e.enableSSHConfig(e.Paths); err != nil {
-			summary.Failed = append(summary.Failed, "ssh")
-		} else {
-			updated, err := e.Assess()
-			if err != nil {
-				return updated, summary, err
-			}
-			current = updated
-			if current.SSHEnabled && current.ManagedConfigReady && current.IdentityAgentOwner.IsForged() {
-				summary.Fixed = append(summary.Fixed, "ssh")
-			} else {
-				summary.Failed = append(summary.Failed, "ssh")
-			}
-		}
-	}
-
-	if current.VaultExists &&
-		current.Service.Installed &&
-		current.Service.Repairable &&
-		(!current.Service.Running || !current.IPCSocketReady || !current.AgentSocketReady) {
-		if err := e.restartUserService(); err != nil {
-			summary.Failed = append(summary.Failed, "service")
-		} else {
-			updated, err := e.waitForServiceReady()
-			if err != nil {
-				return updated, summary, err
-			}
-			current = updated
-			if current.Service.Running && current.IPCSocketReady && current.AgentSocketReady {
-				summary.Fixed = append(summary.Fixed, "service")
-			} else {
-				summary.Failed = append(summary.Failed, "service")
-			}
-		}
-	}
-
-	current.State = classifyState(current)
-	return current, summary, nil
-}
 
 func (e *Engine) ensureConfigFile(paths config.Paths) error {
 	if e != nil && e.ensureConfig != nil {
@@ -83,11 +24,33 @@ func (e *Engine) enableSSHConfig(paths config.Paths) error {
 	return config.EnableSSHAgent(paths)
 }
 
-func (e *Engine) restartUserService() error {
-	if e != nil && e.restartService != nil {
-		return e.restartService()
+func (e *Engine) ensureServiceWithPassword(password []byte) error {
+	runtime, err := e.serviceRuntimeSpec()
+	if err != nil {
+		return err
 	}
-	return daemon.RestartService()
+	if e != nil && e.ensureService != nil {
+		return e.ensureService(e.Paths, daemon.ServiceCredentials{
+			MasterPassword: string(password),
+		}, runtime)
+	}
+	return daemon.EnsureService(e.Paths, daemon.ServiceCredentials{
+		MasterPassword: string(password),
+	}, runtime)
+}
+
+func (e *Engine) installedServicePassword() (string, error) {
+	if e != nil && e.readInstalledServicePassword != nil {
+		return e.readInstalledServicePassword()
+	}
+	return daemon.ReadInstalledServicePassword()
+}
+
+func (e *Engine) serviceRuntimeSpec() (daemon.RuntimeSpec, error) {
+	if e != nil && e.serviceRuntime != nil {
+		return e.serviceRuntime()
+	}
+	return daemon.DefaultRuntimeSpec()
 }
 
 func (e *Engine) waitForServiceReady() (Snapshot, error) {
@@ -103,7 +66,7 @@ func (e *Engine) waitForServiceReady() (Snapshot, error) {
 			return updated, err
 		}
 		last = updated
-		if updated.Service.Running && updated.IPCSocketReady && updated.AgentSocketReady {
+		if serviceHealthy(updated) {
 			return updated, nil
 		}
 		if attempt == retries-1 {
@@ -121,4 +84,67 @@ func (e *Engine) pauseForServiceRetry() {
 		return
 	}
 	time.Sleep(500 * time.Millisecond)
+}
+
+func appendUnique(items []string, item string) []string {
+	for _, existing := range items {
+		if existing == item {
+			return items
+		}
+	}
+	return append(items, item)
+}
+
+func (e *Engine) markFixed(summary *RepairSummary, item string) {
+	summary.Fixed = appendUnique(summary.Fixed, item)
+}
+
+func (e *Engine) markFailed(summary *RepairSummary, item string) {
+	summary.Failed = appendUnique(summary.Failed, item)
+}
+
+func serviceHealthy(snapshot Snapshot) bool {
+	return snapshot.Service.Installed &&
+		snapshot.Service.ConfigValid &&
+		snapshot.Service.Running &&
+		snapshot.IPCSocketReady &&
+		snapshot.AgentSocketReady
+}
+
+func serviceNeedsRepair(snapshot Snapshot) bool {
+	if !snapshot.VaultExists {
+		return false
+	}
+	return !serviceHealthy(snapshot)
+}
+
+func createEmptyVaultForRestore(paths config.Paths, password []byte) error {
+	v, err := vault.Create(paths.VaultFile(), password)
+	if err != nil {
+		return err
+	}
+	v.Close()
+	return nil
+}
+
+func passwordUnlocksVault(paths config.Paths, password []byte) (bool, error) {
+	if len(password) == 0 {
+		return false, nil
+	}
+
+	v, err := vault.Open(paths.VaultFile(), password)
+	if err == nil {
+		v.Close()
+		return true, nil
+	}
+
+	message := err.Error()
+	switch {
+	case strings.Contains(message, "message authentication failed"):
+		return false, nil
+	case strings.Contains(message, "vault is locked by another process"):
+		return true, nil
+	default:
+		return false, fmt.Errorf("verifying master password: %w", err)
+	}
 }

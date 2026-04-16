@@ -22,7 +22,7 @@ func (c *Client) Call(command string, args any) (Response, error) {
 func (c *Client) CallWithTimeout(command string, args any, timeout time.Duration) (Response, error) {
 	conn, err := net.DialTimeout("unix", c.socketPath, 2*time.Second)
 	if err != nil {
-		return Response{}, fmt.Errorf("daemon is not running. Start it with: forged start")
+		return Response{}, fmt.Errorf("daemon is not running. Run `forged` or `forged doctor --fix`")
 	}
 	defer conn.Close()
 

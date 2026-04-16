@@ -26,6 +26,25 @@ const (
 	RowBlocked  RowState = "blocked"
 )
 
+type Mode string
+
+const (
+	ModeAssessOnly          Mode = "assess_only"
+	ModeInteractiveLauncher Mode = "interactive_launcher"
+	ModeInteractiveDoctor   Mode = "interactive_doctor"
+	ModeNonInteractiveFix   Mode = "non_interactive_fix"
+)
+
+type NextAction string
+
+const (
+	NextActionNone                  NextAction = "none"
+	NextActionNeedsPassword         NextAction = "needs_password"
+	NextActionNeedsInteractiveSetup NextAction = "needs_interactive_setup"
+)
+
+type PasswordPrompt func(reason string) ([]byte, error)
+
 type Snapshot struct {
 	State              State
 	KeyCount           int
@@ -44,4 +63,15 @@ type Snapshot struct {
 type RepairSummary struct {
 	Fixed  []string
 	Failed []string
+}
+
+type RunOptions struct {
+	Mode           Mode
+	PromptPassword PasswordPrompt
+}
+
+type RunResult struct {
+	Snapshot Snapshot
+	Summary  RepairSummary
+	Next     NextAction
 }

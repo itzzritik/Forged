@@ -8,15 +8,15 @@ import (
 )
 
 type ReadinessRunner interface {
-	Assess() (readiness.Snapshot, error)
-	Repair(readiness.Snapshot) (readiness.Snapshot, readiness.RepairSummary, error)
+	Run(readiness.RunOptions) (readiness.RunResult, error)
 }
 
 type ActionFunc func(readiness.Snapshot) (string, error)
 
 type Dependencies struct {
-	Readiness ReadinessRunner
-	Actions   map[ActionID]ActionFunc
+	Readiness      ReadinessRunner
+	PromptPassword readiness.PasswordPrompt
+	Actions        map[ActionID]ActionFunc
 }
 
 type Controller struct {
@@ -30,12 +30,11 @@ func NewController(deps Dependencies) *Controller {
 func (c *Controller) Run() error {
 	flash := ""
 	for {
-		model := NewModel(func() (readiness.Snapshot, readiness.RepairSummary, error) {
-			snapshot, err := c.deps.Readiness.Assess()
-			if err != nil {
-				return readiness.Snapshot{}, readiness.RepairSummary{}, err
-			}
-			return c.deps.Readiness.Repair(snapshot)
+		model := NewModel(func() (readiness.RunResult, error) {
+			return c.deps.Readiness.Run(readiness.RunOptions{
+				Mode:           readiness.ModeInteractiveLauncher,
+				PromptPassword: c.deps.PromptPassword,
+			})
 		}, flash)
 
 		final, err := tea.NewProgram(model).Run()

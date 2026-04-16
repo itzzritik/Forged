@@ -10,12 +10,11 @@ import (
 	"github.com/itzzritik/forged/cli/internal/readiness"
 )
 
-type startupFunc func() (readiness.Snapshot, readiness.RepairSummary, error)
+type startupFunc func() (readiness.RunResult, error)
 
 type startupMsg struct {
-	snapshot readiness.Snapshot
-	summary  readiness.RepairSummary
-	err      error
+	result readiness.RunResult
+	err    error
 }
 
 type Model struct {
@@ -27,6 +26,7 @@ type Model struct {
 	phase    string
 	snapshot readiness.Snapshot
 	summary  readiness.RepairSummary
+	next     readiness.NextAction
 	menu     []MenuItem
 	cursor   int
 
@@ -69,9 +69,10 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, tea.Quit
 		}
-		m.snapshot = msg.snapshot
-		m.summary = msg.summary
-		m.menu = BuildMenu(msg.snapshot)
+		m.snapshot = msg.result.Snapshot
+		m.summary = msg.result.Summary
+		m.next = msg.result.Next
+		m.menu = BuildMenu(msg.result.Snapshot)
 		m.phase = "menu"
 		m.cursor = 0
 		return m, nil
@@ -118,6 +119,9 @@ func (m *Model) View() string {
 	if m.flash != "" {
 		lines = append(lines, m.flash, "")
 	}
+	if m.next == readiness.NextActionNeedsPassword {
+		lines = append(lines, warnStyle.Render("Master password required to finish repair"), "")
+	}
 	if len(m.summary.Fixed) > 0 {
 		lines = append(lines, successStyle.Render("Ready after repair"), mutedStyle.Render(strings.Join(m.summary.Fixed, ", ")), "")
 	}
@@ -155,6 +159,13 @@ func (m *Model) renderContainer(content string) string {
 }
 
 func (m *Model) stateSubtitle() string {
+	switch m.next {
+	case readiness.NextActionNeedsPassword:
+		return warnStyle.Render("Forged needs your master password to finish repair")
+	case readiness.NextActionNeedsInteractiveSetup:
+		return "Choose how to start"
+	}
+
 	switch m.snapshot.State {
 	case readiness.StateUninitialized:
 		return "Choose how to start"
@@ -173,7 +184,7 @@ func (m *Model) stateSubtitle() string {
 
 func (m *Model) runStartup() tea.Cmd {
 	return func() tea.Msg {
-		snapshot, summary, err := m.startup()
-		return startupMsg{snapshot: snapshot, summary: summary, err: err}
+		result, err := m.startup()
+		return startupMsg{result: result, err: err}
 	}
 }

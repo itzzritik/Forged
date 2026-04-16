@@ -19,7 +19,8 @@ func shouldLaunchBareForged(args []string) bool {
 func runBareForged(cmd *cobra.Command) error {
 	paths := config.DefaultPaths()
 	controller := launcher.NewController(launcher.Dependencies{
-		Readiness: readiness.New(paths),
+		Readiness:      readiness.New(paths),
+		PromptPassword: promptMasterPassword,
 		Actions: map[launcher.ActionID]launcher.ActionFunc{
 			launcher.ActionSetupVault: func(snapshot readiness.Snapshot) (string, error) {
 				return runSetupVault(paths)

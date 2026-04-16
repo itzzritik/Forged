@@ -137,15 +137,15 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 }
 
 func (a *ForgedAgent) Add(key agent.AddedKey) error {
-	return fmt.Errorf("use 'forged add' or 'forged generate' to add keys")
+	return fmt.Errorf("use 'forged key import' or 'forged key generate' to add keys")
 }
 
 func (a *ForgedAgent) Remove(key ssh.PublicKey) error {
-	return fmt.Errorf("use 'forged remove' to remove keys")
+	return fmt.Errorf("use 'forged key delete' to remove keys")
 }
 
 func (a *ForgedAgent) RemoveAll() error {
-	return fmt.Errorf("use 'forged remove' to remove keys")
+	return fmt.Errorf("use 'forged key delete' to remove keys")
 }
 
 func (a *ForgedAgent) Lock(passphrase []byte) error {

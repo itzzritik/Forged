@@ -40,8 +40,11 @@ func createVaultAtPaths(paths config.Paths, password []byte) (*vault.Vault, *vau
 }
 
 func ensureLocalService(paths config.Paths, password []byte) error {
-	if err := daemon.InstallService(paths, string(password)); err != nil {
+	runtime, err := daemon.DefaultRuntimeSpec()
+	if err != nil {
 		return err
 	}
-	return daemon.StartService()
+	return daemon.EnsureService(paths, daemon.ServiceCredentials{
+		MasterPassword: string(password),
+	}, runtime)
 }

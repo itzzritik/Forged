@@ -29,7 +29,11 @@ lint: lint-cli lint-server
 
 # Run
 dev:
-    cd cli && go run ./cmd/forged daemon
+    just build-cli
+    cd cli && go run ./cmd/forged-dev-service --binary ../bin/forged install
+
+dev-stop:
+    cd cli && go run ./cmd/forged-dev-service stop
 
 dev-server:
     cd server && doppler run -- go run ./cmd/forged-server

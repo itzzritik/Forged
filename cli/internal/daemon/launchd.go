@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 )
@@ -22,6 +23,7 @@ var legacyLaunchdLabels = []string{"me.ritik.forged"}
 type launchdTemplateData struct {
 	Label          string
 	Binary         string
+	Args           []string
 	LogFile        string
 	MasterPassword string
 }
@@ -43,7 +45,9 @@ var plistTemplate = template.Must(template.New("plist").Funcs(template.FuncMap{
     <key>ProgramArguments</key>
     <array>
         <string>{{ xml .Binary }}</string>
-        <string>daemon</string>
+{{- range .Args }}
+        <string>{{ xml . }}</string>
+{{- end }}
     </array>
     <key>RunAtLoad</key>
     <true/>
@@ -79,8 +83,8 @@ func legacyPlistPaths() []string {
 	return paths
 }
 
-func InstallService(paths config.Paths, masterPassword string) error {
-	binaryPath, err := findBinary()
+func InstallService(paths config.Paths, masterPassword string, runtime RuntimeSpec) error {
+	runtime, err := normalizeRuntimeSpec(runtime)
 	if err != nil {
 		return err
 	}
@@ -97,7 +101,8 @@ func InstallService(paths config.Paths, masterPassword string) error {
 
 	data := launchdTemplateData{
 		Label:          launchdLabel,
-		Binary:         binaryPath,
+		Binary:         runtime.Binary,
+		Args:           runtime.Args,
 		LogFile:        paths.LogFile(),
 		MasterPassword: masterPassword,
 	}
@@ -143,6 +148,7 @@ func StartService() error {
 	); err != nil {
 		return err
 	}
+	waitForDaemonExit(paths)
 	if err := launchctlRun(
 		[]string{"bootstrap", launchdDomain(), plistPath()},
 		nil,
@@ -273,6 +279,16 @@ func launchdServiceTargetForLabel(label string) string {
 	return launchdDomain() + "/" + label
 }
 
+func waitForDaemonExit(paths config.Paths) {
+	deadline := time.Now().Add(3 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, running := IsRunning(paths); !running {
+			return
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
 func findBinary() (string, error) {
 	self, err := os.Executable()
 	if err != nil {
@@ -362,7 +378,11 @@ func migrateLegacyLaunchdService(paths config.Paths) error {
 		if err != nil {
 			return fmt.Errorf("reading legacy launchd service %s: %w", path, err)
 		}
-		if err := InstallService(paths, password); err != nil {
+		runtime, err := DefaultRuntimeSpec()
+		if err != nil {
+			return err
+		}
+		if err := InstallService(paths, password, runtime); err != nil {
 			return fmt.Errorf("installing migrated launchd service: %w", err)
 		}
 		return nil
@@ -386,6 +406,19 @@ func loadLaunchdMasterPassword(path string) (string, error) {
 		return "", fmt.Errorf("FORGED_MASTER_PASSWORD is empty")
 	}
 	return password, nil
+}
+
+func ReadInstalledServicePassword() (string, error) {
+	for _, service := range existingLaunchdServiceFiles() {
+		password, err := loadLaunchdMasterPassword(service.Path)
+		if err == nil && password != "" {
+			return password, nil
+		}
+		if err != nil && !os.IsNotExist(err) {
+			return "", err
+		}
+	}
+	return "", fmt.Errorf("installed service password not found")
 }
 
 func removeLegacyLaunchdPlists() error {

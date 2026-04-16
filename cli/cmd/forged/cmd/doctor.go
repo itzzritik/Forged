@@ -19,20 +19,25 @@ var doctorCmd = &cobra.Command{
 		fmt.Println("Forged Doctor")
 		fmt.Println()
 
-		snapshot, err := engine.Assess()
+		opts := readiness.RunOptions{Mode: readiness.ModeAssessOnly}
+		if fix && terminalIsInteractive() {
+			opts = readiness.RunOptions{
+				Mode:           readiness.ModeInteractiveDoctor,
+				PromptPassword: promptMasterPassword,
+			}
+		} else if fix {
+			opts = readiness.RunOptions{Mode: readiness.ModeNonInteractiveFix}
+		}
+
+		result, err := engine.Run(opts)
 		if err != nil {
 			return err
 		}
 
-		var summary readiness.RepairSummary
-		if fix {
-			snapshot, summary, err = engine.Repair(snapshot)
-			if err != nil {
-				return err
-			}
-		}
+		snapshot := result.Snapshot
+		summary := result.Summary
 
-		renderDoctorVault(snapshot, summary)
+		renderDoctorVault(snapshot, result.Next)
 		renderDoctorConfig(snapshot, summary)
 		renderDoctorRuntime(snapshot, summary)
 		renderDoctorSSH(snapshot, summary, paths)
@@ -44,6 +49,10 @@ var doctorCmd = &cobra.Command{
 
 		fmt.Println()
 		switch {
+		case result.Next == readiness.NextActionNeedsPassword:
+			fmt.Println("Repair needs your master password. Run `forged doctor --fix` in an interactive terminal or run `forged`.")
+		case result.Next == readiness.NextActionNeedsInteractiveSetup:
+			fmt.Println("Repair needs interactive setup. Run `forged`.")
 		case issues == 0 && len(summary.Fixed) == 0:
 			fmt.Println("Everything looks good.")
 		case issues == 0 && len(summary.Fixed) > 0:
@@ -55,16 +64,28 @@ var doctorCmd = &cobra.Command{
 		default:
 			fmt.Printf("%d issue(s) found. Run: forged doctor --fix\n", issues)
 		}
+
+		if fix && result.Next == readiness.NextActionNeedsPassword {
+			return fmt.Errorf("repair requires your master password")
+		}
+		if fix && result.Next == readiness.NextActionNeedsInteractiveSetup {
+			return fmt.Errorf("repair requires interactive setup")
+		}
 		return nil
 	},
 }
 
-func renderDoctorVault(snapshot readiness.Snapshot, summary readiness.RepairSummary) {
+func renderDoctorVault(snapshot readiness.Snapshot, next readiness.NextAction) {
 	if snapshot.VaultExists {
 		pass("Vault exists", config.DefaultPaths().VaultFile())
 		return
 	}
-	fail("Vault not found", "Run: forged setup")
+	switch {
+	case snapshot.LoggedIn && next == readiness.NextActionNeedsPassword:
+		fail("Vault not found", "master password required to restore from your linked account")
+	default:
+		fail("Vault not found", "Run `forged` interactively to set up or restore this device")
+	}
 }
 
 func renderDoctorConfig(snapshot readiness.Snapshot, summary readiness.RepairSummary) {
@@ -74,7 +95,7 @@ func renderDoctorConfig(snapshot readiness.Snapshot, summary readiness.RepairSum
 	case snapshot.ConfigExists:
 		pass("Config exists", config.DefaultPaths().ConfigFile())
 	default:
-		fail("Config not found", "Run: forged setup")
+		fail("Config not found", "Run: forged doctor --fix")
 	}
 }
 
@@ -85,7 +106,7 @@ func renderDoctorRuntime(snapshot readiness.Snapshot, summary readiness.RepairSu
 	case snapshot.Service.Running && snapshot.DaemonPID > 0:
 		pass("Daemon running", fmt.Sprintf("PID %d", snapshot.DaemonPID))
 	default:
-		fail("Daemon not running", "Run: forged start")
+		fail("Daemon not running", "Run: forged doctor --fix")
 	}
 
 	switch {
@@ -153,7 +174,7 @@ func renderDoctorService(snapshot readiness.Snapshot) {
 	case snapshot.Service.Installed:
 		fail("System service", snapshot.Service.Detail)
 	default:
-		warn("System service", "not installed (daemon won't auto-start)")
+		warn("System service", "not installed (run `forged doctor --fix` to install)")
 	}
 }
 

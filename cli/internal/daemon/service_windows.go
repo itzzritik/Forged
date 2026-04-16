@@ -14,8 +14,8 @@ import (
 
 const taskName = "ForgedSSHAgent"
 
-func InstallService(paths config.Paths, masterPassword string) error {
-	binaryPath, err := findBinary()
+func InstallService(paths config.Paths, masterPassword string, runtime RuntimeSpec) error {
+	runtime, err := normalizeRuntimeSpec(runtime)
 	if err != nil {
 		return err
 	}
@@ -42,10 +42,10 @@ func InstallService(paths config.Paths, masterPassword string) error {
   <Actions>
     <Exec>
       <Command>%s</Command>
-      <Arguments>daemon</Arguments>
+      <Arguments>%s</Arguments>
     </Exec>
   </Actions>
-</Task>`, binaryPath)
+</Task>`, runtime.Binary, strings.Join(runtime.Args, " "))
 
 	tmpFile := filepath.Join(os.TempDir(), "forged-task.xml")
 	if err := os.WriteFile(tmpFile, []byte(xml), 0600); err != nil {
@@ -61,6 +61,10 @@ func InstallService(paths config.Paths, masterPassword string) error {
 	}
 
 	return nil
+}
+
+func ReadInstalledServicePassword() (string, error) {
+	return "", fmt.Errorf("reading installed service password is not supported on windows")
 }
 
 func StartService() error {

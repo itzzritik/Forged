@@ -42,7 +42,7 @@ var signingCmd = &cobra.Command{
 		}
 
 		if len(keys) == 0 {
-			return fmt.Errorf("no keys in vault. Run: forged generate")
+			return fmt.Errorf("no keys in vault. Run: forged key generate")
 		}
 
 		currentKey := getCurrentSigningKey()
@@ -74,7 +74,7 @@ var signingCmd = &cobra.Command{
 		}
 
 		if len(available) == 0 {
-			fmt.Println("  No other keys available. Generate a new key: forged generate")
+			fmt.Println("  No other keys available. Generate a new key: forged key generate")
 			return nil
 		}
 

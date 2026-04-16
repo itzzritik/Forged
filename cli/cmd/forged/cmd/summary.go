@@ -7,12 +7,8 @@ import (
 	"github.com/itzzritik/forged/cli/internal/readiness"
 )
 
-func runRootSummary() error {
+func renderRootSummary(snapshot readiness.Snapshot, next readiness.NextAction) error {
 	paths := config.DefaultPaths()
-	snapshot, err := readiness.New(paths).Assess()
-	if err != nil {
-		return err
-	}
 
 	if jsonOutput {
 		return printOutput(map[string]any{
@@ -25,6 +21,7 @@ func runRootSummary() error {
 			"ipc_socket":         paths.CtlSocket(),
 			"agent_socket":       paths.AgentSocket(),
 			"pid":                snapshot.DaemonPID,
+			"next_action":        next,
 		})
 	}
 
@@ -37,6 +34,12 @@ func runRootSummary() error {
 		fmt.Println("Sync:   linked")
 	} else {
 		fmt.Println("Sync:   not linked")
+	}
+	if next == readiness.NextActionNeedsPassword {
+		fmt.Println("Action: run `forged doctor --fix` in an interactive terminal and enter your master password")
+	}
+	if next == readiness.NextActionNeedsInteractiveSetup {
+		fmt.Println("Action: run `forged` interactively to finish first-time setup")
 	}
 	if snapshot.State == readiness.StateDegraded || snapshot.State == readiness.StateBlocked {
 		fmt.Println("Action: run `forged` to repair interactively or `forged doctor --fix`")
