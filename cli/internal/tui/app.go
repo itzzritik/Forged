@@ -203,7 +203,7 @@ func (m *model) Init() tea.Cmd {
 	case RouteAccountLogin:
 		m.screen = screenLogin
 		m.loginScreen = accountscreen.LoginScreen{
-			Title:   "Preparing sign-in",
+			Title:   "Sign In to Sync Vault",
 			Context: "Checking local health before opening the approval link.",
 			Status:  "Checking local health",
 			Waiting: true,
@@ -262,7 +262,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loginScreen = accountscreen.LoginScreen{
-			Title:            "Approve in browser",
+			Title:            "Sign In to Sync Vault",
 			Context:          "Match the browser code before approving.",
 			Status:           "Waiting for approval",
 			VerificationCode: msg.session.VerificationCode,
@@ -417,7 +417,7 @@ func (m *model) headerPageTitle() string {
 		if strings.TrimSpace(m.loginScreen.Title) != "" {
 			return m.loginScreen.Title
 		}
-		return "Sign In"
+		return "Sign In to Sync Vault"
 	case screenPassword:
 		if strings.TrimSpace(m.passwordTitle) != "" {
 			return m.passwordTitle
@@ -735,7 +735,7 @@ func (m *model) startLoginFlow() tea.Cmd {
 	m.screen = screenLogin
 	m.notice = notice{}
 	m.loginScreen = accountscreen.LoginScreen{
-		Title:   "Approve in browser",
+		Title:   "Sign In to Sync Vault",
 		Context: "Match the browser code before approving.",
 		Status:  "Opening approval link",
 		Waiting: true,

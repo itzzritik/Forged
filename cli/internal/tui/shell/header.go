@@ -48,17 +48,32 @@ func RenderHeader(width int, data HeaderData) string {
 
 func renderHeaderBox(width int, data HeaderData) string {
 	innerWidth := max(48, width-4)
-	sidebarWidth := min(32, max(28, innerWidth/3))
-	leftWidth := max(18, innerWidth-sidebarWidth-1)
+	sidebar := renderSidebar(data.Version, data.StatusItems)
+	sidebarBlock := theme.HeaderSidebar.Render(sidebar)
+	sidebarWidth := min(max(lipgloss.Width(sidebarBlock), 28), max(28, innerWidth-20))
+	leftLimit := max(18, innerWidth-sidebarWidth-3)
 
-	logo := renderBrandBanner(leftWidth)
-	sidebar := renderSidebar(data.Version, data.StatusItems, sidebarWidth)
+	logo := renderBrandBanner(leftLimit)
 
 	var content string
 	if innerWidth >= 68 {
-		leftBlock := lipgloss.NewStyle().Width(leftWidth).Render(logo)
+		leftBlock := lipgloss.NewStyle().Width(lipgloss.Width(logo)).Render(logo)
 		rightBlock := theme.HeaderSidebar.Width(sidebarWidth).Render(sidebar)
-		content = lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, " ", rightBlock)
+		height := max(lipgloss.Height(leftBlock), lipgloss.Height(rightBlock))
+		separator := renderHeaderSeparator(height)
+
+		leftBlock = padBlockHeight(leftBlock, height)
+		rightBlock = padBlockHeight(rightBlock, height)
+		leftGap, rightGap := balancedHeaderGaps(innerWidth, lipgloss.Width(leftBlock), lipgloss.Width(separator), lipgloss.Width(rightBlock))
+
+		content = lipgloss.JoinHorizontal(
+			lipgloss.Top,
+			leftBlock,
+			strings.Repeat(" ", leftGap),
+			separator,
+			strings.Repeat(" ", rightGap),
+			rightBlock,
+		)
 	} else {
 		content = strings.Join([]string{
 			logo,
@@ -77,7 +92,7 @@ func renderBrandBanner(width int) string {
 	return theme.BrandBanner.Render(brandBanner)
 }
 
-func renderSidebar(version string, items []StatusItem, width int) string {
+func renderSidebar(version string, items []StatusItem) string {
 	if strings.TrimSpace(version) == "" {
 		version = "dev"
 	}
@@ -93,6 +108,39 @@ func renderSidebar(version string, items []StatusItem, width int) string {
 		lines = append(lines, renderStatusItem(item))
 	}
 
+	return strings.Join(lines, "\n")
+}
+
+func renderHeaderSeparator(height int) string {
+	if height <= 0 {
+		return ""
+	}
+	lines := make([]string, height)
+	for index := range lines {
+		lines[index] = theme.HeaderSeparator.Render("│")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func balancedHeaderGaps(totalWidth int, leftWidth int, separatorWidth int, rightWidth int) (int, int) {
+	remaining := totalWidth - leftWidth - separatorWidth - rightWidth
+	if remaining <= 0 {
+		return 0, 0
+	}
+	leftGap := remaining / 2
+	rightGap := remaining - leftGap
+	bias := min(2, rightGap)
+	leftGap += bias
+	rightGap -= bias
+	return leftGap, rightGap
+}
+
+func padBlockHeight(block string, targetHeight int) string {
+	lines := strings.Split(block, "\n")
+	width := lipgloss.Width(block)
+	for len(lines) < targetHeight {
+		lines = append(lines, strings.Repeat(" ", width))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -116,7 +164,7 @@ func renderBreadcrumbs(items []Breadcrumb) string {
 	parts := make([]string, 0, len(items)*2)
 	for index, item := range items {
 		if index > 0 {
-			parts = append(parts, theme.BreadcrumbSeparator.Render("›"))
+			parts = append(parts, theme.BreadcrumbSeparator.Render("❱"))
 		}
 		if item.Current {
 			parts = append(parts, theme.BreadcrumbCurrent.Render(strings.ToUpper(item.Label)))
@@ -128,6 +176,9 @@ func renderBreadcrumbs(items []Breadcrumb) string {
 }
 
 func renderTitleRow(width int, title string, breadcrumbs []Breadcrumb) string {
+	const leftInset = 2
+	const rightInset = 4
+
 	left := ""
 	if strings.TrimSpace(title) != "" {
 		left = theme.SectionTitle.Render(strings.ToUpper(title))
@@ -136,8 +187,16 @@ func renderTitleRow(width int, title string, breadcrumbs []Breadcrumb) string {
 	if left == "" && right == "" {
 		return ""
 	}
-	if left != "" && right != "" && lipgloss.Width(left)+lipgloss.Width(right)+4 > width {
-		return left + "\n" + right
+	innerWidth := max(0, width-leftInset-rightInset)
+	row := ""
+	if left != "" && right != "" && lipgloss.Width(left)+lipgloss.Width(right)+4 > innerWidth {
+		row = left + "\n" + right
+	} else {
+		row = JoinRow(innerWidth, left, right)
 	}
-	return JoinRow(width, left, right)
+	lines := strings.Split(row, "\n")
+	for index, line := range lines {
+		lines[index] = strings.Repeat(" ", leftInset) + line + strings.Repeat(" ", rightInset)
+	}
+	return strings.Join(lines, "\n")
 }

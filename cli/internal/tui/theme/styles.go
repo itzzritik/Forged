@@ -54,10 +54,11 @@ var (
 				Foreground(lipgloss.Color(ColorSubtle))
 
 	HeaderSidebar = lipgloss.NewStyle().
-			BorderStyle(lipgloss.NormalBorder()).
-			BorderLeft(true).
-			BorderForeground(lipgloss.Color(ColorBorder)).
 			PaddingLeft(1)
+
+	HeaderSeparator = lipgloss.NewStyle().
+			Faint(true).
+			Foreground(lipgloss.Color(ColorBorder))
 
 	HeaderVersionLabel = lipgloss.NewStyle().
 				Foreground(lipgloss.Color(ColorSubtle))
