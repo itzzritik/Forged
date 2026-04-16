@@ -30,12 +30,15 @@ func NewController(deps Dependencies) *Controller {
 func (c *Controller) Run() error {
 	flash := ""
 	for {
-		model := NewModel(func() (readiness.RunResult, error) {
-			return c.deps.Readiness.Run(readiness.RunOptions{
-				Mode:           readiness.ModeInteractiveLauncher,
-				PromptPassword: c.deps.PromptPassword,
-			})
-		}, flash)
+		result, err := c.deps.Readiness.Run(readiness.RunOptions{
+			Mode:           readiness.ModeInteractiveLauncher,
+			PromptPassword: c.deps.PromptPassword,
+		})
+		if err != nil {
+			return err
+		}
+
+		model := NewModelWithResult(result, flash)
 
 		final, err := tea.NewProgram(model).Run()
 		if err != nil {

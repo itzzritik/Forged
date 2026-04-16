@@ -48,7 +48,16 @@ func NewModel(startup startupFunc, flash string) *Model {
 	}
 }
 
+func NewModelWithResult(result readiness.RunResult, flash string) *Model {
+	model := NewModel(nil, flash)
+	model.applyStartupResult(result)
+	return model
+}
+
 func (m *Model) Init() tea.Cmd {
+	if m.startup == nil {
+		return nil
+	}
 	return tea.Batch(m.spinner.Tick, m.runStartup())
 }
 
@@ -69,12 +78,7 @@ func (m *Model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err != nil {
 			return m, tea.Quit
 		}
-		m.snapshot = msg.result.Snapshot
-		m.summary = msg.result.Summary
-		m.next = msg.result.Next
-		m.menu = BuildMenu(msg.result.Snapshot)
-		m.phase = "menu"
-		m.cursor = 0
+		m.applyStartupResult(msg.result)
 		return m, nil
 	case tea.KeyMsg:
 		switch msg.String() {
@@ -183,8 +187,20 @@ func (m *Model) stateSubtitle() string {
 }
 
 func (m *Model) runStartup() tea.Cmd {
+	if m.startup == nil {
+		return nil
+	}
 	return func() tea.Msg {
 		result, err := m.startup()
 		return startupMsg{result: result, err: err}
 	}
+}
+
+func (m *Model) applyStartupResult(result readiness.RunResult) {
+	m.snapshot = result.Snapshot
+	m.summary = result.Summary
+	m.next = result.Next
+	m.menu = BuildMenu(result.Snapshot)
+	m.phase = "menu"
+	m.cursor = 0
 }

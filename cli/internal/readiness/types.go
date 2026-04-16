@@ -43,7 +43,18 @@ const (
 	NextActionNeedsInteractiveSetup NextAction = "needs_interactive_setup"
 )
 
+type ProgressStage string
+
+const (
+	ProgressConfig  ProgressStage = "config"
+	ProgressSSH     ProgressStage = "ssh"
+	ProgressVault   ProgressStage = "vault"
+	ProgressService ProgressStage = "service"
+	ProgressSockets ProgressStage = "sockets"
+)
+
 type PasswordPrompt func(reason string) ([]byte, error)
+type ProgressFunc func(ProgressStage)
 
 type Snapshot struct {
 	State              State
@@ -68,6 +79,7 @@ type RepairSummary struct {
 type RunOptions struct {
 	Mode           Mode
 	PromptPassword PasswordPrompt
+	Progress       ProgressFunc
 }
 
 type RunResult struct {

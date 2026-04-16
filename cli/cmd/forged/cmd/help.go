@@ -66,7 +66,7 @@ func renderRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "  forged [flags]")
 	fmt.Fprintln(w, "  forged [command]")
 	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Run forged with no arguments to open the interactive launcher.")
+	fmt.Fprintln(w, "Run forged with no arguments to open the interactive shell.")
 	fmt.Fprintln(w)
 	writeHelpSections(w, sections)
 
