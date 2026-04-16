@@ -204,7 +204,7 @@ func (m *model) Init() tea.Cmd {
 		m.screen = screenLogin
 		m.loginScreen = accountscreen.LoginScreen{
 			Title:   "Sign In to Sync Vault",
-			Context: "Checking local health before opening the approval link.",
+			Context: "Preparing secure browser approval.",
 			Status:  "Checking local health",
 			Waiting: true,
 		}
@@ -263,8 +263,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loginScreen = accountscreen.LoginScreen{
 			Title:            "Sign In to Sync Vault",
-			Context:          "Match the browser code before approving.",
-			Status:           "Waiting for approval",
+			Context:          "Verify this code in your browser before approving.",
+			Status:           "Waiting for browser approval",
 			VerificationCode: msg.session.VerificationCode,
 			URL:              msg.session.URL,
 			Waiting:          true,
@@ -514,12 +514,11 @@ func (m *model) footerActions() []shell.FooterAction {
 	switch m.screen {
 	case screenLogin:
 		actions := []shell.FooterAction{}
-		if m.loginScreen.URL != "" {
+		if m.loginScreen.Error != "" {
+			actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Retry"})
+		} else if m.loginScreen.URL != "" {
 			actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Open Link"})
 			actions = append(actions, shell.FooterAction{Key: "C", Label: "Copy URL"})
-		}
-		if m.loginScreen.URL == "" && m.loginScreen.Error != "" {
-			actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Retry"})
 		}
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscCancel)})
 		return actions
@@ -627,16 +626,16 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "c":
-		if m.loginScreen.URL == "" {
+		if m.loginScreen.URL == "" || m.loginScreen.Error != "" {
 			return m, nil
 		}
 		return m, m.copyToClipboard(m.loginScreen.URL)
 	case "enter":
-		if m.loginScreen.URL != "" {
-			return m, m.openCurrentLoginURL()
-		}
 		if m.loginScreen.Error != "" {
 			return m, m.startLoginFlow()
+		}
+		if m.loginScreen.URL != "" {
+			return m, m.openCurrentLoginURL()
 		}
 	}
 	return m, nil
@@ -736,7 +735,7 @@ func (m *model) startLoginFlow() tea.Cmd {
 	m.notice = notice{}
 	m.loginScreen = accountscreen.LoginScreen{
 		Title:   "Sign In to Sync Vault",
-		Context: "Match the browser code before approving.",
+		Context: "Preparing secure browser approval.",
 		Status:  "Opening approval link",
 		Waiting: true,
 	}
@@ -744,10 +743,13 @@ func (m *model) startLoginFlow() tea.Cmd {
 	id := m.loginID
 	startLogin := m.startLogin
 	server := m.serverURL()
-	return func() tea.Msg {
-		session, err := startLogin(server)
-		return loginStartedMsg{id: id, session: session, err: err}
-	}
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			session, err := startLogin(server)
+			return loginStartedMsg{id: id, session: session, err: err}
+		},
+	)
 }
 
 func (m *model) waitForLogin(ctx context.Context, id int, session actions.LoginSession) tea.Cmd {

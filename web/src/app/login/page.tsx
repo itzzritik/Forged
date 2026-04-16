@@ -174,15 +174,15 @@ function LoginContent() {
 						)}
 
 						{code && verification && (
-							<div className="mb-6 border border-border-line bg-surface-hover p-4 text-center">
-								<p className="mb-2 font-mono text-[#3f3f46] text-[10px] uppercase tracking-widest">Verify this code matches your terminal</p>
-								<p className="font-bold font-mono text-accent text-lg tracking-[0.15em]">FORGE-{verification.toUpperCase()}</p>
+							<div className="mb-6 border border-[#27272a] bg-[#030303] p-4 text-center">
+								<p className="mb-2 font-mono text-[#a1a1aa] text-[10px] uppercase tracking-widest">Verify this code matches your terminal</p>
+								<p className="font-bold font-mono text-2xl text-[#ea580c] tracking-[0.2em]">FORGE-{verification.toUpperCase()}</p>
 							</div>
 						)}
 
 						{code && !verification && (
-							<div className="mb-6 flex items-center justify-center border border-border-line bg-surface-hover p-4">
-								<div className="h-4 w-4 animate-spin rounded-full border-2 border-border-line border-t-accent" />
+							<div className="mb-6 flex items-center justify-center border border-[#27272a] bg-[#030303] p-4">
+								<div className="h-4 w-4 animate-spin rounded-full border-2 border-[#27272a] border-t-[#ea580c]" />
 							</div>
 						)}
 
@@ -222,10 +222,6 @@ function LoginContent() {
 								<span className="text-white">forged login</span>
 							</div>
 						</div>
-
-						<p className="mt-4 text-[#3f3f46] text-[11px] leading-relaxed">
-							Run in your terminal to authenticate via CLI. Opens a browser session for OAuth handshake.
-						</p>
 					</div>
 				</div>
 

@@ -1,7 +1,6 @@
 package account
 
 import (
-	"net/url"
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
@@ -20,100 +19,78 @@ type LoginScreen struct {
 }
 
 func Render(screen LoginScreen, spinner string, width int) string {
-	left := renderPrimaryPane(screen, spinner, width)
-	right := renderUtilityRail(screen, width)
-	if right == "" {
-		return left
+	const leftInset = 2
+
+	lines := make([]string, 0, 8)
+	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+
+	if screen.Error != "" {
+		return indentLines(renderError(screen.Error, contentWidth), leftInset)
 	}
 
-	if width >= 68 {
-		railWidth := min(34, max(28, width/3))
-		leftWidth := max(30, width-railWidth-3)
-		leftBlock := lipgloss.NewStyle().Width(leftWidth).Render(left)
-		rightBlock := theme.AsideRail.Width(railWidth).Render(right)
-		return lipgloss.JoinHorizontal(lipgloss.Top, leftBlock, "   ", rightBlock)
-	}
-
-	return strings.Join([]string{
-		left,
-		"",
-		theme.AsideRail.Render(right),
-	}, "\n")
-}
-
-func renderPrimaryPane(screen LoginScreen, spinner string, width int) string {
-	lines := make([]string, 0, 4)
 	if strings.TrimSpace(screen.Context) != "" {
-		lines = append(lines, theme.Body.Width(max(28, min(width, theme.HeroMaxWidth))).Render(screen.Context))
+		lines = append(lines, theme.Body.Width(contentWidth).Render(screen.Context))
 	}
+
+	if code := renderCode(screen.VerificationCode); code != "" {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, code)
+	}
+
 	if status := renderStatus(screen, spinner); status != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
 		lines = append(lines, status)
 	}
-	if screen.Error != "" {
+
+	if link := renderLink(screen.URL, screen.Copied); link != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
-		lines = append(lines, renderError(screen.Error, min(52, max(28, width-6))))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func renderUtilityRail(screen LoginScreen, width int) string {
-	sections := make([]string, 0, 3)
-
-	if screen.VerificationCode != "" {
-		sections = append(sections, renderCode(screen.VerificationCode))
-	}
-	if screen.URL != "" {
-		sections = append(sections, renderLink(screen.URL, max(22, min(30, width/3)), screen.Copied))
+		lines = append(lines, link)
 	}
 
-	return strings.Join(sections, "\n\n")
+	return indentLines(strings.Join(lines, "\n"), leftInset)
 }
 
 func renderCode(code string) string {
-	return strings.Join([]string{
-		theme.SectionTitle.Render("Verification code"),
-		theme.CodeFrame.Render(strings.Join([]string{
-			theme.CodeLabel.Render("CODE"),
-			theme.CodeValue.Render(code),
-		}, "\n")),
-	}, "\n")
+	if strings.TrimSpace(code) == "" {
+		return ""
+	}
+
+	innerWidth := max(13, lipgloss.Width(code)+4)
+	inner := lipgloss.NewStyle().
+		Width(innerWidth).
+		Align(lipgloss.Center).
+		Render(theme.CodeValue.Render(code))
+	return theme.CodeFrame.Render(inner)
 }
 
-func renderLink(raw string, width int, copied bool) string {
-	host := raw
-	target := raw
-	if parsed, err := url.Parse(raw); err == nil {
-		if parsed.Scheme != "" && parsed.Host != "" {
-			host = parsed.Scheme + "://" + parsed.Host
-		}
-		if requestURI := parsed.RequestURI(); requestURI != "" {
-			target = requestURI
-		}
+func renderLink(raw string, copied bool) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
 	}
 
-	lines := []string{
-		theme.SectionTitle.Render("Open link"),
-		theme.LinkHost.Render(host),
-		theme.LinkPath.Width(max(18, width)).Render(target),
-	}
+	label := theme.BodyStrong.Render("Login URL")
 	if copied {
-		lines = append(lines, theme.Success.Render("✓ Link copied"))
+		label += "  " + theme.Success.Render("✓") + " " + theme.BodyMuted.Render("Copied")
 	}
-	return strings.Join(lines, "\n")
+	return strings.Join([]string{
+		label,
+		theme.Link.Render(raw),
+	}, "\n")
 }
 
 func renderStatus(screen LoginScreen, spinner string) string {
 	if screen.Waiting {
 		label := screen.Status
 		if strings.TrimSpace(label) == "" {
-			label = "Waiting for approval"
+			label = "Waiting for browser approval"
 		}
-		return theme.BodyStrong.Render(spinner + " " + label)
+		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + label)
 	}
 	if strings.TrimSpace(screen.Status) != "" {
 		return theme.BodyStrong.Render(screen.Status)
@@ -122,21 +99,43 @@ func renderStatus(screen LoginScreen, spinner string) string {
 }
 
 func renderError(message string, width int) string {
+	if strings.TrimSpace(message) == "" {
+		return ""
+	}
+
 	title := "Sign-in could not start"
 	detail := message
 
 	switch {
 	case strings.Contains(message, "could not reach server"):
 		title = "Unable to reach the sign-in service"
-		detail = "Check connectivity, then open the approval link again."
+		detail = "Check connectivity, then open the link again."
 	case strings.Contains(message, "timed out"):
 		title = "Approval timed out"
-		detail = "Open the link again and finish browser approval before the session expires."
+		detail = "Open the link again to continue."
 	}
 
 	lines := []string{
-		theme.Danger.Render(title),
-		theme.Body.Width(max(24, width)).Render(detail),
+		theme.Danger.Render("✕ " + title),
 	}
-	return theme.AlertRail.Width(max(30, width+3)).Render(strings.Join(lines, "\n"))
+	if strings.TrimSpace(detail) != "" {
+		lines = append(lines, theme.Body.Width(max(24, width)).Render(detail))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func indentLines(block string, spaces int) string {
+	if strings.TrimSpace(block) == "" || spaces <= 0 {
+		return block
+	}
+
+	prefix := strings.Repeat(" ", spaces)
+	lines := strings.Split(block, "\n")
+	for index, line := range lines {
+		if line == "" {
+			continue
+		}
+		lines[index] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }
