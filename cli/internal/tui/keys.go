@@ -628,6 +628,7 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 	}
 
 	current := m.session.Current()
+	m.storeKeyCache(msg.keys)
 	switch current.ID {
 	case RouteKeysBrowser:
 		preserveName := ""
@@ -677,16 +678,16 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		}
 		return m.fallbackKeyBrowser(msg.keys, query, fallbackNotice(RouteKeysRename, query, len(resolution.Matches)))
-	case RouteKeysDelete:
-		query := current.Params["name"]
-		resolution := actions.ResolveKeyQuery(msg.keys, query)
-		if resolution.Exact != nil {
-			m.keyDelete = keyDeleteState{key: *resolution.Exact}
+		case RouteKeysDelete:
+			query := current.Params["name"]
+			resolution := actions.ResolveKeyQuery(msg.keys, query)
+			if resolution.Exact != nil {
+				m.keyDelete = keyDeleteState{key: *resolution.Exact}
+				return m, nil
+			}
+			return m.fallbackKeyBrowser(msg.keys, query, fallbackNotice(RouteKeysDelete, query, len(resolution.Matches)))
+		default:
 			return m, nil
-		}
-		return m.fallbackKeyBrowser(msg.keys, query, fallbackNotice(RouteKeysDelete, query, len(resolution.Matches)))
-	default:
-		return m, nil
 	}
 }
 
@@ -832,6 +833,13 @@ func (m *model) refreshKeyBrowser(sync bool) tea.Cmd {
 	return tea.Batch(m.spinner.Tick, m.listKeys(id, true))
 }
 
+func (m *model) preloadKeyBrowser() tea.Cmd {
+	if !m.snapshot.VaultExists || len(m.keyBrowser.all) > 0 {
+		return nil
+	}
+	return m.listKeys(m.nextKeyListID(), true)
+}
+
 func (m *model) applyKeyBrowserRoute(route Route) {
 	query := route.Params["query"]
 	notice := route.Params["notice"]
@@ -854,6 +862,19 @@ func (m *model) cachedKeyRow(name string) (actions.KeySummary, bool) {
 		}
 	}
 	return actions.KeySummary{}, false
+}
+
+func (m *model) storeKeyCache(keys []actions.KeySummary) {
+	preserveName := ""
+	if key, ok := m.selectedKeyRow(); ok {
+		preserveName = key.Name
+	}
+	m.keyBrowser.all = keys
+	if len(m.keyBrowser.rows) == 0 && strings.TrimSpace(m.keyBrowser.input.Value()) == "" {
+		return
+	}
+	m.refreshKeyBrowserRows()
+	m.selectKeyBrowserByName(preserveName)
 }
 
 func (m *model) selectKeyBrowserByName(name string) {

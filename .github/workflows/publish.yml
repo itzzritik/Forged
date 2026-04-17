@@ -155,9 +155,9 @@ jobs:
             - run: git push --follow-tags origin HEAD:main
 
             - env:
+                  GH_TOKEN: ${{ secrets.JARVIS_GH_PAT }}
+              run: ./scripts/deploy/create-github-release.sh "${{ needs.version.outputs.tag }}"
+
+            - env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-                  NEW_TAG: ${{ needs.version.outputs.tag }}
-              run: |
-                  gh release create "$NEW_TAG" \
-                    --generate-notes \
-                    dist/*.tar.gz dist/*.zip dist/checksums.txt
+              run: ./scripts/deploy/prune-orphan-tags.sh

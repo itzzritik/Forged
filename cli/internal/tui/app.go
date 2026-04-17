@@ -516,6 +516,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupFinalizing = false
 		return m, m.handleRepairFinished(pending.result, pending.err)
 	case runtimeStatusMsg:
+		wasUsingSpinner := m.usesSpinner()
 		if msg.err == nil {
 			m.runtimeStatus = msg.status
 			m.runtimeLoaded = true
@@ -524,7 +525,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.runtimeLoaded = true
 		}
 		if m.screen == screenDashboard && m.snapshot.VaultExists {
-			return m, m.pollRuntimeStatus(time.Second)
+			cmds := []tea.Cmd{m.pollRuntimeStatus(time.Second)}
+			if !wasUsingSpinner && m.usesSpinner() {
+				cmds = append([]tea.Cmd{m.spinner.Tick}, cmds...)
+			}
+			return m, tea.Batch(cmds...)
 		}
 		return m, nil
 	case keyListMsg:
@@ -1552,27 +1557,30 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 		m.popWizardRoutes()
 		m.screen = screenDashboard
 		return nil
-	default:
-		if (m.repairPurpose == repairPurposeSetup || m.repairPurpose == repairPurposeUnlock) && result.Snapshot.VaultExists {
-			m.popWizardRoutes()
-			return m.restartAfterVaultReady()
-		}
+		default:
+			if (m.repairPurpose == repairPurposeSetup || m.repairPurpose == repairPurposeUnlock) && result.Snapshot.VaultExists {
+				m.popWizardRoutes()
+				return m.restartAfterVaultReady()
+			}
 		m.popWizardRoutes()
 		m.notice = notice{}
 		m.setupVariant = setupVariantNone
-		m.screen = screenDashboard
-		if m.snapshot.VaultExists {
-			if route := m.session.Current().ID; route != "" && route != RouteDashboardHome {
+			m.screen = screenDashboard
+			if m.snapshot.VaultExists {
+				if route := m.session.Current().ID; route != "" && route != RouteDashboardHome {
+					return tea.Batch(
+						m.showCurrentRoute(),
+						m.pollRuntimeStatus(0),
+					)
+				}
 				return tea.Batch(
-					m.showCurrentRoute(),
 					m.pollRuntimeStatus(0),
+					m.preloadKeyBrowser(),
 				)
 			}
-			return m.pollRuntimeStatus(0)
+			return nil
 		}
-		return nil
 	}
-}
 
 func (m *model) systemHeaderForSnapshot(snapshot readiness.Snapshot) systemHeaderState {
 	switch snapshot.State {
@@ -1607,7 +1615,10 @@ func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.repairAuthEmail = ""
 	m.setupPending = nil
 	m.runtimeLoaded = false
-	return m.assessCurrentState()
+	return tea.Batch(
+		m.spinner.Tick,
+		m.assessCurrentState(),
+	)
 }
 
 func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorText string, reuseCurrentRoute bool) {
