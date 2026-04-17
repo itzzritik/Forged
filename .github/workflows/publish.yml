@@ -12,18 +12,18 @@ on:
                     - patch
                     - minor
                     - major
-    push:
-        branches:
-            - main
-        paths:
-            - .github/workflows/publish.yml
-            - .goreleaser.yml
-            - cli/**
-            - npm/**
-            - proto/**
-            - scripts/build-forged-auth-release.sh
-            - scripts/build-npm-packages.sh
-            - scripts/publish-npm-packages.sh
+    # push:
+    #     branches:
+    #         - main
+    #     paths:
+    #         - .github/workflows/publish.yml
+    #         - .goreleaser.yml
+    #         - cli/**
+    #         - npm/**
+    #         - proto/**
+    #         - scripts/build-forged-auth-release.sh
+    #         - scripts/build-npm-packages.sh
+    #         - scripts/publish-npm-packages.sh
 
 permissions:
     contents: write
