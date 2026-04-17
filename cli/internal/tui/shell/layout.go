@@ -10,6 +10,7 @@ import (
 const (
 	ContentLeftInset  = 2
 	ContentRightInset = 4
+	fullBleedMarker   = "\x00full-bleed\x00"
 )
 
 func ContentWidth(termWidth int) int {
@@ -43,6 +44,10 @@ func IndentBlock(block string, spaces int) string {
 	prefix := strings.Repeat(" ", spaces)
 	lines := strings.Split(block, "\n")
 	for index, line := range lines {
+		if strings.HasPrefix(line, fullBleedMarker) {
+			lines[index] = strings.TrimPrefix(line, fullBleedMarker)
+			continue
+		}
 		if line == "" {
 			continue
 		}
@@ -51,7 +56,11 @@ func IndentBlock(block string, spaces int) string {
 	return strings.Join(lines, "\n")
 }
 
-func Render(termWidth int, header string, body string, footer string) string {
+func FullBleed(line string) string {
+	return fullBleedMarker + line
+}
+
+func Render(termWidth int, header string, body string, footer string, tightFooter bool, tightBody bool) string {
 	chunks := make([]string, 0, 4)
 
 	if header != "" {
@@ -59,13 +68,19 @@ func Render(termWidth int, header string, body string, footer string) string {
 	}
 	if body != "" {
 		if len(chunks) > 0 {
-			chunks = append(chunks, "")
+			if !tightBody {
+				chunks = append(chunks, "")
+			}
 		}
 		chunks = append(chunks, body)
 	}
 	if footer != "" {
 		if len(chunks) > 0 {
-			chunks = append(chunks, "", theme.Divider(ContentWidth(termWidth)), "", footer)
+			if tightFooter {
+				chunks = append(chunks, theme.Divider(ContentWidth(termWidth)), "", footer)
+			} else {
+				chunks = append(chunks, "", theme.Divider(ContentWidth(termWidth)), "", footer)
+			}
 		} else {
 			chunks = append(chunks, footer)
 		}

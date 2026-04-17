@@ -282,7 +282,7 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 }
 
 func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
-	return &model{
+	model := &model{
 		intent:          intent,
 		session:         NewSession(intent),
 		repair:          deps.Repair,
@@ -298,6 +298,19 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		commitSigning:   deps.CommitSigning,
 		spinner:         spin,
 		random:          rand.New(rand.NewSource(time.Now().UnixNano())),
+	}
+	model.initializePendingRouteState()
+	return model
+}
+
+func (m *model) initializePendingRouteState() {
+	switch m.intent.Entry {
+	case RouteKeysDetail:
+		m.keyDetail.resolving = true
+	case RouteKeysRename:
+		m.keyRename.resolving = true
+	case RouteKeysDelete:
+		m.keyDelete.resolving = true
 	}
 }
 
@@ -562,7 +575,9 @@ func (m *model) View() string {
 		body = shell.IndentBlock(body, shell.ContentLeftInset)
 	}
 	footer := shell.RenderFooter(m.footerActions()...)
-	return shell.Render(m.width, header, body, footer)
+	tightFooter := m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser
+	tightBody := m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser
+	return shell.Render(m.width, header, body, footer, tightFooter, tightBody)
 }
 
 func (m *model) renderHeader(width int) string {
@@ -1143,17 +1158,6 @@ func (m *model) currentDashboardSection() *dashboardSection {
 	}
 
 	switch m.session.Current().ID {
-	case RouteKeysHome:
-		return &dashboardSection{
-			Title:   "Key",
-			Context: "Manage encrypted keys on this machine and move into browsing, creation, import, and export flows.",
-			Actions: []dashboardSectionAction{
-				{Label: "View keys", Description: "Browse loaded keys, details, and future edit actions"},
-				{Label: "Generate key", Description: "Create a new SSH key inside this vault"},
-				{Label: "Import key", Description: "Bring an existing key into Forged"},
-				{Label: "Export key", Description: "Copy public keys or export key material when allowed"},
-			},
-		}
 	case RouteVaultHome:
 		return &dashboardSection{
 			Title:   "Vault",
@@ -1643,7 +1647,7 @@ func (m *model) showCurrentRoute() tea.Cmd {
 		return m.startLoginFlow()
 	case RouteKeysBrowser, RouteKeysDetail, RouteKeysRename, RouteKeysDelete:
 		return m.startKeyRouteLoad()
-	case RouteKeysHome, RouteVaultHome, RouteAgentHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
+	case RouteVaultHome, RouteAgentHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
 		return nil
 	default:
 		return nil
@@ -1659,11 +1663,11 @@ func (m *model) pendingDashboardRouteTitle() string {
 	case RouteKeysBrowser:
 		return "View keys"
 	case RouteKeysDetail:
-		return "Key details"
+		return ""
 	case RouteKeysRename:
-		return "Rename key"
+		return ""
 	case RouteKeysDelete:
-		return "Delete key"
+		return ""
 	case RouteVaultHome:
 		return "Vault"
 	case RouteAgentHome:
@@ -1684,27 +1688,14 @@ func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
 	case RouteKeysBrowser:
 		return []shell.Breadcrumb{
 			{Label: "Home"},
-			{Label: "Key"},
-			{Label: "View", Current: true},
+			{Label: "Key", Current: true},
 		}
 	case RouteKeysDetail:
-		return []shell.Breadcrumb{
-			{Label: "Home"},
-			{Label: "Key"},
-			{Label: "Details", Current: true},
-		}
+		return nil
 	case RouteKeysRename:
-		return []shell.Breadcrumb{
-			{Label: "Home"},
-			{Label: "Key"},
-			{Label: "Rename", Current: true},
-		}
+		return nil
 	case RouteKeysDelete:
-		return []shell.Breadcrumb{
-			{Label: "Home"},
-			{Label: "Key"},
-			{Label: "Delete", Current: true},
-		}
+		return nil
 	case RouteVaultHome:
 		return []shell.Breadcrumb{
 			{Label: "Home"},

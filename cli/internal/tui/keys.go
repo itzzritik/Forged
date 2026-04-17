@@ -160,8 +160,7 @@ func (m *model) keyBreadcrumbs() []shell.Breadcrumb {
 	case RouteKeysBrowser:
 		return []shell.Breadcrumb{
 			{Label: "Home"},
-			{Label: "Key"},
-			{Label: "View", Current: true},
+			{Label: "Key", Current: true},
 		}
 	case RouteKeysDetail:
 		if m.keyDetail.resolving {
@@ -170,7 +169,7 @@ func (m *model) keyBreadcrumbs() []shell.Breadcrumb {
 		return []shell.Breadcrumb{
 			{Label: "Home"},
 			{Label: "Key"},
-			{Label: "Details", Current: true},
+			{Label: "View", Current: true},
 		}
 	case RouteKeysRename:
 		if m.keyRename.resolving {
@@ -207,7 +206,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 		if m.keyBrowser.searchActive {
 			return []shell.FooterAction{
 				{Key: "Enter", Label: "Done"},
-				{Key: "Esc", Label: m.session.EscLabel(EscCloseSearch)},
+				{Key: "Esc", Label: m.session.EscLabel(EscCancel)},
 			}
 		}
 		return []shell.FooterAction{
@@ -361,6 +360,8 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "esc":
 			m.keyBrowser.searchActive = false
 			m.keyBrowser.input.Blur()
+			m.keyBrowser.input.SetValue("")
+			m.refreshKeyBrowserRows()
 			return m, nil
 		case "enter":
 			m.keyBrowser.searchActive = false
@@ -760,7 +761,7 @@ func (m *model) selectedKeyRow() (actions.KeySummary, bool) {
 }
 
 func (m *model) resizeKeyInputs() {
-	searchWidth := max(18, min(shell.BodyWidth(m.width), theme.HeroMaxWidth))
+	searchWidth := max(18, shell.BodyWidth(m.width)-3)
 	m.keyBrowser.input.Width = searchWidth
 	m.keyRename.input.Width = max(18, min(shell.ClampBlockWidth(m.width, 44), 44))
 }

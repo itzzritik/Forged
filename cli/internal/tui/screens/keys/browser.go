@@ -6,10 +6,11 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
+	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
-const visibleRowCount = 5
+const visibleRowCount = 8
 
 type BrowserScreen struct {
 	SearchView    string
@@ -22,30 +23,29 @@ type BrowserScreen struct {
 }
 
 func RenderBrowser(screen BrowserScreen, spinner string, width int) string {
-	contentWidth := max(28, width)
-	sections := []string{
-		renderSearchField(screen.SearchView, screen.SearchActive, contentWidth),
-	}
+	contentWidth := max(36, width)
+	sections := []string{}
 
 	if screen.Loading {
-		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" Loading keys"))
-		return strings.Join(sections, "\n")
+		sections = append(sections, theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" Loading keys"))
+		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, contentWidth)), "\n")
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
-		sections = append(sections, "", theme.Danger.Render("✕ "+msg))
-		return strings.Join(sections, "\n")
+		sections = append(sections, theme.Danger.Render("✕ "+msg))
+		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, contentWidth)), "\n")
 	}
 
 	if notice := strings.TrimSpace(screen.SearchNotice); notice != "" {
-		sections = append(sections, "", theme.BodyMuted.Width(min(contentWidth, theme.HeroMaxWidth)).Render(notice))
+		sections = append(sections, theme.BodyMuted.Width(contentWidth).Render(notice))
 	}
 
 	if len(screen.Rows) == 0 {
-		sections = append(sections, "", theme.BodyMuted.Render("No keys found"))
-		return strings.Join(sections, "\n")
+		sections = append(sections, theme.BodyMuted.Render("No keys found"))
+		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, contentWidth)), "\n")
 	}
 
-	sections = append(sections, "", renderBrowserTable(screen, contentWidth))
+	sections = append(sections, renderBrowserTable(screen, contentWidth))
+	sections = append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, contentWidth))
 	return strings.Join(sections, "\n")
 }
 
@@ -54,33 +54,40 @@ func VisibleRows() int {
 }
 
 func renderSearchField(view string, active bool, width int) string {
-	lineStyle := theme.FieldLineIdle
-	if active {
-		lineStyle = theme.FieldLineActive
-	}
-
-	value := strings.TrimSpace(view)
+	value := strings.TrimRight(view, " ")
 	if value == "" {
 		value = theme.BodyMuted.Render("Search keys")
+	} else if active {
+		value = theme.FieldValue.Render(value)
+	} else {
+		value = theme.Body.Render(value)
 	}
 
-	fieldWidth := max(20, min(width, theme.HeroMaxWidth))
+	fieldWidth := max(20, width+shell.ContentLeftInset+shell.ContentRightInset)
 	lines := []string{
-		theme.FieldLabel.Render("Search"),
-		value,
-		lineStyle.Render(strings.Repeat("─", fieldWidth)),
+		shell.FullBleed(theme.Divider(fieldWidth)),
+		theme.Kicker.Render("❯") + "  " + value,
 	}
 	return strings.Join(lines, "\n")
 }
 
 func renderBrowserTable(screen BrowserScreen, width int) string {
-	listWidth := max(36, min(width, theme.HeroMaxWidth+8))
-	nameWidth := max(14, listWidth-27)
-	typeWidth := 8
-	fingerprintWidth := max(10, listWidth-nameWidth-typeWidth-7)
+	tableWidth := max(44, width)
+	selectionWidth := 2
+	nameWidth := 28
+	typeWidth := 10
+	columnGap := 2
+	minFingerprintWidth := 16
+	requiredWidth := selectionWidth + nameWidth + typeWidth + minFingerprintWidth + columnGap + columnGap
+	if requiredWidth > tableWidth {
+		nameWidth = max(18, tableWidth-selectionWidth-typeWidth-minFingerprintWidth-columnGap-columnGap)
+	}
+	fingerprintWidth := max(minFingerprintWidth, tableWidth-selectionWidth-nameWidth-typeWidth-columnGap-columnGap)
 
 	lines := []string{
-		renderBrowserHeader(nameWidth, typeWidth, fingerprintWidth),
+		renderBrowserHeader(selectionWidth, nameWidth, typeWidth, fingerprintWidth, columnGap),
+		shell.FullBleed(theme.Divider(tableWidth + shell.ContentLeftInset + shell.ContentRightInset)),
+		"",
 	}
 
 	for index := 0; index < visibleRowCount; index++ {
@@ -88,35 +95,38 @@ func renderBrowserTable(screen BrowserScreen, width int) string {
 			lines = append(lines, "")
 			continue
 		}
-		lines = append(lines, renderBrowserRow(screen.Rows[index], index == screen.SelectedIndex, nameWidth, typeWidth, fingerprintWidth))
+		lines = append(lines, renderBrowserRow(screen.Rows[index], index == screen.SelectedIndex, selectionWidth, nameWidth, typeWidth, fingerprintWidth, columnGap))
 	}
 
 	return strings.Join(lines, "\n")
 }
 
-func renderBrowserHeader(nameWidth, typeWidth, fingerprintWidth int) string {
-	left := padRight(theme.RowLabel.Render("NAME"), nameWidth+2)
-	keyType := padRight(theme.RowLabel.Render("TYPE"), typeWidth+1)
-	fingerprint := truncateRunes("FINGERPRINT", fingerprintWidth)
-	return left + keyType + theme.RowLabel.Render(fingerprint)
+func renderBrowserHeader(selectionWidth, nameWidth, typeWidth, fingerprintWidth, columnGap int) string {
+	selection := strings.Repeat(" ", selectionWidth)
+	name := padRight(theme.RowLabel.Render("NAME"), nameWidth+columnGap)
+	keyType := padRight(theme.RowLabel.Render("TYPE"), typeWidth+columnGap)
+	fingerprint := theme.RowLabel.Render(truncateRunes("FINGERPRINT", fingerprintWidth))
+	return selection + name + keyType + fingerprint
 }
 
-func renderBrowserRow(key actions.KeySummary, selected bool, nameWidth, typeWidth, fingerprintWidth int) string {
-	prefix := theme.BodyMuted.Render(" ")
-	nameStyle := theme.Body
+func renderBrowserRow(key actions.KeySummary, selected bool, selectionWidth, nameWidth, typeWidth, fingerprintWidth, columnGap int) string {
+	prefix := strings.Repeat(" ", selectionWidth)
+	nameStyle := theme.FieldValue
+	detailStyle := theme.BodyMuted
 	if selected {
-		prefix = theme.Kicker.Render("›")
+		prefix = theme.Kicker.Render("▸")
 		nameStyle = theme.Kicker
+		detailStyle = theme.Body
 	}
 
 	name := truncateRunes(key.Name, nameWidth)
 	keyType := truncateRunes(strings.ToUpper(key.Type), typeWidth)
 	fingerprint := truncateRunes(key.Fingerprint, fingerprintWidth)
 
-	return prefix + " " +
-		padRight(nameStyle.Render(name), nameWidth+1) +
-		padRight(theme.BodyMuted.Render(keyType), typeWidth+1) +
-		theme.BodyMuted.Render(fingerprint)
+	return padRight(prefix, selectionWidth) +
+		padRight(nameStyle.Render(name), nameWidth+columnGap) +
+		padRight(detailStyle.Render(keyType), typeWidth+columnGap) +
+		detailStyle.Render(fingerprint)
 }
 
 func padRight(value string, width int) string {
