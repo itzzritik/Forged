@@ -11,6 +11,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
+	"github.com/itzzritik/forged/cli/internal/tui"
 	"github.com/itzzritik/forged/cli/internal/vault"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -143,6 +144,10 @@ var listCmd = &cobra.Command{
 	Use:   "list",
 	Short: "List all keys",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !jsonOutput && isInteractiveTerminal() {
+			return runInteractiveIntent(tui.ResolveCommand([]string{"key", "list"}, args))
+		}
+
 		resp, err := ctlClient().Call(ipc.CmdList, nil)
 		if err != nil {
 			return err
@@ -213,6 +218,10 @@ var removeCmd = &cobra.Command{
 	Short: "Delete a key",
 	Args:  cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !jsonOutput && isInteractiveTerminal() {
+			return runInteractiveIntent(tui.ResolveCommand([]string{"key", "delete"}, args))
+		}
+
 		resp, err := ctlClient().Call(ipc.CmdRemove, map[string]string{"name": args[0]})
 		if err != nil {
 			return err
@@ -273,6 +282,10 @@ Forged is locked, or the OS session lock is detected.
 	Args: cobra.ExactArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
 		full, _ := cmd.Flags().GetBool("full")
+		if !full && !jsonOutput && isInteractiveTerminal() {
+			intent := tui.ResolveCommand([]string{"key", "view"}, args)
+			return runInteractiveIntent(intent)
+		}
 		return viewKey(args[0], full)
 	},
 }
@@ -551,6 +564,10 @@ var renameCmd = &cobra.Command{
 	Short: "Rename a key",
 	Args:  cobra.ExactArgs(2),
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !jsonOutput && isInteractiveTerminal() {
+			return runInteractiveIntent(tui.ResolveCommand([]string{"key", "rename"}, args))
+		}
+
 		resp, err := ctlClient().Call(ipc.CmdRename, map[string]string{
 			"old_name": args[0],
 			"new_name": args[1],

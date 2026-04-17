@@ -41,6 +41,9 @@ dev-server:
 dev-web:
     cd web && pnpm dev
 
+auth:
+    open "http://localhost:3035/api/auth/callback?token=$(node -e 'process.stdout.write(JSON.parse(require(\"fs\").readFileSync(require(\"os\").homedir()+\"/.forged/config/credentials.json\",\"utf8\")).token)')"
+
 # Database
 migrate:
     cd server && doppler run -- go run ./cmd/migrate

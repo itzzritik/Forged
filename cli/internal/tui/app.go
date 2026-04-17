@@ -233,6 +233,16 @@ type model struct {
 	setupPending    *pendingSetupResult
 	setupFinalizing bool
 	random          *rand.Rand
+
+	keyListID   int
+	keyDetailID int
+	keyRenameID int
+	keyDeleteID int
+
+	keyBrowser keyBrowserState
+	keyDetail  keyDetailState
+	keyRename  keyRenameState
+	keyDelete  keyDeleteState
 }
 
 func Run(intent Intent, deps Dependencies) (Result, error) {
@@ -317,6 +327,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.passwordInput != nil {
 			m.passwordInput.SetWidth(max(18, shell.ClampBlockWidth(m.width, 40)-4))
 		}
+		m.resizeKeyInputs()
 		return m, nil
 	case spinner.TickMsg:
 		if !m.usesSpinner() {
@@ -503,6 +514,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.pollRuntimeStatus(time.Second)
 		}
 		return m, nil
+	case keyListMsg:
+		return m.handleKeyListMsg(msg)
+	case keyDetailMsg:
+		return m.handleKeyDetailMsg(msg)
+	case keyRenameFinishedMsg:
+		return m.handleKeyRenameFinishedMsg(msg)
+	case keyDeleteFinishedMsg:
+		return m.handleKeyDeleteFinishedMsg(msg)
 	case copyFinishedMsg:
 		if msg.err != nil {
 			if m.screen == screenLogin {
@@ -612,10 +631,19 @@ func (m *model) vaultSyncHeaderItem() shell.StatusItem {
 }
 
 func (m *model) headerPageTitle() string {
+	if !m.bootAssessed {
+		if title := m.pendingDashboardRouteTitle(); title != "" {
+			return title
+		}
+		return ""
+	}
 	if m.isWelcomeState() {
 		return ""
 	}
 	if m.screen == screenDashboard && m.snapshot.VaultExists {
+		if m.isKeyRoute() {
+			return m.keyHeaderTitle()
+		}
 		if section := m.currentDashboardSection(); section != nil {
 			return section.Title
 		}
@@ -643,11 +671,18 @@ func (m *model) headerPageTitle() string {
 }
 
 func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
+	if !m.bootAssessed {
+		return m.pendingDashboardRouteBreadcrumbs()
+	}
+
 	if m.isWelcomeState() {
 		return nil
 	}
 
 	if m.screen == screenDashboard && m.snapshot.VaultExists {
+		if m.isKeyRoute() {
+			return m.keyBreadcrumbs()
+		}
 		if section := m.currentDashboardSection(); section != nil {
 			return []shell.Breadcrumb{
 				{Label: "Home"},
@@ -688,7 +723,7 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 }
 
 func (m *model) headerPageNote() string {
-	if m.screen != screenDashboard || !m.snapshot.VaultExists || m.isWelcomeState() || m.currentDashboardSection() != nil {
+	if m.screen != screenDashboard || !m.snapshot.VaultExists || m.isWelcomeState() || m.currentDashboardSection() != nil || m.isKeyRoute() {
 		return ""
 	}
 	if m.snapshot.LoggedIn {
@@ -711,6 +746,12 @@ func (m *model) renderBody(contentWidth int) string {
 	default:
 		if !m.bootAssessed {
 			return ""
+		}
+		if m.isKeyRoute() {
+			if !m.keyRouteLoaded() {
+				return ""
+			}
+			return m.renderKeyBody(contentWidth)
 		}
 		if section := m.currentDashboardSection(); section != nil {
 			return m.renderDashboardSection(contentWidth, *section)
@@ -811,6 +852,9 @@ func (m *model) footerActions() []shell.FooterAction {
 		if !m.bootAssessed {
 			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 		}
+		if m.isKeyRoute() {
+			return m.keyFooterActions()
+		}
 		if m.isWelcomeState() {
 			return []shell.FooterAction{
 				{Key: "↑/↓", Label: "Move"},
@@ -879,6 +923,10 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, tea.Quit
 		}
 		return m, nil
+	}
+
+	if m.isKeyRoute() {
+		return m.updateKeyKeys(msg)
 	}
 
 	if m.currentDashboardSection() != nil {
@@ -1070,7 +1118,7 @@ func (m *model) dashboardLead() string {
 func (m *model) dashboardAreaRoute(label string) RouteID {
 	switch label {
 	case "Key":
-		return RouteKeysHome
+		return RouteKeysBrowser
 	case "Vault":
 		return RouteVaultHome
 	case "Agent":
@@ -1275,7 +1323,7 @@ func (m *model) usesSpinner() bool {
 	case screenPassword:
 		return m.passwordBusy
 	case screenDashboard:
-		return m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeStatus.Syncing
+		return m.keyUsesSpinner() || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeStatus.Syncing
 	default:
 		return false
 	}
@@ -1510,6 +1558,12 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 		m.setupVariant = setupVariantNone
 		m.screen = screenDashboard
 		if m.snapshot.VaultExists {
+			if route := m.session.Current().ID; route != "" && route != RouteDashboardHome {
+				return tea.Batch(
+					m.showCurrentRoute(),
+					m.pollRuntimeStatus(0),
+				)
+			}
 			return m.pollRuntimeStatus(0)
 		}
 		return nil
@@ -1587,8 +1641,95 @@ func (m *model) showCurrentRoute() tea.Cmd {
 	switch m.session.Current().ID {
 	case RouteAccountLogin:
 		return m.startLoginFlow()
+	case RouteKeysBrowser, RouteKeysDetail, RouteKeysRename, RouteKeysDelete:
+		return m.startKeyRouteLoad()
 	case RouteKeysHome, RouteVaultHome, RouteAgentHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
 		return nil
+	default:
+		return nil
+	}
+}
+
+func (m *model) pendingDashboardRouteTitle() string {
+	if m.screen != screenDashboard {
+		return ""
+	}
+
+	switch m.session.Current().ID {
+	case RouteKeysBrowser:
+		return "View keys"
+	case RouteKeysDetail:
+		return "Key details"
+	case RouteKeysRename:
+		return "Rename key"
+	case RouteKeysDelete:
+		return "Delete key"
+	case RouteVaultHome:
+		return "Vault"
+	case RouteAgentHome:
+		return "Agent"
+	case RouteAccountStatus:
+		return "Account"
+	case RouteSyncHome:
+		return "Sync"
+	case RouteDoctorOverview:
+		return "Doctor"
+	default:
+		return ""
+	}
+}
+
+func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
+	switch m.session.Current().ID {
+	case RouteKeysBrowser:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "View", Current: true},
+		}
+	case RouteKeysDetail:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Details", Current: true},
+		}
+	case RouteKeysRename:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Rename", Current: true},
+		}
+	case RouteKeysDelete:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Delete", Current: true},
+		}
+	case RouteVaultHome:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Vault", Current: true},
+		}
+	case RouteAgentHome:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Agent", Current: true},
+		}
+	case RouteAccountStatus:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Account", Current: true},
+		}
+	case RouteSyncHome:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Sync", Current: true},
+		}
+	case RouteDoctorOverview:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Doctor", Current: true},
+		}
 	default:
 		return nil
 	}

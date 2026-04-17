@@ -24,7 +24,7 @@ func ResolveCommand(path []string, args []string) Intent {
 	case "doctor":
 		return intentWithEntry(intent, RouteDoctorOverview)
 	case "key":
-		return intentWithEntry(intent, RouteKeysHome)
+		return intentWithEntry(intent, RouteKeysBrowser)
 	case "key list":
 		return intentWithEntry(intent, RouteKeysBrowser)
 	case "key view":

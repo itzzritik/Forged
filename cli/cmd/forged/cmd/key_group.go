@@ -1,14 +1,17 @@
 package cmd
 
-import "github.com/spf13/cobra"
+import (
+	"github.com/itzzritik/forged/cli/internal/tui"
+	"github.com/spf13/cobra"
+)
 
 func newKeyCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "key",
 		Short: "Manage keys",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if shouldLaunchKeyManager(args) {
-				return runKeyManager(cmd)
+			if !jsonOutput && isInteractiveTerminal() {
+				return runInteractiveIntent(tui.ResolveCommand([]string{"key"}, args))
 			}
 			return cmd.Help()
 		},

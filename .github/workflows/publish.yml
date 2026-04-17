@@ -32,6 +32,30 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
+    version:
+        if: github.actor != 'github-actions[bot]'
+        name: Compute version
+        runs-on: ubuntu-latest
+        outputs:
+            version: ${{ steps.compute.outputs.version }}
+            tag: ${{ steps.compute.outputs.tag }}
+        steps:
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 1
+
+            - uses: actions/setup-node@v6
+              with:
+                  node-version: 24
+
+            - id: compute
+              env:
+                  RELEASE_TYPE: ${{ inputs.version }}
+              run: |
+                  TAG="$(npm version "$RELEASE_TYPE" --prefix npm/cli --no-git-tag-version)"
+                  echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+                  echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
+
     swift-helpers:
         if: github.actor != 'github-actions[bot]'
         name: Build Swift helpers
@@ -58,9 +82,9 @@ jobs:
                   if-no-files-found: error
 
     release:
-        needs: swift-helpers
+        needs: [version, swift-helpers]
         if: github.actor != 'github-actions[bot]'
-        name: Publish new ${{ github.event.inputs.version }} version
+        name: Publish ${{ needs.version.outputs.tag }} to npm + GitHub Releases
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v6
@@ -97,11 +121,10 @@ jobs:
                   git config commit.gpgsign true
                   git config tag.gpgsign true
 
-            - id: version
-              env:
-                  RELEASE_TYPE: ${{ github.event.inputs.version }}
+            - env:
+                  NEW_VERSION: ${{ needs.version.outputs.version }}
               run: |
-                  TAG="$(npm version "$RELEASE_TYPE" --prefix npm/cli --no-git-tag-version)"
+                  npm version "$NEW_VERSION" --prefix npm/cli --no-git-tag-version
                   node - <<'NODE' "npm/cli/package.json"
                   const fs = require("node:fs");
                   const [path] = process.argv.slice(2);
@@ -111,22 +134,21 @@ jobs:
                   }
                   fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
                   NODE
-                  echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-                  echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-            - run: |
+            - env:
+                  NEW_TAG: ${{ needs.version.outputs.tag }}
+              run: |
                   git add npm/cli/package.json
-                  git commit -m "publish ${{ steps.version.outputs.tag }}"
-                  git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
+                  git commit -m "publish $NEW_TAG"
+                  git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
+                  git push --follow-tags origin HEAD:main
 
             - uses: goreleaser/goreleaser-action@v7
               with:
                   distribution: goreleaser
                   version: '~> v2'
-                  args: release --clean --skip=announce,publish,homebrew,nfpm,scoop
+                  args: release --clean --skip=announce,homebrew,nfpm,scoop
 
-            - run: ./scripts/deploy/build-npm-packages.sh "${{ steps.version.outputs.version }}"
+            - run: ./scripts/deploy/build-npm-packages.sh "${{ needs.version.outputs.version }}"
 
-            - run: ./scripts/deploy/publish-npm-packages.sh "${{ steps.version.outputs.version }}"
-
-            - run: git push --follow-tags origin HEAD:main
+            - run: ./scripts/deploy/publish-npm-packages.sh "${{ needs.version.outputs.version }}"

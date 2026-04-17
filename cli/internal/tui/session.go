@@ -45,6 +45,16 @@ func (s *Session) Push(route Route) {
 	})
 }
 
+func (s *Session) ReplaceCurrent(route Route) {
+	if s == nil || len(s.stack) == 0 {
+		return
+	}
+	s.stack[len(s.stack)-1] = Route{
+		ID:     route.ID,
+		Params: cloneParams(route.Params),
+	}
+}
+
 func (s *Session) CanGoBack() bool {
 	if s == nil {
 		return false
