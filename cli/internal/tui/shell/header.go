@@ -29,6 +29,7 @@ type StatusItem struct {
 type HeaderData struct {
 	PageTitle   string
 	Breadcrumbs []Breadcrumb
+	PageNote    string
 	Version     string
 	StatusItems []StatusItem
 }
@@ -41,7 +42,7 @@ const brandBanner = `▄▄▄▄▄▄▄   ▄▄▄▄▄   ▄▄▄▄▄�
 
 func RenderHeader(width int, data HeaderData) string {
 	lines := []string{renderHeaderBox(width, data)}
-	if titleRow := renderTitleRow(width, data.PageTitle, data.Breadcrumbs); titleRow != "" {
+	if titleRow := renderTitleRow(width, data.PageTitle, data.Breadcrumbs, data.PageNote); titleRow != "" {
 		lines = append(lines, "", titleRow, "", theme.Divider(width))
 	}
 	return strings.Join(lines, "\n")
@@ -180,12 +181,22 @@ func renderBreadcrumbs(items []Breadcrumb) string {
 	return strings.Join(parts, " ")
 }
 
-func renderTitleRow(width int, title string, breadcrumbs []Breadcrumb) string {
+func renderTitleNote(note string) string {
+	if strings.TrimSpace(note) == "" {
+		return ""
+	}
+	return theme.BodyMuted.Render(note)
+}
+
+func renderTitleRow(width int, title string, breadcrumbs []Breadcrumb, note string) string {
 	left := ""
 	if strings.TrimSpace(title) != "" {
 		left = theme.SectionTitle.Render(strings.ToUpper(title))
 	}
 	right := renderBreadcrumbs(breadcrumbs)
+	if right == "" {
+		right = renderTitleNote(note)
+	}
 	if left == "" && right == "" {
 		return ""
 	}

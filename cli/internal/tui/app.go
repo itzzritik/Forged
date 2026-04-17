@@ -131,6 +131,7 @@ type model struct {
 	notice   notice
 
 	onboardingCursor int
+	accountEmail     string
 	loginScreen      accountscreen.LoginScreen
 	passwordInput    *components.PasswordInput
 	passwordFlow     passwordFlow
@@ -302,6 +303,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.snapshot.LoggedIn = true
+		m.accountEmail = msg.creds.Email
 		m.passwordAuth = msg.creds.Email
 		if !m.snapshot.VaultExists {
 			m.showPasswordScreen(passwordRestore, msg.creds.Email, "", true)
@@ -367,6 +369,7 @@ func (m *model) renderHeader(width int) string {
 	data := shell.HeaderData{
 		PageTitle:   m.headerPageTitle(),
 		Breadcrumbs: m.headerBreadcrumbs(),
+		PageNote:    m.headerPageNote(),
 		Version:     m.appVersion,
 		StatusItems: m.headerStatusItems(),
 	}
@@ -485,8 +488,21 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Repair", Current: true},
 		}
 	default:
-		return []shell.Breadcrumb{{Label: "Home", Current: true}}
+		return nil
 	}
+}
+
+func (m *model) headerPageNote() string {
+	if m.screen != screenDashboard || !m.snapshot.VaultExists || m.isWelcomeState() {
+		return ""
+	}
+	if m.snapshot.LoggedIn {
+		if email := strings.TrimSpace(m.accountEmail); email != "" {
+			return "Welcome back, " + email
+		}
+		return "Welcome back"
+	}
+	return "Your local vault is ready"
 }
 
 func (m *model) renderBody(contentWidth int) string {
@@ -499,12 +515,10 @@ func (m *model) renderBody(contentWidth int) string {
 		return repairscreen.Render(m.repairScreen, m.spinner.View(), contentWidth)
 	default:
 		return dashboardscreen.Render(dashboardscreen.Screen{
-			Title:       m.dashboardBodyTitle(),
-			Context:     m.dashboardLead(),
-			Snapshot:    m.snapshot,
-			Options:     m.dashboardOptions(),
-			Issues:      m.dashboardIssues(),
-			ShowSummary: m.shouldShowDashboardSummary(),
+			Title:   m.dashboardBodyTitle(),
+			Context: m.dashboardLead(),
+			Options: m.dashboardOptions(),
+			Areas:   m.dashboardAreas(),
 			Notice: dashboardscreen.Notice{
 				Message: m.notice.message,
 				Tone:    m.notice.tone,
@@ -560,7 +574,6 @@ func (m *model) footerActions() []shell.FooterAction {
 	case screenRepair:
 		return nil
 	default:
-		actions := []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 		if m.isWelcomeState() {
 			return []shell.FooterAction{
 				{Key: "↑/↓", Label: "Move"},
@@ -568,13 +581,18 @@ func (m *model) footerActions() []shell.FooterAction {
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
 		}
-		if !m.snapshot.LoggedIn && m.snapshot.VaultExists {
-			return []shell.FooterAction{
-				{Key: "L", Label: "Sign In"},
-				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+		if areas := m.dashboardAreas(); len(areas) > 0 {
+			actions := []shell.FooterAction{{Key: "↑/↓", Label: "Move"}}
+			if dashboardscreen.AreaColumns(shell.BodyWidth(m.width), len(areas)) > 1 {
+				actions = append(actions, shell.FooterAction{Key: "←/→", Label: "Move"})
 			}
+			if area := m.selectedDashboardArea(); area != nil && area.Label == "Account" && !m.snapshot.LoggedIn {
+				actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Sign In"})
+			}
+			actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
+			return actions
 		}
-		return actions
+		return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 	}
 }
 
@@ -597,6 +615,46 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if areas := m.dashboardAreas(); len(areas) > 0 {
+		columns := dashboardscreen.AreaColumns(shell.BodyWidth(m.width), len(areas))
+		switch msg.String() {
+		case "esc":
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		case "up", "k":
+			if m.onboardingCursor-columns >= 0 {
+				m.onboardingCursor -= columns
+			}
+			return m, nil
+		case "down", "j":
+			if m.onboardingCursor+columns < len(areas) {
+				m.onboardingCursor += columns
+			}
+			return m, nil
+		case "left", "h":
+			if columns > 1 && m.onboardingCursor%columns > 0 {
+				m.onboardingCursor--
+			}
+			return m, nil
+		case "right", "l":
+			if columns > 1 && m.onboardingCursor%columns < columns-1 && m.onboardingCursor+1 < len(areas) {
+				m.onboardingCursor++
+			}
+			return m, nil
+		case "enter":
+			if area := m.selectedDashboardArea(); area != nil && area.Label == "Account" && !m.snapshot.LoggedIn {
+				if m.session.Current().ID != RouteAccountLogin {
+					m.session.Push(Route{ID: RouteAccountLogin})
+				}
+				return m, m.startLoginFlow()
+			}
+			return m, nil
+		}
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "esc":
 		if m.session.Back() {
@@ -623,13 +681,7 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.onboardingCursor++
 			return m, nil
 		}
-		if m.snapshot.LoggedIn || !m.snapshot.VaultExists {
-			return m, nil
-		}
-		if m.session.Current().ID != RouteAccountLogin {
-			m.session.Push(Route{ID: RouteAccountLogin})
-		}
-		return m, m.startLoginFlow()
+		return m, nil
 	case "enter":
 		if len(m.dashboardOptions()) == 0 {
 			return m, nil
@@ -721,26 +773,7 @@ func (m *model) dashboardLead() string {
 	if m.isWelcomeState() {
 		return "Restore your synced vault or start fresh on this device"
 	}
-	if m.dashboardHealthyCompact() {
-		return ""
-	}
-	if !m.snapshot.LoggedIn && m.snapshot.VaultExists {
-		return "The local vault is healthy. Sign in any time to sync it across your devices."
-	}
-	return "The machine is healthy and the new shell now owns setup, auth, unlock, and repair."
-}
-
-func (m *model) dashboardContext() string {
-	if len(m.dashboardOptions()) > 0 {
-		return "First-run setup and recovery stay in one place."
-	}
-	if m.dashboardHealthyCompact() {
-		return ""
-	}
-	if m.snapshot.LoggedIn {
-		return "Everything needed for the local device is already linked."
-	}
-	return "Healthy machine state with local vault access."
+	return ""
 }
 
 func (m *model) dashboardOptions() []dashboardscreen.Option {
@@ -760,6 +793,76 @@ func (m *model) dashboardOptions() []dashboardscreen.Option {
 			Selected:    m.onboardingCursor == 1,
 		},
 	}
+}
+
+func (m *model) dashboardAreas() []dashboardscreen.Area {
+	if !m.snapshot.VaultExists {
+		return nil
+	}
+
+	areas := []dashboardscreen.Area{
+		{
+			Label:       "Key",
+			Summary:     "Generate, import, and inspect keys",
+			Description: "Browse encrypted keys and prepare generate, import, export, rename, and delete flows from one place.",
+		},
+		{
+			Label:       "Vault",
+			Summary:     "Lock, unlock, and protect this machine",
+			Description: "Control the local vault, change its password, and manage how this machine protects encrypted key material.",
+		},
+		{
+			Label:       "Agent",
+			Summary:     "Own SSH routing and signing",
+			Description: "Manage SSH agent ownership, signing integration, and the runtime behavior behind developer workflows.",
+		},
+		{
+			Label:       "Account",
+			Summary:     "Profile, access, and linked features",
+			Description: "Review your Forged account, sign in for multi-device sync, and manage access to linked features.",
+		},
+		{
+			Label:       "Sync",
+			Summary:     "Track machine-to-cloud state",
+			Description: "Review sync state, refresh linked data, and keep this machine aligned with your Forged account.",
+		},
+		{
+			Label:       "Doctor",
+			Summary:     "Inspect and repair health",
+			Description: "Audit sockets, service state, SSH routing, and other runtime issues when this machine needs attention.",
+		},
+	}
+
+	if m.snapshot.LoggedIn {
+		areas[3].Summary = "Profile, session, and linked features"
+		if email := strings.TrimSpace(m.accountEmail); email != "" {
+			areas[3].Description = "Review the account for " + email + ", manage linked access, and control synced Forged features."
+		}
+		areas[4].Summary = "Track and refresh sync state"
+		areas[4].Description = "Review sync status, refresh linked data, and keep this machine aligned with your signed-in Forged account."
+	} else {
+		areas[4].Summary = "Available after account sign-in"
+		areas[4].Description = "Sign in first to enable multi-device sync, linked backup, and account-aware machine state."
+	}
+
+	for index := range areas {
+		areas[index].Selected = index == m.onboardingCursor
+	}
+	return areas
+}
+
+func (m *model) selectedDashboardArea() *dashboardscreen.Area {
+	areas := m.dashboardAreas()
+	if len(areas) == 0 {
+		return nil
+	}
+	if m.onboardingCursor < 0 {
+		m.onboardingCursor = 0
+	}
+	if m.onboardingCursor >= len(areas) {
+		m.onboardingCursor = len(areas) - 1
+	}
+	return &areas[m.onboardingCursor]
 }
 
 func (m *model) usesSpinner() bool {
@@ -895,6 +998,9 @@ func (m *model) waitForRepairProgress(id int, ch <-chan readiness.ProgressStage)
 func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.Cmd {
 	m.snapshot = result.Snapshot
 	m.summary = result.Summary
+	if m.repairAuthEmail != "" {
+		m.accountEmail = m.repairAuthEmail
+	}
 	m.finishRepairTasks(result)
 
 	if err != nil {
@@ -934,15 +1040,7 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 			return m.restartAfterVaultReady()
 		}
 		m.popWizardRoutes()
-		if !m.dashboardHealthyCompact() {
-			success := m.summaryMessage()
-			if m.repairAuthEmail != "" {
-				success = "Signed in as " + m.repairAuthEmail + "."
-			}
-			m.showDashboardNotice(success, dashboardscreen.ToneSuccess)
-		} else {
-			m.notice = notice{}
-		}
+		m.notice = notice{}
 		m.screen = screenDashboard
 		return nil
 	}
@@ -961,6 +1059,7 @@ func (m *model) startStartupRepair() tea.Cmd {
 
 func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.notice = notice{}
+	m.onboardingCursor = 0
 	m.screen = screenRepair
 	m.repairPurpose = repairPurposeStartup
 	m.repairUsedPassword = false
@@ -1017,28 +1116,6 @@ func (m *model) showDashboardNotice(message string, tone dashboardscreen.Tone) {
 	if m.snapshot.VaultExists {
 		m.onboardingCursor = 0
 	}
-}
-
-func (m *model) dashboardHealthyCompact() bool {
-	if m.isWelcomeState() {
-		return false
-	}
-	switch m.snapshot.State {
-	case readiness.StateReady, readiness.StateReadyEmpty:
-		return true
-	default:
-		return false
-	}
-}
-
-func (m *model) shouldShowDashboardSummary() bool {
-	if m.isWelcomeState() {
-		return false
-	}
-	if m.dashboardHealthyCompact() {
-		return false
-	}
-	return true
 }
 
 func (m *model) isWelcomeState() bool {
@@ -1151,74 +1228,6 @@ func (m *model) repairStatusRows() []repairscreen.StatusRow {
 		out = append(out, repairscreen.StatusRow{Label: row.Label, Value: row.Value})
 	}
 	return out
-}
-
-func (m *model) dashboardIssues() []dashboardscreen.Issue {
-	if len(m.dashboardOptions()) > 0 || m.dashboardHealthyCompact() {
-		return nil
-	}
-
-	issues := make([]dashboardscreen.Issue, 0, 6)
-	if !m.snapshot.VaultExists {
-		issues = append(issues, dashboardscreen.Issue{
-			Title:  "Vault access is unavailable",
-			Detail: "Create a local vault or restore the linked one to continue.",
-		})
-	}
-	if !m.snapshot.ConfigExists {
-		issues = append(issues, dashboardscreen.Issue{
-			Title:  "Config file is missing",
-			Detail: "The local configuration has not been written yet.",
-		})
-	}
-	if !m.snapshot.Service.Installed {
-		issues = append(issues, dashboardscreen.Issue{
-			Title:  "Background service is not installed",
-			Detail: "The daemon needs to be installed before sockets and signing can work.",
-		})
-	} else if !m.snapshot.Service.ConfigValid {
-		detail := strings.TrimSpace(m.snapshot.Service.Detail)
-		if detail == "" {
-			detail = "The installed service definition is invalid."
-		}
-		issues = append(issues, dashboardscreen.Issue{
-			Title:  "Background service needs repair",
-			Detail: detail,
-		})
-	} else if !m.snapshot.Service.Running {
-		detail := strings.TrimSpace(m.snapshot.Service.Detail)
-		if detail == "" {
-			detail = "The daemon is installed but is not currently running."
-		}
-		issues = append(issues, dashboardscreen.Issue{
-			Title:  "Background service is stopped",
-			Detail: detail,
-		})
-	}
-	if !m.snapshot.IPCSocketReady || !m.snapshot.AgentSocketReady {
-		issues = append(issues, dashboardscreen.Issue{
-			Title:  "Sockets are not ready",
-			Detail: "The control socket or SSH agent socket is still unavailable.",
-		})
-	}
-	if !m.snapshot.SSHEnabled || !m.snapshot.ManagedConfigReady {
-		issues = append(issues, dashboardscreen.Issue{
-			Title:  "SSH routing is incomplete",
-			Detail: "The managed SSH include is missing or not enabled in the user SSH config.",
-		})
-	} else if !m.snapshot.IdentityAgentOwner.IsForged() {
-		issues = append(issues, dashboardscreen.Issue{
-			Title:  "Another SSH agent is active",
-			Detail: "IdentityAgent is not currently owned by the managed Forged SSH config.",
-		})
-	}
-	if m.snapshot.LoggedIn && !m.snapshot.VaultExists {
-		issues = append(issues, dashboardscreen.Issue{
-			Title:  "No linked vault was restored",
-			Detail: "The account is linked, but a local vault is not available on this machine.",
-		})
-	}
-	return issues
 }
 
 func (m *model) passwordFlowForSnapshot(snapshot readiness.Snapshot) passwordFlow {
