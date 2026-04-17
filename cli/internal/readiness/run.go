@@ -169,7 +169,25 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 	}
 
 	if err := e.ensureServiceWithPassword(password); err != nil {
-		return err
+		if updated, waitErr := e.waitForServiceReady(); waitErr == nil {
+			state.result.Snapshot = updated
+			if serviceHealthy(updated) {
+				e.markFixed(&state.result.Summary, "service")
+				return nil
+			}
+		}
+
+		e.pauseForServiceRetry()
+		if retryErr := e.ensureServiceWithPassword(password); retryErr != nil {
+			if updated, waitErr := e.waitForServiceReady(); waitErr == nil {
+				state.result.Snapshot = updated
+				if serviceHealthy(updated) {
+					e.markFixed(&state.result.Summary, "service")
+					return nil
+				}
+			}
+			return retryErr
+		}
 	}
 	updated, err := e.waitForServiceReady()
 	if err != nil {

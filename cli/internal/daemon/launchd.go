@@ -149,10 +149,7 @@ func StartService() error {
 		return err
 	}
 	waitForDaemonExit(paths)
-	if err := launchctlRun(
-		[]string{"bootstrap", launchdDomain(), plistPath()},
-		nil,
-	); err != nil {
+	if err := bootstrapLaunchdService(); err != nil {
 		return err
 	}
 	if err := launchctlRun(
@@ -170,6 +167,23 @@ func StartService() error {
 
 	_ = removeLegacyLaunchdPlists()
 	return nil
+}
+
+func bootstrapLaunchdService() error {
+	args := []string{"bootstrap", launchdDomain(), plistPath()}
+	err := launchctlRun(args, nil)
+	if err == nil {
+		return nil
+	}
+	if !isIgnorableLaunchdError(err.Error(), []string{"bootstrap failed: 5: input/output error"}) {
+		return err
+	}
+
+	time.Sleep(300 * time.Millisecond)
+	return launchctlRun(
+		args,
+		[]string{"service already loaded", "already loaded", "already bootstrapped"},
+	)
 }
 
 func StopService() error {

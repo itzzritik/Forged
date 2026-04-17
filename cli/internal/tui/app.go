@@ -64,6 +64,14 @@ const (
 	repairPurposePostLogin repairPurpose = "post-login"
 )
 
+type setupVariant string
+
+const (
+	setupVariantNone    setupVariant = ""
+	setupVariantLocal   setupVariant = "local"
+	setupVariantRestore setupVariant = "restore"
+)
+
 type notice struct {
 	message string
 	tone    dashboardscreen.Tone
@@ -148,6 +156,7 @@ type model struct {
 	repairPurpose      repairPurpose
 	repairUsedPassword bool
 	repairAuthEmail    string
+	setupVariant       setupVariant
 }
 
 func Run(intent Intent, deps Dependencies) (Result, error) {
@@ -256,6 +265,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.summary = readiness.RepairSummary{}
 			m.repairAuthEmail = ""
 			m.repairUsedPassword = false
+			m.setupVariant = setupVariantNone
 			m.screen = screenDashboard
 			return m, nil
 		}
@@ -483,9 +493,13 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 			{Label: label, Current: true},
 		}
 	case screenRepair:
+		label := "Health"
+		if m.isSetupSequence() {
+			label = "Setup"
+		}
 		return []shell.Breadcrumb{
 			{Label: "Home"},
-			{Label: "Repair", Current: true},
+			{Label: label, Current: true},
 		}
 	default:
 		return nil
@@ -572,6 +586,12 @@ func (m *model) footerActions() []shell.FooterAction {
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 		return actions
 	case screenRepair:
+		if m.repairScreen.Error != "" {
+			return []shell.FooterAction{
+				{Key: "Enter", Label: "Retry"},
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+			}
+		}
 		return nil
 	default:
 		if m.isWelcomeState() {
@@ -608,6 +628,21 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case screenPassword:
 		return m.updatePasswordKeys(msg)
 	case screenRepair:
+		if m.repairScreen.Error == "" {
+			return m, nil
+		}
+		switch msg.String() {
+		case "esc":
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		case "enter":
+			if m.isSetupSequence() && m.snapshot.VaultExists {
+				return m, m.restartAfterVaultReady()
+			}
+			return m, m.startStartupRepair()
+		}
 		return m, nil
 	default:
 		return m.updateDashboardKeys(msg)
@@ -747,9 +782,9 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		switch m.passwordFlow {
 		case passwordCreate:
-			return m, m.startRepair(repairPurposeSetup, password, true, "Setting up Forged", "Creating the local vault and preparing background services for this device.", "")
+			return m, m.startRepair(repairPurposeSetup, password, true, "Setting up Forged", "Creating the local vault and preparing background services for this machine.", "")
 		case passwordRestore:
-			return m, m.startRepair(repairPurposeUnlock, password, false, "Unlocking your vault", "Decrypting the linked vault and finishing device setup.", m.passwordAuth)
+			return m, m.startRepair(repairPurposeUnlock, password, false, "Setting up Forged", "Restoring your vault and preparing secure access on this machine.", m.passwordAuth)
 		default:
 			return m, m.startRepair(repairPurposeUnlock, password, false, "Unlocking Forged", "Verifying the vault and repairing the background service.", "")
 		}
@@ -929,7 +964,9 @@ func (m *model) startRepair(purpose repairPurpose, password []byte, createVaultF
 	m.repairPurpose = purpose
 	m.repairUsedPassword = len(password) > 0
 	m.repairAuthEmail = authEmail
+	m.setupVariant = m.setupVariantForRepair(purpose, createVaultFirst, authEmail)
 	m.repairScreen = repairscreen.TaskScreen{
+		Kind:       m.repairScreenKind(),
 		Title:      title,
 		Context:    contextLine,
 		Tasks:      m.newRepairTasks(authEmail),
@@ -951,6 +988,7 @@ func (m *model) startRepair(purpose repairPurpose, password []byte, createVaultF
 	}
 
 	return tea.Batch(
+		m.spinner.Tick,
 		m.waitForRepairProgress(id, progressCh),
 		func() tea.Msg {
 			if createVaultFirst {
@@ -1005,12 +1043,18 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 
 	if err != nil {
 		switch {
-		case m.repairUsedPassword:
-			m.showPasswordScreen(m.passwordFlowForSnapshot(result.Snapshot), m.repairAuthEmail, err.Error(), m.repairAuthEmail != "")
-			return m.passwordInput.Init()
 		case m.repairPurpose == repairPurposeSetup:
+			if result.Snapshot.VaultExists {
+				m.markActiveRepairTaskFailed()
+				m.repairScreen.Error = err.Error()
+				return nil
+			}
 			m.showPasswordScreen(passwordCreate, "", err.Error(), false)
 			return m.passwordInput.Init()
+		case m.repairUsedPassword:
+			m.markActiveRepairTaskFailed()
+			m.repairScreen.Error = err.Error()
+			return nil
 		default:
 			m.showDashboardNotice(err.Error(), dashboardscreen.ToneDanger)
 			return nil
@@ -1041,18 +1085,30 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 		}
 		m.popWizardRoutes()
 		m.notice = notice{}
+		m.setupVariant = setupVariantNone
 		m.screen = screenDashboard
 		return nil
 	}
 }
 
 func (m *model) startStartupRepair() tea.Cmd {
+	title := "Checking local health"
+	context := "Reviewing the current state and applying safe fixes where needed."
+	if m.isSetupSequence() {
+		title = "Setting up Forged"
+		switch m.setupVariant {
+		case setupVariantRestore:
+			context = "Restoring your vault and preparing secure access on this machine."
+		default:
+			context = "Creating the local vault and preparing background services for this machine."
+		}
+	}
 	return m.startRepair(
 		repairPurposeStartup,
 		nil,
 		false,
-		"Checking local health",
-		"Reviewing the current state and applying safe fixes where needed.",
+		title,
+		context,
 		"",
 	)
 }
@@ -1065,8 +1121,9 @@ func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.repairUsedPassword = false
 	m.repairAuthEmail = ""
 	m.repairScreen = repairscreen.TaskScreen{
-		Title:   "Checking local health",
-		Context: "Reviewing the current state and applying safe fixes where needed.",
+		Kind:    m.repairScreenKind(),
+		Title:   "Setting up Forged",
+		Context: m.setupContextLine(),
 		Tasks:   m.newRepairTasks(""),
 	}
 	return m.assessCurrentState()
@@ -1126,6 +1183,42 @@ func (m *model) shouldShowProductRail() bool {
 	return !m.snapshot.VaultExists
 }
 
+func (m *model) isSetupSequence() bool {
+	return m.setupVariant != setupVariantNone
+}
+
+func (m *model) repairScreenKind() repairscreen.ScreenKind {
+	if m.isSetupSequence() {
+		return repairscreen.ScreenKindSetup
+	}
+	return repairscreen.ScreenKindRepair
+}
+
+func (m *model) setupVariantForRepair(purpose repairPurpose, createVaultFirst bool, authEmail string) setupVariant {
+	switch purpose {
+	case repairPurposeSetup:
+		if createVaultFirst {
+			return setupVariantLocal
+		}
+	case repairPurposeUnlock:
+		if authEmail != "" || m.passwordFlow == passwordRestore || (!m.snapshot.VaultExists && m.snapshot.LoggedIn) {
+			return setupVariantRestore
+		}
+	case repairPurposeStartup:
+		return m.setupVariant
+	}
+	return setupVariantNone
+}
+
+func (m *model) setupContextLine() string {
+	switch m.setupVariant {
+	case setupVariantRestore:
+		return "Restoring your vault and preparing secure access on this machine."
+	default:
+		return "Creating the local vault and preparing background services for this machine."
+	}
+}
+
 func (m *model) serverURL() string {
 	if server := strings.TrimSpace(m.intent.Param("server")); server != "" {
 		return server
@@ -1152,6 +1245,35 @@ func (m *model) openCurrentLoginURL() tea.Cmd {
 }
 
 func (m *model) newRepairTasks(authEmail string) []repairscreen.Task {
+	if m.isSetupSequence() {
+		switch m.setupVariant {
+		case setupVariantRestore:
+			vaultState := repairscreen.TaskPending
+			if m.snapshot.VaultExists {
+				vaultState = repairscreen.TaskDone
+			}
+			return []repairscreen.Task{
+				{Label: "Account", State: repairscreen.TaskDone},
+				{Label: "Vault", State: vaultState},
+				{Label: "Service", State: repairscreen.TaskPending},
+				{Label: "SSH", State: repairscreen.TaskPending},
+				{Label: "Agent", State: repairscreen.TaskPending},
+			}
+		default:
+			vaultState := repairscreen.TaskPending
+			if m.snapshot.VaultExists {
+				vaultState = repairscreen.TaskDone
+			}
+			return []repairscreen.Task{
+				{Label: "Password", State: repairscreen.TaskDone},
+				{Label: "Vault", State: vaultState},
+				{Label: "Service", State: repairscreen.TaskPending},
+				{Label: "SSH", State: repairscreen.TaskPending},
+				{Label: "Agent", State: repairscreen.TaskPending},
+			}
+		}
+	}
+
 	accountState := repairscreen.TaskPending
 	if authEmail != "" || m.snapshot.LoggedIn {
 		accountState = repairscreen.TaskDone
@@ -1197,6 +1319,12 @@ func (m *model) finishRepairTasks(result readiness.RunResult) {
 	for index := range m.repairScreen.Tasks {
 		task := &m.repairScreen.Tasks[index]
 		switch task.Label {
+		case "Password":
+			task.State = repairscreen.TaskDone
+		case "Account":
+			if result.Snapshot.LoggedIn || m.repairAuthEmail != "" {
+				task.State = repairscreen.TaskDone
+			}
 		case "Vault":
 			if result.Snapshot.VaultExists {
 				task.State = repairscreen.TaskDone
@@ -1213,10 +1341,14 @@ func (m *model) finishRepairTasks(result readiness.RunResult) {
 			if result.Snapshot.IPCSocketReady && result.Snapshot.AgentSocketReady {
 				task.State = repairscreen.TaskDone
 			}
-		case "Account":
-			if result.Snapshot.LoggedIn || m.repairAuthEmail != "" {
-				task.State = repairscreen.TaskDone
-			}
+		}
+	}
+}
+
+func (m *model) markActiveRepairTaskFailed() {
+	for index := range m.repairScreen.Tasks {
+		if m.repairScreen.Tasks[index].State == repairscreen.TaskActive {
+			m.repairScreen.Tasks[index].State = repairscreen.TaskFailed
 		}
 	}
 }
