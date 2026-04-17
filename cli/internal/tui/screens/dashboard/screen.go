@@ -46,6 +46,7 @@ type Screen struct {
 const (
 	stackedLeftInset   = 2
 	stackedRightInset  = 4
+	dashboardRightPad  = 2
 	gridColumnGap      = 3
 	gridMinWidth       = 74
 	gridCardMinWidth   = 24
@@ -71,16 +72,13 @@ func Render(screen Screen, width int) string {
 }
 
 func renderDashboard(screen Screen, width int) string {
-	sections := make([]string, 0, 4)
+	safeWidth := max(20, width-dashboardRightPad)
+	sections := make([]string, 0, 3)
 	if notice := renderNotice(screen.Notice); notice != "" {
 		sections = append(sections, notice, "")
 	}
 
-	sections = append(sections, renderAreas(screen.Areas, width))
-
-	if detail := renderSelectedAreaDescription(screen.Areas, width); detail != "" {
-		sections = append(sections, "", detail)
-	}
+	sections = append(sections, renderAreas(screen.Areas, safeWidth))
 
 	return strings.Join(sections, "\n")
 }
@@ -114,7 +112,7 @@ func AreaColumns(width int, count int) int {
 }
 
 func renderAreaStack(areas []Area, width int) string {
-	cardWidth := max(gridCardMinWidth, min(width, theme.HeroMaxWidth+10))
+	cardWidth := max(gridCardMinWidth, width)
 	blocks := make([]string, 0, len(areas)*2)
 	for index, area := range areas {
 		blocks = append(blocks, renderAreaCard(area, cardWidth))

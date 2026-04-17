@@ -7,10 +7,12 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"os/exec"
 	"os/signal"
 	"path/filepath"
 	"runtime"
 	"strconv"
+	"strings"
 	"syscall"
 
 	"github.com/google/uuid"
@@ -168,10 +170,19 @@ func (d *Daemon) cleanStaleState() error {
 
 	pidPath := d.paths.PIDFile()
 	if data, err := os.ReadFile(pidPath); err == nil {
-		if pid, err := strconv.Atoi(string(data)); err == nil {
+		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
 			if process, err := os.FindProcess(pid); err == nil {
 				if err := process.Signal(syscall.Signal(0)); err == nil {
-					return fmt.Errorf("daemon already running (PID %d)", pid)
+					if command, inspectErr := processCommandLine(pid); inspectErr == nil {
+						if isForgedDaemonCommand(command) {
+							return fmt.Errorf("daemon already running (PID %d)", pid)
+						}
+						if d.logger != nil {
+							d.logger.Warn("ignoring stale daemon pid file because pid belongs to another process", "pid", pid, "command", command)
+						}
+					} else {
+						return fmt.Errorf("daemon already running (PID %d)", pid)
+					}
 				}
 			}
 		}
@@ -410,7 +421,7 @@ func IsRunning(paths config.Paths) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	pid, err := strconv.Atoi(string(data))
+	pid, err := strconv.Atoi(strings.TrimSpace(string(data)))
 	if err != nil {
 		return 0, false
 	}
@@ -421,5 +432,36 @@ func IsRunning(paths config.Paths) (int, bool) {
 	if err := process.Signal(syscall.Signal(0)); err != nil {
 		return 0, false
 	}
+	if command, err := processCommandLine(pid); err == nil && !isForgedDaemonCommand(command) {
+		return 0, false
+	}
 	return pid, true
+}
+
+func processCommandLine(pid int) (string, error) {
+	if runtime.GOOS == "windows" {
+		return "", fmt.Errorf("process inspection unavailable")
+	}
+	output, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+	if err != nil {
+		return "", err
+	}
+	return strings.TrimSpace(string(output)), nil
+}
+
+func isForgedDaemonCommand(command string) bool {
+	fields := strings.Fields(command)
+	if len(fields) == 0 {
+		return false
+	}
+	executable := filepath.Base(fields[0])
+	if !strings.HasPrefix(executable, "forged") {
+		return false
+	}
+	for _, field := range fields[1:] {
+		if field == "daemon" {
+			return true
+		}
+	}
+	return false
 }

@@ -705,7 +705,7 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 
 	if m.passwordAuth != "" {
 		sections = append(sections,
-			theme.Success.Render("✓")+" "+theme.BodyMuted.Render("Signed in as")+" "+theme.Body.Render(m.passwordAuth),
+			theme.Success.Render("✓")+" "+theme.BodyMuted.Render(" Signed in as")+" "+theme.Body.Render(m.passwordAuth),
 			"",
 		)
 	}
@@ -765,10 +765,7 @@ func (m *model) footerActions() []shell.FooterAction {
 			}
 		}
 		if areas := m.dashboardAreas(); len(areas) > 0 {
-			actions := []shell.FooterAction{{Key: "↑/↓", Label: "Move"}}
-			if dashboardscreen.AreaColumns(shell.BodyWidth(m.width), len(areas)) > 1 {
-				actions = append(actions, shell.FooterAction{Key: "←/→", Label: "Move"})
-			}
+			actions := []shell.FooterAction{{Key: "↕/↔", Label: "Move"}}
 			if area := m.selectedDashboardArea(); area != nil && area.Label == "Account" && !m.snapshot.LoggedIn {
 				actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Sign In"})
 			}
@@ -1025,7 +1022,7 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 	areas := []dashboardscreen.Area{
 		{
 			Label:       "Key",
-			Summary:     "Generate, import, and inspect keys",
+			Summary:     "Browse, create, import, and export keys",
 			Description: "Browse encrypted keys and prepare generate, import, export, rename, and delete flows from one place.",
 		},
 		{
@@ -1035,7 +1032,7 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 		},
 		{
 			Label:       "Agent",
-			Summary:     "Own SSH routing and signing",
+			Summary:     "Control SSH routing and signing",
 			Description: "Manage SSH agent ownership, signing integration, and the runtime behavior behind developer workflows.",
 		},
 		{
@@ -1045,12 +1042,12 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 		},
 		{
 			Label:       "Sync",
-			Summary:     "Track machine-to-cloud state",
+			Summary:     "Refresh and review vault sync",
 			Description: "Review sync state, refresh linked data, and keep this machine aligned with your Forged account.",
 		},
 		{
 			Label:       "Doctor",
-			Summary:     "Inspect and repair health",
+			Summary:     "Inspect health and fix issues",
 			Description: "Audit sockets, service state, SSH routing, and other runtime issues when this machine needs attention.",
 		},
 	}
@@ -1060,10 +1057,10 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 		if email := strings.TrimSpace(m.accountEmail); email != "" {
 			areas[3].Description = "Review the account for " + email + ", manage linked access, and control synced Forged features."
 		}
-		areas[4].Summary = "Track and refresh sync state"
+		areas[4].Summary = "Refresh and review sync state"
 		areas[4].Description = "Review sync status, refresh linked data, and keep this machine aligned with your signed-in Forged account."
 	} else {
-		areas[4].Summary = "Available after account sign-in"
+		areas[4].Summary = "Unlocks after account sign-in"
 		areas[4].Description = "Sign in first to enable multi-device sync, linked backup, and account-aware machine state."
 	}
 

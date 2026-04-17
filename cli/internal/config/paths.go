@@ -21,11 +21,7 @@ func (p Paths) SyncStateFile() string   { return filepath.Join(p.DataDir, "sync-
 func (p Paths) SyncDirtyFile() string   { return filepath.Join(p.DataDir, "sync.dirty") }
 
 func (p Paths) SSHManagedDir() string {
-	if runtime.GOOS == "windows" {
-		return filepath.Join(p.ConfigDir, "ssh")
-	}
-	home, _ := os.UserHomeDir()
-	return filepath.Join(home, ".forged", "ssh")
+	return filepath.Join(p.ConfigDir, "ssh")
 }
 
 func (p Paths) SSHUserConfig() string {
@@ -92,9 +88,9 @@ func darwinPaths() Paths {
 	home, _ := os.UserHomeDir()
 	base := filepath.Join(home, ".forged")
 	return Paths{
-		ConfigDir:  base,
-		DataDir:    base,
-		RuntimeDir: base,
+		ConfigDir:  filepath.Join(base, "config"),
+		DataDir:    filepath.Join(base, "data"),
+		RuntimeDir: filepath.Join(base, "runtime"),
 		StateDir:   base,
 	}
 }
