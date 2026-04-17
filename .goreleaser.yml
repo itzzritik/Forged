@@ -4,7 +4,7 @@ project_name: forged
 
 before:
   hooks:
-    - ./scripts/build-forged-auth-release.sh
+    - ./scripts/deploy/build-auth-go.sh
 
 builds:
   - id: forged

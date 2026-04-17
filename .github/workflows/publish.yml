@@ -21,9 +21,7 @@ on:
     #         - cli/**
     #         - npm/**
     #         - proto/**
-    #         - scripts/build-forged-auth-release.sh
-    #         - scripts/build-npm-packages.sh
-    #         - scripts/publish-npm-packages.sh
+    #         - scripts/deploy/**
 
 permissions:
     contents: write
@@ -34,81 +32,101 @@ concurrency:
     cancel-in-progress: true
 
 jobs:
-    publish:
+    swift-helpers:
         if: github.actor != 'github-actions[bot]'
-        name: Publish new ${{ github.event_name == 'push' && 'patch' || github.event.inputs.version }} version
+        name: Build Swift helpers
         runs-on: macos-latest
         steps:
-            - name: Checkout
-              uses: actions/checkout@v6
+            - uses: actions/checkout@v6
+              with:
+                  fetch-depth: 1
+
+            - id: cache
+              uses: actions/cache@v5
+              with:
+                  path: build/forged-auth-release
+                  key: swift-helpers-${{ hashFiles('cli/cmd/forged-auth/main.swift', 'cli/cmd/forged-auth/Info.plist') }}
+
+            - if: steps.cache.outputs.cache-hit != 'true'
+              run: ./scripts/deploy/build-auth-swift.sh
+
+            - uses: actions/upload-artifact@v7
+              with:
+                  name: swift-helpers
+                  path: build/forged-auth-release
+                  retention-days: 1
+                  if-no-files-found: error
+
+    release:
+        needs: swift-helpers
+        if: github.actor != 'github-actions[bot]'
+        name: Publish new ${{ github.event.inputs.version }} version
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v6
               with:
                   fetch-depth: 0
 
-            - name: Set up Go
-              uses: actions/setup-go@v6
+            - uses: actions/setup-go@v6
               with:
-                  go-version: '1.25'
+                  go-version-file: cli/go.mod
+                  check-latest: true
+                  cache-dependency-path: cli/go.sum
 
-            - name: Set up Node.js
-              uses: actions/setup-node@v6
+            - uses: actions/setup-node@v6
               with:
                   node-version: 24
+
+            - uses: actions/download-artifact@v8
+              with:
+                  name: swift-helpers
+                  path: build/forged-auth-release
+
+            - run: find build/forged-auth-release -type f -name 'forged-auth' -exec chmod +x {} +
 
             - name: Setup Git & SSH signing
               run: |
                   git config user.email "ritik.jarvis@gmail.com"
                   git config user.name "Jarvis"
-
                   mkdir -p ~/.ssh/
                   echo "${{ secrets.JARVIS_SSH_KEY }}" > ~/.ssh/id_rsa
                   chmod 600 ~/.ssh/id_rsa
                   ssh-keyscan github.com >> ~/.ssh/known_hosts
-
                   git config gpg.format ssh
                   git config user.signingkey ~/.ssh/id_rsa
                   git config commit.gpgsign true
                   git config tag.gpgsign true
 
-            - name: Generate new version
-              id: version
+            - id: version
               env:
-                  RELEASE_TYPE: ${{ github.event.inputs.version || 'patch' }}
+                  RELEASE_TYPE: ${{ github.event.inputs.version }}
               run: |
                   TAG="$(npm version "$RELEASE_TYPE" --prefix npm/cli --no-git-tag-version)"
                   node - <<'NODE' "npm/cli/package.json"
                   const fs = require("node:fs");
-
                   const [path] = process.argv.slice(2);
                   const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-
                   for (const dependency of Object.keys(pkg.optionalDependencies || {})) {
                     pkg.optionalDependencies[dependency] = pkg.version;
                   }
-
                   fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
                   NODE
-
                   echo "tag=$TAG" >> "$GITHUB_OUTPUT"
                   echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
-            - name: Create release commit and tag
-              run: |
+            - run: |
                   git add npm/cli/package.json
                   git commit -m "publish ${{ steps.version.outputs.tag }}"
                   git tag -a "${{ steps.version.outputs.tag }}" -m "Release ${{ steps.version.outputs.tag }}"
 
-            - name: Build release artifacts
-              uses: goreleaser/goreleaser-action@v7
+            - uses: goreleaser/goreleaser-action@v7
               with:
                   distribution: goreleaser
                   version: '~> v2'
                   args: release --clean --skip=announce,publish,homebrew,nfpm,scoop
 
-            - name: Build npm packages
-              run: ./scripts/build-npm-packages.sh "${{ steps.version.outputs.version }}"
+            - run: ./scripts/deploy/build-npm-packages.sh "${{ steps.version.outputs.version }}"
 
-            - name: Publish npm packages
-              run: ./scripts/publish-npm-packages.sh "${{ steps.version.outputs.version }}"
+            - run: ./scripts/deploy/publish-npm-packages.sh "${{ steps.version.outputs.version }}"
 
-            - name: Push release commit and tag
-              run: git push --follow-tags origin HEAD:main
+            - run: git push --follow-tags origin HEAD:main

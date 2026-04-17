@@ -2,7 +2,7 @@
 set -eu
 
 repo_root=$(
-  CDPATH= cd -- "$(dirname "$0")/.." && pwd
+  CDPATH= cd -- "$(dirname "$0")/../.." && pwd
 )
 
 cd "$repo_root/cli"
@@ -33,23 +33,5 @@ build_swift_helper() {
     cmd/forged-auth/main.swift
 }
 
-build_go_helper() {
-  goos="$1"
-  goarch="$2"
-  ext=""
-  if [ "$goos" = "windows" ]; then
-    ext=".exe"
-  fi
-
-  output_dir="$helpers_dir/${goos}_${goarch}"
-  mkdir -p "$output_dir"
-  GOOS="$goos" GOARCH="$goarch" go build -o "$output_dir/forged-auth$ext" ./cmd/forged-auth
-}
-
 build_swift_helper amd64 x86_64-apple-macos13.0
 build_swift_helper arm64 arm64-apple-macos13.0
-
-build_go_helper linux amd64
-build_go_helper linux arm64
-build_go_helper windows amd64
-build_go_helper windows arm64

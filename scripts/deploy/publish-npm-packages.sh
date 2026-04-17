@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DIST_DIR="$ROOT/dist/npm"
 RAW_VERSION="${1:-${VERSION:-}}"
 VERSION="${RAW_VERSION#v}"
@@ -67,8 +67,20 @@ if [[ ${#platform_dirs[@]} -eq 0 ]]; then
   exit 1
 fi
 
+pids=()
 for package_dir in "${platform_dirs[@]}"; do
-  publish_if_needed "$package_dir"
+  publish_if_needed "$package_dir" &
+  pids+=("$!")
 done
+
+status=0
+for pid in "${pids[@]}"; do
+  wait "$pid" || status=$?
+done
+
+if [[ $status -ne 0 ]]; then
+  echo "one or more platform publishes failed" >&2
+  exit "$status"
+fi
 
 publish_if_needed "$DIST_DIR/cli"

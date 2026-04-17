@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
 DIST_DIR="$ROOT/dist"
 OUT_DIR="$DIST_DIR/npm"
 WRAPPER_DIR="$ROOT/npm/cli"
