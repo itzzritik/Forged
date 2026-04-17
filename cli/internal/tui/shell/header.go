@@ -22,6 +22,7 @@ const (
 
 type StatusItem struct {
 	Label string
+	Icon  string
 	Tone  StatusTone
 }
 
@@ -146,11 +147,15 @@ func padBlockHeight(block string, targetHeight int) string {
 
 func renderStatusItem(item StatusItem) string {
 	icon := theme.Danger.Render("✕")
-	switch item.Tone {
-	case StatusToneSuccess:
-		icon = theme.Success.Render("✓")
-	case StatusToneWarning:
-		icon = theme.Warning.Render("!")
+	if strings.TrimSpace(item.Icon) != "" {
+		icon = theme.Kicker.Render(item.Icon)
+	} else {
+		switch item.Tone {
+		case StatusToneSuccess:
+			icon = theme.Success.Render("✓")
+		case StatusToneWarning:
+			icon = theme.Warning.Render("!")
+		}
 	}
 	text := theme.BodyStrong.Render(item.Label)
 	return icon + " " + text
@@ -176,9 +181,6 @@ func renderBreadcrumbs(items []Breadcrumb) string {
 }
 
 func renderTitleRow(width int, title string, breadcrumbs []Breadcrumb) string {
-	const leftInset = 2
-	const rightInset = 4
-
 	left := ""
 	if strings.TrimSpace(title) != "" {
 		left = theme.SectionTitle.Render(strings.ToUpper(title))
@@ -187,7 +189,7 @@ func renderTitleRow(width int, title string, breadcrumbs []Breadcrumb) string {
 	if left == "" && right == "" {
 		return ""
 	}
-	innerWidth := max(0, width-leftInset-rightInset)
+	innerWidth := max(0, width-ContentLeftInset-ContentRightInset)
 	row := ""
 	if left != "" && right != "" && lipgloss.Width(left)+lipgloss.Width(right)+4 > innerWidth {
 		row = left + "\n" + right
@@ -196,7 +198,7 @@ func renderTitleRow(width int, title string, breadcrumbs []Breadcrumb) string {
 	}
 	lines := strings.Split(row, "\n")
 	for index, line := range lines {
-		lines[index] = strings.Repeat(" ", leftInset) + line + strings.Repeat(" ", rightInset)
+		lines[index] = strings.Repeat(" ", ContentLeftInset) + line + strings.Repeat(" ", ContentRightInset)
 	}
 	return strings.Join(lines, "\n")
 }

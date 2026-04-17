@@ -19,13 +19,11 @@ type LoginScreen struct {
 }
 
 func Render(screen LoginScreen, spinner string, width int) string {
-	const leftInset = 2
-
 	lines := make([]string, 0, 8)
 	contentWidth := max(28, min(width, theme.HeroMaxWidth))
 
 	if screen.Error != "" {
-		return indentLines(renderError(screen.Error, contentWidth), leftInset)
+		return renderError(screen.Error, contentWidth)
 	}
 
 	if strings.TrimSpace(screen.Context) != "" {
@@ -53,7 +51,7 @@ func Render(screen LoginScreen, spinner string, width int) string {
 		lines = append(lines, link)
 	}
 
-	return indentLines(strings.Join(lines, "\n"), leftInset)
+	return strings.Join(lines, "\n")
 }
 
 func renderCode(code string) string {
@@ -120,22 +118,6 @@ func renderError(message string, width int) string {
 	}
 	if strings.TrimSpace(detail) != "" {
 		lines = append(lines, theme.Body.Width(max(24, width)).Render(detail))
-	}
-	return strings.Join(lines, "\n")
-}
-
-func indentLines(block string, spaces int) string {
-	if strings.TrimSpace(block) == "" || spaces <= 0 {
-		return block
-	}
-
-	prefix := strings.Repeat(" ", spaces)
-	lines := strings.Split(block, "\n")
-	for index, line := range lines {
-		if line == "" {
-			continue
-		}
-		lines[index] = prefix + line
 	}
 	return strings.Join(lines, "\n")
 }

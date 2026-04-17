@@ -177,7 +177,7 @@ func (p *PasswordInput) View(labels ...string) string {
 		if p.kind == PasswordKindCreate && index == 1 {
 			label = "Confirm password"
 		}
-		if index < len(labels) && strings.TrimSpace(labels[index]) != "" {
+		if index < len(labels) {
 			label = labels[index]
 		}
 
@@ -187,11 +187,17 @@ func (p *PasswordInput) View(labels ...string) string {
 		}
 
 		inputWidth := max(12, p.width)
-		sections = append(sections, strings.Join([]string{
-			theme.FieldLabel.Render(label),
+		lines := []string{
 			theme.FieldValue.Render(field.View()),
 			lineStyle.Render(strings.Repeat("─", min(inputWidth, 36))),
-		}, "\n"))
+		}
+		if strings.TrimSpace(label) != "" {
+			lines = append([]string{theme.FieldLabel.Render(label)}, lines...)
+		} else {
+			lines = append([]string{""}, lines...)
+		}
+
+		sections = append(sections, strings.Join(lines, "\n"))
 	}
 
 	if p.err != "" {

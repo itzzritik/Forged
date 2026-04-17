@@ -20,5 +20,5 @@ func RenderFooter(actions ...FooterAction) string {
 	for _, action := range actions {
 		parts = append(parts, theme.FooterKey.Render("["+action.Key+"]")+" "+theme.FooterLabel.Render(action.Label))
 	}
-	return "  " + strings.Join(parts, "  ·  ")
+	return strings.Repeat(" ", ContentLeftInset) + strings.Join(parts, "  ·  ")
 }

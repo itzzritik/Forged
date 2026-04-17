@@ -7,6 +7,11 @@ import (
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
+const (
+	ContentLeftInset  = 2
+	ContentRightInset = 4
+)
+
 func ContentWidth(termWidth int) int {
 	if termWidth <= 0 {
 		return theme.ShellMaxContentWidth
@@ -24,6 +29,26 @@ func ContentWidth(termWidth int) int {
 	}
 
 	return available
+}
+
+func BodyWidth(termWidth int) int {
+	return max(16, ContentWidth(termWidth)-ContentLeftInset)
+}
+
+func IndentBlock(block string, spaces int) string {
+	if strings.TrimSpace(block) == "" || spaces <= 0 {
+		return block
+	}
+
+	prefix := strings.Repeat(" ", spaces)
+	lines := strings.Split(block, "\n")
+	for index, line := range lines {
+		if line == "" {
+			continue
+		}
+		lines[index] = prefix + line
+	}
+	return strings.Join(lines, "\n")
 }
 
 func Render(termWidth int, header string, body string, footer string) string {

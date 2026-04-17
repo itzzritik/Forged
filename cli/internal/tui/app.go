@@ -250,7 +250,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.screen == screenLogin {
 			return m, m.startLoginFlow()
 		}
-		return m, m.startRepair(repairPurposeStartup, nil, false, "Checking local health", "Reviewing the current state and applying safe fixes where needed.", "")
+		if !msg.snapshot.VaultExists {
+			m.notice = notice{}
+			m.summary = readiness.RepairSummary{}
+			m.repairAuthEmail = ""
+			m.repairUsedPassword = false
+			m.screen = screenDashboard
+			return m, nil
+		}
+		return m, m.startStartupRepair()
 	case loginStartedMsg:
 		if msg.id != m.loginID {
 			return m, nil
@@ -345,8 +353,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 func (m *model) View() string {
 	contentWidth := shell.ContentWidth(m.width)
+	bodyWidth := shell.BodyWidth(m.width)
 	header := m.renderHeader(contentWidth)
-	body := m.renderBody(contentWidth)
+	body := m.renderBody(bodyWidth)
+	if !m.isWelcomeState() {
+		body = shell.IndentBlock(body, shell.ContentLeftInset)
+	}
 	footer := shell.RenderFooter(m.footerActions()...)
 	return shell.Render(m.width, header, body, footer)
 }
@@ -362,6 +374,14 @@ func (m *model) renderHeader(width int) string {
 }
 
 func (m *model) headerStatusItems() []shell.StatusItem {
+	if m.shouldShowProductRail() {
+		return []shell.StatusItem{
+			{Label: "Encrypted key vault", Icon: "✦"},
+			{Label: "Multi-device sync", Icon: "✦"},
+			{Label: "SSH + commit signing", Icon: "✦"},
+		}
+	}
+
 	sshReady := m.snapshot.ManagedConfigReady &&
 		m.snapshot.SSHEnabled &&
 		m.snapshot.IPCSocketReady &&
@@ -510,7 +530,7 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 
 	labels := []string{"Master password"}
 	if m.passwordFlow == passwordCreate {
-		labels = []string{"Create password", "Confirm password"}
+		labels = []string{"", ""}
 	}
 	sections = append(sections, "", m.passwordInput.View(labels...))
 	return strings.Join(sections, "\n")
@@ -909,6 +929,10 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 		m.screen = screenDashboard
 		return nil
 	default:
+		if (m.repairPurpose == repairPurposeSetup || m.repairPurpose == repairPurposeUnlock) && result.Snapshot.VaultExists {
+			m.popWizardRoutes()
+			return m.restartAfterVaultReady()
+		}
 		m.popWizardRoutes()
 		if !m.dashboardHealthyCompact() {
 			success := m.summaryMessage()
@@ -924,6 +948,31 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 	}
 }
 
+func (m *model) startStartupRepair() tea.Cmd {
+	return m.startRepair(
+		repairPurposeStartup,
+		nil,
+		false,
+		"Checking local health",
+		"Reviewing the current state and applying safe fixes where needed.",
+		"",
+	)
+}
+
+func (m *model) restartAfterVaultReady() tea.Cmd {
+	m.notice = notice{}
+	m.screen = screenRepair
+	m.repairPurpose = repairPurposeStartup
+	m.repairUsedPassword = false
+	m.repairAuthEmail = ""
+	m.repairScreen = repairscreen.TaskScreen{
+		Title:   "Checking local health",
+		Context: "Reviewing the current state and applying safe fixes where needed.",
+		Tasks:   m.newRepairTasks(""),
+	}
+	return m.assessCurrentState()
+}
+
 func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorText string, reuseCurrentRoute bool) {
 	if !reuseCurrentRoute && m.session.Current().ID != RouteVaultUnlock {
 		m.session.Push(Route{ID: RouteVaultUnlock})
@@ -934,8 +983,8 @@ func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorTex
 	m.passwordAuth = authEmail
 	switch flow {
 	case passwordCreate:
-		m.passwordTitle = "Create your master password"
-		m.passwordContext = "This password encrypts the local vault on this device. You will use it again whenever sensitive access needs to be unlocked."
+		m.passwordTitle = "Create local vault"
+		m.passwordContext = "Set an encryption password for your vault. Save it securely. If you lose it, your keys are lost."
 		m.passwordInput = components.NewCreatePasswordInput()
 	case passwordRestore:
 		m.passwordTitle = "Unlock your vault"
@@ -994,6 +1043,10 @@ func (m *model) shouldShowDashboardSummary() bool {
 
 func (m *model) isWelcomeState() bool {
 	return m.screen == screenDashboard && len(m.dashboardOptions()) > 0
+}
+
+func (m *model) shouldShowProductRail() bool {
+	return !m.snapshot.VaultExists
 }
 
 func (m *model) serverURL() string {
