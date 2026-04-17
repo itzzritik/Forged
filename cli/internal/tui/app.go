@@ -142,6 +142,17 @@ type RuntimeStatus struct {
 	Error   string
 }
 
+type dashboardSectionAction struct {
+	Label       string
+	Description string
+}
+
+type dashboardSection struct {
+	Title   string
+	Context string
+	Actions []dashboardSectionAction
+}
+
 type systemHeaderState string
 
 const (
@@ -604,6 +615,11 @@ func (m *model) headerPageTitle() string {
 	if m.isWelcomeState() {
 		return ""
 	}
+	if m.screen == screenDashboard && m.snapshot.VaultExists {
+		if section := m.currentDashboardSection(); section != nil {
+			return section.Title
+		}
+	}
 
 	switch m.screen {
 	case screenLogin:
@@ -629,6 +645,15 @@ func (m *model) headerPageTitle() string {
 func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 	if m.isWelcomeState() {
 		return nil
+	}
+
+	if m.screen == screenDashboard && m.snapshot.VaultExists {
+		if section := m.currentDashboardSection(); section != nil {
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: section.Title, Current: true},
+			}
+		}
 	}
 
 	switch m.screen {
@@ -663,7 +688,7 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 }
 
 func (m *model) headerPageNote() string {
-	if m.screen != screenDashboard || !m.snapshot.VaultExists || m.isWelcomeState() {
+	if m.screen != screenDashboard || !m.snapshot.VaultExists || m.isWelcomeState() || m.currentDashboardSection() != nil {
 		return ""
 	}
 	if m.snapshot.LoggedIn {
@@ -686,6 +711,9 @@ func (m *model) renderBody(contentWidth int) string {
 	default:
 		if !m.bootAssessed {
 			return ""
+		}
+		if section := m.currentDashboardSection(); section != nil {
+			return m.renderDashboardSection(contentWidth, *section)
 		}
 		return dashboardscreen.Render(dashboardscreen.Screen{
 			Title:   m.dashboardBodyTitle(),
@@ -719,6 +747,32 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 		labels = []string{"", ""}
 	}
 	sections = append(sections, "", m.passwordInput.View(m.spinner.View(), labels...))
+	return strings.Join(sections, "\n")
+}
+
+func (m *model) renderDashboardSection(contentWidth int, section dashboardSection) string {
+	sections := make([]string, 0, len(section.Actions)*4+2)
+
+	if strings.TrimSpace(section.Context) != "" {
+		sections = append(sections, theme.Body.Width(max(28, min(contentWidth, theme.HeroMaxWidth))).Render(section.Context))
+	}
+
+	if len(section.Actions) > 0 {
+		if len(sections) > 0 {
+			sections = append(sections, "")
+		}
+		for index, action := range section.Actions {
+			sections = append(sections, theme.Bullet.Render("•")+" "+theme.BodyStrong.Render(action.Label))
+			if strings.TrimSpace(action.Description) != "" {
+				desc := theme.BodyMuted.Width(max(24, min(contentWidth-2, theme.HeroMaxWidth))).Render(action.Description)
+				sections = append(sections, shell.IndentBlock(desc, 2))
+			}
+			if index < len(section.Actions)-1 {
+				sections = append(sections, "")
+			}
+		}
+	}
+
 	return strings.Join(sections, "\n")
 }
 
@@ -764,11 +818,17 @@ func (m *model) footerActions() []shell.FooterAction {
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
 		}
-		if areas := m.dashboardAreas(); len(areas) > 0 {
-			actions := []shell.FooterAction{{Key: "↕/↔", Label: "Move"}}
-			if area := m.selectedDashboardArea(); area != nil && area.Label == "Account" && !m.snapshot.LoggedIn {
-				actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Sign In"})
+		if m.currentDashboardSection() != nil {
+			return []shell.FooterAction{
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
+		}
+		if areas := m.dashboardAreas(); len(areas) > 0 {
+			moveLabel := "↕/↔"
+			if dashboardscreen.AreaColumns(shell.BodyWidth(m.width), len(areas)) == 1 {
+				moveLabel = "↑/↓"
+			}
+			actions := []shell.FooterAction{{Key: moveLabel, Label: "Move"}, {Key: "Enter", Label: "Open"}}
 			actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 			return actions
 		}
@@ -821,6 +881,17 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	if m.currentDashboardSection() != nil {
+		switch msg.String() {
+		case "esc":
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
 	if areas := m.dashboardAreas(); len(areas) > 0 {
 		columns := dashboardscreen.AreaColumns(shell.BodyWidth(m.width), len(areas))
 		switch msg.String() {
@@ -850,11 +921,12 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "enter":
-			if area := m.selectedDashboardArea(); area != nil && area.Label == "Account" && !m.snapshot.LoggedIn {
-				if m.session.Current().ID != RouteAccountLogin {
-					m.session.Push(Route{ID: RouteAccountLogin})
+			if area := m.selectedDashboardArea(); area != nil {
+				route := m.dashboardAreaRoute(area.Label)
+				if route != "" && m.session.Current().ID != route {
+					m.session.Push(Route{ID: route})
 				}
-				return m, m.startLoginFlow()
+				return m, m.showCurrentRoute()
 			}
 			return m, nil
 		}
@@ -995,6 +1067,112 @@ func (m *model) dashboardLead() string {
 	return ""
 }
 
+func (m *model) dashboardAreaRoute(label string) RouteID {
+	switch label {
+	case "Key":
+		return RouteKeysHome
+	case "Vault":
+		return RouteVaultHome
+	case "Agent":
+		return RouteAgentHome
+	case "Account":
+		if !m.snapshot.LoggedIn {
+			return RouteAccountLogin
+		}
+		return RouteAccountStatus
+	case "Sync":
+		return RouteSyncHome
+	case "Doctor":
+		return RouteDoctorOverview
+	default:
+		return ""
+	}
+}
+
+func (m *model) currentDashboardSection() *dashboardSection {
+	if m.screen != screenDashboard || !m.snapshot.VaultExists {
+		return nil
+	}
+
+	switch m.session.Current().ID {
+	case RouteKeysHome:
+		return &dashboardSection{
+			Title:   "Key",
+			Context: "Manage encrypted keys on this machine and move into browsing, creation, import, and export flows.",
+			Actions: []dashboardSectionAction{
+				{Label: "View keys", Description: "Browse loaded keys, details, and future edit actions"},
+				{Label: "Generate key", Description: "Create a new SSH key inside this vault"},
+				{Label: "Import key", Description: "Bring an existing key into Forged"},
+				{Label: "Export key", Description: "Copy public keys or export key material when allowed"},
+			},
+		}
+	case RouteVaultHome:
+		return &dashboardSection{
+			Title:   "Vault",
+			Context: "Control how this machine unlocks, protects, and changes the local encrypted vault.",
+			Actions: []dashboardSectionAction{
+				{Label: "Unlock vault", Description: "Open the vault and enable sensitive access"},
+				{Label: "Lock vault", Description: "Seal sensitive access until the master password is entered again"},
+				{Label: "Change password", Description: "Rotate the password used to encrypt this vault"},
+			},
+		}
+	case RouteAgentHome:
+		return &dashboardSection{
+			Title:   "Agent",
+			Context: "Manage SSH routing, agent ownership, and commit-signing behavior across developer workflows.",
+			Actions: []dashboardSectionAction{
+				{Label: "Enable SSH agent", Description: "Route OpenSSH through Forged on this machine"},
+				{Label: "Disable SSH agent", Description: "Stop routing SSH requests through Forged"},
+				{Label: "Commit signing", Description: "Review and control how Forged signs Git commits"},
+			},
+		}
+	case RouteAccountStatus:
+		context := "Review your Forged account and manage the features linked to this machine."
+		if email := strings.TrimSpace(m.accountEmail); email != "" {
+			context = "Signed in as " + email + " and ready to manage linked account access on this machine."
+		}
+		actions := []dashboardSectionAction{
+			{Label: "Profile", Description: "Review signed-in account identity and linked access"},
+		}
+		if m.snapshot.LoggedIn {
+			actions = append(actions, dashboardSectionAction{Label: "Log out", Description: "Remove linked account access from this machine"})
+		}
+		return &dashboardSection{
+			Title:   "Account",
+			Context: context,
+			Actions: actions,
+		}
+	case RouteSyncHome:
+		context := "Keep this machine aligned with your linked Forged vault and review the current sync state."
+		actions := []dashboardSectionAction{
+			{Label: "Sync status", Description: "Review the current linked sync state"},
+			{Label: "Sync now", Description: "Trigger a fresh sync when account features are enabled"},
+		}
+		if !m.snapshot.LoggedIn {
+			context = "Sign in to enable multi-device vault sync and linked recovery features."
+			actions = []dashboardSectionAction{
+				{Label: "Sign in", Description: "Connect this machine to your Forged account"},
+			}
+		}
+		return &dashboardSection{
+			Title:   "Sync",
+			Context: context,
+			Actions: actions,
+		}
+	case RouteDoctorOverview:
+		return &dashboardSection{
+			Title:   "Doctor",
+			Context: "Inspect runtime health, check the local service, and surface issues that need attention on this machine.",
+			Actions: []dashboardSectionAction{
+				{Label: "Health overview", Description: "Review the current machine health contract"},
+				{Label: "Fix issues", Description: "Run the guided repair flow when the machine needs attention"},
+			},
+		}
+	default:
+		return nil
+	}
+}
+
 func (m *model) dashboardOptions() []dashboardscreen.Option {
 	if m.snapshot.VaultExists {
 		return nil
@@ -1021,47 +1199,51 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 
 	areas := []dashboardscreen.Area{
 		{
-			Label:       "Key",
-			Summary:     "Browse, create, import, and export keys",
-			Description: "Browse encrypted keys and prepare generate, import, export, rename, and delete flows from one place.",
+			Label:   "Key",
+			Summary: "Browse, create, import, and export keys",
 		},
 		{
-			Label:       "Vault",
-			Summary:     "Lock, unlock, and protect this machine",
-			Description: "Control the local vault, change its password, and manage how this machine protects encrypted key material.",
+			Label:   "Vault",
+			Summary: "Lock, unlock, and protect this machine",
 		},
 		{
-			Label:       "Agent",
-			Summary:     "Control SSH routing and signing",
-			Description: "Manage SSH agent ownership, signing integration, and the runtime behavior behind developer workflows.",
+			Label:   "Agent",
+			Summary: "Control SSH routing and signing",
 		},
 		{
-			Label:       "Account",
-			Summary:     "Profile, access, and linked features",
-			Description: "Review your Forged account, sign in for multi-device sync, and manage access to linked features.",
+			Label:   "Account",
+			Summary: "Profile, access, and linked features",
 		},
 		{
-			Label:       "Sync",
-			Summary:     "Refresh and review vault sync",
-			Description: "Review sync state, refresh linked data, and keep this machine aligned with your Forged account.",
+			Label:   "Sync",
+			Summary: "Refresh and review vault sync",
 		},
 		{
-			Label:       "Doctor",
-			Summary:     "Inspect health and fix issues",
-			Description: "Audit sockets, service state, SSH routing, and other runtime issues when this machine needs attention.",
+			Label:   "Doctor",
+			Summary: "Inspect health and fix issues",
 		},
+	}
+
+	if m.snapshot.KeyCount == 0 {
+		areas[0].Summary = "Browse, create, import, and export keys"
+	} else if m.snapshot.KeyCount == 1 {
+		areas[0].Summary = "1 key ready to view, export, or manage"
+	} else {
+		areas[0].Summary = fmt.Sprintf("%d keys ready to view, export, or manage", m.snapshot.KeyCount)
+	}
+
+	if m.snapshot.LoggedIn {
+		areas[1].Summary = "Lock, unlock, and protect your synced vault"
 	}
 
 	if m.snapshot.LoggedIn {
 		areas[3].Summary = "Profile, session, and linked features"
 		if email := strings.TrimSpace(m.accountEmail); email != "" {
-			areas[3].Description = "Review the account for " + email + ", manage linked access, and control synced Forged features."
+			areas[3].Summary = fmt.Sprintf("Profile, session, and linked features for %s", email)
 		}
-		areas[4].Summary = "Refresh and review sync state"
-		areas[4].Description = "Review sync status, refresh linked data, and keep this machine aligned with your signed-in Forged account."
+		areas[4].Summary = "Refresh and review vault sync"
 	} else {
-		areas[4].Summary = "Unlocks after account sign-in"
-		areas[4].Description = "Sign in first to enable multi-device sync, linked backup, and account-aware machine state."
+		areas[4].Summary = "Review sync once account access is enabled"
 	}
 
 	for index := range areas {
@@ -1405,6 +1587,8 @@ func (m *model) showCurrentRoute() tea.Cmd {
 	switch m.session.Current().ID {
 	case RouteAccountLogin:
 		return m.startLoginFlow()
+	case RouteKeysHome, RouteVaultHome, RouteAgentHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
+		return nil
 	default:
 		return nil
 	}

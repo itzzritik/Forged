@@ -11,6 +11,7 @@ type Tone string
 
 const (
 	ToneNone    Tone = "none"
+	ToneAccent  Tone = "accent"
 	ToneSuccess Tone = "success"
 	ToneWarning Tone = "warning"
 	ToneDanger  Tone = "danger"
@@ -151,12 +152,10 @@ func renderAreaGrid(areas []Area, width int, columns int) string {
 func renderAreaCard(area Area, cardWidth int) string {
 	borderColor := lipgloss.Color(theme.ColorBorder)
 	titleStyle := theme.BodyStrong
-	summaryStyle := theme.BodyMuted
 
 	if area.Selected {
 		borderColor = lipgloss.Color(theme.ColorAccent)
 		titleStyle = theme.Kicker
-		summaryStyle = theme.Body
 	}
 
 	frame := lipgloss.NewStyle().
@@ -168,7 +167,10 @@ func renderAreaCard(area Area, cardWidth int) string {
 	innerWidth := max(16, cardWidth-4)
 	lines := []string{titleStyle.Render(area.Label)}
 	if strings.TrimSpace(area.Summary) != "" {
-		lines = append(lines, "", summaryStyle.Width(innerWidth).Render(area.Summary))
+		lines = append(lines, "")
+	}
+	if strings.TrimSpace(area.Summary) != "" {
+		lines = append(lines, theme.BodyMuted.Width(innerWidth).Render(area.Summary))
 	}
 	body := strings.Join(lines, "\n")
 	body = lipgloss.Place(innerWidth, gridCardBodyHeight, lipgloss.Left, lipgloss.Top, body)
