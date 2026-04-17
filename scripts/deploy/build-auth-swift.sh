@@ -1,37 +1,23 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
-repo_root=$(
-  CDPATH= cd -- "$(dirname "$0")/../.." && pwd
-)
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+out="$root/build/forged-auth-release"
+cd "$root/cli"
+rm -rf "$out"
 
-cd "$repo_root/cli"
+export CLANG_MODULE_CACHE_PATH="${CLANG_MODULE_CACHE_PATH:-/tmp/forged-swift-clang-cache}"
+export TMPDIR="${TMPDIR:-/tmp/forged-swift-tmp}"
+mkdir -p "$CLANG_MODULE_CACHE_PATH" "$TMPDIR"
 
-helpers_dir="$repo_root/build/forged-auth-release"
-rm -rf "$helpers_dir"
-mkdir -p "$helpers_dir"
-
-build_swift_helper() {
-  arch="$1"
-  target="$2"
-  output_dir="$helpers_dir/darwin_${arch}"
-
-  mkdir -p "$output_dir"
-
-  swift_clang_cache="${CLANG_MODULE_CACHE_PATH:-/tmp/forged-swift-clang-cache}"
-  swift_tmpdir="${TMPDIR:-/tmp/forged-swift-tmp}"
-  mkdir -p "$swift_clang_cache" "$swift_tmpdir"
-
-  CLANG_MODULE_CACHE_PATH="$swift_clang_cache" \
-  TMPDIR="$swift_tmpdir" \
-  swiftc -target "$target" \
-    -o "$output_dir/forged-auth" \
-    -Xlinker -sectcreate \
-    -Xlinker __TEXT \
-    -Xlinker __info_plist \
+build() {
+  local arch="$1" target="$2"
+  mkdir -p "$out/darwin_${arch}"
+  swiftc -target "$target" -o "$out/darwin_${arch}/forged-auth" \
+    -Xlinker -sectcreate -Xlinker __TEXT -Xlinker __info_plist \
     -Xlinker cmd/forged-auth/Info.plist \
     cmd/forged-auth/main.swift
 }
 
-build_swift_helper amd64 x86_64-apple-macos13.0
-build_swift_helper arm64 arm64-apple-macos13.0
+build amd64 x86_64-apple-macos13.0
+build arm64 arm64-apple-macos13.0

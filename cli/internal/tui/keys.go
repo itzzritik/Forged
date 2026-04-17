@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"path/filepath"
 	"slices"
 	"strings"
 
@@ -39,6 +40,34 @@ type keyDeleteFinishedMsg struct {
 	err  error
 }
 
+type keyCopyFinishedMsg struct {
+	status string
+	err    error
+}
+
+type keyPrivateCopyFinishedMsg struct {
+	status string
+	err    error
+}
+
+type keyGenerateFinishedMsg struct {
+	id     int
+	result actions.GenerateResult
+	err    error
+}
+
+type keyImportFinishedMsg struct {
+	id     int
+	result actions.ImportResult
+	err    error
+}
+
+type keyExportFinishedMsg struct {
+	id     int
+	result actions.ExportResult
+	err    error
+}
+
 type keyBrowserState struct {
 	loading    bool
 	refreshing bool
@@ -59,6 +88,9 @@ type keyDetailState struct {
 	resolving bool
 	err       string
 	key       actions.KeyDetail
+	busy      bool
+	status    string
+	statusErr string
 }
 
 type keyRenameState struct {
@@ -79,13 +111,56 @@ type keyDeleteState struct {
 	key       actions.KeySummary
 }
 
+type keyGenerateState struct {
+	generating bool
+	err        string
+	status     string
+
+	nameInput    textinput.Model
+	commentInput textinput.Model
+	focus        int
+}
+
+type keyImportState struct {
+	importing bool
+	err       string
+	status    string
+
+	sourceIndex int
+	focus       int
+	pathInput   textinput.Model
+}
+
+type keyExportState struct {
+	exporting bool
+	err       string
+	status    string
+
+	pathInput textinput.Model
+}
+
+type keyImportSource struct {
+	ID          string
+	Label       string
+	NeedsPath   bool
+	Placeholder string
+}
+
+var keyImportSources = []keyImportSource{
+	{ID: "1password", Label: "1Password export", NeedsPath: true, Placeholder: "Path to 1Password export"},
+	{ID: "bitwarden", Label: "Bitwarden export", NeedsPath: true, Placeholder: "Path to Bitwarden export"},
+	{ID: "forged", Label: "Forged export", NeedsPath: true, Placeholder: "Path to Forged export"},
+	{ID: "ssh-dir", Label: "SSH directory", NeedsPath: false, Placeholder: ""},
+	{ID: "file", Label: "Key file", NeedsPath: true, Placeholder: "Path to private key file"},
+}
+
 func (m *model) isKeyRoute() bool {
 	if m.screen != screenDashboard || !m.snapshot.VaultExists {
 		return false
 	}
 
 	switch m.session.Current().ID {
-	case RouteKeysBrowser, RouteKeysDetail, RouteKeysRename, RouteKeysDelete:
+	case RouteKeysBrowser, RouteKeysDetail, RouteKeysRename, RouteKeysDelete, RouteKeysGenerate, RouteKeysImport, RouteKeysExport:
 		return true
 	default:
 		return false
@@ -102,11 +177,17 @@ func (m *model) keyUsesSpinner() bool {
 	case RouteKeysBrowser:
 		return m.keyBrowser.loading
 	case RouteKeysDetail:
-		return m.keyDetail.loading
+		return m.keyDetail.loading || m.keyDetail.busy
 	case RouteKeysRename:
 		return m.keyRename.loading || m.keyRename.saving
 	case RouteKeysDelete:
 		return m.keyDelete.loading || m.keyDelete.deleting
+	case RouteKeysGenerate:
+		return m.keyGenerate.generating
+	case RouteKeysImport:
+		return m.keyImport.importing
+	case RouteKeysExport:
+		return m.keyExport.exporting
 	default:
 		return false
 	}
@@ -126,6 +207,12 @@ func (m *model) keyRouteLoaded() bool {
 		return !m.keyRename.resolving && (m.keyRename.loading || m.keyRename.saving || m.keyRename.err != "" || strings.TrimSpace(m.keyRename.original) != "" || strings.TrimSpace(m.keyRename.input.Value()) != "")
 	case RouteKeysDelete:
 		return !m.keyDelete.resolving && (m.keyDelete.loading || m.keyDelete.deleting || m.keyDelete.err != "" || strings.TrimSpace(m.keyDelete.key.Name) != "")
+	case RouteKeysGenerate:
+		return strings.TrimSpace(m.keyGenerate.nameInput.Placeholder) != "" || m.keyGenerate.generating || strings.TrimSpace(m.keyGenerate.err) != "" || strings.TrimSpace(m.keyGenerate.status) != ""
+	case RouteKeysImport:
+		return len(keyImportSources) > 0 && (strings.TrimSpace(m.keyImport.err) != "" || strings.TrimSpace(m.keyImport.status) != "" || m.keyImport.importing || strings.TrimSpace(m.keyImport.pathInput.Placeholder) != "")
+	case RouteKeysExport:
+		return strings.TrimSpace(m.keyExport.pathInput.Placeholder) != "" || strings.TrimSpace(m.keyExport.err) != "" || strings.TrimSpace(m.keyExport.status) != "" || m.keyExport.exporting
 	default:
 		return false
 	}
@@ -153,6 +240,12 @@ func (m *model) keyHeaderTitle() string {
 			return ""
 		}
 		return "Delete key"
+	case RouteKeysGenerate:
+		return "Generate key"
+	case RouteKeysImport:
+		return "Import keys"
+	case RouteKeysExport:
+		return "Export vault"
 	default:
 		return ""
 	}
@@ -192,6 +285,24 @@ func (m *model) keyBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Key"},
 			{Label: "Delete", Current: true},
 		}
+	case RouteKeysGenerate:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Generate", Current: true},
+		}
+	case RouteKeysImport:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Import", Current: true},
+		}
+	case RouteKeysExport:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Export", Current: true},
+		}
 	default:
 		return nil
 	}
@@ -217,6 +328,9 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			{Key: "Enter", Label: "View"},
 			{Key: "E", Label: "Edit"},
 			{Key: "D", Label: "Delete"},
+			{Key: "G", Label: "Generate"},
+			{Key: "I", Label: "Import"},
+			{Key: "X", Label: "Export"},
 			{Key: "R", Label: "Refresh"},
 			{Key: "/", Label: "Search"},
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
@@ -229,6 +343,9 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			}
 		}
 		return []shell.FooterAction{
+			{Key: "C", Label: "Copy Public"},
+			{Key: "K", Label: "Copy Private"},
+			{Key: "F", Label: "Copy Fingerprint"},
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
 	case RouteKeysRename:
@@ -249,6 +366,44 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 		}
 		return []shell.FooterAction{
 			{Key: "Enter", Label: "Delete"},
+			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+		}
+	case RouteKeysGenerate:
+		if m.keyGenerate.generating {
+			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+		}
+		enterLabel := "Generate"
+		if m.keyGenerate.focus == 0 {
+			enterLabel = "Next"
+		}
+		return []shell.FooterAction{
+			{Key: "Enter", Label: enterLabel},
+			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+		}
+	case RouteKeysImport:
+		if m.keyImport.importing {
+			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+		}
+		source := m.currentImportSource()
+		enterLabel := "Import"
+		actions := []shell.FooterAction{}
+		if m.keyImport.focus == 0 {
+			actions = append(actions, shell.FooterAction{Key: "↑/↓", Label: "Source"})
+			if source.NeedsPath {
+				enterLabel = "Continue"
+			}
+		}
+		actions = append(actions,
+			shell.FooterAction{Key: "Enter", Label: enterLabel},
+			shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+		)
+		return actions
+	case RouteKeysExport:
+		if m.keyExport.exporting {
+			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+		}
+		return []shell.FooterAction{
+			{Key: "Enter", Label: "Export"},
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
 	default:
@@ -278,9 +433,12 @@ func (m *model) renderKeyBody(contentWidth int) string {
 			return ""
 		}
 		return keyscreen.RenderDetail(keyscreen.DetailScreen{
-			Loading: m.keyDetail.loading,
-			Error:   m.keyDetail.err,
-			Key:     m.keyDetail.key,
+			Loading:     m.keyDetail.loading,
+			Error:       m.keyDetail.err,
+			Key:         m.keyDetail.key,
+			Status:      m.keyDetail.status,
+			StatusError: m.keyDetail.statusErr,
+			Busy:        m.keyDetail.busy,
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysRename:
 		if m.keyRename.resolving {
@@ -305,6 +463,44 @@ func (m *model) renderKeyBody(contentWidth int) string {
 			Error:   m.keyDelete.err,
 			Loading: m.keyDelete.loading,
 		}, m.spinner.View(), contentWidth)
+	case RouteKeysGenerate:
+		return keyscreen.RenderGenerate(keyscreen.GenerateScreen{
+			Context:     "Create a new SSH key and add it to this vault",
+			NameView:    m.keyGenerate.nameInput.View(),
+			CommentView: m.keyGenerate.commentInput.View(),
+			NameFocused: m.keyGenerate.focus == 0,
+			Status:      m.keyGenerate.status,
+			Error:       m.keyGenerate.err,
+			Generating:  m.keyGenerate.generating,
+		}, m.spinner.View(), contentWidth)
+	case RouteKeysImport:
+		options := make([]keyscreen.ImportSourceOption, 0, len(keyImportSources))
+		for index, source := range keyImportSources {
+			options = append(options, keyscreen.ImportSourceOption{
+				Label:    source.Label,
+				Selected: index == m.keyImport.sourceIndex,
+			})
+		}
+		return keyscreen.RenderImport(keyscreen.ImportScreen{
+			Context:     "Import keys from another source into this vault",
+			Sources:     options,
+			SourceFocus: m.keyImport.focus == 0,
+			PathView:    m.keyImport.pathInput.View(),
+			PathFocused: m.keyImport.focus == 1,
+			NeedsPath:   m.currentImportSource().NeedsPath,
+			Status:      m.keyImport.status,
+			Error:       m.keyImport.err,
+			Importing:   m.keyImport.importing,
+		}, m.spinner.View(), contentWidth)
+	case RouteKeysExport:
+		return keyscreen.RenderExport(keyscreen.ExportScreen{
+			Context:   "Export this vault to a Forged JSON file",
+			PathView:  m.keyExport.pathInput.View(),
+			Focused:   true,
+			Status:    m.keyExport.status,
+			Error:     m.keyExport.err,
+			Exporting: m.keyExport.exporting,
+		}, m.spinner.View(), contentWidth)
 	default:
 		return ""
 	}
@@ -315,22 +511,17 @@ func (m *model) updateKeyKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case RouteKeysBrowser:
 		return m.updateKeyBrowser(msg)
 	case RouteKeysDetail:
-		switch msg.String() {
-		case "esc":
-			if m.session.Back() {
-				return m, m.showCurrentRoute()
-			}
-			return m, tea.Quit
-		case "enter":
-			if m.keyDetail.err != "" {
-				return m, m.startKeyRouteLoad()
-			}
-		}
-		return m, nil
+		return m.updateKeyDetail(msg)
 	case RouteKeysRename:
 		return m.updateKeyRename(msg)
 	case RouteKeysDelete:
 		return m.updateKeyDelete(msg)
+	case RouteKeysGenerate:
+		return m.updateKeyGenerate(msg)
+	case RouteKeysImport:
+		return m.updateKeyImport(msg)
+	case RouteKeysExport:
+		return m.updateKeyExport(msg)
 	default:
 		return m, nil
 	}
@@ -404,6 +595,15 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.session.Push(Route{ID: RouteKeysDetail, Params: map[string]string{"name": key.Name, "source": "browser"}})
 			return m, m.showCurrentRoute()
 		}
+	case "g":
+		m.session.Push(Route{ID: RouteKeysGenerate})
+		return m, m.showCurrentRoute()
+	case "i":
+		m.session.Push(Route{ID: RouteKeysImport})
+		return m, m.showCurrentRoute()
+	case "x":
+		m.session.Push(Route{ID: RouteKeysExport})
+		return m, m.showCurrentRoute()
 	case "e":
 		if key, ok := m.selectedKeyRow(); ok {
 			m.session.Push(Route{ID: RouteKeysRename, Params: map[string]string{"old_name": key.Name, "source": "browser"}})
@@ -414,6 +614,56 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.session.Push(Route{ID: RouteKeysDelete, Params: map[string]string{"name": key.Name, "source": "browser"}})
 			return m, m.showCurrentRoute()
 		}
+	}
+	return m, nil
+}
+
+func (m *model) updateKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.keyDetail.loading || m.keyDetail.busy {
+		if msg.String() == "esc" {
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "esc":
+		if m.session.Back() {
+			return m, m.showCurrentRoute()
+		}
+		return m, tea.Quit
+	case "enter":
+		if m.keyDetail.err != "" {
+			return m, m.startKeyRouteLoad()
+		}
+	case "c":
+		if strings.TrimSpace(m.keyDetail.key.PublicKey) == "" {
+			return m, nil
+		}
+		m.keyDetail.status = ""
+		m.keyDetail.statusErr = ""
+		m.keyDetail.busy = true
+		return m, tea.Batch(m.spinner.Tick, m.copyKeyText(m.keyDetail.key.PublicKey, "Public key copied"))
+	case "f":
+		if strings.TrimSpace(m.keyDetail.key.Fingerprint) == "" {
+			return m, nil
+		}
+		m.keyDetail.status = ""
+		m.keyDetail.statusErr = ""
+		m.keyDetail.busy = true
+		return m, tea.Batch(m.spinner.Tick, m.copyKeyText(m.keyDetail.key.Fingerprint, "Fingerprint copied"))
+	case "k":
+		name := strings.TrimSpace(m.keyDetail.key.Name)
+		if name == "" {
+			return m, nil
+		}
+		m.keyDetail.status = ""
+		m.keyDetail.statusErr = ""
+		m.keyDetail.busy = true
+		return m, tea.Batch(m.spinner.Tick, m.copyPrivateKey(nil))
 	}
 	return m, nil
 }
@@ -481,6 +731,161 @@ func (m *model) updateKeyDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *model) updateKeyGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.keyGenerate.generating {
+		if msg.String() == "esc" {
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "esc":
+		if m.session.Back() {
+			return m, m.showCurrentRoute()
+		}
+		return m, tea.Quit
+	case "tab", "shift+tab", "up", "down":
+		m.moveKeyGenerateFocus(msg.String())
+		return m, nil
+	case "enter":
+		if m.keyGenerate.focus == 0 {
+			m.moveKeyGenerateFocus("down")
+			return m, textinput.Blink
+		}
+		name := strings.TrimSpace(m.keyGenerate.nameInput.Value())
+		if name == "" {
+			m.keyGenerate.err = "Enter a key name"
+			return m, nil
+		}
+		m.keyGenerate.err = ""
+		m.keyGenerate.status = "Generating key"
+		m.keyGenerate.generating = true
+		return m, tea.Batch(m.spinner.Tick, m.generateKeyCmd(name, strings.TrimSpace(m.keyGenerate.commentInput.Value())))
+	default:
+		return m, m.updateKeyGenerateInputs(msg)
+	}
+}
+
+func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.keyImport.importing {
+		if msg.String() == "esc" {
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	source := m.currentImportSource()
+	switch msg.String() {
+	case "esc":
+		if m.session.Back() {
+			return m, m.showCurrentRoute()
+		}
+		return m, tea.Quit
+	case "tab":
+		if source.NeedsPath {
+			m.toggleKeyImportFocus()
+			if m.keyImport.focus == 1 {
+				return m, textinput.Blink
+			}
+		}
+		return m, nil
+	case "up", "k":
+		if m.keyImport.focus == 0 {
+			m.moveKeyImportSource(-1)
+			return m, nil
+		}
+		return m, m.updateKeyImportPath(msg)
+	case "down", "j":
+		if m.keyImport.focus == 0 {
+			m.moveKeyImportSource(1)
+			return m, nil
+		}
+		return m, m.updateKeyImportPath(msg)
+	case "enter":
+		if m.keyImport.focus == 0 && source.NeedsPath {
+			m.keyImport.focus = 1
+			m.keyImport.pathInput.Focus()
+			return m, textinput.Blink
+		}
+		file := ""
+		if source.NeedsPath {
+			file = strings.TrimSpace(m.keyImport.pathInput.Value())
+			if file == "" {
+				m.keyImport.err = "Enter a file path"
+				return m, nil
+			}
+		}
+		m.keyImport.err = ""
+		m.keyImport.status = "Importing keys"
+		m.keyImport.importing = true
+		return m, tea.Batch(m.spinner.Tick, m.importKeysCmd(source.ID, file))
+	default:
+		if m.keyImport.focus == 1 {
+			return m, m.updateKeyImportPath(msg)
+		}
+	}
+	return m, nil
+}
+
+func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.keyExport.exporting {
+		if msg.String() == "esc" {
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	switch msg.String() {
+	case "esc":
+		if m.session.Back() {
+			return m, m.showCurrentRoute()
+		}
+		return m, tea.Quit
+	case "enter":
+		if strings.TrimSpace(m.keyExport.pathInput.Value()) == "" {
+			m.keyExport.err = "Enter an export path"
+			return m, nil
+		}
+		m.keyExport.err = ""
+		m.keyExport.status = "Exporting vault"
+		m.keyExport.exporting = true
+		return m, tea.Batch(m.spinner.Tick, m.exportVault(nil))
+	default:
+		var cmd tea.Cmd
+		m.keyExport.pathInput, cmd = m.keyExport.pathInput.Update(msg)
+		m.keyExport.err = ""
+		return m, cmd
+	}
+}
+
+func (m *model) updateKeyGenerateInputs(msg tea.KeyMsg) tea.Cmd {
+	var cmd tea.Cmd
+	if m.keyGenerate.focus == 0 {
+		m.keyGenerate.nameInput, cmd = m.keyGenerate.nameInput.Update(msg)
+	} else {
+		m.keyGenerate.commentInput, cmd = m.keyGenerate.commentInput.Update(msg)
+	}
+	m.keyGenerate.err = ""
+	return cmd
+}
+
+func (m *model) updateKeyImportPath(msg tea.KeyMsg) tea.Cmd {
+	var cmd tea.Cmd
+	m.keyImport.pathInput, cmd = m.keyImport.pathInput.Update(msg)
+	m.keyImport.err = ""
+	return cmd
+}
+
 func (m *model) startKeyRouteLoad() tea.Cmd {
 	route := m.session.Current()
 	switch route.ID {
@@ -536,6 +941,38 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 			}
 		}
 		m.keyDelete = keyDeleteState{loading: true, resolving: true}
+	case RouteKeysGenerate:
+		m.keyGenerate = keyGenerateState{
+			nameInput:    newKeyInput("Enter key name"),
+			commentInput: newKeyInput("Optional comment"),
+		}
+		m.keyGenerate.commentInput.Placeholder = "Optional comment"
+		if name := strings.TrimSpace(route.Params["name"]); name != "" {
+			m.keyGenerate.nameInput.SetValue(name)
+			m.keyGenerate.focus = 1
+		}
+		m.syncKeyGenerateFocus()
+		m.resizeKeyInputs()
+		return textinput.Blink
+	case RouteKeysImport:
+		m.keyImport = keyImportState{
+			sourceIndex: 0,
+			focus:       0,
+			pathInput:   newKeyInput(""),
+		}
+		m.keyImport.pathInput.CharLimit = 512
+		m.syncKeyImportSource()
+		m.resizeKeyInputs()
+		return nil
+	case RouteKeysExport:
+		m.keyExport = keyExportState{
+			pathInput: newKeyInput("Export path"),
+		}
+		m.keyExport.pathInput.CharLimit = 512
+		m.keyExport.pathInput.SetValue(actions.DefaultExportPath())
+		m.keyExport.pathInput.Focus()
+		m.resizeKeyInputs()
+		return textinput.Blink
 	default:
 		return nil
 	}
@@ -576,6 +1013,38 @@ func (m *model) loadKeyDetail(name string) tea.Cmd {
 	})
 }
 
+func (m *model) copyKeyText(value string, status string) tea.Cmd {
+	copyText := m.copyText
+	return func() tea.Msg {
+		if strings.TrimSpace(value) == "" {
+			return keyCopyFinishedMsg{err: fmt.Errorf("nothing to copy")}
+		}
+		if err := copyText(value); err != nil {
+			return keyCopyFinishedMsg{err: err}
+		}
+		return keyCopyFinishedMsg{status: status}
+	}
+}
+
+func (m *model) copyPrivateKey(password []byte) tea.Cmd {
+	copyText := m.copyText
+	name := strings.TrimSpace(m.keyDetail.key.Name)
+	paths := config.DefaultPaths()
+	return func() tea.Msg {
+		detail, err := actions.ViewFullKey(paths, name, password)
+		if err != nil {
+			return keyPrivateCopyFinishedMsg{err: err}
+		}
+		if strings.TrimSpace(detail.PrivateKey) == "" {
+			return keyPrivateCopyFinishedMsg{err: fmt.Errorf("private key is unavailable")}
+		}
+		if err := copyText(detail.PrivateKey); err != nil {
+			return keyPrivateCopyFinishedMsg{err: err}
+		}
+		return keyPrivateCopyFinishedMsg{status: "Private key copied"}
+	}
+}
+
 func (m *model) renameKey(oldName, newName string) tea.Cmd {
 	m.keyRenameID++
 	id := m.keyRenameID
@@ -593,6 +1062,37 @@ func (m *model) deleteKey(name string) tea.Cmd {
 	return func() tea.Msg {
 		resolvedName, err := actions.DeleteKey(paths, name)
 		return keyDeleteFinishedMsg{id: id, name: resolvedName, err: err}
+	}
+}
+
+func (m *model) generateKeyCmd(name, comment string) tea.Cmd {
+	m.keyGenerateID++
+	id := m.keyGenerateID
+	paths := config.DefaultPaths()
+	return func() tea.Msg {
+		result, err := actions.GenerateKey(paths, name, comment)
+		return keyGenerateFinishedMsg{id: id, result: result, err: err}
+	}
+}
+
+func (m *model) importKeysCmd(source, file string) tea.Cmd {
+	m.keyImportID++
+	id := m.keyImportID
+	paths := config.DefaultPaths()
+	return func() tea.Msg {
+		result, err := actions.ImportFromSource(paths, source, file)
+		return keyImportFinishedMsg{id: id, result: result, err: err}
+	}
+}
+
+func (m *model) exportVault(password []byte) tea.Cmd {
+	m.keyExportID++
+	id := m.keyExportID
+	paths := config.DefaultPaths()
+	outPath := strings.TrimSpace(m.keyExport.pathInput.Value())
+	return func() tea.Msg {
+		result, err := actions.ExportVault(paths, outPath, password)
+		return keyExportFinishedMsg{id: id, result: result, err: err}
 	}
 }
 
@@ -705,6 +1205,50 @@ func (m *model) handleKeyDetailMsg(msg keyDetailMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+func (m *model) handleKeyCopyFinishedMsg(msg keyCopyFinishedMsg) (tea.Model, tea.Cmd) {
+	m.keyDetail.busy = false
+	if msg.err != nil {
+		m.keyDetail.status = ""
+		m.keyDetail.statusErr = msg.err.Error()
+		return m, nil
+	}
+	m.keyDetail.statusErr = ""
+	m.keyDetail.status = msg.status
+	return m, nil
+}
+
+func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (tea.Model, tea.Cmd) {
+	if m.screen == screenPassword && m.passwordFlow == passwordKeyView {
+		m.passwordBusy = false
+		if msg.err != nil {
+			m.passwordInput.SetError(msg.err.Error())
+			return m, nil
+		}
+		m.passwordOverlay = false
+		m.passwordAuth = ""
+		m.screen = screenDashboard
+		m.keyDetail.busy = false
+		m.keyDetail.statusErr = ""
+		m.keyDetail.status = msg.status
+		return m, nil
+	}
+
+	m.keyDetail.busy = false
+	if msg.err != nil {
+		if actions.IsSensitiveAuthRequired(msg.err) {
+			m.keyDetail.busy = false
+			m.showPasswordScreen(passwordKeyView, "", "", true)
+			return m, m.passwordInput.Init()
+		}
+		m.keyDetail.status = ""
+		m.keyDetail.statusErr = msg.err.Error()
+		return m, nil
+	}
+	m.keyDetail.statusErr = ""
+	m.keyDetail.status = msg.status
+	return m, nil
+}
+
 func (m *model) handleKeyRenameFinishedMsg(msg keyRenameFinishedMsg) (tea.Model, tea.Cmd) {
 	if msg.id != m.keyRenameID {
 		return m, nil
@@ -744,6 +1288,84 @@ func (m *model) handleKeyDeleteFinishedMsg(msg keyDeleteFinishedMsg) (tea.Model,
 		},
 	})
 	return m, m.showCurrentRoute()
+}
+
+func (m *model) handleKeyGenerateFinishedMsg(msg keyGenerateFinishedMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.keyGenerateID {
+		return m, nil
+	}
+	m.keyGenerate.generating = false
+	if msg.err != nil {
+		m.keyGenerate.err = msg.err.Error()
+		return m, nil
+	}
+	m.upsertCachedKey(actions.KeySummary{
+		Name:        msg.result.Name,
+		Type:        msg.result.Type,
+		Fingerprint: msg.result.Fingerprint,
+		Comment:     msg.result.Comment,
+	})
+	m.session.ReplaceCurrent(Route{
+		ID: RouteKeysDetail,
+		Params: map[string]string{
+			"name":   msg.result.Name,
+			"source": "browser",
+		},
+	})
+	return m, m.showCurrentRoute()
+}
+
+func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.keyImportID {
+		return m, nil
+	}
+	m.keyImport.importing = false
+	if msg.err != nil {
+		m.keyImport.err = msg.err.Error()
+		return m, nil
+	}
+	notice := importResultNotice(msg.result)
+	m.session.ReplaceCurrent(Route{
+		ID: RouteKeysBrowser,
+		Params: map[string]string{
+			"notice": notice,
+		},
+	})
+	return m, m.showCurrentRoute()
+}
+
+func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.keyExportID {
+		return m, nil
+	}
+	if m.screen == screenPassword && m.passwordFlow == passwordKeyExport {
+		m.passwordBusy = false
+		if msg.err != nil {
+			m.passwordInput.SetError(msg.err.Error())
+			return m, nil
+		}
+		m.passwordOverlay = false
+		m.passwordAuth = ""
+		m.screen = screenDashboard
+		m.keyExport.exporting = false
+		m.keyExport.err = ""
+		m.keyExport.status = exportSuccessMessage(msg.result)
+		return m, nil
+	}
+
+	m.keyExport.exporting = false
+	if msg.err != nil {
+		if actions.IsSensitiveAuthRequired(msg.err) {
+			m.keyExport.exporting = false
+			m.showPasswordScreen(passwordKeyExport, "", "", true)
+			return m, m.passwordInput.Init()
+		}
+		m.keyExport.err = msg.err.Error()
+		return m, nil
+	}
+	m.keyExport.err = ""
+	m.keyExport.status = exportSuccessMessage(msg.result)
+	return m, nil
 }
 
 func (m *model) fallbackKeyBrowser(keys []actions.KeySummary, query string, notice string) (tea.Model, tea.Cmd) {
@@ -941,6 +1563,11 @@ func (m *model) resizeKeyInputs() {
 	searchWidth := max(18, shell.BodyWidth(m.width)-3)
 	m.keyBrowser.input.Width = searchWidth
 	m.keyRename.input.Width = max(18, min(shell.ClampBlockWidth(m.width, 44), 44))
+	inputWidth := max(18, min(shell.ClampBlockWidth(m.width, 44), 44))
+	m.keyGenerate.nameInput.Width = inputWidth
+	m.keyGenerate.commentInput.Width = inputWidth
+	m.keyImport.pathInput.Width = max(18, min(shell.ClampBlockWidth(m.width, 54), 54))
+	m.keyExport.pathInput.Width = max(18, min(shell.ClampBlockWidth(m.width, 54), 54))
 }
 
 func newKeyInput(placeholder string) textinput.Model {
@@ -976,6 +1603,115 @@ func fallbackNotice(route RouteID, query string, matches int) string {
 		}
 		return fmt.Sprintf("No exact match for %q. Showing closest results", query)
 	}
+}
+
+func (m *model) moveKeyGenerateFocus(key string) {
+	if key == "up" || key == "shift+tab" {
+		m.keyGenerate.focus = 0
+	} else {
+		m.keyGenerate.focus = 1
+	}
+	m.syncKeyGenerateFocus()
+}
+
+func (m *model) syncKeyGenerateFocus() {
+	if m.keyGenerate.focus <= 0 {
+		m.keyGenerate.focus = 0
+		m.keyGenerate.nameInput.Focus()
+		m.keyGenerate.commentInput.Blur()
+		return
+	}
+	m.keyGenerate.focus = 1
+	m.keyGenerate.nameInput.Blur()
+	m.keyGenerate.commentInput.Focus()
+}
+
+func (m *model) moveKeyImportSource(delta int) {
+	next := m.keyImport.sourceIndex + delta
+	if next < 0 {
+		next = len(keyImportSources) - 1
+	}
+	if next >= len(keyImportSources) {
+		next = 0
+	}
+	m.keyImport.sourceIndex = next
+	m.syncKeyImportSource()
+}
+
+func (m *model) toggleKeyImportFocus() {
+	if !m.currentImportSource().NeedsPath {
+		m.keyImport.focus = 0
+		m.syncKeyImportSource()
+		return
+	}
+	if m.keyImport.focus == 0 {
+		m.keyImport.focus = 1
+		m.keyImport.pathInput.Focus()
+		return
+	}
+	m.keyImport.focus = 0
+	m.syncKeyImportSource()
+}
+
+func (m *model) syncKeyImportSource() {
+	source := m.currentImportSource()
+	m.keyImport.pathInput.Placeholder = source.Placeholder
+	if m.keyImport.focus == 0 || !source.NeedsPath {
+		m.keyImport.focus = 0
+		m.keyImport.pathInput.Blur()
+		return
+	}
+	m.keyImport.pathInput.Focus()
+}
+
+func (m *model) currentImportSource() keyImportSource {
+	if len(keyImportSources) == 0 {
+		return keyImportSource{}
+	}
+	if m.keyImport.sourceIndex < 0 {
+		m.keyImport.sourceIndex = 0
+	}
+	if m.keyImport.sourceIndex >= len(keyImportSources) {
+		m.keyImport.sourceIndex = len(keyImportSources) - 1
+	}
+	return keyImportSources[m.keyImport.sourceIndex]
+}
+
+func (m *model) upsertCachedKey(summary actions.KeySummary) {
+	found := false
+	for index := range m.keyBrowser.all {
+		if m.keyBrowser.all[index].Name == summary.Name {
+			m.keyBrowser.all[index] = summary
+			found = true
+			break
+		}
+	}
+	if !found {
+		m.keyBrowser.all = append(m.keyBrowser.all, summary)
+	}
+	slices.SortFunc(m.keyBrowser.all, func(a, b actions.KeySummary) int {
+		return strings.Compare(strings.ToLower(a.Name), strings.ToLower(b.Name))
+	})
+	m.refreshKeyBrowserRows()
+	m.selectKeyBrowserByName(summary.Name)
+}
+
+func importResultNotice(result actions.ImportResult) string {
+	label := actions.ImportSourceLabel(result.Source)
+	switch {
+	case result.Imported == 0 && result.Discovered == 0:
+		return "No keys were found to import"
+	case result.Imported == 0:
+		return fmt.Sprintf("No keys were imported from %s", label)
+	case result.Skipped > 0:
+		return fmt.Sprintf("Imported %d keys from %s, skipped %d", result.Imported, label, result.Skipped)
+	default:
+		return fmt.Sprintf("Imported %d keys from %s", result.Imported, label)
+	}
+}
+
+func exportSuccessMessage(result actions.ExportResult) string {
+	return fmt.Sprintf("Exported %d keys to %s", result.KeyCount, filepath.Base(result.Path))
 }
 
 func renameContext(name string) string {

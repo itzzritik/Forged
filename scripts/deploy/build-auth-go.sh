@@ -1,36 +1,24 @@
-#!/bin/sh
-set -eu
+#!/usr/bin/env bash
+set -euo pipefail
 
-repo_root=$(
-  CDPATH= cd -- "$(dirname "$0")/../.." && pwd
-)
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+out="$root/build/forged-auth-release"
+cd "$root/cli"
+mkdir -p "$out"
 
-cd "$repo_root/cli"
-
-helpers_dir="$repo_root/build/forged-auth-release"
-mkdir -p "$helpers_dir"
-
-build_go_helper() {
-  goos="$1"
-  goarch="$2"
-  ext=""
-  if [ "$goos" = "windows" ]; then
-    ext=".exe"
-  fi
-
-  output_dir="$helpers_dir/${goos}_${goarch}"
-  mkdir -p "$output_dir"
-  GOOS="$goos" GOARCH="$goarch" go build -o "$output_dir/forged-auth$ext" ./cmd/forged-auth
+build() {
+  local goos="$1" goarch="$2" ext=""
+  [[ "$goos" == "windows" ]] && ext=".exe"
+  mkdir -p "$out/${goos}_${goarch}"
+  GOOS="$goos" GOARCH="$goarch" go build -o "$out/${goos}_${goarch}/forged-auth$ext" ./cmd/forged-auth
 }
 
-pids=""
-build_go_helper linux amd64 & pids="$pids $!"
-build_go_helper linux arm64 & pids="$pids $!"
-build_go_helper windows amd64 & pids="$pids $!"
-build_go_helper windows arm64 & pids="$pids $!"
+pids=()
+for target in linux/amd64 linux/arm64 windows/amd64 windows/arm64; do
+  IFS=/ read -r goos goarch <<<"$target"
+  build "$goos" "$goarch" & pids+=("$!")
+done
 
 status=0
-for pid in $pids; do
-  wait "$pid" || status=$?
-done
+for pid in "${pids[@]}"; do wait "$pid" || status=$?; done
 exit "$status"

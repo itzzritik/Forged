@@ -9,9 +9,12 @@ import (
 )
 
 type DetailScreen struct {
-	Loading bool
-	Error   string
-	Key     actions.KeyDetail
+	Loading     bool
+	Error       string
+	Key         actions.KeyDetail
+	Status      string
+	StatusError string
+	Busy        bool
 }
 
 func RenderDetail(screen DetailScreen, spinner string, width int) string {
@@ -43,6 +46,10 @@ func RenderDetail(screen DetailScreen, spinner string, width int) string {
 	meta := buildMetadata(screen.Key)
 	if len(meta) > 0 {
 		sections = append(sections, "", theme.SectionTitle.Render("Metadata"), strings.Join(meta, "\n"))
+	}
+
+	if status := renderDetailStatus(screen.Status, screen.StatusError, screen.Busy, spinner); status != "" {
+		sections = append(sections, "", status)
 	}
 
 	return strings.Join(sections, "\n")
@@ -78,4 +85,17 @@ func boolLabel(value bool) string {
 		return "Enabled"
 	}
 	return "Disabled"
+}
+
+func renderDetailStatus(status string, statusError string, busy bool, spinner string) string {
+	if strings.TrimSpace(statusError) != "" {
+		return theme.Danger.Render("✕ " + statusError)
+	}
+	if busy && strings.TrimSpace(status) != "" {
+		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + status)
+	}
+	if strings.TrimSpace(status) != "" {
+		return theme.Success.Render("✓ " + status)
+	}
+	return ""
 }

@@ -9,12 +9,12 @@ import (
 )
 
 type RenameScreen struct {
-	Context string
+	Context   string
 	FieldView string
-	Focused bool
-	Status  string
-	Error   string
-	Loading bool
+	Focused   bool
+	Status    string
+	Error     string
+	Loading   bool
 }
 
 type DeleteScreen struct {
@@ -23,6 +23,42 @@ type DeleteScreen struct {
 	Status  string
 	Error   string
 	Loading bool
+}
+
+type GenerateScreen struct {
+	Context      string
+	NameView     string
+	CommentView  string
+	NameFocused  bool
+	Status       string
+	Error        string
+	Generating   bool
+}
+
+type ImportSourceOption struct {
+	Label    string
+	Selected bool
+}
+
+type ImportScreen struct {
+	Context      string
+	Sources      []ImportSourceOption
+	SourceFocus  bool
+	PathView     string
+	PathFocused  bool
+	NeedsPath    bool
+	Status       string
+	Error        string
+	Importing    bool
+}
+
+type ExportScreen struct {
+	Context     string
+	PathView    string
+	Focused     bool
+	Status      string
+	Error       string
+	Exporting   bool
 }
 
 func RenderRename(screen RenameScreen, spinner string, width int) string {
@@ -72,6 +108,92 @@ func RenderDelete(screen DeleteScreen, spinner string, width int) string {
 	return strings.Join(sections, "\n")
 }
 
+func RenderGenerate(screen GenerateScreen, spinner string, width int) string {
+	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+	sections := make([]string, 0, 6)
+	if context := strings.TrimSpace(screen.Context); context != "" {
+		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
+	}
+
+	if screen.Generating {
+		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+screen.Status))
+		return strings.Join(sections, "\n")
+	}
+
+	sections = append(sections,
+		"",
+		renderTextField(screen.NameView, screen.NameFocused),
+		"",
+		renderTextField(screen.CommentView, !screen.NameFocused),
+	)
+	if status := renderResultStatus(screen.Status, screen.Error, false, spinner); status != "" {
+		sections = append(sections, status)
+	} else {
+		sections = append(sections, "")
+	}
+	return strings.Join(sections, "\n")
+}
+
+func RenderImport(screen ImportScreen, spinner string, width int) string {
+	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+	sections := make([]string, 0, 6)
+	if context := strings.TrimSpace(screen.Context); context != "" {
+		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
+	}
+
+	if screen.Importing {
+		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+screen.Status))
+		return strings.Join(sections, "\n")
+	}
+
+	if len(screen.Sources) > 0 {
+		lines := make([]string, 0, len(screen.Sources))
+		for _, source := range screen.Sources {
+			prefix := theme.BodyMuted.Render("·")
+			labelStyle := theme.BodyMuted
+			if source.Selected {
+				prefix = theme.Kicker.Render("▸")
+				labelStyle = theme.BodyStrong
+			}
+			lines = append(lines, prefix+" "+labelStyle.Render(source.Label))
+		}
+		sections = append(sections, "", strings.Join(lines, "\n"))
+	}
+
+	if screen.NeedsPath {
+		sections = append(sections, "", renderTextField(screen.PathView, screen.PathFocused))
+	}
+
+	if status := renderResultStatus(screen.Status, screen.Error, false, spinner); status != "" {
+		sections = append(sections, "", status)
+	} else {
+		sections = append(sections, "")
+	}
+
+	return strings.Join(sections, "\n")
+}
+
+func RenderExport(screen ExportScreen, spinner string, width int) string {
+	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+	sections := make([]string, 0, 5)
+	if context := strings.TrimSpace(screen.Context); context != "" {
+		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
+	}
+
+	if screen.Exporting {
+		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+screen.Status))
+		return strings.Join(sections, "\n")
+	}
+
+	sections = append(sections, "", renderTextField(screen.PathView, screen.Focused))
+	if status := renderResultStatus(screen.Status, screen.Error, false, spinner); status != "" {
+		sections = append(sections, status)
+	} else {
+		sections = append(sections, "")
+	}
+	return strings.Join(sections, "\n")
+}
+
 func renderTextField(view string, focused bool) string {
 	lineStyle := theme.FieldLineIdle
 	if focused {
@@ -95,4 +217,17 @@ func renderStatus(info string, err string, spinner string) string {
 		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + info)
 	}
 	return ""
+}
+
+func renderResultStatus(info string, err string, busy bool, spinner string) string {
+	if strings.TrimSpace(err) != "" {
+		return theme.Danger.Render("✕ " + err)
+	}
+	if strings.TrimSpace(info) == "" {
+		return ""
+	}
+	if busy {
+		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + info)
+	}
+	return theme.Success.Render("✓ " + info)
 }

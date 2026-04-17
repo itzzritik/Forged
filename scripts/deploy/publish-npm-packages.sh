@@ -1,86 +1,38 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROOT="$(cd "$(dirname "$0")/../.." && pwd)"
-DIST_DIR="$ROOT/dist/npm"
-RAW_VERSION="${1:-${VERSION:-}}"
-VERSION="${RAW_VERSION#v}"
-
-if [[ -z "$VERSION" ]]; then
-  echo "usage: $0 <version>" >&2
-  exit 1
-fi
-
-package_name() {
-  local package_dir="$1"
-
-  node - <<'NODE' "$package_dir/package.json"
-const fs = require("node:fs");
-const [path] = process.argv.slice(2);
-const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-process.stdout.write(pkg.name);
-NODE
-}
-
-package_version() {
-  local package_dir="$1"
-
-  node - <<'NODE' "$package_dir/package.json"
-const fs = require("node:fs");
-const [path] = process.argv.slice(2);
-const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-process.stdout.write(pkg.version);
-NODE
-}
+root="$(cd "$(dirname "$0")/../.." && pwd)"
+dist="$root/dist/npm"
+: "${1:?usage: $0 <version>}"
+version="${1#v}"
 
 publish_if_needed() {
-  local package_dir="$1"
-  local name
-  local version
+  local dir="$1" name pkg_version
+  [[ -f "$dir/package.json" ]] || { echo "missing package.json in $dir" >&2; exit 1; }
 
-  if [[ ! -f "$package_dir/package.json" ]]; then
-    echo "missing package.json in $package_dir" >&2
-    exit 1
-  fi
+  read -r name pkg_version < <(node -p "const p=require('$dir/package.json');p.name+' '+p.version")
 
-  name="$(package_name "$package_dir")"
-  version="$(package_version "$package_dir")"
+  [[ "$pkg_version" == "$version" ]] || { echo "version mismatch for $name: expected $version, found $pkg_version" >&2; exit 1; }
 
-  if [[ "$version" != "$VERSION" ]]; then
-    echo "version mismatch for $name: expected $VERSION, found $version" >&2
-    exit 1
-  fi
-
-  if npm view "${name}@${VERSION}" version >/dev/null 2>&1; then
-    echo "Skipping ${name}@${VERSION}; already published"
+  if npm view "${name}@${version}" version >/dev/null 2>&1; then
+    echo "skipping ${name}@${version}; already published"
     return 0
   fi
 
-  npm publish --access public --provenance "$package_dir"
+  npm publish --access public --provenance "$dir"
 }
 
 shopt -s nullglob
-
-platform_dirs=("$DIST_DIR"/@getforged/cli-*)
-if [[ ${#platform_dirs[@]} -eq 0 ]]; then
-  echo "no platform packages found in $DIST_DIR/@getforged" >&2
-  exit 1
-fi
+platforms=("$dist"/@getforged/cli-*)
+[[ ${#platforms[@]} -gt 0 ]] || { echo "no platform packages in $dist/@getforged" >&2; exit 1; }
 
 pids=()
-for package_dir in "${platform_dirs[@]}"; do
-  publish_if_needed "$package_dir" &
-  pids+=("$!")
+for pkg in "${platforms[@]}"; do
+  publish_if_needed "$pkg" & pids+=("$!")
 done
 
 status=0
-for pid in "${pids[@]}"; do
-  wait "$pid" || status=$?
-done
+for pid in "${pids[@]}"; do wait "$pid" || status=$?; done
+[[ $status -eq 0 ]] || { echo "one or more platform publishes failed" >&2; exit "$status"; }
 
-if [[ $status -ne 0 ]]; then
-  echo "one or more platform publishes failed" >&2
-  exit "$status"
-fi
-
-publish_if_needed "$DIST_DIR/cli"
+publish_if_needed "$dist/cli"

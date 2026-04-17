@@ -2,6 +2,7 @@ package actions
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -9,6 +10,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 )
 
 type KeySummary struct {
@@ -24,6 +26,7 @@ type KeyDetail struct {
 	Type         string `json:"type"`
 	Fingerprint  string `json:"fingerprint"`
 	PublicKey    string `json:"public_key"`
+	PrivateKey   string `json:"private_key,omitempty"`
 	Comment      string `json:"comment,omitempty"`
 	CreatedAt    string `json:"created_at,omitempty"`
 	UpdatedAt    string `json:"updated_at,omitempty"`
@@ -36,6 +39,30 @@ type KeyDetail struct {
 type RenameResult struct {
 	OldName string
 	NewName string
+}
+
+type GenerateResult struct {
+	Name        string `json:"name"`
+	Type        string `json:"type"`
+	Fingerprint string `json:"fingerprint"`
+	PublicKey   string `json:"public_key"`
+	Comment     string `json:"comment,omitempty"`
+}
+
+type SensitiveAuthRequiredError struct {
+	Prompt string
+}
+
+func (e *SensitiveAuthRequiredError) Error() string {
+	if strings.TrimSpace(e.Prompt) != "" {
+		return e.Prompt
+	}
+	return "sensitive authentication requires a password"
+}
+
+func IsSensitiveAuthRequired(err error) bool {
+	var target *SensitiveAuthRequiredError
+	return errors.As(err, &target)
 }
 
 type KeyQueryResolution struct {
@@ -59,9 +86,67 @@ func ListKeys(paths config.Paths) ([]KeySummary, error) {
 }
 
 func ViewKey(paths config.Paths, name string) (KeyDetail, error) {
+	return viewKey(paths, name, false)
+}
+
+func ViewFullKey(paths config.Paths, name string, password []byte) (KeyDetail, error) {
+	if _, err := authorizeSensitiveResult(paths, sensitiveauth.ActionView, password); err != nil {
+		return KeyDetail{}, err
+	}
+	return viewKey(paths, name, true)
+}
+
+func ExportPublicKey(paths config.Paths, name string) (GenerateResult, error) {
+	resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdExport, map[string]any{
+		"name": name,
+	})
+	if err != nil {
+		return GenerateResult{}, err
+	}
+
+	var result struct {
+		PublicKey    string `json:"public_key"`
+		ResolvedName string `json:"resolved_name"`
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return GenerateResult{}, fmt.Errorf("parsing key export: %w", err)
+	}
+
+	detail, err := ViewKey(paths, result.ResolvedName)
+	if err != nil {
+		return GenerateResult{}, err
+	}
+
+	return GenerateResult{
+		Name:        detail.Name,
+		Type:        detail.Type,
+		Fingerprint: detail.Fingerprint,
+		PublicKey:   result.PublicKey,
+		Comment:     detail.Comment,
+	}, nil
+}
+
+func GenerateKey(paths config.Paths, name, comment string) (GenerateResult, error) {
+	resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdGenerate, map[string]string{
+		"name":    name,
+		"comment": comment,
+	})
+	if err != nil {
+		return GenerateResult{}, err
+	}
+
+	var result GenerateResult
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return GenerateResult{}, fmt.Errorf("parsing generate result: %w", err)
+	}
+	result.Comment = comment
+	return result, nil
+}
+
+func viewKey(paths config.Paths, name string, full bool) (KeyDetail, error) {
 	resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdView, map[string]any{
 		"name": name,
-		"full": false,
+		"full": full,
 	})
 	if err != nil {
 		return KeyDetail{}, err
@@ -72,6 +157,48 @@ func ViewKey(paths config.Paths, name string) (KeyDetail, error) {
 		return KeyDetail{}, fmt.Errorf("parsing key detail: %w", err)
 	}
 	return result, nil
+}
+
+func authorizeSensitive(paths config.Paths, action sensitiveauth.Action, password []byte) error {
+	_, err := authorizeSensitiveResult(paths, action, password)
+	return err
+}
+
+func authorizeSensitiveResult(paths config.Paths, action sensitiveauth.Action, password []byte) (sensitiveauth.AuthorizeResult, error) {
+	client := ipc.NewClient(paths.CtlSocket())
+	parseResult := func(raw json.RawMessage) (sensitiveauth.AuthorizeResult, error) {
+		var result sensitiveauth.AuthorizeResult
+		if err := json.Unmarshal(raw, &result); err != nil {
+			return sensitiveauth.AuthorizeResult{}, fmt.Errorf("parsing auth response: %w", err)
+		}
+		return result, nil
+	}
+
+	if len(password) == 0 {
+		resp, err := client.CallWithTimeout(ipc.CmdSensitiveAuth, map[string]string{
+			"action": string(action),
+		}, 5*60*1e9)
+		if err != nil {
+			return sensitiveauth.AuthorizeResult{}, err
+		}
+		result, err := parseResult(resp.Data)
+		if err != nil {
+			return sensitiveauth.AuthorizeResult{}, err
+		}
+		if result.PasswordRequired {
+			return sensitiveauth.AuthorizeResult{}, &SensitiveAuthRequiredError{Prompt: result.Prompt}
+		}
+		return result, nil
+	}
+
+	resp, err := client.CallWithTimeout(ipc.CmdSensitivePassword, map[string]string{
+		"action":   string(action),
+		"password": string(password),
+	}, 5*60*1e9)
+	if err != nil {
+		return sensitiveauth.AuthorizeResult{}, err
+	}
+	return parseResult(resp.Data)
 }
 
 func RenameKey(paths config.Paths, oldName, newName string) (RenameResult, error) {

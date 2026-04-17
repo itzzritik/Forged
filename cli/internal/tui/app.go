@@ -57,6 +57,8 @@ const (
 	passwordCreate  passwordFlow = "create"
 	passwordRestore passwordFlow = "restore"
 	passwordRepair  passwordFlow = "repair"
+	passwordKeyView passwordFlow = "key-view"
+	passwordKeyExport passwordFlow = "key-export"
 )
 
 type repairPurpose string
@@ -210,6 +212,7 @@ type model struct {
 	passwordContext  string
 	passwordAuth     string
 	passwordBusy     bool
+	passwordOverlay  bool
 	repairScreen     repairscreen.TaskScreen
 
 	loginID       int
@@ -238,11 +241,17 @@ type model struct {
 	keyDetailID int
 	keyRenameID int
 	keyDeleteID int
+	keyGenerateID int
+	keyImportID int
+	keyExportID int
 
 	keyBrowser keyBrowserState
 	keyDetail  keyDetailState
 	keyRename  keyRenameState
 	keyDelete  keyDeleteState
+	keyGenerate keyGenerateState
+	keyImport   keyImportState
+	keyExport   keyExportState
 }
 
 func Run(intent Intent, deps Dependencies) (Result, error) {
@@ -540,6 +549,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyRenameFinishedMsg(msg)
 	case keyDeleteFinishedMsg:
 		return m.handleKeyDeleteFinishedMsg(msg)
+	case keyCopyFinishedMsg:
+		return m.handleKeyCopyFinishedMsg(msg)
+	case keyPrivateCopyFinishedMsg:
+		return m.handleKeyPrivateCopyFinishedMsg(msg)
+	case keyGenerateFinishedMsg:
+		return m.handleKeyGenerateFinishedMsg(msg)
+	case keyImportFinishedMsg:
+		return m.handleKeyImportFinishedMsg(msg)
+	case keyExportFinishedMsg:
+		return m.handleKeyExportFinishedMsg(msg)
 	case copyFinishedMsg:
 		if msg.err != nil {
 			if m.screen == screenLogin {
@@ -676,6 +695,12 @@ func (m *model) headerPageTitle() string {
 		}
 		return "Sign In to Sync Vault"
 	case screenPassword:
+		switch m.passwordFlow {
+		case passwordKeyView:
+			return "Unlock private key"
+		case passwordKeyExport:
+			return "Export vault"
+		}
 		if strings.TrimSpace(m.passwordTitle) != "" {
 			return m.passwordTitle
 		}
@@ -719,6 +744,20 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Sign In", Current: true},
 		}
 	case screenPassword:
+		switch m.passwordFlow {
+		case passwordKeyView:
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Key"},
+				{Label: "View", Current: true},
+			}
+		case passwordKeyExport:
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Key"},
+				{Label: "Export", Current: true},
+			}
+		}
 		label := "Unlock"
 		if m.passwordFlow == passwordCreate {
 			label = "Set Up"
@@ -1086,6 +1125,19 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	switch msg.String() {
 	case "esc":
+		if m.passwordOverlay {
+			if m.passwordFlow == passwordKeyView {
+				m.keyDetail.busy = false
+			}
+			if m.passwordFlow == passwordKeyExport {
+				m.keyExport.exporting = false
+			}
+			m.passwordOverlay = false
+			m.passwordBusy = false
+			m.passwordAuth = ""
+			m.screen = screenDashboard
+			return m, nil
+		}
 		if m.session.Back() {
 			m.passwordAuth = ""
 			return m, m.showCurrentRoute()
@@ -1109,6 +1161,14 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.passwordInput.SetInfo("Decrypting vault")
 			m.restoreID++
 			return m, tea.Batch(m.spinner.Tick, m.restoreLinkedVault(m.restoreID, password))
+		case passwordKeyView:
+			m.passwordBusy = true
+			m.passwordInput.SetInfo("Decrypting vault")
+			return m, tea.Batch(m.spinner.Tick, m.copyPrivateKey(password))
+		case passwordKeyExport:
+			m.passwordBusy = true
+			m.passwordInput.SetInfo("Exporting vault")
+			return m, tea.Batch(m.spinner.Tick, m.exportVault(password))
 		default:
 			return m, m.startRepair(repairPurposeUnlock, password, false, "Unlocking Forged", "Verifying the vault and repairing the background service.", "")
 		}
@@ -1630,6 +1690,7 @@ func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorTex
 	m.passwordFlow = flow
 	m.passwordAuth = authEmail
 	m.passwordBusy = false
+	m.passwordOverlay = reuseCurrentRoute && (flow == passwordKeyView || flow == passwordKeyExport)
 	switch flow {
 	case passwordCreate:
 		m.passwordTitle = "Create local vault"
@@ -1638,6 +1699,14 @@ func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorTex
 	case passwordRestore:
 		m.passwordTitle = "Unlock your vault"
 		m.passwordContext = "Master password is required to decrypt this vault and unlock its keys"
+		m.passwordInput = components.NewUnlockPasswordInput()
+	case passwordKeyView:
+		m.passwordTitle = "Unlock private key"
+		m.passwordContext = "Master password is required to decrypt this vault and copy its private key"
+		m.passwordInput = components.NewUnlockPasswordInput()
+	case passwordKeyExport:
+		m.passwordTitle = "Export vault"
+		m.passwordContext = "Master password is required to export this vault and its private keys"
 		m.passwordInput = components.NewUnlockPasswordInput()
 	default:
 		m.passwordTitle = "Unlock Forged"
@@ -1656,7 +1725,7 @@ func (m *model) showCurrentRoute() tea.Cmd {
 	switch m.session.Current().ID {
 	case RouteAccountLogin:
 		return m.startLoginFlow()
-	case RouteKeysBrowser, RouteKeysDetail, RouteKeysRename, RouteKeysDelete:
+	case RouteKeysBrowser, RouteKeysDetail, RouteKeysRename, RouteKeysDelete, RouteKeysGenerate, RouteKeysImport, RouteKeysExport:
 		return m.startKeyRouteLoad()
 	case RouteVaultHome, RouteAgentHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
 		return nil
@@ -1679,6 +1748,12 @@ func (m *model) pendingDashboardRouteTitle() string {
 		return ""
 	case RouteKeysDelete:
 		return ""
+	case RouteKeysGenerate:
+		return "Generate key"
+	case RouteKeysImport:
+		return "Import keys"
+	case RouteKeysExport:
+		return "Export vault"
 	case RouteVaultHome:
 		return "Vault"
 	case RouteAgentHome:
@@ -1707,6 +1782,24 @@ func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
 		return nil
 	case RouteKeysDelete:
 		return nil
+	case RouteKeysGenerate:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Generate", Current: true},
+		}
+	case RouteKeysImport:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Import", Current: true},
+		}
+	case RouteKeysExport:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Export", Current: true},
+		}
 	case RouteVaultHome:
 		return []shell.Breadcrumb{
 			{Label: "Home"},
