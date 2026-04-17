@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/charmbracelet/bubbles/textinput"
@@ -14,9 +15,10 @@ import (
 )
 
 type keyListMsg struct {
-	id   int
-	keys []actions.KeySummary
-	err  error
+	id       int
+	keys     []actions.KeySummary
+	err      error
+	preserve bool
 }
 
 type keyDetailMsg struct {
@@ -38,9 +40,10 @@ type keyDeleteFinishedMsg struct {
 }
 
 type keyBrowserState struct {
-	loading bool
-	err     string
-	notice  string
+	loading    bool
+	refreshing bool
+	err        string
+	notice     string
 
 	all      []actions.KeySummary
 	rows     []actions.KeySummary
@@ -214,6 +217,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			{Key: "Enter", Label: "View"},
 			{Key: "E", Label: "Edit"},
 			{Key: "D", Label: "Delete"},
+			{Key: "R", Label: "Refresh"},
 			{Key: "/", Label: "Search"},
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
@@ -384,6 +388,11 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyBrowser.searchActive = true
 		m.keyBrowser.input.Focus()
 		return m, textinput.Blink
+	case "r":
+		if m.keyBrowser.loading || m.keyBrowser.refreshing {
+			return m, nil
+		}
+		return m, m.refreshKeyBrowser(true)
 	case "up", "k":
 		m.moveKeyBrowserSelection(-1)
 		return m, nil
@@ -392,17 +401,17 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "enter":
 		if key, ok := m.selectedKeyRow(); ok {
-			m.session.Push(Route{ID: RouteKeysDetail, Params: map[string]string{"name": key.Name}})
+			m.session.Push(Route{ID: RouteKeysDetail, Params: map[string]string{"name": key.Name, "source": "browser"}})
 			return m, m.showCurrentRoute()
 		}
 	case "e":
 		if key, ok := m.selectedKeyRow(); ok {
-			m.session.Push(Route{ID: RouteKeysRename, Params: map[string]string{"old_name": key.Name}})
+			m.session.Push(Route{ID: RouteKeysRename, Params: map[string]string{"old_name": key.Name, "source": "browser"}})
 			return m, m.showCurrentRoute()
 		}
 	case "d":
 		if key, ok := m.selectedKeyRow(); ok {
-			m.session.Push(Route{ID: RouteKeysDelete, Params: map[string]string{"name": key.Name}})
+			m.session.Push(Route{ID: RouteKeysDelete, Params: map[string]string{"name": key.Name, "source": "browser"}})
 			return m, m.showCurrentRoute()
 		}
 	}
@@ -476,30 +485,83 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 	route := m.session.Current()
 	switch route.ID {
 	case RouteKeysBrowser:
+		if len(m.keyBrowser.all) > 0 {
+			m.applyKeyBrowserRoute(route)
+			m.keyBrowser.loading = false
+			m.keyBrowser.refreshing = true
+			m.keyBrowser.err = ""
+			return m.listKeys(m.nextKeyListID(), true)
+		}
 		m.keyBrowser = keyBrowserState{
 			loading: true,
 			input:   newKeyInput("Search keys"),
 		}
+		if query := strings.TrimSpace(route.Params["query"]); query != "" {
+			m.keyBrowser.input.SetValue(query)
+		}
+		if route.Params["search"] == "true" {
+			m.keyBrowser.searchActive = true
+			m.keyBrowser.input.Focus()
+		}
 	case RouteKeysDetail:
+		if route.Params["source"] == "browser" {
+			name := strings.TrimSpace(route.Params["name"])
+			if name != "" {
+				m.keyDetail = keyDetailState{loading: true}
+				return tea.Batch(m.spinner.Tick, m.loadKeyDetail(name))
+			}
+		}
 		m.keyDetail = keyDetailState{loading: true, resolving: true}
 	case RouteKeysRename:
+		if route.Params["source"] == "browser" {
+			name := strings.TrimSpace(route.Params["old_name"])
+			if key, ok := m.cachedKeyRow(name); ok {
+				m.keyRename = keyRenameState{
+					original: key.Name,
+					input:    newKeyInput("Enter new key name"),
+				}
+				m.keyRename.input.SetValue(key.Name)
+				m.keyRename.input.Focus()
+				m.resizeKeyInputs()
+				return textinput.Blink
+			}
+		}
 		m.keyRename = keyRenameState{loading: true, resolving: true}
 	case RouteKeysDelete:
+		if route.Params["source"] == "browser" {
+			name := strings.TrimSpace(route.Params["name"])
+			if key, ok := m.cachedKeyRow(name); ok {
+				m.keyDelete = keyDeleteState{key: key}
+				return nil
+			}
+		}
 		m.keyDelete = keyDeleteState{loading: true, resolving: true}
 	default:
 		return nil
 	}
 
 	m.resizeKeyInputs()
-	m.keyListID++
-	return tea.Batch(m.spinner.Tick, m.listKeys(m.keyListID))
+	return tea.Batch(m.spinner.Tick, m.listKeys(m.nextKeyListID(), false))
 }
 
-func (m *model) listKeys(id int) tea.Cmd {
+func (m *model) listKeys(id int, preserve bool) tea.Cmd {
 	paths := config.DefaultPaths()
 	return func() tea.Msg {
 		keys, err := actions.ListKeys(paths)
-		return keyListMsg{id: id, keys: keys, err: err}
+		return keyListMsg{id: id, keys: keys, err: err, preserve: preserve}
+	}
+}
+
+func (m *model) syncAndListKeys(id int) tea.Cmd {
+	paths := config.DefaultPaths()
+	return func() tea.Msg {
+		if m.snapshot.LoggedIn {
+			if err := actions.TriggerSync(paths); err != nil {
+				return keyListMsg{id: id, err: err, preserve: true}
+			}
+		}
+		keys, err := actions.ListKeys(paths)
+		return keyListMsg{id: id, keys: keys, err: err, preserve: true}
 	}
 }
 
@@ -543,6 +605,11 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 		switch m.session.Current().ID {
 		case RouteKeysBrowser:
 			m.keyBrowser.loading = false
+			m.keyBrowser.refreshing = false
+			if msg.preserve && len(m.keyBrowser.all) > 0 {
+				m.keyBrowser.notice = msg.err.Error()
+				return m, nil
+			}
 			m.keyBrowser.err = msg.err.Error()
 		case RouteKeysDetail:
 			m.keyDetail.loading = false
@@ -563,8 +630,23 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 	current := m.session.Current()
 	switch current.ID {
 	case RouteKeysBrowser:
-		searchActive := current.Params["search"] == "true"
-		m.prepareKeyBrowser(msg.keys, current.Params["query"], current.Params["notice"], searchActive)
+		preserveName := ""
+		if key, ok := m.selectedKeyRow(); ok {
+			preserveName = key.Name
+		}
+		m.keyBrowser.loading = false
+		m.keyBrowser.refreshing = false
+		m.keyBrowser.err = ""
+		if len(m.keyBrowser.all) == 0 {
+			searchActive := current.Params["search"] == "true"
+			m.prepareKeyBrowser(msg.keys, current.Params["query"], current.Params["notice"], searchActive)
+		} else {
+			query := m.keyBrowser.input.Value()
+			notice := m.keyBrowser.notice
+			searchActive := m.keyBrowser.searchActive
+			m.prepareKeyBrowser(msg.keys, query, notice, searchActive)
+			m.selectKeyBrowserByName(preserveName)
+		}
 		if m.keyBrowser.searchActive {
 			return m, textinput.Blink
 		}
@@ -631,6 +713,7 @@ func (m *model) handleKeyRenameFinishedMsg(msg keyRenameFinishedMsg) (tea.Model,
 		m.keyRename.err = msg.err.Error()
 		return m, nil
 	}
+	m.renameCachedKey(msg.result.OldName, msg.result.NewName)
 
 	m.session.ReplaceCurrent(Route{
 		ID: RouteKeysBrowser,
@@ -651,6 +734,7 @@ func (m *model) handleKeyDeleteFinishedMsg(msg keyDeleteFinishedMsg) (tea.Model,
 		m.keyDelete.err = msg.err.Error()
 		return m, nil
 	}
+	m.removeCachedKey(msg.name)
 
 	m.session.ReplaceCurrent(Route{
 		ID: RouteKeysBrowser,
@@ -680,6 +764,7 @@ func (m *model) fallbackKeyBrowser(keys []actions.KeySummary, query string, noti
 
 func (m *model) prepareKeyBrowser(keys []actions.KeySummary, query string, notice string, searchActive bool) {
 	m.keyBrowser.loading = false
+	m.keyBrowser.refreshing = false
 	m.keyBrowser.err = ""
 	m.keyBrowser.notice = strings.TrimSpace(notice)
 	m.keyBrowser.all = keys
@@ -730,6 +815,77 @@ func (m *model) moveKeyBrowserSelection(delta int) {
 	}
 	m.keyBrowser.selected = next
 	m.ensureKeyBrowserVisible()
+}
+
+func (m *model) nextKeyListID() int {
+	m.keyListID++
+	return m.keyListID
+}
+
+func (m *model) refreshKeyBrowser(sync bool) tea.Cmd {
+	m.keyBrowser.refreshing = true
+	m.keyBrowser.err = ""
+	id := m.nextKeyListID()
+	if sync {
+		return tea.Batch(m.spinner.Tick, m.syncAndListKeys(id))
+	}
+	return tea.Batch(m.spinner.Tick, m.listKeys(id, true))
+}
+
+func (m *model) applyKeyBrowserRoute(route Route) {
+	query := route.Params["query"]
+	notice := route.Params["notice"]
+	searchActive := route.Params["search"] == "true"
+	if query == "" && notice == "" && !searchActive {
+		m.resizeKeyInputs()
+		return
+	}
+	m.prepareKeyBrowser(m.keyBrowser.all, query, notice, searchActive)
+}
+
+func (m *model) cachedKeyRow(name string) (actions.KeySummary, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return actions.KeySummary{}, false
+	}
+	for _, key := range m.keyBrowser.all {
+		if key.Name == name {
+			return key, true
+		}
+	}
+	return actions.KeySummary{}, false
+}
+
+func (m *model) selectKeyBrowserByName(name string) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return
+	}
+	for index, key := range m.keyBrowser.rows {
+		if key.Name == name {
+			m.keyBrowser.selected = index
+			m.ensureKeyBrowserVisible()
+			return
+		}
+	}
+}
+
+func (m *model) renameCachedKey(oldName, newName string) {
+	for index := range m.keyBrowser.all {
+		if m.keyBrowser.all[index].Name == oldName {
+			m.keyBrowser.all[index].Name = newName
+			break
+		}
+	}
+	m.refreshKeyBrowserRows()
+	m.selectKeyBrowserByName(newName)
+}
+
+func (m *model) removeCachedKey(name string) {
+	m.keyBrowser.all = slices.DeleteFunc(m.keyBrowser.all, func(key actions.KeySummary) bool {
+		return key.Name == name
+	})
+	m.refreshKeyBrowserRows()
 }
 
 func (m *model) ensureKeyBrowserVisible() {

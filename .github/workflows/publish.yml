@@ -141,14 +141,23 @@ jobs:
                   git add npm/cli/package.json
                   git commit -m "publish $NEW_TAG"
                   git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
-                  git push --follow-tags origin HEAD:main
 
             - uses: goreleaser/goreleaser-action@v7
               with:
                   distribution: goreleaser
                   version: '~> v2'
-                  args: release --clean --skip=announce,homebrew,nfpm,scoop
+                  args: release --clean --skip=announce,publish,homebrew,nfpm,scoop
 
             - run: ./scripts/deploy/build-npm-packages.sh "${{ needs.version.outputs.version }}"
 
             - run: ./scripts/deploy/publish-npm-packages.sh "${{ needs.version.outputs.version }}"
+
+            - run: git push --follow-tags origin HEAD:main
+
+            - env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+                  NEW_TAG: ${{ needs.version.outputs.tag }}
+              run: |
+                  gh release create "$NEW_TAG" \
+                    --generate-notes \
+                    dist/*.tar.gz dist/*.zip dist/checksums.txt
