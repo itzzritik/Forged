@@ -47,7 +47,7 @@ func RenderHeader(width int, data HeaderData) string {
 }
 
 func renderHeaderBox(width int, data HeaderData) string {
-	innerWidth := max(48, width-4)
+	innerWidth := max(16, width-4)
 	sidebar := renderSidebar(data.Version, data.StatusItems)
 	sidebarBlock := theme.HeaderSidebar.Render(sidebar)
 	sidebarWidth := min(max(lipgloss.Width(sidebarBlock), 28), max(28, innerWidth-20))
@@ -82,7 +82,7 @@ func renderHeaderBox(width int, data HeaderData) string {
 		}, "\n")
 	}
 
-	return theme.HeaderFrame.Width(max(44, innerWidth)).Render(content)
+	return theme.HeaderFrame.Width(innerWidth).Render(content)
 }
 
 func renderBrandBanner(width int) string {

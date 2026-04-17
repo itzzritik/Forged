@@ -412,6 +412,10 @@ func statusTone(healthy bool, warnWhenFalse bool) shell.StatusTone {
 }
 
 func (m *model) headerPageTitle() string {
+	if m.isWelcomeState() {
+		return ""
+	}
+
 	switch m.screen {
 	case screenLogin:
 		if strings.TrimSpace(m.loginScreen.Title) != "" {
@@ -434,6 +438,10 @@ func (m *model) headerPageTitle() string {
 }
 
 func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
+	if m.isWelcomeState() {
+		return nil
+	}
+
 	switch m.screen {
 	case screenLogin:
 		return []shell.Breadcrumb{
@@ -457,9 +465,7 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Repair", Current: true},
 		}
 	default:
-		return []shell.Breadcrumb{
-			{Label: "Home", Current: true},
-		}
+		return []shell.Breadcrumb{{Label: "Home", Current: true}}
 	}
 }
 
@@ -473,7 +479,7 @@ func (m *model) renderBody(contentWidth int) string {
 		return repairscreen.Render(m.repairScreen, m.spinner.View(), contentWidth)
 	default:
 		return dashboardscreen.Render(dashboardscreen.Screen{
-			Title:       m.dashboardTitle(),
+			Title:       m.dashboardBodyTitle(),
 			Context:     m.dashboardLead(),
 			Snapshot:    m.snapshot,
 			Options:     m.dashboardOptions(),
@@ -535,7 +541,7 @@ func (m *model) footerActions() []shell.FooterAction {
 		return nil
 	default:
 		actions := []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
-		if len(m.dashboardOptions()) > 0 {
+		if m.isWelcomeState() {
 			return []shell.FooterAction{
 				{Key: "↑/↓", Label: "Move"},
 				{Key: "Enter", Label: "Select"},
@@ -587,22 +593,16 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.onboardingCursor++
 		}
 		return m, nil
-	case "enter":
-		if len(m.dashboardOptions()) == 0 {
+	case "left", "h":
+		if m.isWelcomeState() && m.onboardingCursor > 0 {
+			m.onboardingCursor--
+		}
+		return m, nil
+	case "right", "l":
+		if m.isWelcomeState() && m.onboardingCursor < len(m.dashboardOptions())-1 {
+			m.onboardingCursor++
 			return m, nil
 		}
-		if m.onboardingCursor == 0 {
-			if m.session.Current().ID != RouteVaultUnlock {
-				m.session.Push(Route{ID: RouteVaultUnlock})
-			}
-			m.showPasswordScreen(passwordCreate, "", "", false)
-			return m, m.passwordInput.Init()
-		}
-		if m.session.Current().ID != RouteAccountLogin {
-			m.session.Push(Route{ID: RouteAccountLogin})
-		}
-		return m, m.startLoginFlow()
-	case "l":
 		if m.snapshot.LoggedIn || !m.snapshot.VaultExists {
 			return m, nil
 		}
@@ -610,6 +610,24 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.session.Push(Route{ID: RouteAccountLogin})
 		}
 		return m, m.startLoginFlow()
+	case "enter":
+		if len(m.dashboardOptions()) == 0 {
+			return m, nil
+		}
+		if m.onboardingCursor == 0 {
+			if m.session.Current().ID != RouteAccountLogin {
+				m.session.Push(Route{ID: RouteAccountLogin})
+			}
+			return m, m.startLoginFlow()
+		}
+		if m.onboardingCursor == 1 {
+			if m.session.Current().ID != RouteVaultUnlock {
+				m.session.Push(Route{ID: RouteVaultUnlock})
+			}
+			m.showPasswordScreen(passwordCreate, "", "", false)
+			return m, m.passwordInput.Init()
+		}
+		return m, nil
 	}
 	return m, nil
 }
@@ -672,12 +690,16 @@ func (m *model) dashboardTitle() string {
 	return "Dashboard"
 }
 
+func (m *model) dashboardBodyTitle() string {
+	if m.isWelcomeState() {
+		return "Welcome to Forged"
+	}
+	return m.dashboardTitle()
+}
+
 func (m *model) dashboardLead() string {
-	if len(m.dashboardOptions()) > 0 {
-		if m.snapshot.LoggedIn {
-			return "This account is linked, but no synced vault was found for this device yet."
-		}
-		return "Start with a new local vault or restore the one already linked to your Forged account."
+	if m.isWelcomeState() {
+		return "Restore your synced vault or start fresh on this device"
 	}
 	if m.dashboardHealthyCompact() {
 		return ""
@@ -706,8 +728,17 @@ func (m *model) dashboardOptions() []dashboardscreen.Option {
 		return nil
 	}
 	return []dashboardscreen.Option{
-		{Label: "Set up a new vault", Selected: m.onboardingCursor == 0},
-		{Label: "Sign in to an existing Forged account", Selected: m.onboardingCursor == 1},
+		{
+			Label:       "Log in to Forged",
+			Description: "Create and sync encrypted keys across all machines",
+			Primary:     true,
+			Selected:    m.onboardingCursor == 0,
+		},
+		{
+			Label:       "Create local vault",
+			Description: "Create encrypted keys that stay private to this machine",
+			Selected:    m.onboardingCursor == 1,
+		},
 	}
 }
 
@@ -940,7 +971,7 @@ func (m *model) showDashboardNotice(message string, tone dashboardscreen.Tone) {
 }
 
 func (m *model) dashboardHealthyCompact() bool {
-	if len(m.dashboardOptions()) > 0 {
+	if m.isWelcomeState() {
 		return false
 	}
 	switch m.snapshot.State {
@@ -952,13 +983,17 @@ func (m *model) dashboardHealthyCompact() bool {
 }
 
 func (m *model) shouldShowDashboardSummary() bool {
-	if len(m.dashboardOptions()) > 0 {
-		return true
+	if m.isWelcomeState() {
+		return false
 	}
 	if m.dashboardHealthyCompact() {
 		return false
 	}
 	return true
+}
+
+func (m *model) isWelcomeState() bool {
+	return m.screen == screenDashboard && len(m.dashboardOptions()) > 0
 }
 
 func (m *model) serverURL() string {
