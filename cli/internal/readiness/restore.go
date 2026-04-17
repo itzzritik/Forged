@@ -22,6 +22,11 @@ var (
 	errNoRemoteLinkedVault    = errors.New("no remote linked vault")
 )
 
+var (
+	ErrInvalidRestorePassword = errInvalidRestorePassword
+	ErrNoRemoteLinkedVault    = errNoRemoteLinkedVault
+)
+
 type linkedCredentials struct {
 	ServerURL string `json:"server_url"`
 	Token     string `json:"token"`
@@ -33,6 +38,14 @@ type linkedRestorePlan struct {
 	state      *forgedsync.SyncState
 	stateStore *forgedsync.StateStore
 	result     forgedsync.PullResult
+}
+
+func RestoreLinkedVault(paths config.Paths, password []byte) error {
+	plan, err := prepareLinkedRestore(paths)
+	if err != nil {
+		return err
+	}
+	return applyLinkedRestore(paths, plan, password)
 }
 
 func prepareLinkedRestore(paths config.Paths) (linkedRestorePlan, error) {

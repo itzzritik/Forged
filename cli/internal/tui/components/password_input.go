@@ -23,6 +23,7 @@ type PasswordInput struct {
 	focus int
 	err   string
 	ok    string
+	info  string
 
 	fields []textinput.Model
 }
@@ -86,6 +87,7 @@ func (p *PasswordInput) SetError(message string) {
 	p.err = message
 	if message != "" {
 		p.ok = ""
+		p.info = ""
 	}
 }
 
@@ -93,12 +95,22 @@ func (p *PasswordInput) SetSuccess(message string) {
 	p.ok = message
 	if message != "" {
 		p.err = ""
+		p.info = ""
+	}
+}
+
+func (p *PasswordInput) SetInfo(message string) {
+	p.info = message
+	if message != "" {
+		p.err = ""
+		p.ok = ""
 	}
 }
 
 func (p *PasswordInput) ClearStatus() {
 	p.err = ""
 	p.ok = ""
+	p.info = ""
 }
 
 func (p *PasswordInput) FocusIndex() int {
@@ -182,7 +194,7 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 	return []byte(primary), nil
 }
 
-func (p *PasswordInput) View(labels ...string) string {
+func (p *PasswordInput) View(spinner string, labels ...string) string {
 	sections := make([]string, 0, len(p.fields)+1)
 	for index, field := range p.fields {
 		label := "Master password"
@@ -216,6 +228,10 @@ func (p *PasswordInput) View(labels ...string) string {
 		sections = append(sections, theme.Danger.Render("✕ "+p.err))
 	} else if p.ok != "" {
 		sections = append(sections, theme.Success.Render("✓ "+p.ok))
+	} else if p.info != "" {
+		sections = append(sections, theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+p.info))
+	} else {
+		sections = append(sections, "")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)

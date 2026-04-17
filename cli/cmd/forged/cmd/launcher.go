@@ -33,8 +33,11 @@ func runInteractiveIntent(intent tui.Intent) error {
 	_, err := tui.Run(intent, tui.Dependencies{
 		Repair:      engine.Run,
 		CreateVault: func(password []byte) error { return createLocalVault(paths, password) },
-		StartLogin: func(server string) (actions.LoginSession, error) {
-			return actions.BeginLogin(server, actions.OpenBrowser)
+		RestoreVault: func(password []byte) error {
+			return readiness.RestoreLinkedVault(paths, password)
+		},
+		StartLogin: func(server string, progress func(actions.LoginProgress)) (actions.LoginSession, error) {
+			return actions.BeginLoginWithProgress(server, actions.OpenBrowser, progress)
 		},
 		SaveCredentials: func(creds actions.AccountCredentials) error { return actions.SaveCredentials(paths, creds) },
 		LoadStatus: func() (tui.RuntimeStatus, error) {

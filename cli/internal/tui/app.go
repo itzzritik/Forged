@@ -31,7 +31,8 @@ type Result struct {
 type Dependencies struct {
 	Repair          func(readiness.RunOptions) (readiness.RunResult, error)
 	CreateVault     func([]byte) error
-	StartLogin      func(string) (actions.LoginSession, error)
+	RestoreVault    func([]byte) error
+	StartLogin      func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	SaveCredentials func(actions.AccountCredentials) error
 	LoadStatus      func() (RuntimeStatus, error)
 	CopyText        func(string) error
@@ -91,11 +92,22 @@ type loginStartedMsg struct {
 	err     error
 }
 
+type loginProgressMsg struct {
+	id       int
+	progress actions.LoginProgress
+}
+
 type loginFinishedMsg struct {
 	id       int
 	creds    actions.AccountCredentials
 	err      error
 	canceled bool
+}
+
+type restoreFinishedMsg struct {
+	id       int
+	password []byte
+	err      error
 }
 
 type repairProgressMsg struct {
@@ -157,7 +169,8 @@ type model struct {
 	session         *Session
 	repair          func(readiness.RunOptions) (readiness.RunResult, error)
 	createVault     func([]byte) error
-	startLogin      func(string) (actions.LoginSession, error)
+	restoreVault    func([]byte) error
+	startLogin      func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	saveCredentials func(actions.AccountCredentials) error
 	loadStatus      func() (RuntimeStatus, error)
 	copyText        func(string) error
@@ -185,10 +198,13 @@ type model struct {
 	passwordTitle    string
 	passwordContext  string
 	passwordAuth     string
+	passwordBusy     bool
 	repairScreen     repairscreen.TaskScreen
 
-	loginID     int
-	loginCancel context.CancelFunc
+	loginID       int
+	loginProgress <-chan actions.LoginProgress
+	loginCancel   context.CancelFunc
+	restoreID     int
 
 	repairID           int
 	repairProgress     <-chan readiness.ProgressStage
@@ -214,6 +230,8 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("tui repair dependency is required")
 	case deps.CreateVault == nil:
 		return Result{}, fmt.Errorf("tui create-vault dependency is required")
+	case deps.RestoreVault == nil:
+		return Result{}, fmt.Errorf("tui restore-vault dependency is required")
 	case deps.StartLogin == nil:
 		return Result{}, fmt.Errorf("tui login dependency is required")
 	case deps.SaveCredentials == nil:
@@ -248,6 +266,7 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		session:         NewSession(intent),
 		repair:          deps.Repair,
 		createVault:     deps.CreateVault,
+		restoreVault:    deps.RestoreVault,
 		startLogin:      deps.StartLogin,
 		saveCredentials: deps.SaveCredentials,
 		loadStatus:      deps.LoadStatus,
@@ -327,9 +346,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.systemHeader = systemHeaderChecking
 		return m, m.startStartupRepair()
 	case loginStartedMsg:
-		if msg.id != m.loginID {
+		if msg.id != m.loginID || m.screen != screenLogin {
 			return m, nil
 		}
+		m.loginProgress = nil
 		if msg.err != nil {
 			m.loginScreen.Waiting = false
 			m.loginScreen.Error = msg.err.Error()
@@ -351,6 +371,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ctx, cancel := context.WithCancel(context.Background())
 		m.loginCancel = cancel
 		return m, m.waitForLogin(ctx, msg.id, msg.session)
+	case loginProgressMsg:
+		if msg.id != m.loginID || m.screen != screenLogin {
+			return m, nil
+		}
+		if strings.TrimSpace(msg.progress.Status) != "" {
+			m.loginScreen.Waiting = true
+			m.loginScreen.Status = msg.progress.Status
+			m.loginScreen.Error = ""
+		}
+		return m, m.waitForLoginStartProgress(msg.id, m.loginProgress)
 	case loginFinishedMsg:
 		if msg.id != m.loginID {
 			return m, nil
@@ -377,6 +407,23 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		return m, m.startRepair(repairPurposePostLogin, nil, false, "Finishing account setup", "Linking the signed-in account to the local daemon and refreshing machine state.", msg.creds.Email)
+	case restoreFinishedMsg:
+		if msg.id != m.restoreID {
+			return m, nil
+		}
+		m.passwordBusy = false
+		if msg.err != nil {
+			switch {
+			case errors.Is(msg.err, readiness.ErrInvalidRestorePassword):
+				m.passwordInput.SetError("Couldn't decrypt vault, incorrect password")
+			case errors.Is(msg.err, readiness.ErrNoRemoteLinkedVault):
+				m.passwordInput.SetError("No linked vault was found for this account.")
+			default:
+				m.passwordInput.SetError(msg.err.Error())
+			}
+			return m, nil
+		}
+		return m, m.startRepair(repairPurposeUnlock, msg.password, false, "Setting up Forged", "Restoring your vault and preparing secure access on this machine.", m.passwordAuth)
 	case repairProgressMsg:
 		if msg.id != m.repairID {
 			return m, nil
@@ -658,8 +705,7 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 
 	if m.passwordAuth != "" {
 		sections = append(sections,
-			theme.Success.Render("✓ Authentication successful"),
-			theme.Body.Render("Signed in as "+m.passwordAuth+"."),
+			theme.Success.Render("✓")+" "+theme.BodyMuted.Render("Signed in as")+" "+theme.Body.Render(m.passwordAuth),
 			"",
 		)
 	}
@@ -668,11 +714,11 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 		sections = append(sections, theme.Body.Width(max(28, min(contentWidth, theme.HeroMaxWidth))).Render(m.passwordContext))
 	}
 
-	labels := []string{"Master password"}
+	labels := []string{""}
 	if m.passwordFlow == passwordCreate {
 		labels = []string{"", ""}
 	}
-	sections = append(sections, "", m.passwordInput.View(labels...))
+	sections = append(sections, "", m.passwordInput.View(m.spinner.View(), labels...))
 	return strings.Join(sections, "\n")
 }
 
@@ -689,6 +735,9 @@ func (m *model) footerActions() []shell.FooterAction {
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscCancel)})
 		return actions
 	case screenPassword:
+		if m.passwordBusy {
+			return nil
+		}
 		enterLabel := "Continue"
 		if m.passwordFlow == passwordCreate && m.passwordInput != nil && m.passwordInput.FocusIndex() == 0 {
 			enterLabel = "Next"
@@ -867,6 +916,8 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
+		m.loginID++
+		m.loginProgress = nil
 		if m.loginCancel != nil {
 			m.loginCancel()
 			m.loginCancel = nil
@@ -892,6 +943,10 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.passwordBusy {
+		return m, nil
+	}
+
 	switch msg.String() {
 	case "esc":
 		if m.session.Back() {
@@ -913,7 +968,10 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case passwordCreate:
 			return m, m.startRepair(repairPurposeSetup, password, true, "Setting up Forged", "Creating the local vault and preparing background services for this machine.", "")
 		case passwordRestore:
-			return m, m.startRepair(repairPurposeUnlock, password, false, "Setting up Forged", "Restoring your vault and preparing secure access on this machine.", m.passwordAuth)
+			m.passwordBusy = true
+			m.passwordInput.SetInfo("Decrypting vault")
+			m.restoreID++
+			return m, tea.Batch(m.spinner.Tick, m.restoreLinkedVault(m.restoreID, password))
 		default:
 			return m, m.startRepair(repairPurposeUnlock, password, false, "Unlocking Forged", "Verifying the vault and repairing the background service.", "")
 		}
@@ -1035,6 +1093,8 @@ func (m *model) usesSpinner() bool {
 		return m.repairScreen.Error == ""
 	case screenLogin:
 		return m.loginScreen.Waiting
+	case screenPassword:
+		return m.passwordBusy
 	case screenDashboard:
 		return m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeStatus.Syncing
 	default:
@@ -1063,13 +1123,35 @@ func (m *model) startLoginFlow() tea.Cmd {
 	id := m.loginID
 	startLogin := m.startLogin
 	server := m.serverURL()
+	progressCh := make(chan actions.LoginProgress, 8)
+	m.loginProgress = progressCh
 	return tea.Batch(
 		m.spinner.Tick,
+		m.waitForLoginStartProgress(id, progressCh),
 		func() tea.Msg {
-			session, err := startLogin(server)
+			session, err := startLogin(server, func(progress actions.LoginProgress) {
+				select {
+				case progressCh <- progress:
+				default:
+				}
+			})
+			close(progressCh)
 			return loginStartedMsg{id: id, session: session, err: err}
 		},
 	)
+}
+
+func (m *model) waitForLoginStartProgress(id int, ch <-chan actions.LoginProgress) tea.Cmd {
+	if ch == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		progress, ok := <-ch
+		if !ok {
+			return nil
+		}
+		return loginProgressMsg{id: id, progress: progress}
+	}
 }
 
 func (m *model) waitForLogin(ctx context.Context, id int, session actions.LoginSession) tea.Cmd {
@@ -1083,6 +1165,15 @@ func (m *model) waitForLogin(ctx context.Context, id int, session actions.LoginS
 			err = save(creds)
 		}
 		return loginFinishedMsg{id: id, creds: creds, err: err}
+	}
+}
+
+func (m *model) restoreLinkedVault(id int, password []byte) tea.Cmd {
+	restore := m.restoreVault
+	passwordCopy := append([]byte(nil), password...)
+	return func() tea.Msg {
+		err := restore(passwordCopy)
+		return restoreFinishedMsg{id: id, password: passwordCopy, err: err}
 	}
 }
 
@@ -1290,6 +1381,7 @@ func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorTex
 	m.screen = screenPassword
 	m.passwordFlow = flow
 	m.passwordAuth = authEmail
+	m.passwordBusy = false
 	switch flow {
 	case passwordCreate:
 		m.passwordTitle = "Create local vault"
@@ -1297,7 +1389,7 @@ func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorTex
 		m.passwordInput = components.NewCreatePasswordInput()
 	case passwordRestore:
 		m.passwordTitle = "Unlock your vault"
-		m.passwordContext = "Enter your master password to decrypt the keys already linked to this Forged account on this device."
+		m.passwordContext = "Master password is required to decrypt this vault and unlock its keys"
 		m.passwordInput = components.NewUnlockPasswordInput()
 	default:
 		m.passwordTitle = "Unlock Forged"

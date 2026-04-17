@@ -7,6 +7,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
@@ -31,6 +32,10 @@ type LoginSession struct {
 	VerificationCode string
 	URL              string
 	wait             func(context.Context) (AccountCredentials, error)
+}
+
+type LoginProgress struct {
+	Status string
 }
 
 func (s LoginSession) Wait(ctx context.Context) (AccountCredentials, error) {
@@ -91,6 +96,10 @@ func ClearCredentials(paths config.Paths) error {
 }
 
 func BeginLogin(server string, openBrowser func(string)) (LoginSession, error) {
+	return BeginLoginWithProgress(server, openBrowser, nil)
+}
+
+func BeginLoginWithProgress(server string, openBrowser func(string), progress func(LoginProgress)) (LoginSession, error) {
 	code, err := randomHex(16)
 	if err != nil {
 		return LoginSession{}, fmt.Errorf("generating code: %w", err)
@@ -106,14 +115,11 @@ func BeginLogin(server string, openBrowser func(string)) (LoginSession, error) {
 		"verification": verification,
 	})
 
-	resp, err := http.Post(server+"/api/v1/auth/sessions", "application/json", bytes.NewReader(payload))
+	resp, err := createAuthSessionWithRetry(server, payload, progress)
 	if err != nil {
-		return LoginSession{}, fmt.Errorf("could not reach server: %w", err)
+		return LoginSession{}, err
 	}
 	resp.Body.Close()
-	if resp.StatusCode != http.StatusCreated {
-		return LoginSession{}, fmt.Errorf("could not create auth session (status %d)", resp.StatusCode)
-	}
 
 	authURL := ipc.DefaultWebApp + "/login?code=" + code
 	if openBrowser != nil {
@@ -197,6 +203,103 @@ func OpenBrowser(url string) {
 	if err := cmd.Start(); err == nil {
 		go cmd.Wait()
 	}
+}
+
+func createAuthSessionWithRetry(server string, payload []byte, progress func(LoginProgress)) (*http.Response, error) {
+	const maxAttempts = 3
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	backoff := time.Second
+
+	var lastErr error
+	for attempt := 1; attempt <= maxAttempts; attempt++ {
+		req, err := http.NewRequest(http.MethodPost, server+"/api/v1/auth/sessions", bytes.NewReader(payload))
+		if err != nil {
+			return nil, fmt.Errorf("creating auth session request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+
+		resp, err := client.Do(req)
+		if err == nil && resp.StatusCode == http.StatusCreated {
+			if attempt > 1 {
+				logLoginAttempt("auth session created after retry", attempt, server, http.StatusCreated, "", nil)
+			}
+			return resp, nil
+		}
+
+		statusCode := 0
+		responseBody := ""
+		if resp != nil {
+			statusCode = resp.StatusCode
+			responseBody = readLoginErrorBody(resp.Body)
+			resp.Body.Close()
+		}
+
+		lastErr = loginAttemptError(err, statusCode, attempt)
+		logLoginAttempt("auth session create failed", attempt, server, statusCode, responseBody, err)
+
+		if attempt == maxAttempts {
+			break
+		}
+
+		if progress != nil {
+			progress(LoginProgress{
+				Status: fmt.Sprintf("Attempt %d failed. Retrying (%d/%d)", attempt, attempt+1, maxAttempts),
+			})
+		}
+		time.Sleep(backoff)
+		backoff *= 2
+	}
+
+	return nil, lastErr
+}
+
+func loginAttemptError(err error, statusCode int, attempt int) error {
+	suffix := fmt.Sprintf(" after %d attempts", attempt)
+	if err != nil {
+		return fmt.Errorf("could not reach server: %v%s", err, suffix)
+	}
+	return fmt.Errorf("could not create auth session (status %d)%s", statusCode, suffix)
+}
+
+func readLoginErrorBody(body io.Reader) string {
+	if body == nil {
+		return ""
+	}
+	data, err := io.ReadAll(io.LimitReader(body, 2048))
+	if err != nil {
+		return ""
+	}
+	text := strings.Join(strings.Fields(string(data)), " ")
+	if len(text) > 300 {
+		return text[:300] + "..."
+	}
+	return text
+}
+
+func logLoginAttempt(event string, attempt int, server string, statusCode int, responseBody string, err error) {
+	paths := config.DefaultPaths()
+	path := paths.LogFile()
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return
+	}
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+
+	line := fmt.Sprintf("%s login %s attempt=%d server=%s", time.Now().Format(time.RFC3339), event, attempt, server)
+	if statusCode > 0 {
+		line += fmt.Sprintf(" status=%d", statusCode)
+	}
+	if err != nil {
+		line += fmt.Sprintf(" error=%q", err.Error())
+	}
+	if trimmed := strings.TrimSpace(responseBody); trimmed != "" {
+		line += fmt.Sprintf(" body=%q", trimmed)
+	}
+	_, _ = fmt.Fprintln(file, line)
 }
 
 func randomHex(n int) (string, error) {

@@ -13,7 +13,7 @@ type FooterAction struct {
 
 func RenderFooter(actions ...FooterAction) string {
 	if len(actions) == 0 {
-		return ""
+		return strings.Repeat(" ", ContentLeftInset)
 	}
 
 	parts := make([]string, 0, len(actions))
