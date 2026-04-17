@@ -101,6 +101,18 @@ func (p *PasswordInput) ClearStatus() {
 	p.ok = ""
 }
 
+func (p *PasswordInput) FocusIndex() int {
+	return p.focus
+}
+
+func (p *PasswordInput) FieldCount() int {
+	return len(p.fields)
+}
+
+func (p *PasswordInput) MoveNext() {
+	p.moveFocus("down")
+}
+
 func (p *PasswordInput) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:

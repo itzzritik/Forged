@@ -23,7 +23,14 @@ build_go_helper() {
   GOOS="$goos" GOARCH="$goarch" go build -o "$output_dir/forged-auth$ext" ./cmd/forged-auth
 }
 
-build_go_helper linux amd64
-build_go_helper linux arm64
-build_go_helper windows amd64
-build_go_helper windows arm64
+pids=""
+build_go_helper linux amd64 & pids="$pids $!"
+build_go_helper linux arm64 & pids="$pids $!"
+build_go_helper windows amd64 & pids="$pids $!"
+build_go_helper windows arm64 & pids="$pids $!"
+
+status=0
+for pid in $pids; do
+  wait "$pid" || status=$?
+done
+exit "$status"

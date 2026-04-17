@@ -22,6 +22,7 @@ type SyncState struct {
 	LastSuccessfulPushAt   time.Time `json:"last_successful_push_at"`
 	LastError              string    `json:"last_error"`
 	NextRetryAt            time.Time `json:"next_retry_at"`
+	Syncing                bool      `json:"-"`
 }
 
 type StateStore struct {

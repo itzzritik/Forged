@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"math/rand"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
@@ -31,6 +33,7 @@ type Dependencies struct {
 	CreateVault     func([]byte) error
 	StartLogin      func(string) (actions.LoginSession, error)
 	SaveCredentials func(actions.AccountCredentials) error
+	LoadStatus      func() (RuntimeStatus, error)
 	CopyText        func(string) error
 	OpenLink        func(string) error
 	DefaultServer   string
@@ -106,6 +109,41 @@ type repairFinishedMsg struct {
 	err    error
 }
 
+type setupTaskDoneMsg struct {
+	sequence int
+	index    int
+}
+
+type setupFinalizeMsg struct {
+	sequence int
+}
+
+type runtimeStatusMsg struct {
+	status RuntimeStatus
+	err    error
+}
+
+type RuntimeStatus struct {
+	Syncing bool
+	Dirty   bool
+	Linked  bool
+	Error   string
+}
+
+type systemHeaderState string
+
+const (
+	systemHeaderChecking  systemHeaderState = "checking"
+	systemHeaderFixing    systemHeaderState = "fixing"
+	systemHeaderHealthy   systemHeaderState = "healthy"
+	systemHeaderUnhealthy systemHeaderState = "unhealthy"
+)
+
+type pendingSetupResult struct {
+	result readiness.RunResult
+	err    error
+}
+
 type copyFinishedMsg struct {
 	err error
 }
@@ -121,6 +159,7 @@ type model struct {
 	createVault     func([]byte) error
 	startLogin      func(string) (actions.LoginSession, error)
 	saveCredentials func(actions.AccountCredentials) error
+	loadStatus      func() (RuntimeStatus, error)
 	copyText        func(string) error
 	openLink        func(string) error
 	defaultServer   string
@@ -157,6 +196,16 @@ type model struct {
 	repairUsedPassword bool
 	repairAuthEmail    string
 	setupVariant       setupVariant
+
+	bootAssessed    bool
+	systemHeader    systemHeaderState
+	runtimeStatus   RuntimeStatus
+	runtimeLoaded   bool
+	setupStageIndex int
+	setupSequenceID int
+	setupPending    *pendingSetupResult
+	setupFinalizing bool
+	random          *rand.Rand
 }
 
 func Run(intent Intent, deps Dependencies) (Result, error) {
@@ -169,6 +218,8 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("tui login dependency is required")
 	case deps.SaveCredentials == nil:
 		return Result{}, fmt.Errorf("tui save-credentials dependency is required")
+	case deps.LoadStatus == nil:
+		return Result{}, fmt.Errorf("tui load-status dependency is required")
 	case deps.CopyText == nil:
 		return Result{}, fmt.Errorf("tui copy-text dependency is required")
 	case deps.OpenLink == nil:
@@ -199,12 +250,14 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		createVault:     deps.CreateVault,
 		startLogin:      deps.StartLogin,
 		saveCredentials: deps.SaveCredentials,
+		loadStatus:      deps.LoadStatus,
 		copyText:        deps.CopyText,
 		openLink:        deps.OpenLink,
 		defaultServer:   deps.DefaultServer,
 		appVersion:      deps.AppVersion,
 		commitSigning:   deps.CommitSigning,
 		spinner:         spin,
+		random:          rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 }
 
@@ -220,12 +273,9 @@ func (m *model) Init() tea.Cmd {
 		}
 		return tea.Batch(m.spinner.Tick, m.assessCurrentState())
 	default:
-		m.screen = screenRepair
-		m.repairScreen = repairscreen.TaskScreen{
-			Title:   "Checking local health",
-			Context: "Reviewing the current state and applying safe fixes where needed.",
-			Tasks:   m.newRepairTasks(""),
-		}
+		m.screen = screenDashboard
+		m.bootAssessed = false
+		m.systemHeader = systemHeaderChecking
 		return tea.Batch(m.spinner.Tick, m.assessCurrentState())
 	}
 }
@@ -246,6 +296,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.spinner, cmd = m.spinner.Update(msg)
 		return m, cmd
 	case assessmentMsg:
+		m.bootAssessed = true
 		if msg.err != nil {
 			if m.screen == screenLogin {
 				m.loginScreen.Waiting = false
@@ -253,10 +304,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.loginScreen.Status = ""
 				return m, nil
 			}
-			m.repairScreen.Error = msg.err.Error()
+			m.systemHeader = systemHeaderUnhealthy
+			m.notice = notice{message: msg.err.Error(), tone: dashboardscreen.ToneDanger}
 			return m, nil
 		}
 		m.snapshot = msg.snapshot
+		m.runtimeLoaded = false
 		if m.screen == screenLogin {
 			return m, m.startLoginFlow()
 		}
@@ -267,8 +320,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.repairUsedPassword = false
 			m.setupVariant = setupVariantNone
 			m.screen = screenDashboard
+			m.systemHeader = systemHeaderHealthy
 			return m, nil
 		}
+		m.screen = screenDashboard
+		m.systemHeader = systemHeaderChecking
 		return m, m.startStartupRepair()
 	case loginStartedMsg:
 		if msg.id != m.loginID {
@@ -325,13 +381,70 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.id != m.repairID {
 			return m, nil
 		}
+		if m.isSetupSequence() {
+			return m, nil
+		}
 		m.applyRepairProgress(msg.stage)
 		return m, m.waitForRepairProgress(msg.id, m.repairProgress)
 	case repairFinishedMsg:
 		if msg.id != m.repairID {
 			return m, nil
 		}
+		if m.isSetupSequence() {
+			if msg.err != nil {
+				m.setupSequenceID++
+				return m, m.handleRepairFinished(msg.result, msg.err)
+			}
+			m.setupPending = &pendingSetupResult{result: msg.result, err: msg.err}
+			m.setupFinalizing = true
+			m.completeSetupTasks()
+			return m, m.finalizeSetupAfter(time.Second)
+		}
 		return m, m.handleRepairFinished(msg.result, msg.err)
+	case setupTaskDoneMsg:
+		if m.screen != screenRepair {
+			return m, nil
+		}
+		if m.setupFinalizing || !m.isSetupSequence() || msg.sequence != m.setupSequenceID {
+			return m, nil
+		}
+		if msg.index < 0 || msg.index >= len(m.repairScreen.Tasks) {
+			return m, nil
+		}
+		if msg.index >= len(m.repairScreen.Tasks)-1 {
+			return m, nil
+		}
+		if m.repairScreen.Tasks[msg.index].State == repairscreen.TaskActive {
+			m.repairScreen.Tasks[msg.index].State = repairscreen.TaskDone
+			m.advanceSetupStatus()
+		}
+		return m, nil
+	case setupFinalizeMsg:
+		if m.screen != screenRepair {
+			return m, nil
+		}
+		if msg.sequence != m.setupSequenceID {
+			return m, nil
+		}
+		if !m.setupFinalizing || m.setupPending == nil {
+			return m, nil
+		}
+		pending := m.setupPending
+		m.setupPending = nil
+		m.setupFinalizing = false
+		return m, m.handleRepairFinished(pending.result, pending.err)
+	case runtimeStatusMsg:
+		if msg.err == nil {
+			m.runtimeStatus = msg.status
+			m.runtimeLoaded = true
+		} else if m.snapshot.LoggedIn && m.systemHeader == systemHeaderHealthy {
+			m.runtimeStatus = RuntimeStatus{Error: msg.err.Error()}
+			m.runtimeLoaded = true
+		}
+		if m.screen == screenDashboard && m.snapshot.VaultExists {
+			return m, m.pollRuntimeStatus(time.Second)
+		}
+		return m, nil
 	case copyFinishedMsg:
 		if msg.err != nil {
 			if m.screen == screenLogin {
@@ -387,6 +500,9 @@ func (m *model) renderHeader(width int) string {
 }
 
 func (m *model) headerStatusItems() []shell.StatusItem {
+	if !m.bootAssessed {
+		return nil
+	}
 	if m.shouldShowProductRail() {
 		return []shell.StatusItem{
 			{Label: "Encrypted key vault", Icon: "✦"},
@@ -395,53 +511,46 @@ func (m *model) headerStatusItems() []shell.StatusItem {
 		}
 	}
 
-	sshReady := m.snapshot.ManagedConfigReady &&
-		m.snapshot.SSHEnabled &&
-		m.snapshot.IPCSocketReady &&
-		m.snapshot.AgentSocketReady &&
-		m.snapshot.IdentityAgentOwner.IsForged()
-	cloudSyncActive := m.snapshot.LoggedIn
-
 	items := []shell.StatusItem{
-		{
-			Label: sshAgentHeaderLabel(sshReady),
-			Tone:  statusTone(sshReady, false),
-		},
-		{
-			Label: "Commit Signing",
-			Tone:  statusTone(m.commitSigning, false),
-		},
-		{
-			Label: cloudSyncHeaderLabel(cloudSyncActive),
-			Tone:  statusTone(cloudSyncActive, true),
-		},
+		m.systemHeaderItem(),
+		m.commitSigningHeaderItem(),
+		m.vaultSyncHeaderItem(),
 	}
 
 	return items
 }
 
-func sshAgentHeaderLabel(healthy bool) string {
-	if healthy {
-		return "SSH Agent Healthy"
+func (m *model) systemHeaderItem() shell.StatusItem {
+	switch m.systemHeader {
+	case systemHeaderChecking:
+		return shell.StatusItem{Label: "Checking health", Icon: m.spinner.View()}
+	case systemHeaderFixing:
+		return shell.StatusItem{Label: "Fixing issues", Icon: m.spinner.View()}
+	case systemHeaderHealthy:
+		return shell.StatusItem{Label: "System healthy", Tone: shell.StatusToneSuccess}
+	default:
+		return shell.StatusItem{Label: "System unhealthy", Tone: shell.StatusToneDanger}
 	}
-	return "SSH Agent Unhealthy"
 }
 
-func cloudSyncHeaderLabel(active bool) string {
-	if active {
-		return "Cloud Sync Active"
+func (m *model) commitSigningHeaderItem() shell.StatusItem {
+	if m.commitSigning {
+		return shell.StatusItem{Label: "Commit signing", Tone: shell.StatusToneSuccess}
 	}
-	return "Cloud Sync Inactive"
+	return shell.StatusItem{Label: "Commit not signing", Tone: shell.StatusToneWarning}
 }
 
-func statusTone(healthy bool, warnWhenFalse bool) shell.StatusTone {
-	if healthy {
-		return shell.StatusToneSuccess
+func (m *model) vaultSyncHeaderItem() shell.StatusItem {
+	if !m.snapshot.LoggedIn {
+		return shell.StatusItem{Label: "Local vault healthy", Tone: shell.StatusToneSuccess}
 	}
-	if warnWhenFalse {
-		return shell.StatusToneWarning
+	if m.runtimeStatus.Syncing || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing {
+		return shell.StatusItem{Label: "Vault syncing", Icon: m.spinner.View()}
 	}
-	return shell.StatusToneDanger
+	if m.runtimeLoaded && (m.runtimeStatus.Dirty || strings.TrimSpace(m.runtimeStatus.Error) != "") {
+		return shell.StatusItem{Label: "Sync issue", Tone: shell.StatusToneDanger}
+	}
+	return shell.StatusItem{Label: "Vault up to date", Tone: shell.StatusToneSuccess}
 }
 
 func (m *model) headerPageTitle() string {
@@ -528,6 +637,9 @@ func (m *model) renderBody(contentWidth int) string {
 	case screenRepair:
 		return repairscreen.Render(m.repairScreen, m.spinner.View(), contentWidth)
 	default:
+		if !m.bootAssessed {
+			return ""
+		}
 		return dashboardscreen.Render(dashboardscreen.Screen{
 			Title:   m.dashboardBodyTitle(),
 			Context: m.dashboardLead(),
@@ -577,12 +689,11 @@ func (m *model) footerActions() []shell.FooterAction {
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscCancel)})
 		return actions
 	case screenPassword:
-		actions := []shell.FooterAction{
-			{Key: "Enter", Label: "Continue"},
+		enterLabel := "Continue"
+		if m.passwordFlow == passwordCreate && m.passwordInput != nil && m.passwordInput.FocusIndex() == 0 {
+			enterLabel = "Next"
 		}
-		if m.passwordFlow == passwordCreate {
-			actions = append(actions, shell.FooterAction{Key: "Tab", Label: "Next Field"})
-		}
+		actions := []shell.FooterAction{{Key: "Enter", Label: enterLabel}}
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 		return actions
 	case screenRepair:
@@ -594,6 +705,9 @@ func (m *model) footerActions() []shell.FooterAction {
 		}
 		return nil
 	default:
+		if !m.bootAssessed {
+			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+		}
 		if m.isWelcomeState() {
 			return []shell.FooterAction{
 				{Key: "↑/↓", Label: "Move"},
@@ -650,6 +764,17 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if !m.bootAssessed {
+		switch msg.String() {
+		case "esc":
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
 	if areas := m.dashboardAreas(); len(areas) > 0 {
 		columns := dashboardscreen.AreaColumns(shell.BodyWidth(m.width), len(areas))
 		switch msg.String() {
@@ -775,6 +900,10 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "enter":
+		if m.passwordFlow == passwordCreate && m.passwordInput != nil && m.passwordInput.FieldCount() > 1 && m.passwordInput.FocusIndex() == 0 {
+			m.passwordInput.MoveNext()
+			return m, nil
+		}
 		password, err := m.passwordInput.Submit()
 		if err != nil {
 			m.passwordInput.SetError(err.Error())
@@ -906,6 +1035,8 @@ func (m *model) usesSpinner() bool {
 		return m.repairScreen.Error == ""
 	case screenLogin:
 		return m.loginScreen.Waiting
+	case screenDashboard:
+		return m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeStatus.Syncing
 	default:
 		return false
 	}
@@ -956,21 +1087,36 @@ func (m *model) waitForLogin(ctx context.Context, id int, session actions.LoginS
 }
 
 func (m *model) startRepair(purpose repairPurpose, password []byte, createVaultFirst bool, title string, contextLine string, authEmail string) tea.Cmd {
-	if m.session.Current().ID != RouteRepairTask {
+	backgroundStartup := purpose == repairPurposeStartup && !m.isSetupSequence()
+
+	if !backgroundStartup && m.session.Current().ID != RouteRepairTask {
 		m.session.Push(Route{ID: RouteRepairTask})
 	}
-	m.screen = screenRepair
+	if backgroundStartup {
+		m.screen = screenDashboard
+		m.notice = notice{}
+		m.systemHeader = systemHeaderFixing
+	} else {
+		m.screen = screenRepair
+	}
 	m.passwordAuth = authEmail
 	m.repairPurpose = purpose
 	m.repairUsedPassword = len(password) > 0
 	m.repairAuthEmail = authEmail
 	m.setupVariant = m.setupVariantForRepair(purpose, createVaultFirst, authEmail)
-	m.repairScreen = repairscreen.TaskScreen{
-		Kind:       m.repairScreenKind(),
-		Title:      title,
-		Context:    contextLine,
-		Tasks:      m.newRepairTasks(authEmail),
-		StatusRows: m.repairStatusRows(),
+	m.setupPending = nil
+	m.setupStageIndex = 0
+	if !backgroundStartup {
+		m.repairScreen = repairscreen.TaskScreen{
+			Kind:       m.repairScreenKind(),
+			Title:      title,
+			Context:    contextLine,
+			Tasks:      m.newRepairTasks(authEmail),
+			StatusRows: m.repairStatusRows(),
+		}
+		if m.isSetupSequence() {
+			m.initializeSetupSequence()
+		}
 	}
 
 	progressCh := make(chan readiness.ProgressStage, 16)
@@ -990,6 +1136,7 @@ func (m *model) startRepair(purpose repairPurpose, password []byte, createVaultF
 	return tea.Batch(
 		m.spinner.Tick,
 		m.waitForRepairProgress(id, progressCh),
+		m.startSetupSequence(),
 		func() tea.Msg {
 			if createVaultFirst {
 				progress(readiness.ProgressVault)
@@ -1036,12 +1183,14 @@ func (m *model) waitForRepairProgress(id int, ch <-chan readiness.ProgressStage)
 func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.Cmd {
 	m.snapshot = result.Snapshot
 	m.summary = result.Summary
+	m.systemHeader = m.systemHeaderForSnapshot(result.Snapshot)
 	if m.repairAuthEmail != "" {
 		m.accountEmail = m.repairAuthEmail
 	}
 	m.finishRepairTasks(result)
 
 	if err != nil {
+		m.systemHeader = systemHeaderUnhealthy
 		switch {
 		case m.repairPurpose == repairPurposeSetup:
 			if result.Snapshot.VaultExists {
@@ -1057,6 +1206,9 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 			return nil
 		default:
 			m.showDashboardNotice(err.Error(), dashboardscreen.ToneDanger)
+			if m.snapshot.VaultExists {
+				return m.pollRuntimeStatus(time.Second)
+			}
 			return nil
 		}
 	}
@@ -1087,28 +1239,30 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 		m.notice = notice{}
 		m.setupVariant = setupVariantNone
 		m.screen = screenDashboard
+		if m.snapshot.VaultExists {
+			return m.pollRuntimeStatus(0)
+		}
 		return nil
 	}
 }
 
-func (m *model) startStartupRepair() tea.Cmd {
-	title := "Checking local health"
-	context := "Reviewing the current state and applying safe fixes where needed."
-	if m.isSetupSequence() {
-		title = "Setting up Forged"
-		switch m.setupVariant {
-		case setupVariantRestore:
-			context = "Restoring your vault and preparing secure access on this machine."
-		default:
-			context = "Creating the local vault and preparing background services for this machine."
-		}
+func (m *model) systemHeaderForSnapshot(snapshot readiness.Snapshot) systemHeaderState {
+	switch snapshot.State {
+	case readiness.StateReady, readiness.StateReadyEmpty:
+		return systemHeaderHealthy
+	default:
+		return systemHeaderUnhealthy
 	}
+}
+
+func (m *model) startStartupRepair() tea.Cmd {
+	m.systemHeader = systemHeaderFixing
 	return m.startRepair(
 		repairPurposeStartup,
 		nil,
 		false,
-		title,
-		context,
+		"Checking local health",
+		"Reviewing the current state and applying safe fixes where needed.",
 		"",
 	)
 }
@@ -1116,16 +1270,15 @@ func (m *model) startStartupRepair() tea.Cmd {
 func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.notice = notice{}
 	m.onboardingCursor = 0
-	m.screen = screenRepair
+	m.screen = screenDashboard
+	m.bootAssessed = false
+	m.systemHeader = systemHeaderChecking
+	m.setupVariant = setupVariantNone
 	m.repairPurpose = repairPurposeStartup
 	m.repairUsedPassword = false
 	m.repairAuthEmail = ""
-	m.repairScreen = repairscreen.TaskScreen{
-		Kind:    m.repairScreenKind(),
-		Title:   "Setting up Forged",
-		Context: m.setupContextLine(),
-		Tasks:   m.newRepairTasks(""),
-	}
+	m.setupPending = nil
+	m.runtimeLoaded = false
 	return m.assessCurrentState()
 }
 
@@ -1176,7 +1329,7 @@ func (m *model) showDashboardNotice(message string, tone dashboardscreen.Tone) {
 }
 
 func (m *model) isWelcomeState() bool {
-	return m.screen == screenDashboard && len(m.dashboardOptions()) > 0
+	return m.bootAssessed && m.screen == screenDashboard && len(m.dashboardOptions()) > 0
 }
 
 func (m *model) shouldShowProductRail() bool {
@@ -1226,6 +1379,19 @@ func (m *model) serverURL() string {
 	return m.defaultServer
 }
 
+func (m *model) pollRuntimeStatus(delay time.Duration) tea.Cmd {
+	if m.loadStatus == nil || !m.snapshot.VaultExists {
+		return nil
+	}
+	if delay <= 0 {
+		delay = 50 * time.Millisecond
+	}
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		status, err := m.loadStatus()
+		return runtimeStatusMsg{status: status, err: err}
+	})
+}
+
 func (m *model) copyToClipboard(value string) tea.Cmd {
 	copyText := m.copyText
 	return func() tea.Msg {
@@ -1248,28 +1414,20 @@ func (m *model) newRepairTasks(authEmail string) []repairscreen.Task {
 	if m.isSetupSequence() {
 		switch m.setupVariant {
 		case setupVariantRestore:
-			vaultState := repairscreen.TaskPending
-			if m.snapshot.VaultExists {
-				vaultState = repairscreen.TaskDone
-			}
 			return []repairscreen.Task{
-				{Label: "Account", State: repairscreen.TaskDone},
-				{Label: "Vault", State: vaultState},
-				{Label: "Service", State: repairscreen.TaskPending},
+				{Label: "Account", State: repairscreen.TaskPending},
+				{Label: "Vault", State: repairscreen.TaskPending},
 				{Label: "SSH", State: repairscreen.TaskPending},
 				{Label: "Agent", State: repairscreen.TaskPending},
+				{Label: "Service", State: repairscreen.TaskPending},
 			}
 		default:
-			vaultState := repairscreen.TaskPending
-			if m.snapshot.VaultExists {
-				vaultState = repairscreen.TaskDone
-			}
 			return []repairscreen.Task{
-				{Label: "Password", State: repairscreen.TaskDone},
-				{Label: "Vault", State: vaultState},
-				{Label: "Service", State: repairscreen.TaskPending},
+				{Label: "Password", State: repairscreen.TaskPending},
+				{Label: "Vault", State: repairscreen.TaskPending},
 				{Label: "SSH", State: repairscreen.TaskPending},
 				{Label: "Agent", State: repairscreen.TaskPending},
+				{Label: "Service", State: repairscreen.TaskPending},
 			}
 		}
 	}
@@ -1315,7 +1473,110 @@ func (m *model) applyRepairProgress(stage readiness.ProgressStage) {
 	}
 }
 
+func (m *model) initializeSetupSequence() {
+	m.setupStageIndex = 0
+	m.setupSequenceID++
+	m.setupFinalizing = false
+	m.setupPending = nil
+	for index := range m.repairScreen.Tasks {
+		m.repairScreen.Tasks[index].State = repairscreen.TaskActive
+	}
+	m.setSetupStatusForStage()
+}
+
+func (m *model) startSetupSequence() tea.Cmd {
+	if !m.isSetupSequence() || len(m.repairScreen.Tasks) == 0 {
+		return nil
+	}
+	sequence := m.setupSequenceID
+	lastIndex := len(m.repairScreen.Tasks) - 1
+	cmds := make([]tea.Cmd, 0, lastIndex)
+	for index := 0; index < lastIndex; index++ {
+		cmds = append(cmds, m.completeSetupTaskAfter(sequence, index, m.setupStageDelay()))
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *model) completeSetupTaskAfter(sequence int, index int, delay time.Duration) tea.Cmd {
+	if delay <= 0 {
+		delay = 3 * time.Second
+	}
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		return setupTaskDoneMsg{sequence: sequence, index: index}
+	})
+}
+
+func (m *model) setupStageDelay() time.Duration {
+	if m.random == nil {
+		return 5 * time.Second
+	}
+	return time.Duration(3+m.random.Intn(6)) * time.Second
+}
+
+func (m *model) finalizeSetupAfter(delay time.Duration) tea.Cmd {
+	if delay <= 0 {
+		delay = time.Second
+	}
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		return setupFinalizeMsg{sequence: m.setupSequenceID}
+	})
+}
+
+func (m *model) completeSetupTasks() {
+	for index := range m.repairScreen.Tasks {
+		m.repairScreen.Tasks[index].State = repairscreen.TaskDone
+	}
+	m.setupStageIndex = len(m.repairScreen.Tasks) - 1
+	m.setSetupStatusForStage()
+}
+
+func (m *model) advanceSetupStatus() {
+	if len(m.repairScreen.Tasks) == 0 {
+		return
+	}
+	lastIndex := len(m.repairScreen.Tasks) - 1
+	if m.setupStageIndex < lastIndex {
+		m.setupStageIndex++
+	}
+	m.setSetupStatusForStage()
+}
+
+func (m *model) setSetupStatusForStage() {
+	if len(m.repairScreen.Tasks) == 0 {
+		m.repairScreen.SetupStatus = ""
+		return
+	}
+	lastIndex := len(m.repairScreen.Tasks) - 1
+	stageIndex := m.setupStageIndex
+	if stageIndex < 0 {
+		stageIndex = 0
+	}
+	if stageIndex > lastIndex {
+		stageIndex = lastIndex
+	}
+	status := repairscreen.SetupStatusLabel(m.repairScreen.Tasks[stageIndex].Label)
+	if strings.TrimSpace(status) == "" {
+		status = "Preparing secure access"
+	}
+	m.repairScreen.SetupStatus = status
+}
+
 func (m *model) finishRepairTasks(result readiness.RunResult) {
+	if m.isSetupSequence() {
+		for index := range m.repairScreen.Tasks {
+			task := &m.repairScreen.Tasks[index]
+			if result.Snapshot.Service.Running {
+				task.State = repairscreen.TaskDone
+				continue
+			}
+			if task.Label == "Service" {
+				task.State = repairscreen.TaskActive
+			} else {
+				task.State = repairscreen.TaskDone
+			}
+		}
+		return
+	}
 	for index := range m.repairScreen.Tasks {
 		task := &m.repairScreen.Tasks[index]
 		switch task.Label {

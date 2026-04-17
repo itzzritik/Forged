@@ -34,12 +34,13 @@ type StatusRow struct {
 }
 
 type TaskScreen struct {
-	Kind       ScreenKind
-	Title      string
-	Context    string
-	Tasks      []Task
-	StatusRows []StatusRow
-	Error      string
+	Kind        ScreenKind
+	Title       string
+	Context     string
+	SetupStatus string
+	Tasks       []Task
+	StatusRows  []StatusRow
+	Error       string
 }
 
 func Render(screen TaskScreen, spinner string, width int) string {
@@ -81,7 +82,10 @@ func renderSetup(screen TaskScreen, spinner string, width int) string {
 		sections = append(sections, theme.Body.Width(max(28, min(width, theme.HeroMaxWidth))).Render(screen.Context))
 	}
 
-	activeLabel := activeTaskLabel(screen.Tasks)
+	activeLabel := strings.TrimSpace(screen.SetupStatus)
+	if activeLabel == "" {
+		activeLabel = activeTaskLabel(screen.Tasks)
+	}
 	if strings.TrimSpace(activeLabel) == "" {
 		activeLabel = "Preparing secure access"
 	}
@@ -104,25 +108,39 @@ func renderSetup(screen TaskScreen, spinner string, width int) string {
 	return strings.Join(sections, "\n")
 }
 
+func SetupStatusLabel(label string) string {
+	switch label {
+	case "Password":
+		return "Securing local vault"
+	case "Account":
+		return "Linking account"
+	case "Vault":
+		return "Preparing vault"
+	case "Service":
+		return "Setting background service"
+	case "SSH":
+		return "Configuring SSH routing"
+	case "Agent":
+		return "Bringing agent online"
+	default:
+		return label
+	}
+}
+
 func activeTaskLabel(tasks []Task) string {
+	activeCount := 0
 	for _, task := range tasks {
 		if task.State == TaskActive {
-			switch task.Label {
-			case "Password":
-				return "Securing local vault"
-			case "Account":
-				return "Linking account"
-			case "Vault":
-				return "Preparing vault"
-			case "Service":
-				return "Starting background service"
-			case "SSH":
-				return "Configuring SSH routing"
-			case "Agent":
-				return "Bringing agent online"
-			default:
-				return task.Label
-			}
+			activeCount++
+		}
+	}
+	if activeCount > 1 {
+		return "Preparing secure access"
+	}
+
+	for _, task := range tasks {
+		if task.State == TaskActive {
+			return SetupStatusLabel(task.Label)
 		}
 	}
 	return ""

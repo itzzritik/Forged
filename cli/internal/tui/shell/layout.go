@@ -32,7 +32,7 @@ func ContentWidth(termWidth int) int {
 }
 
 func BodyWidth(termWidth int) int {
-	return max(16, ContentWidth(termWidth)-ContentLeftInset)
+	return max(16, ContentWidth(termWidth)-ContentLeftInset-ContentRightInset)
 }
 
 func IndentBlock(block string, spaces int) string {
@@ -92,7 +92,7 @@ func JoinRow(width int, left string, right string) string {
 }
 
 func ClampBlockWidth(termWidth int, preferred int) int {
-	width := ContentWidth(termWidth)
+	width := BodyWidth(termWidth)
 	if preferred > 0 && preferred < width {
 		return preferred
 	}

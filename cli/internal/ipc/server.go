@@ -630,6 +630,7 @@ func (s *Server) handleStatus() Response {
 			"linked":                    syncState.LinkedUserID != "" && syncState.ServerURL != "",
 			"linked_user_id":            syncState.LinkedUserID,
 			"server_url":                syncState.ServerURL,
+			"syncing":                   syncState.Syncing,
 		}
 	}
 

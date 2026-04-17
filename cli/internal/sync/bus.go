@@ -269,6 +269,7 @@ func (b *Bus) SnapshotState() SyncState {
 
 	snapshot := *b.state
 	snapshot.LastSyncedBaseBlob = append([]byte(nil), b.state.LastSyncedBaseBlob...)
+	snapshot.Syncing = b.syncing
 	return snapshot
 }
 

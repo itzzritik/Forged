@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -36,11 +37,34 @@ func runInteractiveIntent(intent tui.Intent) error {
 			return actions.BeginLogin(server, actions.OpenBrowser)
 		},
 		SaveCredentials: func(creds actions.AccountCredentials) error { return actions.SaveCredentials(paths, creds) },
-		CopyText:        copyTextToClipboard,
-		OpenLink:        openLinkInBrowser,
-		DefaultServer:   ipc.DefaultAPIServer,
-		AppVersion:      version,
-		CommitSigning:   commitSigningConfigured(),
+		LoadStatus: func() (tui.RuntimeStatus, error) {
+			resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdStatus, nil)
+			if err != nil {
+				return tui.RuntimeStatus{}, err
+			}
+			var status struct {
+				Sync struct {
+					Dirty   bool   `json:"dirty"`
+					LastErr string `json:"last_error"`
+					Linked  bool   `json:"linked"`
+					Syncing bool   `json:"syncing"`
+				} `json:"sync"`
+			}
+			if err := json.Unmarshal(resp.Data, &status); err != nil {
+				return tui.RuntimeStatus{}, err
+			}
+			return tui.RuntimeStatus{
+				Syncing: status.Sync.Syncing,
+				Dirty:   status.Sync.Dirty,
+				Linked:  status.Sync.Linked,
+				Error:   status.Sync.LastErr,
+			}, nil
+		},
+		CopyText:      copyTextToClipboard,
+		OpenLink:      openLinkInBrowser,
+		DefaultServer: ipc.DefaultAPIServer,
+		AppVersion:    version,
+		CommitSigning: commitSigningConfigured(),
 	})
 	return err
 }
