@@ -173,19 +173,6 @@ function LoginContent() {
 							</div>
 						)}
 
-						{code && verification && (
-							<div className="mb-6 border border-[#27272a] bg-[#030303] p-4 text-center">
-								<p className="mb-2 font-mono text-[#a1a1aa] text-[10px] uppercase tracking-widest">Verify this code matches your terminal</p>
-								<p className="font-bold font-mono text-2xl text-[#ea580c] tracking-[0.2em]">FORGE-{verification.toUpperCase()}</p>
-							</div>
-						)}
-
-						{code && !verification && (
-							<div className="mb-6 flex items-center justify-center border border-[#27272a] bg-[#030303] p-4">
-								<div className="h-4 w-4 animate-spin rounded-full border-2 border-[#27272a] border-t-[#ea580c]" />
-							</div>
-						)}
-
 						<div className="space-y-3">
 							<a
 								className="group relative flex h-12 w-full items-center justify-center gap-3 overflow-hidden bg-white font-bold font-mono text-[12px] text-black uppercase tracking-widest transition-all duration-200 hover:bg-zinc-100 active:scale-[0.98]"
@@ -204,24 +191,26 @@ function LoginContent() {
 							</a>
 						</div>
 
-						{/* Divider */}
-						<div className="mt-8 flex items-center gap-4">
-							<div className="h-px flex-1 bg-[#27272a]" />
-							<span className="font-mono text-[#3f3f46] text-[9px] uppercase tracking-widest">or via CLI</span>
-							<div className="h-px flex-1 bg-[#27272a]" />
-						</div>
-
-						{/* CLI block */}
-						<div className="mt-6 overflow-hidden border border-[#27272a] bg-black">
-							<div className="flex items-center justify-between border-[#18181b] border-b px-4 py-2">
-								<span className="font-mono text-[#3f3f46] text-[9px] uppercase tracking-widest">Terminal</span>
-								<span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#10b981] shadow-[0_0_6px_#10b981]" />
+						{code && (
+							<div className="mt-8 overflow-hidden border border-[#27272a] bg-black">
+								<div className="flex items-center justify-between border-[#18181b] border-b px-4 py-2">
+									<span className="font-mono text-[#3f3f46] text-[9px] uppercase tracking-widest">Authentication code</span>
+									<span className="h-1.5 w-1.5 animate-pulse rounded-full bg-[#10b981] shadow-[0_0_6px_#10b981]" />
+								</div>
+								<div className="flex min-h-[132px] flex-col items-center justify-center gap-4 px-4 py-6 text-center">
+									<p className="font-mono text-[#a1a1aa] text-[10px] uppercase tracking-widest">Verify this code matches your terminal</p>
+									<div className="flex h-10 items-center justify-center">
+										{verification ? (
+											<p className="font-bold font-mono text-2xl leading-none text-[#ea580c] tracking-[0.2em]">FORGE-{verification.toUpperCase()}</p>
+										) : (
+											<div className="flex h-10 w-10 items-center justify-center">
+												<div className="h-5 w-5 animate-spin rounded-full border-2 border-[#27272a] border-t-[#ea580c]" />
+											</div>
+										)}
+									</div>
+								</div>
 							</div>
-							<div className="flex items-center gap-3 px-4 py-3 font-mono text-[13px]">
-								<span className="text-[#ea580c]">$</span>
-								<span className="text-white">forged login</span>
-							</div>
-						</div>
+						)}
 					</div>
 				</div>
 
