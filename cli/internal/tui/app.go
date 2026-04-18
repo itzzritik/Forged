@@ -259,6 +259,8 @@ type model struct {
 	keyGenerateID int
 	keyImportID int
 	keyExportID int
+	keyImportPickerID int
+	keyExportPickerID int
 
 	keyBrowser keyBrowserState
 	keyDetail  keyDetailState
@@ -594,6 +596,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyImportFinishedMsg(msg)
 	case keyExportFinishedMsg:
 		return m.handleKeyExportFinishedMsg(msg)
+	case keyImportPickerMsg:
+		return m.handleKeyImportPickerMsg(msg)
+	case keyExportPickerMsg:
+		return m.handleKeyExportPickerMsg(msg)
 	case copyFinishedMsg:
 		if msg.err != nil {
 			if m.screen == screenLogin {

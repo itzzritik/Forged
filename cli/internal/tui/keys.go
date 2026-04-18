@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"path/filepath"
 	"slices"
@@ -10,6 +11,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/picker"
 	keyscreen "github.com/itzzritik/forged/cli/internal/tui/screens/keys"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
@@ -68,6 +70,18 @@ type keyExportFinishedMsg struct {
 	err    error
 }
 
+type keyImportPickerMsg struct {
+	id   int
+	path string
+	err  error
+}
+
+type keyExportPickerMsg struct {
+	id   int
+	path string
+	err  error
+}
+
 type keyBrowserState struct {
 	loading    bool
 	refreshing bool
@@ -116,27 +130,29 @@ type keyGenerateState struct {
 	err        string
 	status     string
 
-	nameInput    textinput.Model
-	commentInput textinput.Model
-	focus        int
+	nameInput textinput.Model
 }
 
 type keyImportState struct {
-	importing bool
-	err       string
-	status    string
+	importing     bool
+	pickerOpening bool
+	err           string
+	status        string
 
 	sourceIndex int
 	focus       int
+	pathVisible bool
 	pathInput   textinput.Model
 }
 
 type keyExportState struct {
-	exporting bool
-	err       string
-	status    string
+	exporting     bool
+	pickerOpening bool
+	err           string
+	status        string
 
-	pathInput textinput.Model
+	pathVisible bool
+	pathInput   textinput.Model
 }
 
 type keyImportSource struct {
@@ -185,9 +201,9 @@ func (m *model) keyUsesSpinner() bool {
 	case RouteKeysGenerate:
 		return m.keyGenerate.generating
 	case RouteKeysImport:
-		return m.keyImport.importing
+		return m.keyImport.importing || m.keyImport.pickerOpening
 	case RouteKeysExport:
-		return m.keyExport.exporting
+		return m.keyExport.exporting || m.keyExport.pickerOpening
 	default:
 		return false
 	}
@@ -210,9 +226,9 @@ func (m *model) keyRouteLoaded() bool {
 	case RouteKeysGenerate:
 		return strings.TrimSpace(m.keyGenerate.nameInput.Placeholder) != "" || m.keyGenerate.generating || strings.TrimSpace(m.keyGenerate.err) != "" || strings.TrimSpace(m.keyGenerate.status) != ""
 	case RouteKeysImport:
-		return len(keyImportSources) > 0 && (strings.TrimSpace(m.keyImport.err) != "" || strings.TrimSpace(m.keyImport.status) != "" || m.keyImport.importing || strings.TrimSpace(m.keyImport.pathInput.Placeholder) != "")
+		return len(keyImportSources) > 0 && (strings.TrimSpace(m.keyImport.err) != "" || strings.TrimSpace(m.keyImport.status) != "" || m.keyImport.importing || m.keyImport.pickerOpening || m.keyImport.pathVisible || strings.TrimSpace(m.keyImport.pathInput.Placeholder) != "")
 	case RouteKeysExport:
-		return strings.TrimSpace(m.keyExport.pathInput.Placeholder) != "" || strings.TrimSpace(m.keyExport.err) != "" || strings.TrimSpace(m.keyExport.status) != "" || m.keyExport.exporting
+		return strings.TrimSpace(m.keyExport.pathInput.Placeholder) != "" || strings.TrimSpace(m.keyExport.err) != "" || strings.TrimSpace(m.keyExport.status) != "" || m.keyExport.exporting || m.keyExport.pickerOpening || m.keyExport.pathVisible
 	default:
 		return false
 	}
@@ -374,38 +390,49 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 		if m.keyGenerate.generating {
 			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 		}
-		enterLabel := "Generate"
-		if m.keyGenerate.focus == 0 {
-			enterLabel = "Next"
-		}
 		return []shell.FooterAction{
-			{Key: "Enter", Label: enterLabel},
+			{Key: "Enter", Label: "Generate"},
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
 	case RouteKeysImport:
-		if m.keyImport.importing {
+		if m.keyImport.importing || m.keyImport.pickerOpening {
 			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 		}
 		source := m.currentImportSource()
-		enterLabel := "Import"
-		actions := []shell.FooterAction{}
-		if m.keyImport.focus == 0 {
-			actions = append(actions, shell.FooterAction{Key: "↑/↓", Label: "Source"})
-			if source.NeedsPath {
-				enterLabel = "Continue"
+		if m.keyImport.pathVisible && m.keyImport.focus == 1 {
+			return []shell.FooterAction{
+				{Key: "↑/↓", Label: "Source"},
+				{Key: "Enter", Label: "Import"},
+				{Key: "Tab", Label: "Choose file"},
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
 		}
-		actions = append(actions,
-			shell.FooterAction{Key: "Enter", Label: enterLabel},
-			shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
-		)
+		enterLabel := "Import"
+		if source.NeedsPath {
+			enterLabel = "Choose File"
+		}
+		actions := []shell.FooterAction{
+			{Key: "↑/↓", Label: "Source"},
+			{Key: "Enter", Label: enterLabel},
+		}
+		if m.keyImport.pathVisible {
+			actions = append(actions, shell.FooterAction{Key: "Tab", Label: "Path"})
+		}
+		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 		return actions
 	case RouteKeysExport:
-		if m.keyExport.exporting {
+		if m.keyExport.exporting || m.keyExport.pickerOpening {
 			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+		}
+		if !m.keyExport.pathVisible {
+			return []shell.FooterAction{
+				{Key: "Enter", Label: "Choose file"},
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+			}
 		}
 		return []shell.FooterAction{
 			{Key: "Enter", Label: "Export"},
+			{Key: "Tab", Label: "Choose file"},
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
 	default:
@@ -444,12 +471,12 @@ func (m *model) renderKeyBody(contentWidth int) string {
 			return ""
 		}
 		return keyscreen.RenderRename(keyscreen.RenameScreen{
-			Context:  renameContext(m.keyRename.original),
+			Context:   renameContext(m.keyRename.original),
 			FieldView: m.keyRename.input.View(),
-			Focused: true,
-			Status:  renameStatus(m.keyRename.saving),
-			Error:   m.keyRename.err,
-			Loading: m.keyRename.loading,
+			Focused:   true,
+			Status:    renameStatus(m.keyRename.saving),
+			Error:     m.keyRename.err,
+			Loading:   m.keyRename.loading,
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysDelete:
 		if m.keyDelete.resolving {
@@ -464,13 +491,12 @@ func (m *model) renderKeyBody(contentWidth int) string {
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysGenerate:
 		return keyscreen.RenderGenerate(keyscreen.GenerateScreen{
-			Context:     "Create a new SSH key and add it to this vault",
-			NameView:    m.keyGenerate.nameInput.View(),
-			CommentView: m.keyGenerate.commentInput.View(),
-			NameFocused: m.keyGenerate.focus == 0,
-			Status:      m.keyGenerate.status,
-			Error:       m.keyGenerate.err,
-			Generating:  m.keyGenerate.generating,
+			Context:    "Create a new SSH key and add it to this vault",
+			NameView:   m.keyGenerate.nameInput.View(),
+			Focused:    true,
+			Status:     m.keyGenerate.status,
+			Error:      m.keyGenerate.err,
+			Generating: m.keyGenerate.generating,
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysImport:
 		options := make([]keyscreen.ImportSourceOption, 0, len(keyImportSources))
@@ -486,19 +512,20 @@ func (m *model) renderKeyBody(contentWidth int) string {
 			SourceFocus: m.keyImport.focus == 0,
 			PathView:    m.keyImport.pathInput.View(),
 			PathFocused: m.keyImport.focus == 1,
-			NeedsPath:   m.currentImportSource().NeedsPath,
+			PathVisible: m.keyImport.pathVisible,
 			Status:      m.keyImport.status,
 			Error:       m.keyImport.err,
-			Importing:   m.keyImport.importing,
+			Busy:        m.keyImport.importing || m.keyImport.pickerOpening,
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysExport:
 		return keyscreen.RenderExport(keyscreen.ExportScreen{
-			Context:   "Export this vault to a Forged JSON file",
-			PathView:  m.keyExport.pathInput.View(),
-			Focused:   true,
-			Status:    m.keyExport.status,
-			Error:     m.keyExport.err,
-			Exporting: m.keyExport.exporting,
+			Context:     "Export this vault to a Forged JSON file",
+			PathView:    m.keyExport.pathInput.View(),
+			Focused:     m.keyExport.pathVisible,
+			PathVisible: m.keyExport.pathVisible,
+			Status:      m.keyExport.status,
+			Error:       m.keyExport.err,
+			Busy:        m.keyExport.exporting || m.keyExport.pickerOpening,
 		}, m.spinner.View(), contentWidth)
 	default:
 		return ""
@@ -747,14 +774,7 @@ func (m *model) updateKeyGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.showCurrentRoute()
 		}
 		return m, tea.Quit
-	case "tab", "shift+tab", "up", "down":
-		m.moveKeyGenerateFocus(msg.String())
-		return m, nil
 	case "enter":
-		if m.keyGenerate.focus == 0 {
-			m.moveKeyGenerateFocus("down")
-			return m, textinput.Blink
-		}
 		name := strings.TrimSpace(m.keyGenerate.nameInput.Value())
 		if name == "" {
 			m.keyGenerate.err = "Enter a key name"
@@ -763,14 +783,17 @@ func (m *model) updateKeyGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyGenerate.err = ""
 		m.keyGenerate.status = "Generating key"
 		m.keyGenerate.generating = true
-		return m, tea.Batch(m.spinner.Tick, m.generateKeyCmd(name, strings.TrimSpace(m.keyGenerate.commentInput.Value())))
+		return m, tea.Batch(m.spinner.Tick, m.generateKeyCmd(name, ""))
 	default:
-		return m, m.updateKeyGenerateInputs(msg)
+		var cmd tea.Cmd
+		m.keyGenerate.nameInput, cmd = m.keyGenerate.nameInput.Update(msg)
+		m.keyGenerate.err = ""
+		return m, cmd
 	}
 }
 
 func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.keyImport.importing {
+	if m.keyImport.importing || m.keyImport.pickerOpening {
 		if msg.String() == "esc" {
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
@@ -788,11 +811,16 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "tab":
-		if source.NeedsPath {
-			m.toggleKeyImportFocus()
-			if m.keyImport.focus == 1 {
-				return m, textinput.Blink
-			}
+		if m.keyImport.pathVisible && m.keyImport.focus == 1 {
+			m.keyImport.err = ""
+			m.keyImport.status = "Choosing import file"
+			m.keyImport.pickerOpening = true
+			return m, tea.Batch(m.spinner.Tick, m.openImportPicker(source.ID))
+		}
+		if m.keyImport.pathVisible {
+			m.keyImport.focus = 1
+			m.keyImport.pathInput.Focus()
+			return m, textinput.Blink
 		}
 		return m, nil
 	case "up", "k":
@@ -800,18 +828,34 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.moveKeyImportSource(-1)
 			return m, nil
 		}
-		return m, m.updateKeyImportPath(msg)
+		m.keyImport.focus = 0
+		m.keyImport.pathInput.Blur()
+		return m, nil
 	case "down", "j":
 		if m.keyImport.focus == 0 {
+			if m.keyImport.pathVisible {
+				m.keyImport.focus = 1
+				m.keyImport.pathInput.Focus()
+				return m, textinput.Blink
+			}
 			m.moveKeyImportSource(1)
 			return m, nil
 		}
-		return m, m.updateKeyImportPath(msg)
+		m.keyImport.focus = 0
+		m.keyImport.pathInput.Blur()
+		return m, nil
 	case "enter":
-		if m.keyImport.focus == 0 && source.NeedsPath {
-			m.keyImport.focus = 1
-			m.keyImport.pathInput.Focus()
-			return m, textinput.Blink
+		if m.keyImport.focus == 0 {
+			if source.NeedsPath {
+				m.keyImport.err = ""
+				m.keyImport.status = "Choosing import file"
+				m.keyImport.pickerOpening = true
+				return m, tea.Batch(m.spinner.Tick, m.openImportPicker(source.ID))
+			}
+			m.keyImport.err = ""
+			m.keyImport.status = "Importing keys"
+			m.keyImport.importing = true
+			return m, tea.Batch(m.spinner.Tick, m.importKeysCmd(source.ID, ""))
 		}
 		file := ""
 		if source.NeedsPath {
@@ -834,7 +878,7 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.keyExport.exporting {
+	if m.keyExport.exporting || m.keyExport.pickerOpening {
 		if msg.String() == "esc" {
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
@@ -850,7 +894,21 @@ func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.showCurrentRoute()
 		}
 		return m, tea.Quit
+	case "tab":
+		if m.keyExport.pathVisible {
+			m.keyExport.err = ""
+			m.keyExport.status = "Choosing export file"
+			m.keyExport.pickerOpening = true
+			return m, tea.Batch(m.spinner.Tick, m.openExportPicker(strings.TrimSpace(m.keyExport.pathInput.Value())))
+		}
+		return m, nil
 	case "enter":
+		if !m.keyExport.pathVisible {
+			m.keyExport.err = ""
+			m.keyExport.status = "Choosing export file"
+			m.keyExport.pickerOpening = true
+			return m, tea.Batch(m.spinner.Tick, m.openExportPicker(strings.TrimSpace(m.keyExport.pathInput.Value())))
+		}
 		if strings.TrimSpace(m.keyExport.pathInput.Value()) == "" {
 			m.keyExport.err = "Enter an export path"
 			return m, nil
@@ -869,11 +927,7 @@ func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) updateKeyGenerateInputs(msg tea.KeyMsg) tea.Cmd {
 	var cmd tea.Cmd
-	if m.keyGenerate.focus == 0 {
-		m.keyGenerate.nameInput, cmd = m.keyGenerate.nameInput.Update(msg)
-	} else {
-		m.keyGenerate.commentInput, cmd = m.keyGenerate.commentInput.Update(msg)
-	}
+	m.keyGenerate.nameInput, cmd = m.keyGenerate.nameInput.Update(msg)
 	m.keyGenerate.err = ""
 	return cmd
 }
@@ -964,25 +1018,23 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 		m.keyDelete = keyDeleteState{loading: true, resolving: true}
 	case RouteKeysGenerate:
 		m.keyGenerate = keyGenerateState{
-			nameInput:    newKeyInput("Enter key name"),
-			commentInput: newKeyInput("Optional comment"),
+			nameInput: newKeyInput("Enter key name"),
 		}
-		m.keyGenerate.commentInput.Placeholder = "Optional comment"
 		if name := strings.TrimSpace(route.Params["name"]); name != "" {
 			m.keyGenerate.nameInput.SetValue(name)
-			m.keyGenerate.focus = 1
 		}
-		m.syncKeyGenerateFocus()
+		m.keyGenerate.nameInput.Focus()
 		m.resizeKeyInputs()
 		return textinput.Blink
 	case RouteKeysImport:
 		m.keyImport = keyImportState{
 			sourceIndex: 0,
 			focus:       0,
-			pathInput:   newKeyInput(""),
+			pathVisible: false,
+			pathInput:   newKeyInput("Enter import file path"),
 		}
 		m.keyImport.pathInput.CharLimit = 512
-		m.syncKeyImportSource()
+		m.keyImport.pathInput.Placeholder = m.currentImportSource().Placeholder
 		m.resizeKeyInputs()
 		return nil
 	case RouteKeysExport:
@@ -991,9 +1043,9 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 		}
 		m.keyExport.pathInput.CharLimit = 512
 		m.keyExport.pathInput.SetValue(actions.DefaultExportPath())
-		m.keyExport.pathInput.Focus()
+		m.keyExport.pathVisible = false
 		m.resizeKeyInputs()
-		return textinput.Blink
+		return nil
 	default:
 		return nil
 	}
@@ -1138,6 +1190,28 @@ func (m *model) exportVault(password []byte) tea.Cmd {
 	}
 }
 
+func (m *model) openImportPicker(source string) tea.Cmd {
+	m.keyImportPickerID++
+	id := m.keyImportPickerID
+	return func() tea.Msg {
+		path, err := picker.ChooseFile()
+		return keyImportPickerMsg{id: id, path: path, err: err}
+	}
+}
+
+func (m *model) openExportPicker(defaultPath string) tea.Cmd {
+	m.keyExportPickerID++
+	id := m.keyExportPickerID
+	defaultName := filepath.Base(strings.TrimSpace(defaultPath))
+	if defaultName == "" || defaultName == "." || defaultName == string(filepath.Separator) {
+		defaultName = filepath.Base(actions.DefaultExportPath())
+	}
+	return func() tea.Msg {
+		path, err := picker.ChooseSavePath(defaultName)
+		return keyExportPickerMsg{id: id, path: path, err: err}
+	}
+}
+
 func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 	if msg.id != m.keyListID {
 		return m, nil
@@ -1214,8 +1288,8 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 		if resolution.Exact != nil {
 			m.keyRename = keyRenameState{
 				resolving: false,
-				original: resolution.Exact.Name,
-				input:    newKeyInput("Enter new key name"),
+				original:  resolution.Exact.Name,
+				input:     newKeyInput("Enter new key name"),
 			}
 			m.keyRename.input.SetValue(strings.TrimSpace(current.Params["new_name"]))
 			if strings.TrimSpace(current.Params["new_name"]) == "" {
@@ -1226,16 +1300,16 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 			return m, textinput.Blink
 		}
 		return m.fallbackKeyBrowser(msg.keys, query, fallbackNotice(RouteKeysRename, query, len(resolution.Matches)))
-		case RouteKeysDelete:
-			query := current.Params["name"]
-			resolution := actions.ResolveKeyQuery(msg.keys, query)
-			if resolution.Exact != nil {
-				m.keyDelete = keyDeleteState{key: *resolution.Exact}
-				return m, nil
-			}
-			return m.fallbackKeyBrowser(msg.keys, query, fallbackNotice(RouteKeysDelete, query, len(resolution.Matches)))
-		default:
+	case RouteKeysDelete:
+		query := current.Params["name"]
+		resolution := actions.ResolveKeyQuery(msg.keys, query)
+		if resolution.Exact != nil {
+			m.keyDelete = keyDeleteState{key: *resolution.Exact}
 			return m, nil
+		}
+		return m.fallbackKeyBrowser(msg.keys, query, fallbackNotice(RouteKeysDelete, query, len(resolution.Matches)))
+	default:
+		return m, nil
 	}
 }
 
@@ -1378,6 +1452,9 @@ func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model,
 		m.keyImport.err = msg.err.Error()
 		return m, nil
 	}
+	for _, key := range msg.result.Keys {
+		m.upsertCachedKey(key)
+	}
 	notice := importResultNotice(msg.result)
 	m.session.ReplaceCurrent(Route{
 		ID: RouteKeysBrowser,
@@ -1420,6 +1497,62 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 	m.keyExport.err = ""
 	m.keyExport.status = exportSuccessMessage(msg.result)
 	return m, nil
+}
+
+func (m *model) handleKeyImportPickerMsg(msg keyImportPickerMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.keyImportPickerID {
+		return m, nil
+	}
+	m.keyImport.pickerOpening = false
+	source := m.currentImportSource()
+	if msg.err == nil && strings.TrimSpace(msg.path) != "" {
+		m.keyImport.pathInput.SetValue(msg.path)
+		m.keyImport.pathVisible = false
+		m.keyImport.err = ""
+		m.keyImport.status = "Importing keys"
+		m.keyImport.importing = true
+		return m, tea.Batch(m.spinner.Tick, m.importKeysCmd(source.ID, msg.path))
+	}
+	m.keyImport.pathVisible = true
+	m.keyImport.focus = 1
+	m.keyImport.pathInput.Focus()
+	switch {
+	case errors.Is(msg.err, picker.ErrUnavailable):
+		m.keyImport.err = "File picker unavailable. Enter a file path instead"
+	case errors.Is(msg.err, picker.ErrCanceled), msg.err == nil:
+		m.keyImport.err = ""
+	default:
+		m.keyImport.err = "File picker failed. Enter a file path instead"
+	}
+	m.keyImport.status = ""
+	return m, textinput.Blink
+}
+
+func (m *model) handleKeyExportPickerMsg(msg keyExportPickerMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.keyExportPickerID {
+		return m, nil
+	}
+	m.keyExport.pickerOpening = false
+	if msg.err == nil && strings.TrimSpace(msg.path) != "" {
+		m.keyExport.pathInput.SetValue(msg.path)
+		m.keyExport.pathVisible = false
+		m.keyExport.err = ""
+		m.keyExport.status = "Exporting vault"
+		m.keyExport.exporting = true
+		return m, tea.Batch(m.spinner.Tick, m.exportVault(nil))
+	}
+	m.keyExport.pathVisible = true
+	m.keyExport.pathInput.Focus()
+	switch {
+	case errors.Is(msg.err, picker.ErrUnavailable):
+		m.keyExport.err = "File picker unavailable. Enter an export path instead"
+	case errors.Is(msg.err, picker.ErrCanceled), msg.err == nil:
+		m.keyExport.err = ""
+	default:
+		m.keyExport.err = "File picker failed. Enter an export path instead"
+	}
+	m.keyExport.status = ""
+	return m, textinput.Blink
 }
 
 func (m *model) fallbackKeyBrowser(keys []actions.KeySummary, query string, notice string) (tea.Model, tea.Cmd) {
@@ -1626,7 +1759,6 @@ func (m *model) resizeKeyInputs() {
 	m.keyRename.input.Width = max(18, min(shell.ClampBlockWidth(m.width, 44), 44))
 	inputWidth := max(18, min(shell.ClampBlockWidth(m.width, 44), 44))
 	m.keyGenerate.nameInput.Width = inputWidth
-	m.keyGenerate.commentInput.Width = inputWidth
 	m.keyImport.pathInput.Width = max(18, min(shell.ClampBlockWidth(m.width, 54), 54))
 	m.keyExport.pathInput.Width = max(18, min(shell.ClampBlockWidth(m.width, 54), 54))
 }
@@ -1666,27 +1798,6 @@ func fallbackNotice(route RouteID, query string, matches int) string {
 	}
 }
 
-func (m *model) moveKeyGenerateFocus(key string) {
-	if key == "up" || key == "shift+tab" {
-		m.keyGenerate.focus = 0
-	} else {
-		m.keyGenerate.focus = 1
-	}
-	m.syncKeyGenerateFocus()
-}
-
-func (m *model) syncKeyGenerateFocus() {
-	if m.keyGenerate.focus <= 0 {
-		m.keyGenerate.focus = 0
-		m.keyGenerate.nameInput.Focus()
-		m.keyGenerate.commentInput.Blur()
-		return
-	}
-	m.keyGenerate.focus = 1
-	m.keyGenerate.nameInput.Blur()
-	m.keyGenerate.commentInput.Focus()
-}
-
 func (m *model) moveKeyImportSource(delta int) {
 	next := m.keyImport.sourceIndex + delta
 	if next < 0 {
@@ -1696,33 +1807,14 @@ func (m *model) moveKeyImportSource(delta int) {
 		next = 0
 	}
 	m.keyImport.sourceIndex = next
-	m.syncKeyImportSource()
-}
-
-func (m *model) toggleKeyImportFocus() {
-	if !m.currentImportSource().NeedsPath {
-		m.keyImport.focus = 0
-		m.syncKeyImportSource()
-		return
-	}
-	if m.keyImport.focus == 0 {
-		m.keyImport.focus = 1
-		m.keyImport.pathInput.Focus()
-		return
-	}
-	m.keyImport.focus = 0
-	m.syncKeyImportSource()
-}
-
-func (m *model) syncKeyImportSource() {
 	source := m.currentImportSource()
 	m.keyImport.pathInput.Placeholder = source.Placeholder
-	if m.keyImport.focus == 0 || !source.NeedsPath {
+	if !source.NeedsPath {
+		m.keyImport.pathVisible = false
 		m.keyImport.focus = 0
 		m.keyImport.pathInput.Blur()
-		return
+		m.keyImport.pathInput.SetValue("")
 	}
-	m.keyImport.pathInput.Focus()
 }
 
 func (m *model) currentImportSource() keyImportSource {

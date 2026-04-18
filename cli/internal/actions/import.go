@@ -18,6 +18,7 @@ type ImportResult struct {
 	Discovered int
 	Imported   int
 	Skipped    int
+	Keys       []KeySummary
 }
 
 func ImportSourceLabel(source string) string {
@@ -54,7 +55,7 @@ func ImportFromSource(paths config.Paths, source string, file string) (ImportRes
 
 	client := ipc.NewClient(paths.CtlSocket())
 	for _, key := range keys {
-		_, err := client.Call(ipc.CmdAdd, map[string]string{
+		resp, err := client.Call(ipc.CmdAdd, map[string]string{
 			"name":        key.Name,
 			"private_key": key.PrivateKey,
 			"comment":     "",
@@ -64,6 +65,26 @@ func ImportFromSource(paths config.Paths, source string, file string) (ImportRes
 			continue
 		}
 		result.Imported++
+
+		var added struct {
+			Name         string `json:"name"`
+			ResolvedName string `json:"resolved_name"`
+			Type         string `json:"type"`
+			Fingerprint  string `json:"fingerprint"`
+		}
+		if err := json.Unmarshal(resp.Data, &added); err == nil {
+			name := strings.TrimSpace(added.ResolvedName)
+			if name == "" {
+				name = strings.TrimSpace(added.Name)
+			}
+			if name != "" {
+				result.Keys = append(result.Keys, KeySummary{
+					Name:        name,
+					Type:        strings.TrimSpace(added.Type),
+					Fingerprint: strings.TrimSpace(added.Fingerprint),
+				})
+			}
+		}
 	}
 
 	return result, nil

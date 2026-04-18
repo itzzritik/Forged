@@ -26,13 +26,12 @@ type DeleteScreen struct {
 }
 
 type GenerateScreen struct {
-	Context      string
-	NameView     string
-	CommentView  string
-	NameFocused  bool
-	Status       string
-	Error        string
-	Generating   bool
+	Context    string
+	NameView   string
+	Focused    bool
+	Status     string
+	Error      string
+	Generating bool
 }
 
 type ImportSourceOption struct {
@@ -41,24 +40,25 @@ type ImportSourceOption struct {
 }
 
 type ImportScreen struct {
-	Context      string
-	Sources      []ImportSourceOption
-	SourceFocus  bool
-	PathView     string
-	PathFocused  bool
-	NeedsPath    bool
-	Status       string
-	Error        string
-	Importing    bool
+	Context     string
+	Sources     []ImportSourceOption
+	SourceFocus bool
+	PathView    string
+	PathFocused bool
+	PathVisible bool
+	Status      string
+	Error       string
+	Busy        bool
 }
 
 type ExportScreen struct {
 	Context     string
 	PathView    string
 	Focused     bool
+	PathVisible bool
 	Status      string
 	Error       string
-	Exporting   bool
+	Busy        bool
 }
 
 func RenderRename(screen RenameScreen, spinner string, width int) string {
@@ -122,11 +122,10 @@ func RenderGenerate(screen GenerateScreen, spinner string, width int) string {
 
 	sections = append(sections,
 		"",
-		renderTextField(screen.NameView, screen.NameFocused),
-		"",
-		renderTextField(screen.CommentView, !screen.NameFocused),
+		renderTextField(screen.NameView, screen.Focused),
 	)
 	if status := renderResultStatus(screen.Status, screen.Error, false, spinner); status != "" {
+		sections = append(sections, "")
 		sections = append(sections, status)
 	} else {
 		sections = append(sections, "")
@@ -141,7 +140,7 @@ func RenderImport(screen ImportScreen, spinner string, width int) string {
 		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
 	}
 
-	if screen.Importing {
+	if screen.Busy {
 		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+screen.Status))
 		return strings.Join(sections, "\n")
 	}
@@ -160,7 +159,7 @@ func RenderImport(screen ImportScreen, spinner string, width int) string {
 		sections = append(sections, "", strings.Join(lines, "\n"))
 	}
 
-	if screen.NeedsPath {
+	if screen.PathVisible {
 		sections = append(sections, "", renderTextField(screen.PathView, screen.PathFocused))
 	}
 
@@ -180,13 +179,16 @@ func RenderExport(screen ExportScreen, spinner string, width int) string {
 		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
 	}
 
-	if screen.Exporting {
+	if screen.Busy {
 		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+screen.Status))
 		return strings.Join(sections, "\n")
 	}
 
-	sections = append(sections, "", renderTextField(screen.PathView, screen.Focused))
+	if screen.PathVisible {
+		sections = append(sections, "", renderTextField(screen.PathView, screen.Focused))
+	}
 	if status := renderResultStatus(screen.Status, screen.Error, false, spinner); status != "" {
+		sections = append(sections, "")
 		sections = append(sections, status)
 	} else {
 		sections = append(sections, "")
