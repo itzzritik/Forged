@@ -2,6 +2,7 @@ package sshrouting
 
 import (
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -30,6 +31,7 @@ type Attempt struct {
 }
 
 type Service struct {
+	mu            sync.RWMutex
 	paths         config.Paths
 	keyStore      *vault.KeyStore
 	now           func() time.Time
@@ -67,6 +69,7 @@ func (s *Service) Prepare(req PrepareRequest) error {
 
 	routes := s.keyStore.SSHRoutes()
 	plan := PlanCandidates(target, routes, s.keyStore.List(), 3)
+	s.mu.Lock()
 	s.attempts[req.Attempt] = Attempt{
 		Token:      req.Attempt,
 		ClientPID:  req.ClientPID,
@@ -76,15 +79,19 @@ func (s *Service) Prepare(req PrepareRequest) error {
 		Created:    s.now(),
 	}
 	s.clientAttempt[req.ClientPID] = req.Attempt
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *Service) Success(attempt string) error {
+	s.mu.Lock()
 	current, ok := s.attempts[attempt]
 	if !ok {
+		s.mu.Unlock()
 		return fmt.Errorf("attempt %q not found", attempt)
 	}
-	defer s.deleteAttempt(current)
+	s.deleteAttemptLocked(current)
+	s.mu.Unlock()
 
 	if current.LastKey == "" {
 		return nil
@@ -93,16 +100,21 @@ func (s *Service) Success(attempt string) error {
 }
 
 func (s *Service) RecordSignature(clientPID int, fingerprint string) {
-	attempt, ok := s.AttemptByPID(clientPID)
+	s.mu.Lock()
+	attempt, ok := s.attemptByPIDLocked(clientPID)
 	if !ok {
+		s.mu.Unlock()
 		return
 	}
 	attempt.LastKey = fingerprint
 	s.attempts[attempt.Token] = attempt
+	s.mu.Unlock()
 }
 
 func (s *Service) AllowedFingerprints(clientPID int) []string {
-	attempt, ok := s.AttemptByPID(clientPID)
+	s.mu.RLock()
+	attempt, ok := s.attemptByPIDLocked(clientPID)
+	s.mu.RUnlock()
 	if !ok {
 		return nil
 	}
@@ -110,6 +122,12 @@ func (s *Service) AllowedFingerprints(clientPID int) []string {
 }
 
 func (s *Service) AttemptByPID(clientPID int) (Attempt, bool) {
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	return s.attemptByPIDLocked(clientPID)
+}
+
+func (s *Service) attemptByPIDLocked(clientPID int) (Attempt, bool) {
 	token, ok := s.clientAttempt[clientPID]
 	if !ok {
 		return Attempt{}, false
@@ -119,18 +137,31 @@ func (s *Service) AttemptByPID(clientPID int) (Attempt, bool) {
 }
 
 func (s *Service) ExpireBefore(cutoff time.Time) {
+	var expired []Attempt
+	s.mu.Lock()
 	for _, attempt := range s.attempts {
 		if attempt.Created.After(cutoff) {
 			continue
 		}
+		expired = append(expired, attempt)
+		s.deleteAttemptLocked(attempt)
+	}
+	s.mu.Unlock()
+
+	for _, attempt := range expired {
 		if attempt.HadExact && attempt.LastKey != "" {
 			_ = s.keyStore.ClearSSHRoute(attempt.Target.Canonical, s.now())
 		}
-		s.deleteAttempt(attempt)
 	}
 }
 
 func (s *Service) deleteAttempt(attempt Attempt) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.deleteAttemptLocked(attempt)
+}
+
+func (s *Service) deleteAttemptLocked(attempt Attempt) {
 	delete(s.attempts, attempt.Token)
 	delete(s.clientAttempt, attempt.ClientPID)
 }

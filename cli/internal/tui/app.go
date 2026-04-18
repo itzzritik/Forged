@@ -8,12 +8,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/spinner"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/itzzritik/forged/cli/internal/tui/components"
 	accountscreen "github.com/itzzritik/forged/cli/internal/tui/screens/account"
+	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
 	dashboardscreen "github.com/itzzritik/forged/cli/internal/tui/screens/dashboard"
 	repairscreen "github.com/itzzritik/forged/cli/internal/tui/screens/repair"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
@@ -338,7 +340,24 @@ func (m *model) Init() tea.Cmd {
 		m.screen = screenDashboard
 		m.bootAssessed = false
 		m.systemHeader = systemHeaderChecking
-		return tea.Batch(m.spinner.Tick, m.assessCurrentState())
+		cmds := []tea.Cmd{m.spinner.Tick, m.assessCurrentState()}
+		if m.intent.Entry == RouteKeysBrowser {
+			m.keyBrowser = keyBrowserState{
+				loading: true,
+				input:   newKeyInput("Search keys"),
+			}
+			route := m.session.Current()
+			if query := strings.TrimSpace(route.Params["query"]); query != "" {
+				m.keyBrowser.input.SetValue(query)
+			}
+			if route.Params["search"] == "true" {
+				m.keyBrowser.searchActive = true
+				m.keyBrowser.input.Focus()
+				cmds = append(cmds, textinput.Blink)
+			}
+			cmds = append(cmds, m.listLocalKeys(m.nextKeyListID(), false))
+		}
+		return tea.Batch(cmds...)
 	}
 }
 
@@ -388,7 +407,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.screen = screenDashboard
 		m.systemHeader = systemHeaderChecking
-		return m, m.startStartupRepair()
+		return m, tea.Batch(
+			m.startStartupRepair(),
+			m.preloadKeyBrowser(),
+		)
 	case loginStartedMsg:
 		if msg.id != m.loginID || m.screen != screenLogin {
 			return m, nil
@@ -617,7 +639,11 @@ func (m *model) renderHeader(width int) string {
 
 func (m *model) headerStatusItems() []shell.StatusItem {
 	if !m.bootAssessed {
-		return nil
+		return []shell.StatusItem{
+			{Label: "Checking health", Icon: m.spinner.View()},
+			m.commitSigningHeaderItem(),
+			{Label: "Loading vault", Icon: m.spinner.View()},
+		}
 	}
 	if m.shouldShowProductRail() {
 		return []shell.StatusItem{
@@ -641,7 +667,7 @@ func (m *model) systemHeaderItem() shell.StatusItem {
 	case systemHeaderChecking:
 		return shell.StatusItem{Label: "Checking health", Icon: m.spinner.View()}
 	case systemHeaderFixing:
-		return shell.StatusItem{Label: "Fixing issues", Icon: m.spinner.View()}
+		return shell.StatusItem{Label: "Restoring Health", Icon: m.spinner.View()}
 	case systemHeaderHealthy:
 		return shell.StatusItem{Label: "System healthy", Tone: shell.StatusToneSuccess}
 	default:
@@ -804,10 +830,19 @@ func (m *model) renderBody(contentWidth int) string {
 		return repairscreen.Render(m.repairScreen, m.spinner.View(), contentWidth)
 	default:
 		if !m.bootAssessed {
-			return ""
+			return m.renderPendingBody(contentWidth)
 		}
 		if m.isKeyRoute() {
+			if m.session.Current().ID == RouteKeysBrowser && m.keyBrowser.loading && len(m.keyBrowser.all) == 0 {
+				return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
+					Title:       "Loading keys",
+					Description: "Reading keys from this vault",
+				}, m.spinner.View(), contentWidth)
+			}
 			if !m.keyRouteLoaded() {
+				if m.session.Current().ID == RouteKeysDetail && m.keyDetail.resolving {
+					return m.renderKeyBody(contentWidth)
+				}
 				return ""
 			}
 			return m.renderKeyBody(contentWidth)
@@ -825,6 +860,45 @@ func (m *model) renderBody(contentWidth int) string {
 				Tone:    m.notice.tone,
 			},
 		}, contentWidth)
+	}
+}
+
+func (m *model) renderPendingBody(contentWidth int) string {
+	switch m.session.Current().ID {
+	case RouteKeysDetail:
+		return m.renderKeyBody(contentWidth)
+	case RouteKeysBrowser:
+		return m.renderKeyBody(contentWidth)
+	case RouteKeysRename:
+		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
+			Title:       "Loading key",
+			Description: "Preparing the selected key for rename",
+		}, m.spinner.View(), contentWidth)
+	case RouteKeysDelete:
+		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
+			Title:       "Loading key",
+			Description: "Preparing the selected key for deletion",
+		}, m.spinner.View(), contentWidth)
+	case RouteKeysGenerate:
+		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
+			Title:       "Opening generate key",
+			Description: "Preparing the key creation flow",
+		}, m.spinner.View(), contentWidth)
+	case RouteKeysImport:
+		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
+			Title:       "Opening import keys",
+			Description: "Preparing the key import flow",
+		}, m.spinner.View(), contentWidth)
+	case RouteKeysExport:
+		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
+			Title:       "Opening export vault",
+			Description: "Preparing the vault export flow",
+		}, m.spinner.View(), contentWidth)
+	default:
+		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
+			Title:       "Opening Forged",
+			Description: "Checking local health and preparing this machine",
+		}, m.spinner.View(), contentWidth)
 	}
 }
 
@@ -1355,9 +1429,6 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 
 	if m.snapshot.LoggedIn {
 		areas[3].Summary = "Profile, session, and linked features"
-		if email := strings.TrimSpace(m.accountEmail); email != "" {
-			areas[3].Summary = fmt.Sprintf("Profile, session, and linked features for %s", email)
-		}
 		areas[4].Summary = "Refresh and review vault sync"
 	} else {
 		areas[4].Summary = "Review sync once account access is enabled"
@@ -1667,6 +1738,9 @@ func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.notice = notice{}
 	m.onboardingCursor = 0
 	m.screen = screenDashboard
+	if m.session.Current().ID == RouteAccountLogin {
+		m.session.ReplaceCurrent(Route{ID: RouteDashboardHome})
+	}
 	m.bootAssessed = false
 	m.systemHeader = systemHeaderChecking
 	m.setupVariant = setupVariantNone
@@ -1743,11 +1817,11 @@ func (m *model) pendingDashboardRouteTitle() string {
 	case RouteKeysBrowser:
 		return "View keys"
 	case RouteKeysDetail:
-		return ""
+		return "View key"
 	case RouteKeysRename:
-		return ""
+		return "Rename key"
 	case RouteKeysDelete:
-		return ""
+		return "Delete key"
 	case RouteKeysGenerate:
 		return "Generate key"
 	case RouteKeysImport:
@@ -1777,11 +1851,23 @@ func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Key", Current: true},
 		}
 	case RouteKeysDetail:
-		return nil
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "View", Current: true},
+		}
 	case RouteKeysRename:
-		return nil
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Rename", Current: true},
+		}
 	case RouteKeysDelete:
-		return nil
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Key"},
+			{Label: "Delete", Current: true},
+		}
 	case RouteKeysGenerate:
 		return []shell.Breadcrumb{
 			{Label: "Home"},

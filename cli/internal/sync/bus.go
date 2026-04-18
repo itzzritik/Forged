@@ -130,7 +130,6 @@ func (b *Bus) ForegroundRead(ctx context.Context, reason string) error {
 		}
 		if b.syncing {
 			done := b.syncDone
-			b.queuedRefresh = true
 			b.mu.Unlock()
 			if err := waitForSync(ctx, done); err != nil {
 				return err
@@ -171,7 +170,6 @@ func (b *Bus) RefreshMissingKey(ctx context.Context, reason string) error {
 		b.mu.Lock()
 		if b.syncing {
 			done := b.syncDone
-			b.queuedRefresh = true
 			b.mu.Unlock()
 			if err := waitForSync(ctx, done); err != nil {
 				return err
@@ -416,9 +414,7 @@ func (b *Bus) finishPull(err error) {
 		b.enqueuePush("queued_push")
 		return
 	}
-	if queuedRefresh && err == nil {
-		b.enqueueRefresh("queued_refresh", 5*time.Second)
-	}
+	_ = queuedRefresh
 }
 
 func (b *Bus) beginSyncLocked() {

@@ -221,8 +221,6 @@ func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
 }
 
 func (s *Server) handleList() Response {
-	s.refreshForRead("list")
-
 	keys := s.keyStore.List()
 	type keyInfo struct {
 		Name        string `json:"name"`
@@ -335,8 +333,6 @@ type exportArgs struct {
 }
 
 func (s *Server) handleExport(raw json.RawMessage) Response {
-	s.refreshForRead("export")
-
 	var a exportArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
@@ -362,8 +358,6 @@ type viewArgs struct {
 }
 
 func (s *Server) handleView(raw json.RawMessage) Response {
-	s.refreshForRead("view")
-
 	var a viewArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
@@ -413,8 +407,6 @@ type exportAllArgs struct {
 }
 
 func (s *Server) handleExportAll(raw json.RawMessage) Response {
-	s.refreshForRead("export_all")
-
 	if s.authBroker == nil {
 		return ErrorResponse(fmt.Errorf("sensitive auth broker unavailable"))
 	}

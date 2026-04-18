@@ -224,7 +224,7 @@ func (m *model) keyHeaderTitle() string {
 		return "View keys"
 	case RouteKeysDetail:
 		if m.keyDetail.resolving {
-			return ""
+			return "View key"
 		}
 		if name := strings.TrimSpace(m.keyDetail.key.Name); name != "" {
 			return name
@@ -259,9 +259,6 @@ func (m *model) keyBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Key", Current: true},
 		}
 	case RouteKeysDetail:
-		if m.keyDetail.resolving {
-			return nil
-		}
 		return []shell.Breadcrumb{
 			{Label: "Home"},
 			{Label: "Key"},
@@ -336,6 +333,11 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
 	case RouteKeysDetail:
+		if m.keyDetail.loading {
+			return []shell.FooterAction{
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+			}
+		}
 		if m.keyDetail.err != "" {
 			return []shell.FooterAction{
 				{Key: "Enter", Label: "Retry"},
@@ -429,11 +431,8 @@ func (m *model) renderKeyBody(contentWidth int) string {
 			Error:   m.keyBrowser.err,
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysDetail:
-		if m.keyDetail.resolving {
-			return ""
-		}
 		return keyscreen.RenderDetail(keyscreen.DetailScreen{
-			Loading:     m.keyDetail.loading,
+			Loading:     m.keyDetail.loading || m.keyDetail.resolving,
 			Error:       m.keyDetail.err,
 			Key:         m.keyDetail.key,
 			Status:      m.keyDetail.status,
@@ -890,12 +889,28 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 	route := m.session.Current()
 	switch route.ID {
 	case RouteKeysBrowser:
+		if m.keyBrowser.loading {
+			if query := strings.TrimSpace(route.Params["query"]); query != "" {
+				m.keyBrowser.input.SetValue(query)
+			}
+			m.keyBrowser.notice = strings.TrimSpace(route.Params["notice"])
+			m.keyBrowser.searchActive = route.Params["search"] == "true"
+			if m.keyBrowser.searchActive {
+				m.keyBrowser.input.Focus()
+				return textinput.Blink
+			}
+			m.keyBrowser.input.Blur()
+			return nil
+		}
 		if len(m.keyBrowser.all) > 0 {
 			m.applyKeyBrowserRoute(route)
 			m.keyBrowser.loading = false
-			m.keyBrowser.refreshing = true
+			m.keyBrowser.refreshing = m.snapshot.LoggedIn
 			m.keyBrowser.err = ""
-			return m.listKeys(m.nextKeyListID(), true)
+			if m.snapshot.LoggedIn {
+				return m.refreshKeyBrowser(true)
+			}
+			return nil
 		}
 		m.keyBrowser = keyBrowserState{
 			loading: true,
@@ -911,6 +926,12 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 	case RouteKeysDetail:
 		if route.Params["source"] == "browser" {
 			name := strings.TrimSpace(route.Params["name"])
+			if key, ok := m.cachedKeyRow(name); ok {
+				m.keyDetail = keyDetailState{
+					key: detailFromSummary(key),
+				}
+				return m.refreshKeyDetail(name)
+			}
 			if name != "" {
 				m.keyDetail = keyDetailState{loading: true}
 				return tea.Batch(m.spinner.Tick, m.loadKeyDetail(name))
@@ -989,6 +1010,17 @@ func (m *model) listKeys(id int, preserve bool) tea.Cmd {
 	}
 }
 
+func (m *model) listLocalKeys(id int, preserve bool) tea.Cmd {
+	paths := config.DefaultPaths()
+	return func() tea.Msg {
+		keys, err := actions.ListLocalKeys(paths)
+		if err != nil {
+			keys, err = actions.ListKeys(paths)
+		}
+		return keyListMsg{id: id, keys: keys, err: err, preserve: preserve}
+	}
+}
+
 func (m *model) syncAndListKeys(id int) tea.Cmd {
 	paths := config.DefaultPaths()
 	return func() tea.Msg {
@@ -1011,6 +1043,16 @@ func (m *model) loadKeyDetail(name string) tea.Cmd {
 		detail, err := actions.ViewKey(paths, name)
 		return keyDetailMsg{id: id, detail: detail, err: err}
 	})
+}
+
+func (m *model) refreshKeyDetail(name string) tea.Cmd {
+	m.keyDetailID++
+	id := m.keyDetailID
+	paths := config.DefaultPaths()
+	return func() tea.Msg {
+		detail, err := actions.ViewKey(paths, name)
+		return keyDetailMsg{id: id, detail: detail, err: err}
+	}
 }
 
 func (m *model) copyKeyText(value string, status string) tea.Cmd {
@@ -1149,7 +1191,13 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 			m.selectKeyBrowserByName(preserveName)
 		}
 		if m.keyBrowser.searchActive {
+			if !msg.preserve && m.snapshot.LoggedIn {
+				return m, tea.Batch(textinput.Blink, m.refreshKeyBrowser(true))
+			}
 			return m, textinput.Blink
+		}
+		if !msg.preserve && m.snapshot.LoggedIn {
+			return m, m.refreshKeyBrowser(true)
 		}
 		return m, nil
 	case RouteKeysDetail:
@@ -1197,11 +1245,17 @@ func (m *model) handleKeyDetailMsg(msg keyDetailMsg) (tea.Model, tea.Cmd) {
 	}
 	m.keyDetail.loading = false
 	if msg.err != nil {
+		if strings.TrimSpace(m.keyDetail.key.Name) != "" {
+			m.keyDetail.status = ""
+			m.keyDetail.statusErr = msg.err.Error()
+			return m, nil
+		}
 		m.keyDetail.err = msg.err.Error()
 		return m, nil
 	}
 	m.keyDetail.key = msg.detail
 	m.keyDetail.err = ""
+	m.keyDetail.statusErr = ""
 	return m, nil
 }
 
@@ -1459,7 +1513,7 @@ func (m *model) preloadKeyBrowser() tea.Cmd {
 	if !m.snapshot.VaultExists || len(m.keyBrowser.all) > 0 {
 		return nil
 	}
-	return m.listKeys(m.nextKeyListID(), true)
+	return m.listLocalKeys(m.nextKeyListID(), true)
 }
 
 func (m *model) applyKeyBrowserRoute(route Route) {
@@ -1486,15 +1540,22 @@ func (m *model) cachedKeyRow(name string) (actions.KeySummary, bool) {
 	return actions.KeySummary{}, false
 }
 
+func detailFromSummary(key actions.KeySummary) actions.KeyDetail {
+	return actions.KeyDetail{
+		ResolvedName: key.Name,
+		Name:         key.Name,
+		Type:         key.Type,
+		Fingerprint:  key.Fingerprint,
+		Comment:      key.Comment,
+	}
+}
+
 func (m *model) storeKeyCache(keys []actions.KeySummary) {
 	preserveName := ""
 	if key, ok := m.selectedKeyRow(); ok {
 		preserveName = key.Name
 	}
 	m.keyBrowser.all = keys
-	if len(m.keyBrowser.rows) == 0 && strings.TrimSpace(m.keyBrowser.input.Value()) == "" {
-		return
-	}
 	m.refreshKeyBrowserRows()
 	m.selectKeyBrowserByName(preserveName)
 }

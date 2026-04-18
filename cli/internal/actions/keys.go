@@ -9,8 +9,10 @@ import (
 	"unicode"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
+	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
 type KeySummary struct {
@@ -83,6 +85,31 @@ func ListKeys(paths config.Paths) ([]KeySummary, error) {
 		return nil, fmt.Errorf("parsing key list: %w", err)
 	}
 	return result.Keys, nil
+}
+
+func ListLocalKeys(paths config.Paths) ([]KeySummary, error) {
+	password, err := daemon.ReadInstalledServicePassword()
+	if err != nil {
+		return nil, err
+	}
+
+	v, err := vault.OpenReadOnly(paths.VaultFile(), []byte(password))
+	if err != nil {
+		return nil, err
+	}
+	defer v.Close()
+
+	keys := vault.NewKeyStore(v).List()
+	out := make([]KeySummary, len(keys))
+	for i, key := range keys {
+		out[i] = KeySummary{
+			Name:        key.Name,
+			Type:        key.Type,
+			Fingerprint: key.Fingerprint,
+			Comment:     key.Comment,
+		}
+	}
+	return out, nil
 }
 
 func ViewKey(paths config.Paths, name string) (KeyDetail, error) {

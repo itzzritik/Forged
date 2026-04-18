@@ -149,6 +149,22 @@ func Create(path string, password []byte) (*Vault, error) {
 }
 
 func Open(path string, password []byte) (*Vault, error) {
+	v, err := openVault(path, password)
+	if err != nil {
+		return nil, err
+	}
+	if err := v.acquireLock(); err != nil {
+		v.Close()
+		return nil, err
+	}
+	return v, nil
+}
+
+func OpenReadOnly(path string, password []byte) (*Vault, error) {
+	return openVault(path, password)
+}
+
+func openVault(path string, password []byte) (*Vault, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return nil, fmt.Errorf("reading vault: %w", err)
@@ -210,10 +226,6 @@ func Open(path string, password []byte) (*Vault, error) {
 		key:          symmetricKey,
 		protectedKey: header.ProtectedKey,
 		Data:         vd,
-	}
-
-	if err := v.acquireLock(); err != nil {
-		return nil, err
 	}
 
 	return v, nil

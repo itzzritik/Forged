@@ -28,24 +28,20 @@ func RenderBrowser(screen BrowserScreen, spinner string, width int) string {
 
 	if screen.Loading {
 		sections = append(sections, theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" Loading keys"))
-		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, contentWidth)), "\n")
+		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth)), "\n")
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
 		sections = append(sections, theme.Danger.Render("✕ "+msg))
-		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, contentWidth)), "\n")
-	}
-
-	if notice := strings.TrimSpace(screen.SearchNotice); notice != "" {
-		sections = append(sections, theme.BodyMuted.Width(contentWidth).Render(notice))
+		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth)), "\n")
 	}
 
 	if len(screen.Rows) == 0 {
 		sections = append(sections, theme.BodyMuted.Render("No keys found"))
-		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, contentWidth)), "\n")
+		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth)), "\n")
 	}
 
 	sections = append(sections, renderBrowserTable(screen, contentWidth))
-	sections = append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, contentWidth))
+	sections = append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth))
 	return strings.Join(sections, "\n")
 }
 
@@ -53,7 +49,7 @@ func VisibleRows() int {
 	return visibleRowCount
 }
 
-func renderSearchField(view string, active bool, width int) string {
+func renderSearchField(view string, active bool, notice string, width int) string {
 	value := strings.TrimRight(view, " ")
 	if value == "" {
 		value = theme.BodyMuted.Render("Search keys")
@@ -64,10 +60,14 @@ func renderSearchField(view string, active bool, width int) string {
 	}
 
 	fieldWidth := max(20, width+shell.ContentLeftInset+shell.ContentRightInset)
-	lines := []string{
+	lines := []string{}
+	if msg := strings.TrimSpace(notice); msg != "" {
+		lines = append(lines, theme.Warning.Width(width).Render(msg))
+	}
+	lines = append(lines,
 		shell.FullBleed(theme.Divider(fieldWidth)),
 		theme.Kicker.Render("❯") + "  " + value,
-	}
+	)
 	return strings.Join(lines, "\n")
 }
 
