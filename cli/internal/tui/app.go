@@ -151,6 +151,17 @@ type dashboardSectionAction struct {
 	Description string
 }
 
+type dashboardPage struct {
+	Label   string
+	Summary string
+	Route   RouteID
+}
+
+type dashboardTab struct {
+	Label string
+	Pages []dashboardPage
+}
+
 type dashboardSection struct {
 	Title   string
 	Context string
@@ -206,6 +217,8 @@ type model struct {
 	notice   notice
 
 	onboardingCursor int
+	dashboardTabIndex int
+	dashboardPageIndices []int
 	accountEmail     string
 	loginScreen      accountscreen.LoginScreen
 	passwordInput    *components.PasswordInput
@@ -622,8 +635,19 @@ func (m *model) View() string {
 	}
 	footer := shell.RenderFooter(m.footerActions()...)
 	tightFooter := m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser
-	tightBody := m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser
+	tightBody := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isTabbedDashboardRoot()
 	return shell.Render(m.width, header, body, footer, tightFooter, tightBody)
+}
+
+func (m *model) isTabbedDashboardRoot() bool {
+	return m.bootAssessed &&
+		m.screen == screenDashboard &&
+		m.snapshot.VaultExists &&
+		!m.isWelcomeState() &&
+		!m.isKeyRoute() &&
+		m.currentDashboardSection() == nil &&
+		m.session.Current().ID == RouteDashboardHome &&
+		len(m.dashboardTabs()) > 0
 }
 
 func (m *model) renderHeader(width int) string {
@@ -850,11 +874,14 @@ func (m *model) renderBody(contentWidth int) string {
 		if section := m.currentDashboardSection(); section != nil {
 			return m.renderDashboardSection(contentWidth, *section)
 		}
+		tabs, pages, summary := m.dashboardRootScreen()
 		return dashboardscreen.Render(dashboardscreen.Screen{
 			Title:   m.dashboardBodyTitle(),
 			Context: m.dashboardLead(),
 			Options: m.dashboardOptions(),
-			Areas:   m.dashboardAreas(),
+			Tabs:    tabs,
+			Pages:   pages,
+			Summary: summary,
 			Notice: dashboardscreen.Notice{
 				Message: m.notice.message,
 				Tone:    m.notice.tone,
@@ -1000,14 +1027,13 @@ func (m *model) footerActions() []shell.FooterAction {
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
 		}
-		if areas := m.dashboardAreas(); len(areas) > 0 {
-			moveLabel := "↕/↔"
-			if dashboardscreen.AreaColumns(shell.BodyWidth(m.width), len(areas)) == 1 {
-				moveLabel = "↑/↓"
+		if tabs := m.dashboardTabs(); len(tabs) > 0 {
+			return []shell.FooterAction{
+				{Key: "←/→", Label: "Tabs"},
+				{Key: "↑/↓", Label: "Pages"},
+				{Key: "Enter", Label: "Open"},
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
-			actions := []shell.FooterAction{{Key: moveLabel, Label: "Move"}, {Key: "Enter", Label: "Open"}}
-			actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
-			return actions
 		}
 		return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 	}
@@ -1073,8 +1099,8 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if areas := m.dashboardAreas(); len(areas) > 0 {
-		columns := dashboardscreen.AreaColumns(shell.BodyWidth(m.width), len(areas))
+	if tabs := m.dashboardTabs(); len(tabs) > 0 {
+		m.normalizeDashboardSelection(tabs)
 		switch msg.String() {
 		case "esc":
 			if m.session.Back() {
@@ -1082,30 +1108,32 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Quit
 		case "up", "k":
-			if m.onboardingCursor-columns >= 0 {
-				m.onboardingCursor -= columns
+			pageIndex := m.dashboardPageIndices[m.dashboardTabIndex]
+			if pageIndex > 0 {
+				m.dashboardPageIndices[m.dashboardTabIndex]--
 			}
 			return m, nil
 		case "down", "j":
-			if m.onboardingCursor+columns < len(areas) {
-				m.onboardingCursor += columns
+			pages := tabs[m.dashboardTabIndex].Pages
+			pageIndex := m.dashboardPageIndices[m.dashboardTabIndex]
+			if len(pages) > 0 && pageIndex < len(pages)-1 {
+				m.dashboardPageIndices[m.dashboardTabIndex]++
 			}
 			return m, nil
 		case "left", "h":
-			if columns > 1 && m.onboardingCursor%columns > 0 {
-				m.onboardingCursor--
+			if m.dashboardTabIndex > 0 {
+				m.dashboardTabIndex--
 			}
 			return m, nil
 		case "right", "l":
-			if columns > 1 && m.onboardingCursor%columns < columns-1 && m.onboardingCursor+1 < len(areas) {
-				m.onboardingCursor++
+			if m.dashboardTabIndex < len(tabs)-1 {
+				m.dashboardTabIndex++
 			}
 			return m, nil
 		case "enter":
-			if area := m.selectedDashboardArea(); area != nil {
-				route := m.dashboardAreaRoute(area.Label)
-				if route != "" && m.session.Current().ID != route {
-					m.session.Push(Route{ID: route})
+			if page := m.selectedDashboardPage(); page != nil {
+				if page.Route != "" && m.session.Current().ID != page.Route {
+					m.session.Push(Route{ID: page.Route})
 				}
 				return m, m.showCurrentRoute()
 			}
@@ -1267,6 +1295,177 @@ func (m *model) dashboardLead() string {
 		return "Restore your synced vault or start fresh on this device"
 	}
 	return ""
+}
+
+func (m *model) dashboardTabs() []dashboardTab {
+	if !m.snapshot.VaultExists {
+		return nil
+	}
+
+	accountPages := []dashboardPage{
+		{
+			Label:   "Log in",
+			Summary: "Log in to Forged and sync keys across all devices",
+			Route:   RouteAccountLogin,
+		},
+	}
+	syncPages := []dashboardPage{
+		{
+			Label:   "Log in",
+			Summary: "Connect this machine to enable vault sync",
+			Route:   RouteAccountLogin,
+		},
+	}
+
+	if m.snapshot.LoggedIn {
+		accountPages = []dashboardPage{
+			{
+				Label:   "Profile",
+				Summary: "View account details and profile settings",
+				Route:   RouteAccountStatus,
+			},
+			{
+				Label:   "Log out",
+				Summary: "Log out of Forged while keeping your local vault available",
+				Route:   RouteAccountStatus,
+			},
+		}
+		syncPages = []dashboardPage{
+			{
+				Label:   "Status",
+				Summary: "Check sync health and recent activity",
+				Route:   RouteSyncHome,
+			},
+			{
+				Label:   "Sync now",
+				Summary: "Run a fresh sync for this vault",
+				Route:   RouteSyncHome,
+			},
+		}
+	}
+
+	return []dashboardTab{
+		{
+			Label: "Key",
+			Pages: []dashboardPage{
+				{Label: "View", Summary: "Browse keys, open details, and manage them", Route: RouteKeysBrowser},
+				{Label: "Generate", Summary: "Create a new key in this vault", Route: RouteKeysGenerate},
+				{Label: "Import", Summary: "Bring existing keys into this vault", Route: RouteKeysImport},
+				{Label: "Export", Summary: "Export keys from this vault", Route: RouteKeysExport},
+			},
+		},
+		{
+			Label: "Vault",
+			Pages: []dashboardPage{
+				{Label: "Unlock", Summary: "Unlock this vault with your master password", Route: RouteVaultHome},
+				{Label: "Lock", Summary: "Lock the vault until your password is entered again", Route: RouteVaultHome},
+				{Label: "Change password", Summary: "Change the master password that protects this vault", Route: RouteVaultHome},
+			},
+		},
+		{
+			Label: "Agent",
+			Pages: []dashboardPage{
+				{Label: "Enable SSH agent", Summary: "Set Forged as your default SSH agent", Route: RouteAgentHome},
+				{Label: "Disable SSH agent", Summary: "Turn off Forged SSH routing on this machine", Route: RouteAgentHome},
+				{Label: "Commit signing", Summary: "Sign Git commits using keys in your Forged vault", Route: RouteAgentHome},
+			},
+		},
+		{
+			Label: "Account",
+			Pages: accountPages,
+		},
+		{
+			Label: "Sync",
+			Pages: syncPages,
+		},
+		{
+			Label: "Doctor",
+			Pages: []dashboardPage{
+				{Label: "Overview", Summary: "Review system health and current checks", Route: RouteDoctorOverview},
+				{Label: "Fix issues", Summary: "Repair runtime issues on this machine", Route: RouteDoctorOverview},
+			},
+		},
+	}
+}
+
+func (m *model) normalizeDashboardSelection(tabs []dashboardTab) {
+	if len(tabs) == 0 {
+		m.dashboardTabIndex = 0
+		m.dashboardPageIndices = nil
+		return
+	}
+
+	if m.dashboardTabIndex < 0 {
+		m.dashboardTabIndex = 0
+	}
+	if m.dashboardTabIndex >= len(tabs) {
+		m.dashboardTabIndex = len(tabs) - 1
+	}
+
+	if len(m.dashboardPageIndices) < len(tabs) {
+		m.dashboardPageIndices = append(m.dashboardPageIndices, make([]int, len(tabs)-len(m.dashboardPageIndices))...)
+	}
+	if len(m.dashboardPageIndices) > len(tabs) {
+		m.dashboardPageIndices = m.dashboardPageIndices[:len(tabs)]
+	}
+
+	for index, tab := range tabs {
+		if len(tab.Pages) == 0 {
+			m.dashboardPageIndices[index] = 0
+			continue
+		}
+		if m.dashboardPageIndices[index] < 0 {
+			m.dashboardPageIndices[index] = 0
+		}
+		if m.dashboardPageIndices[index] >= len(tab.Pages) {
+			m.dashboardPageIndices[index] = len(tab.Pages) - 1
+		}
+	}
+}
+
+func (m *model) selectedDashboardPage() *dashboardPage {
+	tabs := m.dashboardTabs()
+	if len(tabs) == 0 {
+		return nil
+	}
+	m.normalizeDashboardSelection(tabs)
+	pages := tabs[m.dashboardTabIndex].Pages
+	if len(pages) == 0 {
+		return nil
+	}
+	page := pages[m.dashboardPageIndices[m.dashboardTabIndex]]
+	return &page
+}
+
+func (m *model) dashboardRootScreen() ([]dashboardscreen.Tab, []dashboardscreen.Page, string) {
+	tabs := m.dashboardTabs()
+	if len(tabs) == 0 {
+		return nil, nil, ""
+	}
+	m.normalizeDashboardSelection(tabs)
+
+	tabItems := make([]dashboardscreen.Tab, 0, len(tabs))
+	for index, tab := range tabs {
+		tabItems = append(tabItems, dashboardscreen.Tab{
+			Label:    tab.Label,
+			Selected: index == m.dashboardTabIndex,
+		})
+	}
+
+	pages := tabs[m.dashboardTabIndex].Pages
+	pageItems := make([]dashboardscreen.Page, 0, len(pages))
+	for index, page := range pages {
+		pageItems = append(pageItems, dashboardscreen.Page{
+			Label:    page.Label,
+			Selected: index == m.dashboardPageIndices[m.dashboardTabIndex],
+		})
+	}
+
+	summary := ""
+	if page := m.selectedDashboardPage(); page != nil {
+		summary = page.Summary
+	}
+	return tabItems, pageItems, summary
 }
 
 func (m *model) dashboardAreaRoute(label string) RouteID {

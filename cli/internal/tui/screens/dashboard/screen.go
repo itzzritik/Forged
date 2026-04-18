@@ -29,6 +29,17 @@ type Option struct {
 	Selected    bool
 }
 
+type Tab struct {
+	Label    string
+	Selected bool
+}
+
+type Page struct {
+	Label    string
+	Summary  string
+	Selected bool
+}
+
 type Area struct {
 	Label       string
 	Summary     string
@@ -41,6 +52,9 @@ type Screen struct {
 	Context string
 	Notice  Notice
 	Options []Option
+	Tabs    []Tab
+	Pages   []Page
+	Summary string
 	Areas   []Area
 }
 
@@ -52,11 +66,18 @@ const (
 	gridMinWidth       = 74
 	gridCardMinWidth   = 24
 	gridCardBodyHeight = 3
+	tabGap             = 1
+	tabPageGap         = 2
+	pageListMinHeight  = 6
+	flexTabMinWidth    = 10
 )
 
 func Render(screen Screen, width int) string {
 	if len(screen.Options) > 0 {
 		return renderWelcome(screen, width)
+	}
+	if len(screen.Tabs) > 0 {
+		return renderTabbedDashboard(screen, width)
 	}
 	if len(screen.Areas) > 0 {
 		return renderDashboard(screen, width)
@@ -72,6 +93,27 @@ func Render(screen Screen, width int) string {
 	return strings.Join(sections, "\n")
 }
 
+func renderTabbedDashboard(screen Screen, width int) string {
+	sections := make([]string, 0, 6)
+	if notice := renderNotice(screen.Notice); notice != "" {
+		sections = append(sections, notice, "")
+	}
+
+	tabWidth := max(16, width)
+	sections = append(sections, renderTabs(screen.Tabs, tabWidth))
+
+	if len(screen.Pages) > 0 {
+		sections = append(sections, strings.Repeat("\n", tabPageGap-1))
+		sections = append(sections, renderPages(screen.Pages, width))
+	}
+
+	if strings.TrimSpace(screen.Summary) != "" {
+		sections = append(sections, "", theme.BodyMuted.Width(max(24, min(width, theme.HeroMaxWidth))).Render(screen.Summary))
+	}
+
+	return strings.Join(sections, "\n")
+}
+
 func renderDashboard(screen Screen, width int) string {
 	safeWidth := max(20, width-dashboardRightPad)
 	sections := make([]string, 0, 3)
@@ -82,6 +124,187 @@ func renderDashboard(screen Screen, width int) string {
 	sections = append(sections, renderAreas(screen.Areas, safeWidth))
 
 	return strings.Join(sections, "\n")
+}
+
+func renderTabs(tabs []Tab, width int) string {
+	if len(tabs) == 0 {
+		return ""
+	}
+
+	available := max(16, width)
+	minFlexTotal := len(tabs)*flexTabMinWidth + max(0, len(tabs)-1)*tabGap
+	if available >= minFlexTotal {
+		return renderConnectedTabs(tabs, available)
+	}
+
+	selected := 0
+	rendered := make([]string, 0, len(tabs))
+	widths := make([]int, 0, len(tabs))
+	totalWidth := 0
+	for index, tab := range tabs {
+		if tab.Selected {
+			selected = index
+		}
+		block := renderTab(tab)
+		rendered = append(rendered, block)
+		blockWidth := lipgloss.Width(block)
+		widths = append(widths, blockWidth)
+		totalWidth += blockWidth
+		if index > 0 {
+			totalWidth += tabGap
+		}
+	}
+
+	if totalWidth <= available {
+		return joinTabBlocks(rendered)
+	}
+
+	start := selected
+	end := selected
+	currentWidth := widths[selected]
+	for {
+		expanded := false
+		if start > 0 {
+			nextWidth := currentWidth + tabGap + widths[start-1]
+			if nextWidth <= available {
+				start--
+				currentWidth = nextWidth
+				expanded = true
+			}
+		}
+		if end < len(rendered)-1 {
+			nextWidth := currentWidth + tabGap + widths[end+1]
+			if nextWidth <= available {
+				end++
+				currentWidth = nextWidth
+				expanded = true
+			}
+		}
+		if !expanded {
+			break
+		}
+	}
+
+	visible := rendered[start : end+1]
+	leftOverflow := start > 0
+	rightOverflow := end < len(rendered)-1
+	overflowWidth := 0
+	if leftOverflow {
+		overflowWidth += 2
+	}
+	if rightOverflow {
+		overflowWidth += 2
+	}
+
+	for currentWidth+overflowWidth > available && len(visible) > 1 {
+		if end-selected > selected-start {
+			currentWidth -= widths[end] + tabGap
+			end--
+		} else {
+			currentWidth -= widths[start] + tabGap
+			start++
+		}
+		visible = rendered[start : end+1]
+		leftOverflow = start > 0
+		rightOverflow = end < len(rendered)-1
+		overflowWidth = 0
+		if leftOverflow {
+			overflowWidth += 2
+		}
+		if rightOverflow {
+			overflowWidth += 2
+		}
+	}
+
+	row := joinTabBlocks(visible)
+	if leftOverflow {
+		row = theme.BodyMuted.Render("… ") + row
+	}
+	if rightOverflow {
+		row += theme.BodyMuted.Render(" …")
+	}
+	return row
+}
+
+func renderConnectedTabs(tabs []Tab, width int) string {
+	innerWidth := max(len(tabs)*flexTabMinWidth, width-max(0, len(tabs)-1)*tabGap)
+	baseWidth := innerWidth / len(tabs)
+	remainder := innerWidth % len(tabs)
+
+	blocks := make([]string, 0, len(tabs))
+	for index, tab := range tabs {
+		segmentWidth := baseWidth
+		if index < remainder {
+			segmentWidth++
+		}
+		blocks = append(blocks, renderTab(tab, segmentWidth))
+	}
+	return joinTabBlocks(blocks)
+}
+
+func renderTab(tab Tab, width ...int) string {
+	labelStyle := theme.BodyStrong
+	borderStyle := theme.HeaderSeparator
+
+	if tab.Selected {
+		labelStyle = theme.Kicker
+		borderStyle = theme.Kicker
+	}
+
+	totalWidth := 0
+	if len(width) > 0 {
+		totalWidth = max(4, width[0])
+	}
+
+	bodyWidth := max(1, totalWidth-2)
+	body := lipgloss.NewStyle().Align(lipgloss.Center)
+	if totalWidth > 0 {
+		body = body.Width(bodyWidth)
+	} else {
+		body = body.Padding(0, 1)
+		bodyWidth = lipgloss.Width(body.Render(labelStyle.Render(tab.Label)))
+	}
+
+	top := borderStyle.Render("┌") + borderStyle.Render(strings.Repeat("─", bodyWidth)) + borderStyle.Render("┐")
+	middle := borderStyle.Render("│") + body.Render(labelStyle.Render(tab.Label)) + borderStyle.Render("│")
+	bottom := borderStyle.Render("└") + borderStyle.Render(strings.Repeat("─", bodyWidth)) + borderStyle.Render("┘")
+	return strings.Join([]string{top, middle, bottom}, "\n")
+}
+
+func joinTabBlocks(blocks []string) string {
+	parts := make([]string, 0, len(blocks)*2)
+	for index, block := range blocks {
+		if index > 0 {
+			parts = append(parts, strings.Repeat(" ", tabGap))
+		}
+		parts = append(parts, block)
+	}
+	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
+}
+
+func renderPages(pages []Page, width int) string {
+	if len(pages) == 0 {
+		return ""
+	}
+
+	lines := make([]string, 0, max(pageListMinHeight, len(pages)))
+	for _, page := range pages {
+		lines = append(lines, renderPage(page, width))
+	}
+	for len(lines) < pageListMinHeight {
+		lines = append(lines, "")
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderPage(page Page, width int) string {
+	prefix := theme.BodyMuted.Render("  ")
+	labelStyle := theme.BodyStrong
+	if page.Selected {
+		prefix = theme.Bullet.Render("▸ ")
+		labelStyle = theme.Kicker
+	}
+	return lipgloss.NewStyle().Width(width).Render(prefix + labelStyle.Render(page.Label))
 }
 
 func renderSelectedAreaDescription(areas []Area, width int) string {
