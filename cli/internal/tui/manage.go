@@ -16,6 +16,7 @@ type manageItemID string
 const (
 	manageItemProfile        manageItemID = "profile"
 	manageItemSignIn         manageItemID = "sign-in"
+	manageItemSync           manageItemID = "sync"
 	manageItemVaultLock      manageItemID = "vault-lock"
 	manageItemVaultUnlock    manageItemID = "vault-unlock"
 	manageItemChangePassword manageItemID = "change-password"
@@ -33,6 +34,7 @@ type manageState struct {
 	selected         int
 	changePasswordID int
 	autoReturnID     int
+	syncBusy         bool
 	success          *manageSuccessState
 }
 
@@ -44,6 +46,10 @@ type manageSuccessState struct {
 }
 
 type manageLockFinishedMsg struct {
+	err error
+}
+
+type manageSyncFinishedMsg struct {
 	err error
 }
 
@@ -78,43 +84,53 @@ func (m *model) manageSuccessTitle() string {
 }
 
 func (m *model) manageItems() []manageItem {
-	items := []manageItem{
-		{
-			ID:      manageItemSignIn,
-			Label:   "Sign In",
-			Summary: "Sign in to enable your Forged profile and synced vault features",
-		},
-		{
-			ID:      manageItemVaultUnlock,
-			Label:   "Vault Unlock",
-			Summary: "Unlock this vault with Touch ID or your master password",
-		},
-		{
-			ID:      manageItemChangePassword,
-			Label:   "Change Master Password",
-			Summary: "Change the master password protecting this vault",
-		},
-	}
-
+	items := make([]manageItem, 0, 5)
 	if m.snapshot.LoggedIn {
-		items[0] = manageItem{
+		items = append(items, manageItem{
 			ID:      manageItemProfile,
 			Label:   "Profile",
 			Summary: "View your Forged profile and account settings",
-		}
+		})
+	} else {
+		items = append(items, manageItem{
+			ID:      manageItemSignIn,
+			Label:   "Sign In",
+			Summary: "Sign in to enable your Forged profile and synced vault features",
+		})
+	}
+
+	items = append(items, manageItem{
+		ID:      manageItemSync,
+		Label:   "Sync Now",
+		Summary: m.manageSyncSummary(),
+	})
+
+	if m.runtimeStatus.Unlocked {
+		items = append(items, manageItem{
+			ID:      manageItemVaultLock,
+			Label:   "Vault Lock",
+			Summary: "Lock this vault until your password is entered again",
+		})
+	} else {
+		items = append(items, manageItem{
+			ID:      manageItemVaultUnlock,
+			Label:   "Vault Unlock",
+			Summary: "Unlock this vault with Touch ID or your master password",
+		})
+	}
+
+	items = append(items, manageItem{
+		ID:      manageItemChangePassword,
+		Label:   "Change Master Password",
+		Summary: "Change the master password protecting this vault",
+	})
+
+	if m.snapshot.LoggedIn {
 		items = append(items, manageItem{
 			ID:      manageItemLogout,
 			Label:   "Logout",
 			Summary: "Log out of your Forged account on this machine",
 		})
-	}
-
-	if m.runtimeStatus.Unlocked {
-		items[1] = manageItem{
-			ID:      manageItemVaultLock,
-			Label:   "Vault Lock",
-			Summary: "Lock this vault until your password is entered again",
-		}
 	}
 
 	return items
@@ -226,7 +242,19 @@ func (m *model) updateManageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
+	if m.manage.syncBusy {
+		return m, nil
+	}
+
 	switch item.ID {
+	case manageItemSync:
+		if !m.snapshot.LoggedIn {
+			if m.session.Current().ID != RouteAccountLogin {
+				m.session.Push(Route{ID: RouteAccountLogin})
+			}
+			return m, m.startLoginFlow()
+		}
+		return m, m.runManageSync()
 	case manageItemVaultLock:
 		return m, m.runManageLock()
 	case manageItemVaultUnlock:
@@ -249,6 +277,17 @@ func (m *model) runManageLock() tea.Cmd {
 	return func() tea.Msg {
 		return manageLockFinishedMsg{err: lock()}
 	}
+}
+
+func (m *model) runManageSync() tea.Cmd {
+	triggerSync := m.triggerSync
+	m.manage.syncBusy = true
+	return tea.Batch(
+		m.spinner.Tick,
+		func() tea.Msg {
+			return manageSyncFinishedMsg{err: triggerSync()}
+		},
+	)
 }
 
 func (m *model) unlockSensitiveCmd(password []byte) tea.Cmd {
@@ -345,6 +384,11 @@ func (m *model) handleManageLockFinishedMsg(msg manageLockFinishedMsg) (tea.Mode
 	return m, m.pollRuntimeStatus(0)
 }
 
+func (m *model) handleManageSyncFinishedMsg(msg manageSyncFinishedMsg) (tea.Model, tea.Cmd) {
+	m.manage.syncBusy = false
+	return m, m.pollRuntimeStatus(0)
+}
+
 func (m *model) handleManageUnlockFinishedMsg(msg manageUnlockFinishedMsg) (tea.Model, tea.Cmd) {
 	if m.passwordFlow != passwordManageUnlock {
 		return m, nil
@@ -410,4 +454,35 @@ func (m *model) handleManageAutoReturnMsg(msg manageAutoReturnMsg) (tea.Model, t
 	}
 	m.manage.success = nil
 	return m, m.returnFromManageFlow()
+}
+
+func (m *model) manageSyncSummary() string {
+	if !m.snapshot.LoggedIn {
+		return "Sign in to enable multi-device sync"
+	}
+	if !m.runtimeLoaded {
+		return "Loading sync state"
+	}
+	if !m.runtimeStatus.Linked {
+		return "Sync is not linked on this machine yet"
+	}
+	if m.manage.syncBusy || m.runtimeStatus.Syncing {
+		return m.spinner.View() + " Syncing vault"
+	}
+	if errText := strings.TrimSpace(m.runtimeStatus.Error); errText != "" {
+		return errText
+	}
+	if syncedAt := latestSyncTime(m.runtimeStatus); !syncedAt.IsZero() {
+		return "Last synced " + syncedAt.In(time.Local).Format("02 Jan 2006, 3:04 PM MST")
+	}
+	return "Not yet synced on this machine"
+}
+
+func latestSyncTime(status RuntimeStatus) time.Time {
+	switch {
+	case status.LastSuccessfulPushAt.After(status.LastSuccessfulPullAt):
+		return status.LastSuccessfulPushAt
+	default:
+		return status.LastSuccessfulPullAt
+	}
 }

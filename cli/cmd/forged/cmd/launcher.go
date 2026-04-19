@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -40,6 +41,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 			return actions.BeginLoginWithProgress(server, actions.OpenBrowser, progress)
 		},
 		SaveCredentials: func(creds actions.AccountCredentials) error { return actions.SaveCredentials(paths, creds) },
+		TriggerSync:     func() error { return actions.TriggerSync(paths) },
 		LoadSnapshot:    engine.Assess,
 		LoadStatus: func() (tui.RuntimeStatus, error) {
 			resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdStatus, nil)
@@ -51,21 +53,25 @@ func runInteractiveIntent(intent tui.Intent) error {
 					Unlocked *bool `json:"unlocked"`
 				} `json:"sensitive"`
 				Sync struct {
-					Dirty   bool   `json:"dirty"`
-					LastErr string `json:"last_error"`
-					Linked  bool   `json:"linked"`
-					Syncing bool   `json:"syncing"`
+					Dirty                bool      `json:"dirty"`
+					LastErr              string    `json:"last_error"`
+					Linked               bool      `json:"linked"`
+					Syncing              bool      `json:"syncing"`
+					LastSuccessfulPullAt time.Time `json:"last_successful_pull_at"`
+					LastSuccessfulPushAt time.Time `json:"last_successful_push_at"`
 				} `json:"sync"`
 			}
 			if err := json.Unmarshal(resp.Data, &status); err != nil {
 				return tui.RuntimeStatus{}, err
 			}
 			runtimeStatus := tui.RuntimeStatus{
-				Syncing:           status.Sync.Syncing,
-				Dirty:             status.Sync.Dirty,
-				Linked:            status.Sync.Linked,
-				Error:             status.Sync.LastErr,
-				SensitiveReported: status.Sensitive != nil && status.Sensitive.Unlocked != nil,
+				Syncing:              status.Sync.Syncing,
+				Dirty:                status.Sync.Dirty,
+				Linked:               status.Sync.Linked,
+				LastSuccessfulPullAt: status.Sync.LastSuccessfulPullAt,
+				LastSuccessfulPushAt: status.Sync.LastSuccessfulPushAt,
+				Error:                status.Sync.LastErr,
+				SensitiveReported:    status.Sensitive != nil && status.Sensitive.Unlocked != nil,
 			}
 			if status.Sensitive != nil && status.Sensitive.Unlocked != nil {
 				runtimeStatus.Unlocked = *status.Sensitive.Unlocked

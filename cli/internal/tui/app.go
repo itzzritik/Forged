@@ -36,6 +36,7 @@ type Dependencies struct {
 	RestoreVault         func([]byte) error
 	StartLogin           func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	SaveCredentials      func(actions.AccountCredentials) error
+	TriggerSync          func() error
 	LoadSnapshot         func() (readiness.Snapshot, error)
 	LoadStatus           func() (RuntimeStatus, error)
 	ProbeSensitive       func() (SensitiveState, error)
@@ -167,13 +168,15 @@ type signingStatusMsg struct {
 }
 
 type RuntimeStatus struct {
-	Syncing           bool
-	Dirty             bool
-	Linked            bool
-	Unlocked          bool
-	SensitiveKnown    bool
-	SensitiveReported bool
-	Error             string
+	Syncing              bool
+	Dirty                bool
+	Linked               bool
+	LastSuccessfulPullAt time.Time
+	LastSuccessfulPushAt time.Time
+	Unlocked             bool
+	SensitiveKnown       bool
+	SensitiveReported    bool
+	Error                string
 }
 
 type SensitiveState struct {
@@ -233,6 +236,7 @@ type model struct {
 	restoreVault         func([]byte) error
 	startLogin           func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	saveCredentials      func(actions.AccountCredentials) error
+	triggerSync          func() error
 	loadSnapshot         func() (readiness.Snapshot, error)
 	loadStatus           func() (RuntimeStatus, error)
 	probeSensitive       func() (SensitiveState, error)
@@ -336,6 +340,8 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("tui login dependency is required")
 	case deps.SaveCredentials == nil:
 		return Result{}, fmt.Errorf("tui save-credentials dependency is required")
+	case deps.TriggerSync == nil:
+		return Result{}, fmt.Errorf("tui trigger-sync dependency is required")
 	case deps.LoadSnapshot == nil:
 		return Result{}, fmt.Errorf("tui load-snapshot dependency is required")
 	case deps.LoadStatus == nil:
@@ -389,6 +395,7 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		restoreVault:         deps.RestoreVault,
 		startLogin:           deps.StartLogin,
 		saveCredentials:      deps.SaveCredentials,
+		triggerSync:          deps.TriggerSync,
 		loadSnapshot:         deps.LoadSnapshot,
 		loadStatus:           deps.LoadStatus,
 		probeSensitive:       deps.ProbeSensitive,
@@ -703,6 +710,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyTransferAutoReturnMsg(msg)
 	case manageLockFinishedMsg:
 		return m.handleManageLockFinishedMsg(msg)
+	case manageSyncFinishedMsg:
+		return m.handleManageSyncFinishedMsg(msg)
 	case manageUnlockFinishedMsg:
 		return m.handleManageUnlockFinishedMsg(msg)
 	case manageChangePasswordFinishedMsg:
@@ -1667,29 +1676,6 @@ func (m *model) dashboardTabs() []dashboardTab {
 		return nil
 	}
 
-	syncPages := []dashboardPage{
-		{
-			Label:   "Log in",
-			Summary: "Connect this machine to enable vault sync",
-			Route:   RouteAccountLogin,
-		},
-	}
-
-	if m.snapshot.LoggedIn {
-		syncPages = []dashboardPage{
-			{
-				Label:   "Status",
-				Summary: "Check sync health and recent activity",
-				Route:   RouteSyncHome,
-			},
-			{
-				Label:   "Sync now",
-				Summary: "Run a fresh sync for this vault",
-				Route:   RouteSyncHome,
-			},
-		}
-	}
-
 	return []dashboardTab{
 		{
 			Label: "Key",
@@ -1707,10 +1693,6 @@ func (m *model) dashboardTabs() []dashboardTab {
 		{
 			Label: "Manage",
 			Pages: m.manageDashboardPages(),
-		},
-		{
-			Label: "Sync",
-			Pages: syncPages,
 		},
 		{
 			Label: "Doctor",
@@ -1810,8 +1792,6 @@ func (m *model) dashboardAreaRoute(label string) RouteID {
 		return RouteVaultHome
 	case "Agent":
 		return RouteAgentHome
-	case "Sync":
-		return RouteSyncHome
 	case "Doctor":
 		return RouteDoctorOverview
 	default:
@@ -1907,11 +1887,7 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 		},
 		{
 			Label:   "Manage",
-			Summary: "Profile, vault access, and account actions",
-		},
-		{
-			Label:   "Sync",
-			Summary: "Refresh and review vault sync",
+			Summary: "Profile, sync, vault access, and account actions",
 		},
 		{
 			Label:   "Doctor",
@@ -1928,10 +1904,7 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 	}
 
 	if m.snapshot.LoggedIn {
-		areas[2].Summary = "Profile, vault access, and account actions"
-		areas[3].Summary = "Refresh and review vault sync"
-	} else {
-		areas[3].Summary = "Review sync once account access is enabled"
+		areas[2].Summary = "Profile, sync, vault access, and account actions"
 	}
 
 	for index := range areas {
@@ -1963,7 +1936,7 @@ func (m *model) usesSpinner() bool {
 	case screenPassword:
 		return m.passwordBusy
 	case screenDashboard:
-		return m.keyUsesSpinner() || m.agentUsesSpinner() || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
+		return m.keyUsesSpinner() || m.agentUsesSpinner() || m.manage.syncBusy || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
 	default:
 		return false
 	}
