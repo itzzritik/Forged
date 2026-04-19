@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/itzzritik/forged/cli/internal/tui/components"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -287,24 +288,14 @@ func renderPages(pages []Page, width int) string {
 		return ""
 	}
 
-	lines := make([]string, 0, max(pageListMinHeight, len(pages)))
+	items := make([]components.SelectionListItem, 0, len(pages))
 	for _, page := range pages {
-		lines = append(lines, renderPage(page, width))
+		items = append(items, components.SelectionListItem{
+			Label:    page.Label,
+			Selected: page.Selected,
+		})
 	}
-	for len(lines) < pageListMinHeight {
-		lines = append(lines, "")
-	}
-	return strings.Join(lines, "\n")
-}
-
-func renderPage(page Page, width int) string {
-	prefix := theme.BodyMuted.Render("  ")
-	labelStyle := theme.BodyStrong
-	if page.Selected {
-		prefix = theme.Bullet.Render("▸ ")
-		labelStyle = theme.Kicker
-	}
-	return lipgloss.NewStyle().Width(width).Render(prefix + labelStyle.Render(page.Label))
+	return components.RenderSelectionList(items, width, pageListMinHeight)
 }
 
 func renderSelectedAreaDescription(areas []Area, width int) string {

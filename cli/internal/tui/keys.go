@@ -14,6 +14,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/picker"
+	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
 	keyscreen "github.com/itzzritik/forged/cli/internal/tui/screens/keys"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
@@ -558,7 +559,7 @@ func (m *model) renderKeyBody(contentWidth int) string {
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysImport:
 		if m.keyImport.success != nil {
-			return keyscreen.RenderTransferSuccess(keyscreen.TransferSuccessScreen{
+			return commonscreen.RenderSuccess(commonscreen.SuccessScreen{
 				Context: "Import keys from another source into this vault",
 				Title:   m.keyImport.success.Title,
 				Message: m.keyImport.success.Message,
@@ -612,7 +613,7 @@ func (m *model) renderKeyBody(contentWidth int) string {
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysExport:
 		if m.keyExport.success != nil {
-			return keyscreen.RenderTransferSuccess(keyscreen.TransferSuccessScreen{
+			return commonscreen.RenderSuccess(commonscreen.SuccessScreen{
 				Context: "Export this vault to a Forged JSON file",
 				Title:   m.keyExport.success.Title,
 				Message: m.keyExport.success.Message,

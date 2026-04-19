@@ -610,6 +610,12 @@ func (s *Server) handleStatus() Response {
 		"key_count": len(s.keyStore.List()),
 	}
 
+	if s.authBroker != nil {
+		status["sensitive"] = map[string]any{
+			"unlocked": s.authBroker.CanViewFull(),
+		}
+	}
+
 	if s.syncBus != nil {
 		syncState := s.syncBus.SnapshotState()
 		status["sync"] = map[string]any{

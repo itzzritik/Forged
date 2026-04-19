@@ -46,6 +46,9 @@ func runInteractiveIntent(intent tui.Intent) error {
 				return tui.RuntimeStatus{}, err
 			}
 			var status struct {
+				Sensitive struct {
+					Unlocked bool `json:"unlocked"`
+				} `json:"sensitive"`
 				Sync struct {
 					Dirty   bool   `json:"dirty"`
 					LastErr string `json:"last_error"`
@@ -57,11 +60,17 @@ func runInteractiveIntent(intent tui.Intent) error {
 				return tui.RuntimeStatus{}, err
 			}
 			return tui.RuntimeStatus{
-				Syncing: status.Sync.Syncing,
-				Dirty:   status.Sync.Dirty,
-				Linked:  status.Sync.Linked,
-				Error:   status.Sync.LastErr,
+				Syncing:  status.Sync.Syncing,
+				Dirty:    status.Sync.Dirty,
+				Linked:   status.Sync.Linked,
+				Unlocked: status.Sensitive.Unlocked,
+				Error:    status.Sync.LastErr,
 			}, nil
+		},
+		LockSensitive:   func() error { return actions.LockSensitive(paths) },
+		UnlockSensitive: func(password []byte) (actions.UnlockResult, error) { return actions.UnlockSensitive(paths, password) },
+		ChangePassword: func(currentPassword []byte, newPassword []byte) (actions.ChangePasswordResult, error) {
+			return actions.ChangePassword(paths, currentPassword, newPassword)
 		},
 		CopyText:      copyTextToClipboard,
 		OpenLink:      openLinkInBrowser,

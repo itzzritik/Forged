@@ -1,13 +1,12 @@
 package cmd
 
 import (
-	"encoding/base64"
 	"fmt"
 	"os"
 
+	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
-	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
-	"github.com/itzzritik/forged/cli/internal/vault"
+	"github.com/itzzritik/forged/cli/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -16,6 +15,10 @@ var changePasswordCmd = &cobra.Command{
 	Use:   "change-password",
 	Short: "Change vault master password",
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !jsonOutput && isInteractiveTerminal() {
+			return runInteractiveIntent(tui.ResolveCommand([]string{"vault", "change-password"}, args))
+		}
+
 		fd := int(os.Stdin.Fd())
 		if !term.IsTerminal(fd) {
 			return fmt.Errorf("change-password requires an interactive terminal")
@@ -27,13 +30,6 @@ var changePasswordCmd = &cobra.Command{
 		if err != nil {
 			return fmt.Errorf("reading current password: %w", err)
 		}
-
-		vaultPath := config.DefaultPaths().VaultFile()
-		v, err := vault.Open(vaultPath, currentPassword)
-		if err != nil {
-			return fmt.Errorf("wrong password or corrupted vault")
-		}
-		defer v.Close()
 
 		fmt.Print("New master password: ")
 		newPassword, err := term.ReadPassword(fd)
@@ -53,31 +49,15 @@ var changePasswordCmd = &cobra.Command{
 			return fmt.Errorf("passwords do not match")
 		}
 
-		if err := v.ChangePassword(newPassword); err != nil {
-			return fmt.Errorf("changing password: %w", err)
-		}
-
-		creds, err := loadCredentials()
+		result, err := actions.ChangePassword(config.DefaultPaths(), currentPassword, newPassword)
 		if err != nil {
-			fmt.Println("Password changed locally.")
-			fmt.Println("Warning: Not synced to server (not logged in). Run 'forged login' then 'forged sync'.")
-			return nil
-		}
-
-		client := forgedsync.NewClient(creds.ServerURL, creds.Token, "")
-
-		err = client.Rekey(
-			v.KDFParams(),
-			base64.StdEncoding.EncodeToString(v.ProtectedKeyBytes()),
-		)
-		if err != nil {
-			fmt.Println("Password changed locally.")
-			fmt.Printf("Warning: Server sync failed: %s\n", err)
-			fmt.Println("Run 'forged sync' to retry.")
-			return nil
+			return err
 		}
 
 		fmt.Println("Password changed successfully.")
+		if detail := result.Detail; detail != "" {
+			fmt.Println(detail)
+		}
 		return nil
 	},
 }

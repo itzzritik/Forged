@@ -37,6 +37,9 @@ type Dependencies struct {
 	StartLogin      func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	SaveCredentials func(actions.AccountCredentials) error
 	LoadStatus      func() (RuntimeStatus, error)
+	LockSensitive   func() error
+	UnlockSensitive func([]byte) (actions.UnlockResult, error)
+	ChangePassword  func([]byte, []byte) (actions.ChangePasswordResult, error)
 	CopyText        func(string) error
 	OpenLink        func(string) error
 	DefaultServer   string
@@ -56,11 +59,13 @@ const (
 type passwordFlow string
 
 const (
-	passwordCreate    passwordFlow = "create"
-	passwordRestore   passwordFlow = "restore"
-	passwordRepair    passwordFlow = "repair"
-	passwordKeyView   passwordFlow = "key-view"
-	passwordKeyExport passwordFlow = "key-export"
+	passwordCreate       passwordFlow = "create"
+	passwordRestore      passwordFlow = "restore"
+	passwordRepair       passwordFlow = "repair"
+	passwordKeyView      passwordFlow = "key-view"
+	passwordKeyExport    passwordFlow = "key-export"
+	passwordManageUnlock passwordFlow = "manage-unlock"
+	passwordManageChange passwordFlow = "manage-change"
 )
 
 type repairPurpose string
@@ -140,10 +145,11 @@ type runtimeStatusMsg struct {
 }
 
 type RuntimeStatus struct {
-	Syncing bool
-	Dirty   bool
-	Linked  bool
-	Error   string
+	Syncing  bool
+	Dirty    bool
+	Linked   bool
+	Unlocked bool
+	Error    string
 }
 
 type dashboardSectionAction struct {
@@ -199,6 +205,9 @@ type model struct {
 	startLogin      func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	saveCredentials func(actions.AccountCredentials) error
 	loadStatus      func() (RuntimeStatus, error)
+	lockSensitive   func() error
+	unlockSensitive func([]byte) (actions.UnlockResult, error)
+	changePassword  func([]byte, []byte) (actions.ChangePasswordResult, error)
 	copyText        func(string) error
 	openLink        func(string) error
 	defaultServer   string
@@ -227,6 +236,8 @@ type model struct {
 	passwordContext      string
 	passwordAuth         string
 	passwordBusy         bool
+	passwordHideInput    bool
+	passwordBusyMessage  string
 	passwordOverlay      bool
 	repairScreen         repairscreen.TaskScreen
 
@@ -271,6 +282,7 @@ type model struct {
 	keyGenerate keyGenerateState
 	keyImport   keyImportState
 	keyExport   keyExportState
+	manage      manageState
 }
 
 func Run(intent Intent, deps Dependencies) (Result, error) {
@@ -287,6 +299,12 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("tui save-credentials dependency is required")
 	case deps.LoadStatus == nil:
 		return Result{}, fmt.Errorf("tui load-status dependency is required")
+	case deps.LockSensitive == nil:
+		return Result{}, fmt.Errorf("tui lock-sensitive dependency is required")
+	case deps.UnlockSensitive == nil:
+		return Result{}, fmt.Errorf("tui unlock-sensitive dependency is required")
+	case deps.ChangePassword == nil:
+		return Result{}, fmt.Errorf("tui change-password dependency is required")
 	case deps.CopyText == nil:
 		return Result{}, fmt.Errorf("tui copy-text dependency is required")
 	case deps.OpenLink == nil:
@@ -319,6 +337,9 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		startLogin:      deps.StartLogin,
 		saveCredentials: deps.SaveCredentials,
 		loadStatus:      deps.LoadStatus,
+		lockSensitive:   deps.LockSensitive,
+		unlockSensitive: deps.UnlockSensitive,
+		changePassword:  deps.ChangePassword,
 		copyText:        deps.CopyText,
 		openLink:        deps.OpenLink,
 		defaultServer:   deps.DefaultServer,
@@ -606,6 +627,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyExportPickerMsg(msg)
 	case keyTransferAutoReturnMsg:
 		return m.handleKeyTransferAutoReturnMsg(msg)
+	case manageLockFinishedMsg:
+		return m.handleManageLockFinishedMsg(msg)
+	case manageUnlockFinishedMsg:
+		return m.handleManageUnlockFinishedMsg(msg)
+	case manageChangePasswordFinishedMsg:
+		return m.handleManageChangePasswordFinishedMsg(msg)
+	case manageAutoReturnMsg:
+		return m.handleManageAutoReturnMsg(msg)
 	case copyFinishedMsg:
 		if msg.err != nil {
 			if m.screen == screenLogin {
@@ -745,6 +774,12 @@ func (m *model) headerPageTitle() string {
 		if m.isKeyRoute() {
 			return m.keyHeaderTitle()
 		}
+		if m.isManageHomeRoute() {
+			return "Manage"
+		}
+		if m.isManageSuccessRoute() {
+			return m.manageSuccessTitle()
+		}
 		if section := m.currentDashboardSection(); section != nil {
 			return section.Title
 		}
@@ -790,6 +825,19 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 		if m.isKeyRoute() {
 			return m.keyBreadcrumbs()
 		}
+		if m.isManageHomeRoute() {
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Manage", Current: true},
+			}
+		}
+		if m.isManageSuccessRoute() {
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Manage"},
+				{Label: m.manageSuccessTitle(), Current: true},
+			}
+		}
 		if section := m.currentDashboardSection(); section != nil {
 			return []shell.Breadcrumb{
 				{Label: "Home"},
@@ -819,6 +867,18 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 				{Label: "Key"},
 				{Label: "Export", Current: true},
 			}
+		case passwordManageUnlock:
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Manage"},
+				{Label: "Unlock", Current: true},
+			}
+		case passwordManageChange:
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Manage"},
+				{Label: "Change Master Password", Current: true},
+			}
 		}
 		label := "Unlock"
 		if m.passwordFlow == passwordCreate {
@@ -844,7 +904,12 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 }
 
 func (m *model) headerPageNote() string {
-	if m.screen != screenDashboard || !m.snapshot.VaultExists || m.isWelcomeState() || m.currentDashboardSection() != nil || m.isKeyRoute() {
+	if m.screen != screenDashboard ||
+		!m.snapshot.VaultExists ||
+		m.isWelcomeState() ||
+		m.currentDashboardSection() != nil ||
+		m.isKeyRoute() ||
+		m.session.Current().ID != RouteDashboardHome {
 		return ""
 	}
 	if m.snapshot.LoggedIn {
@@ -882,6 +947,12 @@ func (m *model) renderBody(contentWidth int) string {
 				return ""
 			}
 			return m.renderKeyBody(contentWidth)
+		}
+		if m.isManageHomeRoute() {
+			return m.renderManageBody(contentWidth)
+		}
+		if m.isManageSuccessRoute() {
+			return m.renderManageSuccessBody(contentWidth)
 		}
 		if section := m.currentDashboardSection(); section != nil {
 			return m.renderDashboardSection(contentWidth, *section)
@@ -955,9 +1026,21 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 		sections = append(sections, theme.Body.Width(max(28, min(contentWidth, theme.HeroMaxWidth))).Render(m.passwordContext))
 	}
 
+	if m.passwordHideInput && m.passwordBusy {
+		busyMessage := strings.TrimSpace(m.passwordBusyMessage)
+		if busyMessage == "" {
+			busyMessage = "Working"
+		}
+		sections = append(sections, "", theme.BodyStrong.Render(m.spinner.View()+" "+busyMessage))
+		return strings.Join(sections, "\n")
+	}
+
 	labels := []string{""}
 	if m.passwordFlow == passwordCreate {
 		labels = []string{"", ""}
+	}
+	if m.passwordFlow == passwordManageChange {
+		labels = []string{"", "", ""}
 	}
 	sections = append(sections, "", m.passwordInput.View(m.spinner.View(), labels...))
 	return strings.Join(sections, "\n")
@@ -1006,7 +1089,7 @@ func (m *model) footerActions() []shell.FooterAction {
 			return nil
 		}
 		enterLabel := "Continue"
-		if m.passwordFlow == passwordCreate && m.passwordInput != nil && m.passwordInput.FocusIndex() == 0 {
+		if m.passwordInput != nil && m.passwordInput.FieldCount() > 1 && m.passwordInput.FocusIndex() < m.passwordInput.FieldCount()-1 {
 			enterLabel = "Next"
 		}
 		actions := []shell.FooterAction{{Key: "Enter", Label: enterLabel}}
@@ -1026,6 +1109,18 @@ func (m *model) footerActions() []shell.FooterAction {
 		}
 		if m.isKeyRoute() {
 			return m.keyFooterActions()
+		}
+		if m.isManageHomeRoute() {
+			return []shell.FooterAction{
+				{Key: "↑/↓", Label: "Move"},
+				{Key: "Enter", Label: "Open"},
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+			}
+		}
+		if m.isManageSuccessRoute() {
+			return []shell.FooterAction{
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+			}
 		}
 		if m.isWelcomeState() {
 			return []shell.FooterAction{
@@ -1100,6 +1195,19 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateKeyKeys(msg)
 	}
 
+	if m.isManageSuccessRoute() {
+		switch msg.String() {
+		case "esc":
+			m.manage.success = nil
+			return m, m.returnFromManageFlow()
+		}
+		return m, nil
+	}
+
+	if m.isManageHomeRoute() {
+		return m.updateManageKeys(msg)
+	}
+
 	if m.currentDashboardSection() != nil {
 		switch msg.String() {
 		case "esc":
@@ -1124,12 +1232,20 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if pageIndex > 0 {
 				m.dashboardPageIndices[m.dashboardTabIndex]--
 			}
+			if tabs[m.dashboardTabIndex].Label == "Manage" {
+				m.notice = notice{}
+				m.manage.selected = m.dashboardPageIndices[m.dashboardTabIndex]
+			}
 			return m, nil
 		case "down", "j":
 			pages := tabs[m.dashboardTabIndex].Pages
 			pageIndex := m.dashboardPageIndices[m.dashboardTabIndex]
 			if len(pages) > 0 && pageIndex < len(pages)-1 {
 				m.dashboardPageIndices[m.dashboardTabIndex]++
+			}
+			if tabs[m.dashboardTabIndex].Label == "Manage" {
+				m.notice = notice{}
+				m.manage.selected = m.dashboardPageIndices[m.dashboardTabIndex]
 			}
 			return m, nil
 		case "left", "h":
@@ -1143,6 +1259,21 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "enter":
+			if tabs[m.dashboardTabIndex].Label == "Manage" {
+				items := m.manageItems()
+				if len(items) == 0 {
+					return m, nil
+				}
+				m.notice = notice{}
+				m.manage.selected = m.dashboardPageIndices[m.dashboardTabIndex]
+				if m.manage.selected < 0 {
+					m.manage.selected = 0
+				}
+				if m.manage.selected >= len(items) {
+					m.manage.selected = len(items) - 1
+				}
+				return m.openManageItem(items[m.manage.selected])
+			}
 			if page := m.selectedDashboardPage(); page != nil {
 				if page.Route != "" && m.session.Current().ID != page.Route {
 					m.session.Push(Route{ID: page.Route})
@@ -1258,32 +1389,56 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "enter":
-		if m.passwordFlow == passwordCreate && m.passwordInput != nil && m.passwordInput.FieldCount() > 1 && m.passwordInput.FocusIndex() == 0 {
+		if m.passwordInput != nil && m.passwordInput.FieldCount() > 1 && m.passwordInput.FocusIndex() < m.passwordInput.FieldCount()-1 {
 			m.passwordInput.MoveNext()
 			return m, nil
 		}
 		password, err := m.passwordInput.Submit()
-		if err != nil {
-			m.passwordInput.SetError(err.Error())
-			return m, nil
-		}
 		switch m.passwordFlow {
 		case passwordCreate:
+			if err != nil {
+				m.passwordInput.SetError(err.Error())
+				return m, nil
+			}
 			return m, m.startRepair(repairPurposeSetup, password, true, "Setting up Forged", "Creating the local vault and preparing background services for this machine.", "")
 		case passwordRestore:
+			if err != nil {
+				m.passwordInput.SetError(err.Error())
+				return m, nil
+			}
 			m.passwordBusy = true
 			m.passwordInput.SetInfo("Decrypting vault")
 			m.restoreID++
 			return m, tea.Batch(m.spinner.Tick, m.restoreLinkedVault(m.restoreID, password))
 		case passwordKeyView:
+			if err != nil {
+				m.passwordInput.SetError(err.Error())
+				return m, nil
+			}
 			m.passwordBusy = true
 			m.passwordInput.SetInfo("Decrypting vault")
 			return m, tea.Batch(m.spinner.Tick, m.copyPrivateKey(password))
 		case passwordKeyExport:
+			if err != nil {
+				m.passwordInput.SetError(err.Error())
+				return m, nil
+			}
 			m.passwordBusy = true
 			m.passwordInput.SetInfo("Exporting vault")
 			return m, tea.Batch(m.spinner.Tick, m.exportVault(password))
+		case passwordManageUnlock:
+			if err != nil {
+				m.passwordInput.SetError(err.Error())
+				return m, nil
+			}
+			return m, m.submitManageUnlock(password)
+		case passwordManageChange:
+			return m, m.submitManageChangePassword()
 		default:
+			if err != nil {
+				m.passwordInput.SetError(err.Error())
+				return m, nil
+			}
 			return m, m.startRepair(repairPurposeUnlock, password, false, "Unlocking Forged", "Verifying the vault and repairing the background service.", "")
 		}
 	default:
@@ -1314,13 +1469,6 @@ func (m *model) dashboardTabs() []dashboardTab {
 		return nil
 	}
 
-	accountPages := []dashboardPage{
-		{
-			Label:   "Log in",
-			Summary: "Log in to Forged and sync keys across all devices",
-			Route:   RouteAccountLogin,
-		},
-	}
 	syncPages := []dashboardPage{
 		{
 			Label:   "Log in",
@@ -1330,18 +1478,6 @@ func (m *model) dashboardTabs() []dashboardTab {
 	}
 
 	if m.snapshot.LoggedIn {
-		accountPages = []dashboardPage{
-			{
-				Label:   "Profile",
-				Summary: "View account details and profile settings",
-				Route:   RouteAccountStatus,
-			},
-			{
-				Label:   "Log out",
-				Summary: "Log out of Forged while keeping your local vault available",
-				Route:   RouteAccountStatus,
-			},
-		}
 		syncPages = []dashboardPage{
 			{
 				Label:   "Status",
@@ -1367,14 +1503,6 @@ func (m *model) dashboardTabs() []dashboardTab {
 			},
 		},
 		{
-			Label: "Vault",
-			Pages: []dashboardPage{
-				{Label: "Unlock", Summary: "Unlock this vault with your master password", Route: RouteVaultHome},
-				{Label: "Lock", Summary: "Lock the vault until your password is entered again", Route: RouteVaultHome},
-				{Label: "Change password", Summary: "Change the master password that protects this vault", Route: RouteVaultHome},
-			},
-		},
-		{
 			Label: "Agent",
 			Pages: []dashboardPage{
 				{Label: "Enable SSH agent", Summary: "Set Forged as your default SSH agent", Route: RouteAgentHome},
@@ -1383,8 +1511,8 @@ func (m *model) dashboardTabs() []dashboardTab {
 			},
 		},
 		{
-			Label: "Account",
-			Pages: accountPages,
+			Label: "Manage",
+			Pages: m.manageDashboardPages(),
 		},
 		{
 			Label: "Sync",
@@ -1484,15 +1612,10 @@ func (m *model) dashboardAreaRoute(label string) RouteID {
 	switch label {
 	case "Key":
 		return RouteKeysBrowser
-	case "Vault":
+	case "Manage":
 		return RouteVaultHome
 	case "Agent":
 		return RouteAgentHome
-	case "Account":
-		if !m.snapshot.LoggedIn {
-			return RouteAccountLogin
-		}
-		return RouteAccountStatus
 	case "Sync":
 		return RouteSyncHome
 	case "Doctor":
@@ -1508,16 +1631,6 @@ func (m *model) currentDashboardSection() *dashboardSection {
 	}
 
 	switch m.session.Current().ID {
-	case RouteVaultHome:
-		return &dashboardSection{
-			Title:   "Vault",
-			Context: "Control how this machine unlocks, protects, and changes the local encrypted vault.",
-			Actions: []dashboardSectionAction{
-				{Label: "Unlock vault", Description: "Open the vault and enable sensitive access"},
-				{Label: "Lock vault", Description: "Seal sensitive access until the master password is entered again"},
-				{Label: "Change password", Description: "Rotate the password used to encrypt this vault"},
-			},
-		}
 	case RouteAgentHome:
 		return &dashboardSection{
 			Title:   "Agent",
@@ -1605,16 +1718,12 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 			Summary: "Browse, create, import, and export keys",
 		},
 		{
-			Label:   "Vault",
-			Summary: "Lock, unlock, and protect this machine",
-		},
-		{
 			Label:   "Agent",
 			Summary: "Control SSH routing and signing",
 		},
 		{
-			Label:   "Account",
-			Summary: "Profile, access, and linked features",
+			Label:   "Manage",
+			Summary: "Profile, vault access, and account actions",
 		},
 		{
 			Label:   "Sync",
@@ -1635,14 +1744,10 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 	}
 
 	if m.snapshot.LoggedIn {
-		areas[1].Summary = "Lock, unlock, and protect your synced vault"
-	}
-
-	if m.snapshot.LoggedIn {
-		areas[3].Summary = "Profile, session, and linked features"
-		areas[4].Summary = "Refresh and review vault sync"
+		areas[2].Summary = "Profile, vault access, and account actions"
+		areas[3].Summary = "Refresh and review vault sync"
 	} else {
-		areas[4].Summary = "Review sync once account access is enabled"
+		areas[3].Summary = "Review sync once account access is enabled"
 	}
 
 	for index := range areas {
@@ -1974,14 +2079,20 @@ func (m *model) restartAfterVaultReady() tea.Cmd {
 }
 
 func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorText string, reuseCurrentRoute bool) {
-	if !reuseCurrentRoute && m.session.Current().ID != RouteVaultUnlock {
-		m.session.Push(Route{ID: RouteVaultUnlock})
+	m.showPasswordScreenOnRoute(RouteVaultUnlock, flow, authEmail, errorText, reuseCurrentRoute)
+}
+
+func (m *model) showPasswordScreenOnRoute(route RouteID, flow passwordFlow, authEmail string, errorText string, reuseCurrentRoute bool) {
+	if !reuseCurrentRoute && m.session.Current().ID != route {
+		m.session.Push(Route{ID: route})
 	}
 
 	m.screen = screenPassword
 	m.passwordFlow = flow
 	m.passwordAuth = authEmail
 	m.passwordBusy = false
+	m.passwordHideInput = false
+	m.passwordBusyMessage = ""
 	m.passwordOverlay = reuseCurrentRoute && (flow == passwordKeyView || flow == passwordKeyExport)
 	switch flow {
 	case passwordCreate:
@@ -2000,6 +2111,14 @@ func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorTex
 		m.passwordTitle = "Export vault"
 		m.passwordContext = "Master password is required to export this vault and its private keys"
 		m.passwordInput = components.NewUnlockPasswordInput()
+	case passwordManageUnlock:
+		m.passwordTitle = "Unlock Vault"
+		m.passwordContext = "Use Touch ID to unlock this vault. If Touch ID is unavailable, enter your master password."
+		m.passwordInput = components.NewUnlockPasswordInput()
+	case passwordManageChange:
+		m.passwordTitle = "Change Master Password"
+		m.passwordContext = "Enter your current password, then choose a new master password for this vault."
+		m.passwordInput = components.NewChangePasswordInput()
 	default:
 		m.passwordTitle = "Unlock Forged"
 		m.passwordContext = "Enter your master password to verify the local vault and finish repairing the background service."
@@ -2019,6 +2138,15 @@ func (m *model) showCurrentRoute() tea.Cmd {
 		return m.startLoginFlow()
 	case RouteKeysBrowser, RouteKeysDetail, RouteKeysRename, RouteKeysDelete, RouteKeysGenerate, RouteKeysImport, RouteKeysExport:
 		return m.startKeyRouteLoad()
+	case RouteVaultLock:
+		m.session.ReplaceCurrent(Route{ID: RouteVaultHome})
+		m.screen = screenDashboard
+		return m.runManageLock()
+	case RouteVaultUnlock:
+		return m.startManageUnlockFlow()
+	case RouteVaultChangePassword:
+		m.showPasswordScreenOnRoute(RouteVaultChangePassword, passwordManageChange, "", "", false)
+		return m.passwordInput.Init()
 	case RouteVaultHome, RouteAgentHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
 		return nil
 	default:
@@ -2047,7 +2175,13 @@ func (m *model) pendingDashboardRouteTitle() string {
 	case RouteKeysExport:
 		return "Export vault"
 	case RouteVaultHome:
-		return "Vault"
+		return "Manage"
+	case RouteVaultLock:
+		return "Manage"
+	case RouteVaultUnlock:
+		return "Unlock Vault"
+	case RouteVaultChangePassword:
+		return "Change Master Password"
 	case RouteAgentHome:
 		return "Agent"
 	case RouteAccountStatus:
@@ -2107,7 +2241,24 @@ func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
 	case RouteVaultHome:
 		return []shell.Breadcrumb{
 			{Label: "Home"},
-			{Label: "Vault", Current: true},
+			{Label: "Manage", Current: true},
+		}
+	case RouteVaultLock:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Manage", Current: true},
+		}
+	case RouteVaultUnlock:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Manage"},
+			{Label: "Unlock", Current: true},
+		}
+	case RouteVaultChangePassword:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Manage"},
+			{Label: "Change Master Password", Current: true},
 		}
 	case RouteAgentHome:
 		return []shell.Breadcrumb{

@@ -15,6 +15,7 @@ type PasswordKind string
 const (
 	PasswordKindUnlock PasswordKind = "unlock"
 	PasswordKindCreate PasswordKind = "create"
+	PasswordKindChange PasswordKind = "change"
 )
 
 type PasswordInput struct {
@@ -36,10 +37,17 @@ func NewCreatePasswordInput() *PasswordInput {
 	return newPasswordInput(PasswordKindCreate)
 }
 
+func NewChangePasswordInput() *PasswordInput {
+	return newPasswordInput(PasswordKindChange)
+}
+
 func newPasswordInput(kind PasswordKind) *PasswordInput {
 	fieldCount := 1
 	if kind == PasswordKindCreate {
 		fieldCount = 2
+	}
+	if kind == PasswordKindChange {
+		fieldCount = 3
 	}
 
 	fields := make([]textinput.Model, 0, fieldCount)
@@ -59,6 +67,11 @@ func newPasswordInput(kind PasswordKind) *PasswordInput {
 	fields[0].Placeholder = "Enter master password"
 	if kind == PasswordKindCreate {
 		fields[1].Placeholder = "Confirm master password"
+	}
+	if kind == PasswordKindChange {
+		fields[0].Placeholder = "Current master password"
+		fields[1].Placeholder = "New master password"
+		fields[2].Placeholder = "Confirm new password"
 	}
 	fields[0].Focus()
 
@@ -191,7 +204,38 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 		}
 	}
 
+	if p.kind == PasswordKindChange {
+		if len(p.fields[1].Value()) < 8 {
+			return nil, fmt.Errorf("use at least 8 characters")
+		}
+		if p.fields[1].Value() != p.fields[2].Value() {
+			return nil, fmt.Errorf("passwords do not match")
+		}
+	}
+
 	return []byte(primary), nil
+}
+
+func (p *PasswordInput) SubmitChangePassword() ([]byte, []byte, error) {
+	p.ClearStatus()
+	if p.kind != PasswordKindChange {
+		return nil, nil, fmt.Errorf("change-password input is not active")
+	}
+
+	current := p.fields[0].Value()
+	if len(current) == 0 {
+		return nil, nil, fmt.Errorf("enter your current master password")
+	}
+
+	next := p.fields[1].Value()
+	if len(next) < 8 {
+		return nil, nil, fmt.Errorf("use at least 8 characters")
+	}
+	if next != p.fields[2].Value() {
+		return nil, nil, fmt.Errorf("passwords do not match")
+	}
+
+	return []byte(current), []byte(next), nil
 }
 
 func (p *PasswordInput) View(spinner string, labels ...string) string {
@@ -200,6 +244,16 @@ func (p *PasswordInput) View(spinner string, labels ...string) string {
 		label := "Master password"
 		if p.kind == PasswordKindCreate && index == 1 {
 			label = "Confirm password"
+		}
+		if p.kind == PasswordKindChange {
+			switch index {
+			case 0:
+				label = "Current password"
+			case 1:
+				label = "New password"
+			case 2:
+				label = "Confirm password"
+			}
 		}
 		if index < len(labels) {
 			label = labels[index]
