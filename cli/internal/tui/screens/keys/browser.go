@@ -16,6 +16,7 @@ type BrowserScreen struct {
 	SearchView    string
 	SearchActive  bool
 	SearchNotice  string
+	CountLabel    string
 	Rows          []actions.KeySummary
 	SelectedIndex int
 	Loading       bool
@@ -28,20 +29,20 @@ func RenderBrowser(screen BrowserScreen, spinner string, width int) string {
 
 	if screen.Loading {
 		sections = append(sections, theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" Loading keys"))
-		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth)), "\n")
+		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth)), "\n")
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
 		sections = append(sections, theme.Danger.Render("✕ "+displayMessage(msg)))
-		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth)), "\n")
+		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth)), "\n")
 	}
 
 	if len(screen.Rows) == 0 {
 		sections = append(sections, theme.BodyMuted.Render("No keys found"))
-		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth)), "\n")
+		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth)), "\n")
 	}
 
 	sections = append(sections, renderBrowserTable(screen, contentWidth))
-	sections = append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth))
+	sections = append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth))
 	return strings.Join(sections, "\n")
 }
 
@@ -49,7 +50,7 @@ func VisibleRows() int {
 	return visibleRowCount
 }
 
-func renderSearchField(view string, active bool, notice string, width int) string {
+func renderSearchField(view string, active bool, notice string, countLabel string, width int) string {
 	value := strings.TrimRight(view, " ")
 	if value == "" {
 		value = theme.BodyMuted.Render("Search keys")
@@ -60,15 +61,36 @@ func renderSearchField(view string, active bool, notice string, width int) strin
 	}
 
 	fieldWidth := max(20, width+shell.ContentLeftInset+shell.ContentRightInset)
-	lines := []string{}
-	if msg := strings.TrimSpace(notice); msg != "" {
-		lines = append(lines, theme.Warning.Width(width).Render(msg))
-	}
+	lines := []string{renderBrowserMetaRow(notice, countLabel, width)}
 	lines = append(lines,
 		shell.FullBleed(theme.Divider(fieldWidth)),
 		theme.Kicker.Render("❯")+"  "+value,
 	)
 	return strings.Join(lines, "\n")
+}
+
+func renderBrowserMetaRow(notice string, countLabel string, width int) string {
+	right := ""
+	if count := strings.TrimSpace(countLabel); count != "" {
+		right = theme.BodyMuted.Render(count)
+	}
+
+	left := ""
+	if msg := strings.TrimSpace(displayMessage(notice)); msg != "" {
+		maxLeftWidth := width
+		if right != "" {
+			maxLeftWidth = max(0, width-lipgloss.Width(right)-2)
+		}
+		if maxLeftWidth > 0 {
+			left = theme.Warning.Render(truncateRunes(msg, maxLeftWidth))
+		}
+	}
+
+	row := shell.JoinRow(width, left, right)
+	if strings.TrimSpace(row) == "" {
+		return " "
+	}
+	return row
 }
 
 func renderBrowserTable(screen BrowserScreen, width int) string {

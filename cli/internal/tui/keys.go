@@ -497,6 +497,7 @@ func (m *model) renderKeyBody(contentWidth int) string {
 			SearchView:   m.keyBrowser.input.View(),
 			SearchActive: m.keyBrowser.searchActive,
 			SearchNotice: m.keyBrowser.notice,
+			CountLabel:   m.keyBrowserCountLabel(),
 			Rows:         m.keyBrowserVisibleRows(),
 			SelectedIndex: func() int {
 				if m.keyBrowser.selected < m.keyBrowser.offset {
@@ -862,6 +863,7 @@ func (m *model) updateKeyGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		name := strings.TrimSpace(m.keyGenerate.nameInput.Value())
 		if name == "" {
 			m.keyGenerate.err = "Enter a key name"
+			m.keyGenerate.status = ""
 			return m, nil
 		}
 		m.keyGenerate.err = ""
@@ -869,10 +871,7 @@ func (m *model) updateKeyGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyGenerate.generating = true
 		return m, tea.Batch(m.spinner.Tick, m.generateKeyCmd(name, ""))
 	default:
-		var cmd tea.Cmd
-		m.keyGenerate.nameInput, cmd = m.keyGenerate.nameInput.Update(msg)
-		m.keyGenerate.err = ""
-		return m, cmd
+		return m, m.updateKeyGenerateInputs(msg)
 	}
 }
 
@@ -1066,6 +1065,7 @@ func (m *model) updateKeyGenerateInputs(msg tea.KeyMsg) tea.Cmd {
 	var cmd tea.Cmd
 	m.keyGenerate.nameInput, cmd = m.keyGenerate.nameInput.Update(msg)
 	m.keyGenerate.err = ""
+	m.keyGenerate.status = ""
 	return cmd
 }
 
@@ -1583,6 +1583,7 @@ func (m *model) handleKeyGenerateFinishedMsg(msg keyGenerateFinishedMsg) (tea.Mo
 	}
 	m.keyGenerate.generating = false
 	if msg.err != nil {
+		m.keyGenerate.status = ""
 		m.keyGenerate.err = msg.err.Error()
 		return m, nil
 	}
@@ -1973,6 +1974,25 @@ func (m *model) keyBrowserVisibleRows() []actions.KeySummary {
 	start := min(max(m.keyBrowser.offset, 0), len(m.keyBrowser.rows))
 	end := min(len(m.keyBrowser.rows), start+keyscreen.VisibleRows())
 	return m.keyBrowser.rows[start:end]
+}
+
+func (m *model) keyBrowserCountLabel() string {
+	total := len(m.keyBrowser.all)
+	if total == 0 {
+		if m.keyBrowser.loading {
+			return ""
+		}
+		return "0 keys"
+	}
+
+	filtered := len(m.keyBrowser.rows)
+	if strings.TrimSpace(m.keyBrowser.input.Value()) != "" {
+		return fmt.Sprintf("%d of %d keys", filtered, total)
+	}
+	if total == 1 {
+		return "1 key"
+	}
+	return fmt.Sprintf("%d keys", total)
 }
 
 func (m *model) selectedKeyRow() (actions.KeySummary, bool) {
