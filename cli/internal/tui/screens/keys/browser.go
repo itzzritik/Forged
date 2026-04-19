@@ -14,6 +14,7 @@ const visibleRowCount = 8
 
 type BrowserScreen struct {
 	SearchView    string
+	SearchQuery   string
 	SearchActive  bool
 	SearchNotice  string
 	CountLabel    string
@@ -33,11 +34,6 @@ func RenderBrowser(screen BrowserScreen, spinner string, width int) string {
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
 		sections = append(sections, theme.Danger.Render("✕ "+displayMessage(msg)))
-		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth)), "\n")
-	}
-
-	if len(screen.Rows) == 0 {
-		sections = append(sections, theme.BodyMuted.Render("No keys found"))
 		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth)), "\n")
 	}
 
@@ -108,6 +104,11 @@ func renderBrowserTable(screen BrowserScreen, width int) string {
 		"",
 	}
 
+	if len(screen.Rows) == 0 {
+		lines = append(lines, renderBrowserEmptyRows(tableWidth, browserEmptySubtitle(screen.SearchQuery))...)
+		return strings.Join(lines, "\n")
+	}
+
 	for index := 0; index < visibleRowCount; index++ {
 		if index >= len(screen.Rows) {
 			lines = append(lines, "")
@@ -147,6 +148,25 @@ func renderBrowserRow(key actions.KeySummary, selected bool, selectionWidth, nam
 		detailStyle.Render(fingerprint)
 }
 
+func renderBrowserEmptyRows(width int, subtitle string) []string {
+	rows := make([]string, visibleRowCount)
+	titleRow := max(0, visibleRowCount/2-1)
+	subtitleRow := min(visibleRowCount-1, titleRow+1)
+
+	rows[titleRow] = centerRow(theme.BodyStrong.Render("No keys to show"), width)
+	if msg := strings.TrimSpace(subtitle); msg != "" {
+		rows[subtitleRow] = centerRow(theme.BodyMuted.Render(msg), width)
+	}
+	return rows
+}
+
+func browserEmptySubtitle(query string) string {
+	if strings.TrimSpace(query) != "" {
+		return "Try a different search term"
+	}
+	return "Generate or import a key to get started"
+}
+
 func padRight(value string, width int) string {
 	if width <= 0 {
 		return value
@@ -167,4 +187,15 @@ func truncateRunes(value string, width int) string {
 	}
 	runes := []rune(value)
 	return string(runes[:width-1]) + "…"
+}
+
+func centerRow(value string, width int) string {
+	visible := lipgloss.Width(value)
+	if visible >= width {
+		return value
+	}
+
+	leftPad := max(0, (width-visible)/2)
+	rightPad := max(0, width-leftPad-visible)
+	return strings.Repeat(" ", leftPad) + value + strings.Repeat(" ", rightPad)
 }

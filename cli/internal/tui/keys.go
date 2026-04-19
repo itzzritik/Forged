@@ -501,6 +501,7 @@ func (m *model) renderKeyBody(contentWidth int) string {
 	case RouteKeysBrowser:
 		return keyscreen.RenderBrowser(keyscreen.BrowserScreen{
 			SearchView:   m.keyBrowser.input.View(),
+			SearchQuery:  m.keyBrowser.input.Value(),
 			SearchActive: m.keyBrowser.searchActive,
 			SearchNotice: m.keyBrowser.notice,
 			CountLabel:   m.keyBrowserCountLabel(),
