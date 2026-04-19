@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"fmt"
 	"strings"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
@@ -54,8 +55,29 @@ func UnlockSensitive(paths config.Paths, password []byte) (UnlockResult, error) 
 }
 
 func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []byte) (ChangePasswordResult, error) {
+	check, err := vault.OpenReadOnly(paths.VaultFile(), currentPassword)
+	if err != nil {
+		return ChangePasswordResult{}, fmt.Errorf("Wrong password or corrupted vault")
+	}
+	check.Close()
+
+	serviceStopped, err := stopDaemonForPasswordChange(paths)
+	if err != nil {
+		return ChangePasswordResult{}, err
+	}
+
+	passwordChanged := false
+	defer func() {
+		if serviceStopped && !passwordChanged {
+			_ = daemon.StartService()
+		}
+	}()
+
 	v, err := vault.Open(paths.VaultFile(), currentPassword)
 	if err != nil {
+		if strings.Contains(err.Error(), "vault is locked by another process") {
+			return ChangePasswordResult{}, fmt.Errorf("Vault is busy. Try again.")
+		}
 		return ChangePasswordResult{}, fmt.Errorf("Wrong password or corrupted vault")
 	}
 	closed := false
@@ -68,6 +90,7 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 	if err := v.ChangePassword(newPassword); err != nil {
 		return ChangePasswordResult{}, fmt.Errorf("changing password: %w", err)
 	}
+	passwordChanged = true
 
 	kdf := v.KDFParams()
 	protectedKey := base64.StdEncoding.EncodeToString(v.ProtectedKeyBytes())
@@ -106,4 +129,28 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		Detail: "Local vault and remote recovery were updated.",
 		Synced: true,
 	}, nil
+}
+
+func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
+	if _, running := daemon.IsRunning(paths); !running {
+		return false, nil
+	}
+
+	if !daemon.ServiceInstalled() {
+		return false, fmt.Errorf("Stop the running Forged daemon and try again.")
+	}
+
+	if err := daemon.StopService(); err != nil {
+		return false, fmt.Errorf("stopping local service: %w", err)
+	}
+
+	deadline := time.Now().Add(5 * time.Second)
+	for time.Now().Before(deadline) {
+		if _, running := daemon.IsRunning(paths); !running {
+			return true, nil
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+
+	return false, fmt.Errorf("waiting for local service to stop")
 }

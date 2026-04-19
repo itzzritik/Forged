@@ -517,10 +517,14 @@ func (m *model) renderKeyBody(contentWidth int) string {
 			Error:   m.keyBrowser.err,
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysDetail:
+		key := m.keyDetail.key
+		if m.signingLoaded {
+			key.GitSigning = m.keyMatchesCurrentSigning(key.PublicKey)
+		}
 		return keyscreen.RenderDetail(keyscreen.DetailScreen{
 			Loading:     m.keyDetail.loading || m.keyDetail.resolving,
 			Error:       m.keyDetail.err,
-			Key:         m.keyDetail.key,
+			Key:         key,
 			Status:      m.keyDetail.status,
 			StatusError: m.keyDetail.statusErr,
 			Busy:        m.keyDetail.busy,

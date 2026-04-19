@@ -31,21 +31,26 @@ type Result struct {
 }
 
 type Dependencies struct {
-	Repair          func(readiness.RunOptions) (readiness.RunResult, error)
-	CreateVault     func([]byte) error
-	RestoreVault    func([]byte) error
-	StartLogin      func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
-	SaveCredentials func(actions.AccountCredentials) error
-	LoadStatus      func() (RuntimeStatus, error)
-	ProbeSensitive  func() (SensitiveState, error)
-	LockSensitive   func() error
-	UnlockSensitive func([]byte) (actions.UnlockResult, error)
-	ChangePassword  func([]byte, []byte) (actions.ChangePasswordResult, error)
-	CopyText        func(string) error
-	OpenLink        func(string) error
-	DefaultServer   string
-	AppVersion      string
-	CommitSigning   bool
+	Repair               func(readiness.RunOptions) (readiness.RunResult, error)
+	CreateVault          func([]byte) error
+	RestoreVault         func([]byte) error
+	StartLogin           func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
+	SaveCredentials      func(actions.AccountCredentials) error
+	LoadSnapshot         func() (readiness.Snapshot, error)
+	LoadStatus           func() (RuntimeStatus, error)
+	ProbeSensitive       func() (SensitiveState, error)
+	LockSensitive        func() error
+	UnlockSensitive      func([]byte) (actions.UnlockResult, error)
+	ChangePassword       func([]byte, []byte) (actions.ChangePasswordResult, error)
+	LoadSigningStatus    func() (actions.CommitSigningStatus, error)
+	EnableSSHAgent       func() error
+	DisableSSHAgent      func() error
+	EnableCommitSigning  func(string) (actions.CommitSigningStatus, error)
+	DisableCommitSigning func() (actions.CommitSigningStatus, error)
+	CopyText             func(string) error
+	OpenLink             func(string) error
+	DefaultServer        string
+	AppVersion           string
 }
 
 type screenMode string
@@ -145,9 +150,20 @@ type runtimeStatusMsg struct {
 	err    error
 }
 
+type snapshotRefreshMsg struct {
+	snapshot readiness.Snapshot
+	err      error
+}
+
 type sensitiveStateMsg struct {
 	state SensitiveState
 	err   error
+}
+
+type signingStatusMsg struct {
+	id     int
+	status actions.CommitSigningStatus
+	err    error
 }
 
 type RuntimeStatus struct {
@@ -210,23 +226,31 @@ type openFinishedMsg struct {
 }
 
 type model struct {
-	intent          Intent
-	session         *Session
-	repair          func(readiness.RunOptions) (readiness.RunResult, error)
-	createVault     func([]byte) error
-	restoreVault    func([]byte) error
-	startLogin      func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
-	saveCredentials func(actions.AccountCredentials) error
-	loadStatus      func() (RuntimeStatus, error)
-	probeSensitive  func() (SensitiveState, error)
-	lockSensitive   func() error
-	unlockSensitive func([]byte) (actions.UnlockResult, error)
-	changePassword  func([]byte, []byte) (actions.ChangePasswordResult, error)
-	copyText        func(string) error
-	openLink        func(string) error
-	defaultServer   string
-	appVersion      string
-	commitSigning   bool
+	intent               Intent
+	session              *Session
+	repair               func(readiness.RunOptions) (readiness.RunResult, error)
+	createVault          func([]byte) error
+	restoreVault         func([]byte) error
+	startLogin           func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
+	saveCredentials      func(actions.AccountCredentials) error
+	loadSnapshot         func() (readiness.Snapshot, error)
+	loadStatus           func() (RuntimeStatus, error)
+	probeSensitive       func() (SensitiveState, error)
+	lockSensitive        func() error
+	unlockSensitive      func([]byte) (actions.UnlockResult, error)
+	changePassword       func([]byte, []byte) (actions.ChangePasswordResult, error)
+	loadSigningStatus    func() (actions.CommitSigningStatus, error)
+	enableSSHAgent       func() error
+	disableSSHAgent      func() error
+	enableCommitSigning  func(string) (actions.CommitSigningStatus, error)
+	disableCommitSigning func() (actions.CommitSigningStatus, error)
+	copyText             func(string) error
+	openLink             func(string) error
+	defaultServer        string
+	appVersion           string
+	signingStatus        actions.CommitSigningStatus
+	signingLoaded        bool
+	signingLoadID        int
 
 	spinner spinner.Model
 	width   int
@@ -297,6 +321,7 @@ type model struct {
 	keyImport   keyImportState
 	keyExport   keyExportState
 	manage      manageState
+	agent       agentState
 }
 
 func Run(intent Intent, deps Dependencies) (Result, error) {
@@ -311,6 +336,8 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("tui login dependency is required")
 	case deps.SaveCredentials == nil:
 		return Result{}, fmt.Errorf("tui save-credentials dependency is required")
+	case deps.LoadSnapshot == nil:
+		return Result{}, fmt.Errorf("tui load-snapshot dependency is required")
 	case deps.LoadStatus == nil:
 		return Result{}, fmt.Errorf("tui load-status dependency is required")
 	case deps.ProbeSensitive == nil:
@@ -321,6 +348,16 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("tui unlock-sensitive dependency is required")
 	case deps.ChangePassword == nil:
 		return Result{}, fmt.Errorf("tui change-password dependency is required")
+	case deps.LoadSigningStatus == nil:
+		return Result{}, fmt.Errorf("tui load-signing-status dependency is required")
+	case deps.EnableSSHAgent == nil:
+		return Result{}, fmt.Errorf("tui enable-ssh-agent dependency is required")
+	case deps.DisableSSHAgent == nil:
+		return Result{}, fmt.Errorf("tui disable-ssh-agent dependency is required")
+	case deps.EnableCommitSigning == nil:
+		return Result{}, fmt.Errorf("tui enable-commit-signing dependency is required")
+	case deps.DisableCommitSigning == nil:
+		return Result{}, fmt.Errorf("tui disable-commit-signing dependency is required")
 	case deps.CopyText == nil:
 		return Result{}, fmt.Errorf("tui copy-text dependency is required")
 	case deps.OpenLink == nil:
@@ -345,25 +382,30 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 
 func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 	model := &model{
-		intent:          intent,
-		session:         NewSession(intent),
-		repair:          deps.Repair,
-		createVault:     deps.CreateVault,
-		restoreVault:    deps.RestoreVault,
-		startLogin:      deps.StartLogin,
-		saveCredentials: deps.SaveCredentials,
-		loadStatus:      deps.LoadStatus,
-		probeSensitive:  deps.ProbeSensitive,
-		lockSensitive:   deps.LockSensitive,
-		unlockSensitive: deps.UnlockSensitive,
-		changePassword:  deps.ChangePassword,
-		copyText:        deps.CopyText,
-		openLink:        deps.OpenLink,
-		defaultServer:   deps.DefaultServer,
-		appVersion:      deps.AppVersion,
-		commitSigning:   deps.CommitSigning,
-		spinner:         spin,
-		random:          rand.New(rand.NewSource(time.Now().UnixNano())),
+		intent:               intent,
+		session:              NewSession(intent),
+		repair:               deps.Repair,
+		createVault:          deps.CreateVault,
+		restoreVault:         deps.RestoreVault,
+		startLogin:           deps.StartLogin,
+		saveCredentials:      deps.SaveCredentials,
+		loadSnapshot:         deps.LoadSnapshot,
+		loadStatus:           deps.LoadStatus,
+		probeSensitive:       deps.ProbeSensitive,
+		lockSensitive:        deps.LockSensitive,
+		unlockSensitive:      deps.UnlockSensitive,
+		changePassword:       deps.ChangePassword,
+		loadSigningStatus:    deps.LoadSigningStatus,
+		enableSSHAgent:       deps.EnableSSHAgent,
+		disableSSHAgent:      deps.DisableSSHAgent,
+		enableCommitSigning:  deps.EnableCommitSigning,
+		disableCommitSigning: deps.DisableCommitSigning,
+		copyText:             deps.CopyText,
+		openLink:             deps.OpenLink,
+		defaultServer:        deps.DefaultServer,
+		appVersion:           deps.AppVersion,
+		spinner:              spin,
+		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	model.initializePendingRouteState()
 	return model
@@ -601,6 +643,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.setupPending = nil
 		m.setupFinalizing = false
 		return m, m.handleRepairFinished(pending.result, pending.err)
+	case snapshotRefreshMsg:
+		return m.handleSnapshotRefreshMsg(msg)
 	case runtimeStatusMsg:
 		wasUsingSpinner := m.usesSpinner()
 		if msg.err == nil {
@@ -628,6 +672,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.runtimeStatus.SensitiveKnown = true
 		}
 		return m, nil
+	case signingStatusMsg:
+		return m.handleSigningStatusMsg(msg)
 	case keyListMsg:
 		return m.handleKeyListMsg(msg)
 	case keyDetailMsg:
@@ -662,6 +708,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleManageChangePasswordFinishedMsg(msg)
 	case manageAutoReturnMsg:
 		return m.handleManageAutoReturnMsg(msg)
+	case agentSSHFinishedMsg:
+		return m.handleAgentSSHFinishedMsg(msg)
+	case agentSigningKeysMsg:
+		return m.handleAgentSigningKeysMsg(msg)
+	case agentSigningFinishedMsg:
+		return m.handleAgentSigningFinishedMsg(msg)
 	case copyFinishedMsg:
 		if msg.err != nil {
 			if m.screen == screenLogin {
@@ -768,10 +820,17 @@ func (m *model) systemHeaderItem() shell.StatusItem {
 }
 
 func (m *model) commitSigningHeaderItem() shell.StatusItem {
-	if m.commitSigning {
-		return shell.StatusItem{Label: "Commit signing", Tone: shell.StatusToneSuccess}
+	if !m.signingLoaded {
+		return shell.StatusItem{Label: "Checking signing", Icon: m.spinner.View()}
 	}
-	return shell.StatusItem{Label: "Commit not signing", Tone: shell.StatusToneWarning}
+	switch m.signingStatus.Mode {
+	case actions.CommitSigningForged:
+		return shell.StatusItem{Label: "Forged signing", Tone: shell.StatusToneSuccess}
+	case actions.CommitSigningExternal:
+		return shell.StatusItem{Label: "External signing", Tone: shell.StatusToneWarning}
+	default:
+		return shell.StatusItem{Label: "Commit not signing", Tone: shell.StatusToneWarning}
+	}
 }
 
 func (m *model) vaultSyncHeaderItem() shell.StatusItem {
@@ -806,6 +865,12 @@ func (m *model) headerPageTitle() string {
 		}
 		if m.isManageSuccessRoute() {
 			return m.manageSuccessTitle()
+		}
+		if m.isAgentHomeRoute() {
+			return "Agent"
+		}
+		if m.isAgentSigningRoute() {
+			return "Commit Signing"
 		}
 		if section := m.currentDashboardSection(); section != nil {
 			return section.Title
@@ -863,6 +928,19 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 				{Label: "Home"},
 				{Label: "Manage"},
 				{Label: m.manageSuccessTitle(), Current: true},
+			}
+		}
+		if m.isAgentHomeRoute() {
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Agent", Current: true},
+			}
+		}
+		if m.isAgentSigningRoute() {
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Agent"},
+				{Label: "Commit Signing", Current: true},
 			}
 		}
 		if section := m.currentDashboardSection(); section != nil {
@@ -980,6 +1058,12 @@ func (m *model) renderBody(contentWidth int) string {
 		}
 		if m.isManageSuccessRoute() {
 			return m.renderManageSuccessBody(contentWidth)
+		}
+		if m.isAgentHomeRoute() {
+			return m.renderAgentBody(contentWidth)
+		}
+		if m.isAgentSigningRoute() {
+			return m.renderAgentSigningBody(contentWidth)
 		}
 		if section := m.currentDashboardSection(); section != nil {
 			return m.renderDashboardSection(contentWidth, *section)
@@ -1149,6 +1233,26 @@ func (m *model) footerActions() []shell.FooterAction {
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
 		}
+		if m.isAgentHomeRoute() {
+			return []shell.FooterAction{
+				{Key: "↑/↓", Label: "Move"},
+				{Key: "Enter", Label: "Open"},
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+			}
+		}
+		if m.isAgentSigningRoute() {
+			actions := []shell.FooterAction{
+				{Key: "↑/↓", Label: "Move"},
+			}
+			if len(m.agent.signing.keys) > 0 {
+				actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Use Key"})
+			}
+			if m.signingStatus.Enabled() {
+				actions = append(actions, shell.FooterAction{Key: "D", Label: "Disable Signing"})
+			}
+			actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
+			return actions
+		}
 		if m.isWelcomeState() {
 			return []shell.FooterAction{
 				{Key: "↑/↓", Label: "Move"},
@@ -1235,6 +1339,14 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateManageKeys(msg)
 	}
 
+	if m.isAgentHomeRoute() {
+		return m.updateAgentKeys(msg)
+	}
+
+	if m.isAgentSigningRoute() {
+		return m.updateAgentSigningKeys(msg)
+	}
+
 	if m.currentDashboardSection() != nil {
 		switch msg.String() {
 		case "esc":
@@ -1263,6 +1375,10 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.notice = notice{}
 				m.manage.selected = m.dashboardPageIndices[m.dashboardTabIndex]
 			}
+			if tabs[m.dashboardTabIndex].Label == "Agent" {
+				m.agent.statusErr = ""
+				m.agent.selected = m.dashboardPageIndices[m.dashboardTabIndex]
+			}
 			return m, nil
 		case "down", "j":
 			pages := tabs[m.dashboardTabIndex].Pages
@@ -1274,6 +1390,10 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.notice = notice{}
 				m.manage.selected = m.dashboardPageIndices[m.dashboardTabIndex]
 			}
+			if tabs[m.dashboardTabIndex].Label == "Agent" {
+				m.agent.statusErr = ""
+				m.agent.selected = m.dashboardPageIndices[m.dashboardTabIndex]
+			}
 			return m, nil
 		case "left", "h":
 			if m.dashboardTabIndex > 0 {
@@ -1282,6 +1402,9 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if tabs[m.dashboardTabIndex].Label == "Manage" {
 				return m, m.probeSensitiveStateCmd()
 			}
+			if tabs[m.dashboardTabIndex].Label == "Agent" {
+				return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSigningStatusCmd())
+			}
 			return m, nil
 		case "right", "l":
 			if m.dashboardTabIndex < len(tabs)-1 {
@@ -1289,6 +1412,9 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if tabs[m.dashboardTabIndex].Label == "Manage" {
 				return m, m.probeSensitiveStateCmd()
+			}
+			if tabs[m.dashboardTabIndex].Label == "Agent" {
+				return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSigningStatusCmd())
 			}
 			return m, nil
 		case "enter":
@@ -1306,6 +1432,22 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.manage.selected = len(items) - 1
 				}
 				return m.openManageItem(items[m.manage.selected])
+			}
+			if tabs[m.dashboardTabIndex].Label == "Agent" {
+				items := m.agentItems()
+				if len(items) == 0 {
+					return m, nil
+				}
+				m.notice = notice{}
+				m.agent.statusErr = ""
+				m.agent.selected = m.dashboardPageIndices[m.dashboardTabIndex]
+				if m.agent.selected < 0 {
+					m.agent.selected = 0
+				}
+				if m.agent.selected >= len(items) {
+					m.agent.selected = len(items) - 1
+				}
+				return m.openAgentItem(items[m.agent.selected])
 			}
 			if page := m.selectedDashboardPage(); page != nil {
 				if page.Route != "" && m.session.Current().ID != page.Route {
@@ -1537,11 +1679,7 @@ func (m *model) dashboardTabs() []dashboardTab {
 		},
 		{
 			Label: "Agent",
-			Pages: []dashboardPage{
-				{Label: "Enable SSH agent", Summary: "Set Forged as your default SSH agent", Route: RouteAgentHome},
-				{Label: "Disable SSH agent", Summary: "Turn off Forged SSH routing on this machine", Route: RouteAgentHome},
-				{Label: "Commit signing", Summary: "Sign Git commits using keys in your Forged vault", Route: RouteAgentHome},
-			},
+			Pages: m.agentDashboardPages(),
 		},
 		{
 			Label: "Manage",
@@ -1664,16 +1802,6 @@ func (m *model) currentDashboardSection() *dashboardSection {
 	}
 
 	switch m.session.Current().ID {
-	case RouteAgentHome:
-		return &dashboardSection{
-			Title:   "Agent",
-			Context: "Manage SSH routing, agent ownership, and commit-signing behavior across developer workflows.",
-			Actions: []dashboardSectionAction{
-				{Label: "Enable SSH agent", Description: "Route OpenSSH through Forged on this machine"},
-				{Label: "Disable SSH agent", Description: "Stop routing SSH requests through Forged"},
-				{Label: "Commit signing", Description: "Review and control how Forged signs Git commits"},
-			},
-		}
 	case RouteAccountStatus:
 		context := "Review your Forged account and manage the features linked to this machine."
 		if email := strings.TrimSpace(m.accountEmail); email != "" {
@@ -1812,7 +1940,7 @@ func (m *model) usesSpinner() bool {
 	case screenPassword:
 		return m.passwordBusy
 	case screenDashboard:
-		return m.keyUsesSpinner() || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
+		return m.keyUsesSpinner() || m.agentUsesSpinner() || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
 	default:
 		return false
 	}
@@ -2058,11 +2186,13 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 				return tea.Batch(
 					m.showCurrentRoute(),
 					m.pollRuntimeStatus(0),
+					m.loadSigningStatusCmd(),
 				)
 			}
 			return tea.Batch(
 				m.pollRuntimeStatus(0),
 				m.preloadKeyBrowser(),
+				m.loadSigningStatusCmd(),
 			)
 		}
 		return nil
@@ -2105,6 +2235,7 @@ func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.repairAuthEmail = ""
 	m.setupPending = nil
 	m.runtimeLoaded = false
+	m.signingLoaded = false
 	return tea.Batch(
 		m.spinner.Tick,
 		m.assessCurrentState(),
@@ -2180,7 +2311,14 @@ func (m *model) showCurrentRoute() tea.Cmd {
 	case RouteVaultChangePassword:
 		m.showPasswordScreenOnRoute(RouteVaultChangePassword, passwordManageChange, "", "", false)
 		return m.passwordInput.Init()
-	case RouteVaultHome, RouteAgentHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
+	case RouteAgentHome:
+		return tea.Batch(
+			m.refreshSnapshotCmd(),
+			m.loadSigningStatusCmd(),
+		)
+	case RouteAgentSigning:
+		return m.startAgentSigningRoute()
+	case RouteVaultHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
 		if m.session.Current().ID == RouteVaultHome {
 			return m.probeSensitiveStateCmd()
 		}
@@ -2220,6 +2358,8 @@ func (m *model) pendingDashboardRouteTitle() string {
 		return "Change Master Password"
 	case RouteAgentHome:
 		return "Agent"
+	case RouteAgentSigning:
+		return "Commit Signing"
 	case RouteAccountStatus:
 		return "Account"
 	case RouteSyncHome:
@@ -2300,6 +2440,12 @@ func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
 		return []shell.Breadcrumb{
 			{Label: "Home"},
 			{Label: "Agent", Current: true},
+		}
+	case RouteAgentSigning:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Agent"},
+			{Label: "Commit Signing", Current: true},
 		}
 	case RouteAccountStatus:
 		return []shell.Breadcrumb{

@@ -11,6 +11,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/keytypes"
+	"github.com/itzzritik/forged/cli/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -29,6 +30,9 @@ var signingCmd = &cobra.Command{
 		off, _ := cmd.Flags().GetBool("off")
 		if off {
 			return disableSigning()
+		}
+		if !jsonOutput && isInteractiveTerminal() {
+			return runInteractiveIntent(tui.ResolveCommand([]string{"agent", "signing"}, args))
 		}
 
 		client := ctlClient()

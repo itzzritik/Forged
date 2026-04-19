@@ -40,6 +40,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 			return actions.BeginLoginWithProgress(server, actions.OpenBrowser, progress)
 		},
 		SaveCredentials: func(creds actions.AccountCredentials) error { return actions.SaveCredentials(paths, creds) },
+		LoadSnapshot:    engine.Assess,
 		LoadStatus: func() (tui.RuntimeStatus, error) {
 			resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdStatus, nil)
 			if err != nil {
@@ -125,11 +126,19 @@ func runInteractiveIntent(intent tui.Intent) error {
 		ChangePassword: func(currentPassword []byte, newPassword []byte) (actions.ChangePasswordResult, error) {
 			return actions.ChangePassword(paths, currentPassword, newPassword)
 		},
+		LoadSigningStatus: func() (actions.CommitSigningStatus, error) { return actions.LoadCommitSigningStatus(paths) },
+		EnableSSHAgent:    func() error { return actions.EnableSSHAgent(paths) },
+		DisableSSHAgent:   func() error { return actions.DisableSSHAgent(paths) },
+		EnableCommitSigning: func(name string) (actions.CommitSigningStatus, error) {
+			return actions.EnableCommitSigning(paths, name)
+		},
+		DisableCommitSigning: func() (actions.CommitSigningStatus, error) {
+			return actions.DisableCommitSigning(paths)
+		},
 		CopyText:      copyTextToClipboard,
 		OpenLink:      openLinkInBrowser,
 		DefaultServer: ipc.DefaultAPIServer,
 		AppVersion:    version,
-		CommitSigning: commitSigningConfigured(),
 	})
 	return err
 }
@@ -204,30 +213,4 @@ func openLinkInBrowser(url string) error {
 	}
 	go cmd.Wait()
 	return nil
-}
-
-func commitSigningConfigured() bool {
-	signingKey := gitGlobalConfig("user.signingkey")
-	gpgFormat := strings.ToLower(gitGlobalConfig("gpg.format"))
-	signProgram := gitGlobalConfig("gpg.ssh.program")
-	commitSign := strings.ToLower(gitGlobalConfig("commit.gpgsign"))
-
-	if signingKey == "" || signProgram == "" {
-		return false
-	}
-	if gpgFormat != "" && gpgFormat != "ssh" {
-		return false
-	}
-	if commitSign != "" && commitSign != "true" {
-		return false
-	}
-	return strings.Contains(signProgram, "forged-sign")
-}
-
-func gitGlobalConfig(key string) string {
-	out, err := exec.Command("git", "config", "--global", key).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }
