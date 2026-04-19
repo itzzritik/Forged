@@ -275,9 +275,9 @@ var viewCmd = &cobra.Command{
 View details for a single key in the vault.
 
 By default, this shows safe metadata only. Use --full to include the
-private key after sensitive authentication. Successful --full access
-reuses a 4-hour view lease until it expires, the daemon restarts,
-Forged is locked, or the OS session lock is detected.
+private key after sensitive authentication. Successful authentication
+unlocks private-key access until Forged is locked, the daemon restarts,
+or the OS session lock is detected.
 	`),
 	Example: strings.TrimSpace(`
   forged key view "Github (ItzzRitik)"

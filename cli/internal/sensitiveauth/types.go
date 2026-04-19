@@ -13,7 +13,6 @@ const (
 )
 
 const (
-	ViewLeaseTTL   = 4 * time.Hour
 	ExportTokenTTL = time.Minute
 )
 
@@ -36,17 +35,17 @@ func ParseAction(raw string) (Action, error) {
 func (a Action) PasswordPrompt() string {
 	switch a {
 	case ActionExport:
-		return "Native authentication unavailable. Enter your master password to export:"
+		return "Native authentication unavailable. Enter your master password to unlock private-key access and export:"
 	default:
-		return "Native authentication unavailable. Enter your master password to continue:"
+		return "Native authentication unavailable. Enter your master password to unlock private-key access:"
 	}
 }
 
 func (a Action) NativeReason() string {
 	switch a {
 	case ActionExport:
-		return "Authenticate to export your Forged vault"
+		return "Authenticate to export private keys from Forged"
 	default:
-		return "Authenticate to reveal a private key in Forged"
+		return "Authenticate to unlock private-key access in Forged"
 	}
 }

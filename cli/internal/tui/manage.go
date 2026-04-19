@@ -87,7 +87,7 @@ func (m *model) manageItems() []manageItem {
 		{
 			ID:      manageItemVaultUnlock,
 			Label:   "Vault Unlock",
-			Summary: "Unlock this vault with your master password",
+			Summary: "Unlock this vault with Touch ID or your master password",
 		},
 		{
 			ID:      manageItemChangePassword,
@@ -341,6 +341,7 @@ func (m *model) handleManageLockFinishedMsg(msg manageLockFinishedMsg) (tea.Mode
 	}
 
 	m.runtimeStatus.Unlocked = false
+	m.runtimeStatus.SensitiveKnown = true
 	return m, m.pollRuntimeStatus(0)
 }
 
@@ -365,6 +366,7 @@ func (m *model) handleManageUnlockFinishedMsg(msg manageUnlockFinishedMsg) (tea.
 	}
 
 	m.runtimeStatus.Unlocked = true
+	m.runtimeStatus.SensitiveKnown = true
 	m.passwordHideInput = false
 	return m, tea.Batch(
 		m.returnFromManageFlow(),

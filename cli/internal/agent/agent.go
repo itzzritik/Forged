@@ -7,6 +7,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 
@@ -17,8 +18,14 @@ type ForgedAgent struct {
 	mu       sync.RWMutex
 	keyStore *vault.KeyStore
 	locked   bool
+	auth     SensitiveAuthorizer
 	syncBus  SyncCoordinator
 	routes   RouteSessions
+}
+
+type SensitiveAuthorizer interface {
+	IsUnlocked() bool
+	Authorize(context.Context, sensitiveauth.Action) (sensitiveauth.AuthorizeResult, error)
 }
 
 type SyncCoordinator interface {
@@ -34,6 +41,12 @@ func (a *ForgedAgent) SetSyncCoordinator(syncBus SyncCoordinator) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.syncBus = syncBus
+}
+
+func (a *ForgedAgent) SetSensitiveAuthorizer(auth SensitiveAuthorizer) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.auth = auth
 }
 
 func (a *ForgedAgent) SetRouteSessions(routes RouteSessions) {
@@ -88,6 +101,17 @@ func (a *ForgedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, erro
 
 func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
 	a.recordAgentAccess("ssh_agent_sign")
+
+	a.mu.RLock()
+	if a.locked {
+		a.mu.RUnlock()
+		return nil, fmt.Errorf("agent is locked")
+	}
+	a.mu.RUnlock()
+
+	if err := a.ensurePrivateKeyAccess(); err != nil {
+		return nil, err
+	}
 
 	a.mu.RLock()
 	defer a.mu.RUnlock()
@@ -166,6 +190,17 @@ func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
 	a.recordAgentAccess("ssh_agent_signers")
 
 	a.mu.RLock()
+	if a.locked {
+		a.mu.RUnlock()
+		return nil, nil
+	}
+	a.mu.RUnlock()
+
+	if err := a.ensurePrivateKeyAccess(); err != nil {
+		return nil, err
+	}
+
+	a.mu.RLock()
 	defer a.mu.RUnlock()
 
 	if a.locked {
@@ -236,6 +271,25 @@ func (a *ForgedAgent) refreshMissingKey(reason string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
 	defer cancel()
 	return syncBus.RefreshMissingKey(ctx, reason)
+}
+
+func (a *ForgedAgent) ensurePrivateKeyAccess() error {
+	a.mu.RLock()
+	auth := a.auth
+	a.mu.RUnlock()
+
+	if auth == nil || auth.IsUnlocked() {
+		return nil
+	}
+
+	result, err := auth.Authorize(context.Background(), sensitiveauth.ActionView)
+	if err != nil {
+		return err
+	}
+	if result.PasswordRequired {
+		return fmt.Errorf("private-key access is locked; unlock Forged from Manage or run `forged vault unlock`")
+	}
+	return nil
 }
 
 var _ agent.ExtendedAgent = (*ForgedAgent)(nil)

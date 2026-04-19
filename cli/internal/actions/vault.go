@@ -56,7 +56,7 @@ func UnlockSensitive(paths config.Paths, password []byte) (UnlockResult, error) 
 func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []byte) (ChangePasswordResult, error) {
 	v, err := vault.Open(paths.VaultFile(), currentPassword)
 	if err != nil {
-		return ChangePasswordResult{}, fmt.Errorf("wrong password or corrupted vault")
+		return ChangePasswordResult{}, fmt.Errorf("Wrong password or corrupted vault")
 	}
 	closed := false
 	defer func() {

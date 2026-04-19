@@ -46,8 +46,8 @@ func runInteractiveIntent(intent tui.Intent) error {
 				return tui.RuntimeStatus{}, err
 			}
 			var status struct {
-				Sensitive struct {
-					Unlocked bool `json:"unlocked"`
+				Sensitive *struct {
+					Unlocked *bool `json:"unlocked"`
 				} `json:"sensitive"`
 				Sync struct {
 					Dirty   bool   `json:"dirty"`
@@ -59,13 +59,66 @@ func runInteractiveIntent(intent tui.Intent) error {
 			if err := json.Unmarshal(resp.Data, &status); err != nil {
 				return tui.RuntimeStatus{}, err
 			}
-			return tui.RuntimeStatus{
-				Syncing:  status.Sync.Syncing,
-				Dirty:    status.Sync.Dirty,
-				Linked:   status.Sync.Linked,
-				Unlocked: status.Sensitive.Unlocked,
-				Error:    status.Sync.LastErr,
-			}, nil
+			runtimeStatus := tui.RuntimeStatus{
+				Syncing:           status.Sync.Syncing,
+				Dirty:             status.Sync.Dirty,
+				Linked:            status.Sync.Linked,
+				Error:             status.Sync.LastErr,
+				SensitiveReported: status.Sensitive != nil && status.Sensitive.Unlocked != nil,
+			}
+			if status.Sensitive != nil && status.Sensitive.Unlocked != nil {
+				runtimeStatus.Unlocked = *status.Sensitive.Unlocked
+				runtimeStatus.SensitiveKnown = true
+			}
+			return runtimeStatus, nil
+		},
+		ProbeSensitive: func() (tui.SensitiveState, error) {
+			client := ipc.NewClient(paths.CtlSocket())
+
+			resp, err := client.Call(ipc.CmdStatus, nil)
+			if err != nil {
+				return tui.SensitiveState{}, err
+			}
+			var status struct {
+				Sensitive *struct {
+					Unlocked *bool `json:"unlocked"`
+				} `json:"sensitive"`
+			}
+			if err := json.Unmarshal(resp.Data, &status); err != nil {
+				return tui.SensitiveState{}, err
+			}
+			if status.Sensitive != nil && status.Sensitive.Unlocked != nil {
+				return tui.SensitiveState{Unlocked: *status.Sensitive.Unlocked, Known: true}, nil
+			}
+
+			listResp, err := client.Call(ipc.CmdList, nil)
+			if err != nil {
+				return tui.SensitiveState{}, err
+			}
+			var list struct {
+				Keys []struct {
+					Name string `json:"name"`
+				} `json:"keys"`
+			}
+			if err := json.Unmarshal(listResp.Data, &list); err != nil {
+				return tui.SensitiveState{}, err
+			}
+			if len(list.Keys) == 0 {
+				return tui.SensitiveState{}, nil
+			}
+
+			_, err = client.Call(ipc.CmdView, map[string]any{
+				"name": list.Keys[0].Name,
+				"full": true,
+			})
+			switch {
+			case err == nil:
+				return tui.SensitiveState{Unlocked: true, Known: true}, nil
+			case strings.Contains(err.Error(), "sensitive private-key access requires authentication"):
+				return tui.SensitiveState{Unlocked: false, Known: true}, nil
+			default:
+				return tui.SensitiveState{}, err
+			}
 		},
 		LockSensitive:   func() error { return actions.LockSensitive(paths) },
 		UnlockSensitive: func(password []byte) (actions.UnlockResult, error) { return actions.UnlockSensitive(paths, password) },

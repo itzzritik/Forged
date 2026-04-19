@@ -8,9 +8,9 @@ import (
 )
 
 type leaseState struct {
-	mu             sync.Mutex
-	viewLeaseUntil time.Time
-	exportTokens   map[string]time.Time
+	mu           sync.Mutex
+	unlocked     bool
+	exportTokens map[string]time.Time
 }
 
 func newLeaseState() *leaseState {
@@ -23,14 +23,21 @@ func (s *leaseState) CanView(now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return now.Before(s.viewLeaseUntil)
+	return s.unlocked
 }
 
 func (s *leaseState) GrantView(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.viewLeaseUntil = now.Add(ViewLeaseTTL)
+	s.unlocked = true
+}
+
+func (s *leaseState) IsUnlocked() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	return s.unlocked
 }
 
 func (s *leaseState) IssueExportToken(now time.Time) string {
@@ -64,6 +71,6 @@ func (s *leaseState) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.viewLeaseUntil = time.Time{}
+	s.unlocked = false
 	s.exportTokens = make(map[string]time.Time)
 }

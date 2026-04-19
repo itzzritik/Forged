@@ -374,7 +374,7 @@ func (s *Server) handleView(raw json.RawMessage) Response {
 	}
 
 	if a.Full {
-		if s.authBroker == nil || !s.authBroker.CanViewFull() {
+		if s.authBroker == nil || !s.authBroker.IsUnlocked() {
 			return ErrorResponse(fmt.Errorf("sensitive private-key access requires authentication"))
 		}
 	}
@@ -599,7 +599,7 @@ func (s *Server) handleSensitivePassword(raw json.RawMessage) Response {
 
 func (s *Server) handleSensitiveLock() Response {
 	if s.authBroker != nil {
-		s.authBroker.Invalidate("manual_lock")
+		s.authBroker.Lock("manual_lock")
 	}
 	return OkResponse(nil)
 }
@@ -612,7 +612,7 @@ func (s *Server) handleStatus() Response {
 
 	if s.authBroker != nil {
 		status["sensitive"] = map[string]any{
-			"unlocked": s.authBroker.CanViewFull(),
+			"unlocked": s.authBroker.IsUnlocked(),
 		}
 	}
 

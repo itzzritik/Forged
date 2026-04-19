@@ -69,7 +69,7 @@ self.onmessage = async (e: MessageEvent) => {
 		} catch {
 			stretchedMasterKey?.fill(0);
 			stretchedMasterKey = null;
-			self.postMessage({ type: "error", error: "wrong password" });
+			self.postMessage({ type: "error", error: "Wrong password" });
 		}
 	}
 

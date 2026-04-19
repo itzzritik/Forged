@@ -44,8 +44,8 @@ func (b *Broker) Close() {
 }
 
 func (b *Broker) Authorize(ctx context.Context, action Action) (AuthorizeResult, error) {
-	if action == ActionView && b.leases.CanView(time.Now()) {
-		return AuthorizeResult{Authorized: true}, nil
+	if b.IsUnlocked() {
+		return b.grant(action), nil
 	}
 
 	if b.helper != nil {
@@ -75,8 +75,12 @@ func (b *Broker) AuthorizeWithPassword(action Action, password []byte) (Authoriz
 	return b.grant(action), nil
 }
 
+func (b *Broker) IsUnlocked() bool {
+	return b.leases.IsUnlocked()
+}
+
 func (b *Broker) CanViewFull() bool {
-	return b.leases.CanView(time.Now())
+	return b.IsUnlocked()
 }
 
 func (b *Broker) ConsumeExportToken(token string) bool {
@@ -84,6 +88,10 @@ func (b *Broker) ConsumeExportToken(token string) bool {
 }
 
 func (b *Broker) Invalidate(reason string) {
+	b.Lock(reason)
+}
+
+func (b *Broker) Lock(reason string) {
 	b.leases.Clear()
 	if b.logger != nil {
 		b.logger.Info("sensitive auth invalidated", "reason", reason)
@@ -92,12 +100,10 @@ func (b *Broker) Invalidate(reason string) {
 
 func (b *Broker) grant(action Action) AuthorizeResult {
 	now := time.Now()
-	if action == ActionView {
-		b.leases.GrantView(now)
-		return AuthorizeResult{Authorized: true}
+	b.leases.GrantView(now)
+	result := AuthorizeResult{Authorized: true}
+	if action == ActionExport {
+		result.ExportToken = b.leases.IssueExportToken(now)
 	}
-	return AuthorizeResult{
-		Authorized:  true,
-		ExportToken: b.leases.IssueExportToken(now),
-	}
+	return result
 }

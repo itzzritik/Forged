@@ -270,6 +270,7 @@ func (d *Daemon) startAgent() error {
 	d.agent = forgedagent.New(d.keyStore)
 	d.agent.SetSyncCoordinator(d.syncBus)
 	d.agent.SetRouteSessions(d.routeService)
+	d.agent.SetSensitiveAuthorizer(d.authBroker)
 	d.agentServer = forgedagent.NewServer(agentPath, d.agent, d.logger)
 	if err := d.agentServer.Start(); err != nil {
 		return fmt.Errorf("starting agent server: %w", err)

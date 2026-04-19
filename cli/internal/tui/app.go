@@ -37,6 +37,7 @@ type Dependencies struct {
 	StartLogin      func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	SaveCredentials func(actions.AccountCredentials) error
 	LoadStatus      func() (RuntimeStatus, error)
+	ProbeSensitive  func() (SensitiveState, error)
 	LockSensitive   func() error
 	UnlockSensitive func([]byte) (actions.UnlockResult, error)
 	ChangePassword  func([]byte, []byte) (actions.ChangePasswordResult, error)
@@ -144,12 +145,24 @@ type runtimeStatusMsg struct {
 	err    error
 }
 
+type sensitiveStateMsg struct {
+	state SensitiveState
+	err   error
+}
+
 type RuntimeStatus struct {
-	Syncing  bool
-	Dirty    bool
-	Linked   bool
+	Syncing           bool
+	Dirty             bool
+	Linked            bool
+	Unlocked          bool
+	SensitiveKnown    bool
+	SensitiveReported bool
+	Error             string
+}
+
+type SensitiveState struct {
 	Unlocked bool
-	Error    string
+	Known    bool
 }
 
 type dashboardSectionAction struct {
@@ -205,6 +218,7 @@ type model struct {
 	startLogin      func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	saveCredentials func(actions.AccountCredentials) error
 	loadStatus      func() (RuntimeStatus, error)
+	probeSensitive  func() (SensitiveState, error)
 	lockSensitive   func() error
 	unlockSensitive func([]byte) (actions.UnlockResult, error)
 	changePassword  func([]byte, []byte) (actions.ChangePasswordResult, error)
@@ -299,6 +313,8 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("tui save-credentials dependency is required")
 	case deps.LoadStatus == nil:
 		return Result{}, fmt.Errorf("tui load-status dependency is required")
+	case deps.ProbeSensitive == nil:
+		return Result{}, fmt.Errorf("tui probe-sensitive dependency is required")
 	case deps.LockSensitive == nil:
 		return Result{}, fmt.Errorf("tui lock-sensitive dependency is required")
 	case deps.UnlockSensitive == nil:
@@ -337,6 +353,7 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		startLogin:      deps.StartLogin,
 		saveCredentials: deps.SaveCredentials,
 		loadStatus:      deps.LoadStatus,
+		probeSensitive:  deps.ProbeSensitive,
 		lockSensitive:   deps.LockSensitive,
 		unlockSensitive: deps.UnlockSensitive,
 		changePassword:  deps.ChangePassword,
@@ -587,10 +604,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runtimeStatusMsg:
 		wasUsingSpinner := m.usesSpinner()
 		if msg.err == nil {
+			if !msg.status.SensitiveReported {
+				msg.status.Unlocked = m.runtimeStatus.Unlocked
+				msg.status.SensitiveKnown = m.runtimeStatus.SensitiveKnown
+			}
 			m.runtimeStatus = msg.status
 			m.runtimeLoaded = true
 		} else if m.snapshot.LoggedIn && m.systemHeader == systemHeaderHealthy {
-			m.runtimeStatus = RuntimeStatus{Error: msg.err.Error()}
+			m.runtimeStatus.Error = msg.err.Error()
 			m.runtimeLoaded = true
 		}
 		if m.screen == screenDashboard && m.snapshot.VaultExists {
@@ -599,6 +620,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append([]tea.Cmd{m.spinner.Tick}, cmds...)
 			}
 			return m, tea.Batch(cmds...)
+		}
+		return m, nil
+	case sensitiveStateMsg:
+		if msg.err == nil && msg.state.Known {
+			m.runtimeStatus.Unlocked = msg.state.Unlocked
+			m.runtimeStatus.SensitiveKnown = true
 		}
 		return m, nil
 	case keyListMsg:
@@ -1252,10 +1279,16 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.dashboardTabIndex > 0 {
 				m.dashboardTabIndex--
 			}
+			if tabs[m.dashboardTabIndex].Label == "Manage" {
+				return m, m.probeSensitiveStateCmd()
+			}
 			return m, nil
 		case "right", "l":
 			if m.dashboardTabIndex < len(tabs)-1 {
 				m.dashboardTabIndex++
+			}
+			if tabs[m.dashboardTabIndex].Label == "Manage" {
+				return m, m.probeSensitiveStateCmd()
 			}
 			return m, nil
 		case "enter":
@@ -2148,6 +2181,9 @@ func (m *model) showCurrentRoute() tea.Cmd {
 		m.showPasswordScreenOnRoute(RouteVaultChangePassword, passwordManageChange, "", "", false)
 		return m.passwordInput.Init()
 	case RouteVaultHome, RouteAgentHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
+		if m.session.Current().ID == RouteVaultHome {
+			return m.probeSensitiveStateCmd()
+		}
 		return nil
 	default:
 		return nil
@@ -2354,6 +2390,17 @@ func (m *model) pollRuntimeStatus(delay time.Duration) tea.Cmd {
 		status, err := m.loadStatus()
 		return runtimeStatusMsg{status: status, err: err}
 	})
+}
+
+func (m *model) probeSensitiveStateCmd() tea.Cmd {
+	if m.probeSensitive == nil || !m.snapshot.VaultExists || m.runtimeStatus.SensitiveReported {
+		return nil
+	}
+	probe := m.probeSensitive
+	return func() tea.Msg {
+		state, err := probe()
+		return sensitiveStateMsg{state: state, err: err}
+	}
 }
 
 func (m *model) copyToClipboard(value string) tea.Cmd {

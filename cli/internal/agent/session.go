@@ -70,6 +70,17 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	}
 
 	s.base.mu.RLock()
+	if s.base.locked {
+		s.base.mu.RUnlock()
+		return nil, fmt.Errorf("agent is locked")
+	}
+	s.base.mu.RUnlock()
+
+	if err := s.base.ensurePrivateKeyAccess(); err != nil {
+		return nil, err
+	}
+
+	s.base.mu.RLock()
 	defer s.base.mu.RUnlock()
 
 	if s.base.locked {

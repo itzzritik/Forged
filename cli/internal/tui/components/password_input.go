@@ -197,7 +197,7 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 
 	if p.kind == PasswordKindCreate {
 		if len(primary) < 8 {
-			return nil, fmt.Errorf("use at least 8 characters")
+			return nil, fmt.Errorf("Use at least 8 characters")
 		}
 		if primary != p.fields[1].Value() {
 			return nil, fmt.Errorf("passwords do not match")
@@ -206,10 +206,10 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 
 	if p.kind == PasswordKindChange {
 		if len(p.fields[1].Value()) < 8 {
-			return nil, fmt.Errorf("use at least 8 characters")
+			return nil, fmt.Errorf("Use at least 8 characters")
 		}
 		if p.fields[1].Value() != p.fields[2].Value() {
-			return nil, fmt.Errorf("passwords do not match")
+			return nil, fmt.Errorf("Passwords do not match")
 		}
 	}
 
@@ -224,15 +224,15 @@ func (p *PasswordInput) SubmitChangePassword() ([]byte, []byte, error) {
 
 	current := p.fields[0].Value()
 	if len(current) == 0 {
-		return nil, nil, fmt.Errorf("enter your current master password")
+		return nil, nil, fmt.Errorf("Enter your current master password")
 	}
 
 	next := p.fields[1].Value()
 	if len(next) < 8 {
-		return nil, nil, fmt.Errorf("use at least 8 characters")
+		return nil, nil, fmt.Errorf("Use at least 8 characters")
 	}
 	if next != p.fields[2].Value() {
-		return nil, nil, fmt.Errorf("passwords do not match")
+		return nil, nil, fmt.Errorf("Passwords do not match")
 	}
 
 	return []byte(current), []byte(next), nil

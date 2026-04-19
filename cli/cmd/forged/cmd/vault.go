@@ -11,7 +11,7 @@ import (
 
 var lockCmd = &cobra.Command{
 	Use:   "lock",
-	Short: "Lock sensitive CLI access",
+	Short: "Lock private-key access",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !jsonOutput && isInteractiveTerminal() {
 			return runInteractiveIntent(tui.ResolveCommand([]string{"vault", "lock"}, args))
@@ -19,12 +19,12 @@ var lockCmd = &cobra.Command{
 		_, err := ctlClient().Call(ipc.CmdSensitiveLock, nil)
 		if err != nil {
 			if strings.Contains(err.Error(), "daemon is not running") {
-				fmt.Println("Sensitive CLI access already locked.")
+				fmt.Println("Private-key access already locked.")
 				return nil
 			}
 			return err
 		}
-		fmt.Println("Sensitive CLI access locked.")
+		fmt.Println("Private-key access locked.")
 		return nil
 	},
 }
