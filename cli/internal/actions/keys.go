@@ -11,6 +11,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
@@ -84,6 +85,9 @@ func ListKeys(paths config.Paths) ([]KeySummary, error) {
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("parsing key list: %w", err)
 	}
+	for i := range result.Keys {
+		result.Keys[i].Type = keytypes.Normalize(result.Keys[i].Type)
+	}
 	return result.Keys, nil
 }
 
@@ -104,7 +108,7 @@ func ListLocalKeys(paths config.Paths) ([]KeySummary, error) {
 	for i, key := range keys {
 		out[i] = KeySummary{
 			Name:        key.Name,
-			Type:        key.Type,
+			Type:        keytypes.Normalize(key.Type),
 			Fingerprint: key.Fingerprint,
 			Comment:     key.Comment,
 		}
@@ -166,6 +170,7 @@ func GenerateKey(paths config.Paths, name, comment string) (GenerateResult, erro
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return GenerateResult{}, fmt.Errorf("parsing generate result: %w", err)
 	}
+	result.Type = keytypes.Normalize(result.Type)
 	result.Comment = comment
 	return result, nil
 }
@@ -183,6 +188,7 @@ func viewKey(paths config.Paths, name string, full bool) (KeyDetail, error) {
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return KeyDetail{}, fmt.Errorf("parsing key detail: %w", err)
 	}
+	result.Type = keytypes.Normalize(result.Type)
 	return result, nil
 }
 

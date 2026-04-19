@@ -4,6 +4,7 @@ import { useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Modal, ModalBody, ModalFooter } from "@/components/ui/modal";
 import { useVaultContext } from "@/hooks/use-vault";
+import { normalizeKeyTypeId } from "@/lib/key-types";
 import { decryptItemKey, decryptPrivateKey } from "@/lib/vault-crypto";
 
 interface ExportModalProps {
@@ -41,7 +42,7 @@ async function buildExportItems(raw: string, selected: Set<string>, symmetricKey
 				private_key: new TextDecoder().decode(privateKeyBytes),
 				public_key: rawKey.public_key || "",
 				fingerprint: rawKey.fingerprint || "",
-				key_type: rawKey.type || "",
+				key_type: normalizeKeyTypeId(rawKey.type as string),
 				comment: rawKey.comment || "",
 				git_signing: Boolean(rawKey.git_signing),
 			},

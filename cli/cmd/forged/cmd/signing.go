@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"github.com/spf13/cobra"
 )
 
@@ -110,6 +111,9 @@ func listKeysWithPublicKeys(client *ipc.Client) ([]keyInfo, error) {
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("parsing key list: %w", err)
+	}
+	for i := range result.Keys {
+		result.Keys[i].Type = keytypes.Normalize(result.Keys[i].Type)
 	}
 
 	for i, k := range result.Keys {

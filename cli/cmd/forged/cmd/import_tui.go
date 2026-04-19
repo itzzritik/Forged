@@ -874,9 +874,9 @@ func formatImportDuplicateSummary(count int) string {
 
 func formatImportUpgradeSummary(count int) string {
 	if count == 1 {
-		return "1 key will be converted to OpenSSH"
+		return "1 key will be upgraded to OpenSSH"
 	}
-	return fmt.Sprintf("%d keys will be converted to OpenSSH", count)
+	return fmt.Sprintf("%d keys will be upgraded to OpenSSH", count)
 }
 
 func formatImportMergedRowsSummary(count int) string {

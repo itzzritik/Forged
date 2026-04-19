@@ -219,6 +219,7 @@ func openVault(path string, password []byte) (*Vault, error) {
 		}
 		return nil, fmt.Errorf("parsing vault data: %w", err)
 	}
+	normalizeVaultKeyTypes(&vd)
 
 	v := &Vault{
 		path:         path,
@@ -232,6 +233,7 @@ func openVault(path string, password []byte) (*Vault, error) {
 }
 
 func (v *Vault) Save() error {
+	normalizeVaultKeyTypes(&v.Data)
 	plaintext, err := json.Marshal(v.Data)
 	if err != nil {
 		return fmt.Errorf("serializing vault: %w", err)
@@ -324,6 +326,7 @@ func (v *Vault) ChangePassword(newPassword []byte) error {
 }
 
 func (v *Vault) ExportForSync() ([]byte, error) {
+	normalizeVaultKeyTypes(&v.Data)
 	plaintext, err := json.Marshal(v.Data)
 	if err != nil {
 		return nil, fmt.Errorf("serializing vault: %w", err)
@@ -340,6 +343,7 @@ func (v *Vault) ImportFromSync(data []byte) error {
 	if err := json.Unmarshal(plaintext, &vd); err != nil {
 		return fmt.Errorf("parsing synced vault: %w", err)
 	}
+	normalizeVaultKeyTypes(&vd)
 	v.Data = vd
 	return v.Save()
 }

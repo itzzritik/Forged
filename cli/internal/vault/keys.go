@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -30,6 +31,9 @@ func (ks *KeyStore) List() []Key {
 
 	out := make([]Key, len(ks.vault.Data.Keys))
 	copy(out, ks.vault.Data.Keys)
+	for i := range out {
+		out[i].Type = keytypes.Normalize(out[i].Type)
+	}
 	return out
 }
 
@@ -39,6 +43,7 @@ func (ks *KeyStore) Get(name string) (Key, bool) {
 
 	for _, k := range ks.vault.Data.Keys {
 		if k.Name == name {
+			k.Type = keytypes.Normalize(k.Type)
 			return k, true
 		}
 	}
@@ -141,7 +146,7 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 	key := Key{
 		ID:                  uuid.NewString(),
 		Name:                name,
-		Type:                sshPub.Type(),
+		Type:                keytypes.FromSSHPublicKeyType(sshPub.Type()),
 		PublicKey:           strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub))),
 		EncryptedPrivateKey: base64.StdEncoding.EncodeToString(encPriv),
 		EncryptedCipherKey:  base64.StdEncoding.EncodeToString(encCK),
@@ -209,7 +214,7 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 	key := Key{
 		ID:                  uuid.NewString(),
 		Name:                name,
-		Type:                normalized.Type,
+		Type:                keytypes.Normalize(normalized.Type),
 		PublicKey:           normalized.PublicKey,
 		EncryptedPrivateKey: base64.StdEncoding.EncodeToString(encPriv),
 		EncryptedCipherKey:  base64.StdEncoding.EncodeToString(encCK),

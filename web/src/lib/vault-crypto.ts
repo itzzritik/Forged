@@ -1,3 +1,5 @@
+import { normalizeKeyTypeId } from "./key-types";
+
 export interface KDFParams {
 	memory: number;
 	parallelism: number;
@@ -156,7 +158,7 @@ export function addKeyToVault(data: VaultData, snakeCaseKey: Record<string, unkn
 		updated_at: snakeCaseKey.updated_at ?? now,
 		version: snakeCaseKey.version ?? 1,
 	});
-	parsed.keys = [...(((parsed.keys as Record<string, unknown>[]) ?? [])), key];
+	parsed.keys = [...((parsed.keys as Record<string, unknown>[]) ?? []), key];
 	bumpVersionVector(parsed, currentDeviceId);
 	const raw = JSON.stringify(normalizeVaultDocument(parsed));
 	return vaultDataFromRaw(raw);
@@ -183,7 +185,7 @@ export function updateKeyInVault(data: VaultData, keyId: string, updates: Record
 			return key;
 		}
 
-		const currentDeviceId = firstNonEmpty(deviceId, ((parsed.metadata as Record<string, unknown> | undefined)?.device_id as string | undefined), "web");
+		const currentDeviceId = firstNonEmpty(deviceId, (parsed.metadata as Record<string, unknown> | undefined)?.device_id as string | undefined, "web");
 		return {
 			...key,
 			...updates,
@@ -211,7 +213,7 @@ export function getVaultKeyDetails(data: VaultData, keyId: string): VaultKeyDeta
 	return {
 		id: rawKey.id as string,
 		name: rawKey.name as string,
-		type: rawKey.type as string,
+		type: normalizeKeyTypeId(rawKey.type as string),
 		publicKey: rawKey.public_key as string,
 		fingerprint: rawKey.fingerprint as string,
 		comment: (rawKey.comment as string) || "",
@@ -229,7 +231,7 @@ function decryptBlobSync(parsed: Record<string, unknown>): Omit<VaultData, "raw"
 	const keys: VaultKeyMetadata[] = ((parsed.keys as Record<string, unknown>[]) || []).map((k) => ({
 		id: k.id as string,
 		name: k.name as string,
-		type: k.type as string,
+		type: normalizeKeyTypeId(k.type as string),
 		publicKey: k.public_key as string,
 		fingerprint: k.fingerprint as string,
 		comment: (k.comment as string) || "",
@@ -254,13 +256,14 @@ function decryptBlobSync(parsed: Record<string, unknown>): Omit<VaultData, "raw"
 function normalizeVaultDocument(parsed: Record<string, unknown>): Record<string, unknown> {
 	return {
 		...parsed,
-		keys: (((parsed.keys as Record<string, unknown>[]) ?? []).map((key) => normalizeRawKey(key))),
+		keys: ((parsed.keys as Record<string, unknown>[]) ?? []).map((key) => normalizeRawKey(key)),
 	};
 }
 
 function normalizeRawKey(key: Record<string, unknown>): Record<string, unknown> {
 	const normalized = { ...key };
 	delete normalized.host_rules;
+	normalized.type = normalizeKeyTypeId(normalized.type as string | undefined);
 	return normalized;
 }
 

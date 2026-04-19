@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
 	"github.com/charmbracelet/bubbles/spinner"
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/readiness"
@@ -56,10 +56,10 @@ const (
 type passwordFlow string
 
 const (
-	passwordCreate  passwordFlow = "create"
-	passwordRestore passwordFlow = "restore"
-	passwordRepair  passwordFlow = "repair"
-	passwordKeyView passwordFlow = "key-view"
+	passwordCreate    passwordFlow = "create"
+	passwordRestore   passwordFlow = "restore"
+	passwordRepair    passwordFlow = "repair"
+	passwordKeyView   passwordFlow = "key-view"
 	passwordKeyExport passwordFlow = "key-export"
 )
 
@@ -216,19 +216,19 @@ type model struct {
 	summary  readiness.RepairSummary
 	notice   notice
 
-	onboardingCursor int
-	dashboardTabIndex int
+	onboardingCursor     int
+	dashboardTabIndex    int
 	dashboardPageIndices []int
-	accountEmail     string
-	loginScreen      accountscreen.LoginScreen
-	passwordInput    *components.PasswordInput
-	passwordFlow     passwordFlow
-	passwordTitle    string
-	passwordContext  string
-	passwordAuth     string
-	passwordBusy     bool
-	passwordOverlay  bool
-	repairScreen     repairscreen.TaskScreen
+	accountEmail         string
+	loginScreen          accountscreen.LoginScreen
+	passwordInput        *components.PasswordInput
+	passwordFlow         passwordFlow
+	passwordTitle        string
+	passwordContext      string
+	passwordAuth         string
+	passwordBusy         bool
+	passwordOverlay      bool
+	repairScreen         repairscreen.TaskScreen
 
 	loginID       int
 	loginProgress <-chan actions.LoginProgress
@@ -252,20 +252,21 @@ type model struct {
 	setupFinalizing bool
 	random          *rand.Rand
 
-	keyListID   int
-	keyDetailID int
-	keyRenameID int
-	keyDeleteID int
-	keyGenerateID int
-	keyImportID int
-	keyExportID int
-	keyImportPickerID int
-	keyExportPickerID int
+	keyListID          int
+	keyDetailID        int
+	keyRenameID        int
+	keyDeleteID        int
+	keyGenerateID      int
+	keyImportPreviewID int
+	keyImportID        int
+	keyExportID        int
+	keyImportPickerID  int
+	keyExportPickerID  int
 
-	keyBrowser keyBrowserState
-	keyDetail  keyDetailState
-	keyRename  keyRenameState
-	keyDelete  keyDeleteState
+	keyBrowser  keyBrowserState
+	keyDetail   keyDetailState
+	keyRename   keyRenameState
+	keyDelete   keyDeleteState
 	keyGenerate keyGenerateState
 	keyImport   keyImportState
 	keyExport   keyExportState
@@ -592,6 +593,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyPrivateCopyFinishedMsg(msg)
 	case keyGenerateFinishedMsg:
 		return m.handleKeyGenerateFinishedMsg(msg)
+	case keyImportPreviewMsg:
+		return m.handleKeyImportPreviewMsg(msg)
 	case keyImportFinishedMsg:
 		return m.handleKeyImportFinishedMsg(msg)
 	case keyExportFinishedMsg:
@@ -716,10 +719,10 @@ func (m *model) vaultSyncHeaderItem() shell.StatusItem {
 	if !m.snapshot.LoggedIn {
 		return shell.StatusItem{Label: "Local vault healthy", Tone: shell.StatusToneSuccess}
 	}
-	if m.runtimeStatus.Syncing || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing {
+	if m.runtimeSyncPending() || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing {
 		return shell.StatusItem{Label: "Vault syncing", Icon: m.spinner.View()}
 	}
-	if m.runtimeLoaded && (m.runtimeStatus.Dirty || strings.TrimSpace(m.runtimeStatus.Error) != "") {
+	if m.runtimeLoaded && strings.TrimSpace(m.runtimeStatus.Error) != "" {
 		return shell.StatusItem{Label: "Sync issue", Tone: shell.StatusToneDanger}
 	}
 	return shell.StatusItem{Label: "Vault up to date", Tone: shell.StatusToneSuccess}
@@ -1668,10 +1671,17 @@ func (m *model) usesSpinner() bool {
 	case screenPassword:
 		return m.passwordBusy
 	case screenDashboard:
-		return m.keyUsesSpinner() || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeStatus.Syncing
+		return m.keyUsesSpinner() || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
 	default:
 		return false
 	}
+}
+
+func (m *model) runtimeSyncPending() bool {
+	if m.runtimeStatus.Syncing {
+		return true
+	}
+	return m.runtimeLoaded && m.runtimeStatus.Dirty && strings.TrimSpace(m.runtimeStatus.Error) == ""
 }
 
 func (m *model) assessCurrentState() tea.Cmd {
@@ -1893,30 +1903,30 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 		m.popWizardRoutes()
 		m.screen = screenDashboard
 		return nil
-		default:
-			if (m.repairPurpose == repairPurposeSetup || m.repairPurpose == repairPurposeUnlock) && result.Snapshot.VaultExists {
-				m.popWizardRoutes()
-				return m.restartAfterVaultReady()
-			}
+	default:
+		if (m.repairPurpose == repairPurposeSetup || m.repairPurpose == repairPurposeUnlock) && result.Snapshot.VaultExists {
+			m.popWizardRoutes()
+			return m.restartAfterVaultReady()
+		}
 		m.popWizardRoutes()
 		m.notice = notice{}
 		m.setupVariant = setupVariantNone
-			m.screen = screenDashboard
-			if m.snapshot.VaultExists {
-				if route := m.session.Current().ID; route != "" && route != RouteDashboardHome {
-					return tea.Batch(
-						m.showCurrentRoute(),
-						m.pollRuntimeStatus(0),
-					)
-				}
+		m.screen = screenDashboard
+		if m.snapshot.VaultExists {
+			if route := m.session.Current().ID; route != "" && route != RouteDashboardHome {
 				return tea.Batch(
+					m.showCurrentRoute(),
 					m.pollRuntimeStatus(0),
-					m.preloadKeyBrowser(),
 				)
 			}
-			return nil
+			return tea.Batch(
+				m.pollRuntimeStatus(0),
+				m.preloadKeyBrowser(),
+			)
 		}
+		return nil
 	}
+}
 
 func (m *model) systemHeaderForSnapshot(snapshot readiness.Snapshot) systemHeaderState {
 	switch snapshot.State {

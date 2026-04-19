@@ -10,6 +10,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"github.com/itzzritik/forged/cli/internal/tui"
 	"github.com/itzzritik/forged/cli/internal/vault"
@@ -165,6 +166,9 @@ var listCmd = &cobra.Command{
 		if err := json.Unmarshal(resp.Data, &result); err != nil {
 			return fmt.Errorf("parsing response: %w", err)
 		}
+		for i := range result.Keys {
+			result.Keys[i].Type = keytypes.Normalize(result.Keys[i].Type)
+		}
 
 		if len(result.Keys) == 0 {
 			fmt.Println("No keys in vault")
@@ -291,19 +295,19 @@ Forged is locked, or the OS session lock is detected.
 }
 
 type viewResult struct {
-	ResolvedName string           `json:"resolved_name"`
-	Name         string           `json:"name"`
-	Type         string           `json:"type"`
-	Fingerprint  string           `json:"fingerprint"`
-	PublicKey    string           `json:"public_key"`
-	PrivateKey   string           `json:"private_key,omitempty"`
-	Comment      string           `json:"comment,omitempty"`
-	CreatedAt    string           `json:"created_at,omitempty"`
-	UpdatedAt    string           `json:"updated_at,omitempty"`
-	LastUsedAt   string           `json:"last_used_at,omitempty"`
-	Version      int              `json:"version,omitempty"`
-	DeviceOrigin string           `json:"device_origin,omitempty"`
-	GitSigning   bool             `json:"git_signing,omitempty"`
+	ResolvedName string `json:"resolved_name"`
+	Name         string `json:"name"`
+	Type         string `json:"type"`
+	Fingerprint  string `json:"fingerprint"`
+	PublicKey    string `json:"public_key"`
+	PrivateKey   string `json:"private_key,omitempty"`
+	Comment      string `json:"comment,omitempty"`
+	CreatedAt    string `json:"created_at,omitempty"`
+	UpdatedAt    string `json:"updated_at,omitempty"`
+	LastUsedAt   string `json:"last_used_at,omitempty"`
+	Version      int    `json:"version,omitempty"`
+	DeviceOrigin string `json:"device_origin,omitempty"`
+	GitSigning   bool   `json:"git_signing,omitempty"`
 }
 
 type exportedKey struct {
@@ -356,6 +360,9 @@ func exportVault(cmd *cobra.Command) error {
 	var keys []exportedKey
 	if err := json.Unmarshal(resp.Data, &keys); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
+	}
+	for i := range keys {
+		keys[i].Type = keytypes.Normalize(keys[i].Type)
 	}
 
 	items := make([]map[string]any, 0, len(keys))
@@ -425,6 +432,7 @@ func viewKey(name string, full bool) error {
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return fmt.Errorf("parsing response: %w", err)
 	}
+	result.Type = keytypes.Normalize(result.Type)
 
 	printViewDetailBlock(result, full)
 	return nil

@@ -2,6 +2,7 @@ package actions
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 	"github.com/itzzritik/forged/cli/internal/hostmatch"
 	"github.com/itzzritik/forged/cli/internal/importers"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/keytypes"
+	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
 type ImportResult struct {
@@ -19,6 +22,21 @@ type ImportResult struct {
 	Imported   int
 	Skipped    int
 	Keys       []KeySummary
+}
+
+type ImportPreview struct {
+	Key                 importers.ImportedKey
+	Converted           bool
+	Fingerprint         string
+	AlreadyInVault      bool
+	CollapsedDuplicates int
+	Selected            bool
+}
+
+type ImportPreviewResult struct {
+	Source     string
+	Discovered int
+	Previews   []ImportPreview
 }
 
 func ImportSourceLabel(source string) string {
@@ -45,10 +63,54 @@ func ImportFromSource(paths config.Paths, source string, file string) (ImportRes
 		return ImportResult{}, err
 	}
 
-	result := ImportResult{
+	return importKeys(paths, ImportResult{
+		Source:     source,
+		Discovered: len(keys),
+	}, keys)
+}
+
+func PreviewImportSource(paths config.Paths, source string, file string) (ImportPreviewResult, error) {
+	source = strings.TrimSpace(strings.ToLower(source))
+	keys, err := loadImportedKeys(source, file)
+	if err != nil {
+		return ImportPreviewResult{}, err
+	}
+
+	result := ImportPreviewResult{
 		Source:     source,
 		Discovered: len(keys),
 	}
+	if len(keys) == 0 {
+		return result, nil
+	}
+
+	existingFingerprints, err := loadExistingVaultFingerprints(paths)
+	if err != nil {
+		return ImportPreviewResult{}, err
+	}
+
+	previews, err := buildImportPreview(keys, existingFingerprints)
+	if err != nil {
+		return ImportPreviewResult{}, err
+	}
+	result.Previews = previews
+	return result, nil
+}
+
+func ImportSelectedPreviews(paths config.Paths, source string, discovered int, previews []ImportPreview) (ImportResult, error) {
+	keys := make([]importers.ImportedKey, 0, len(previews))
+	for _, preview := range previews {
+		if preview.Selected {
+			keys = append(keys, preview.Key)
+		}
+	}
+	return importKeys(paths, ImportResult{
+		Source:     strings.TrimSpace(strings.ToLower(source)),
+		Discovered: discovered,
+	}, keys)
+}
+
+func importKeys(paths config.Paths, result ImportResult, keys []importers.ImportedKey) (ImportResult, error) {
 	if len(keys) == 0 {
 		return result, nil
 	}
@@ -80,7 +142,7 @@ func ImportFromSource(paths config.Paths, source string, file string) (ImportRes
 			if name != "" {
 				result.Keys = append(result.Keys, KeySummary{
 					Name:        name,
-					Type:        strings.TrimSpace(added.Type),
+					Type:        keytypes.Normalize(added.Type),
 					Fingerprint: strings.TrimSpace(added.Fingerprint),
 				})
 			}
@@ -88,6 +150,60 @@ func ImportFromSource(paths config.Paths, source string, file string) (ImportRes
 	}
 
 	return result, nil
+}
+
+func buildImportPreview(keys []importers.ImportedKey, existingFingerprints map[string]struct{}) ([]ImportPreview, error) {
+	previews := make([]ImportPreview, 0, len(keys))
+	byFingerprint := make(map[string]int, len(keys))
+	for _, key := range keys {
+		preview, err := previewImportedKey(key)
+		if err != nil {
+			return nil, fmt.Errorf("%s: %w", key.Name, err)
+		}
+		if idx, ok := byFingerprint[preview.Fingerprint]; ok {
+			previews[idx].CollapsedDuplicates++
+			continue
+		}
+		preview.AlreadyInVault = containsFingerprint(existingFingerprints, preview.Fingerprint)
+		preview.Selected = !preview.AlreadyInVault
+		byFingerprint[preview.Fingerprint] = len(previews)
+		previews = append(previews, preview)
+	}
+	return previews, nil
+}
+
+func previewImportedKey(key importers.ImportedKey) (ImportPreview, error) {
+	normalized, err := vault.NormalizePrivateKeyToOpenSSH([]byte(key.PrivateKey), "")
+	if err != nil {
+		return ImportPreview{}, formatPrivateKeyImportError(err)
+	}
+
+	return ImportPreview{
+		Key:         key,
+		Converted:   normalized.Converted,
+		Fingerprint: normalized.Fingerprint,
+	}, nil
+}
+
+func formatPrivateKeyImportError(err error) error {
+	if err == nil {
+		return nil
+	}
+	if errors.Is(err, vault.ErrPassphraseProtectedPrivateKey) {
+		return fmt.Errorf("key is passphrase-protected. Remove the passphrase first with: ssh-keygen -p -f <file>")
+	}
+
+	msg := err.Error()
+	switch {
+	case strings.Contains(msg, "private key is empty"):
+		return fmt.Errorf("private key is empty")
+	case strings.Contains(msg, "parsing private key"):
+		return fmt.Errorf("unrecognized key format. Only unencrypted OpenSSH or PEM private keys are supported")
+	case strings.Contains(msg, "creating signer from private key"):
+		return fmt.Errorf("unsupported private key type. Only RSA, ECDSA, and Ed25519 keys are supported")
+	default:
+		return err
+	}
 }
 
 func loadImportedKeys(source string, file string) ([]importers.ImportedKey, error) {
@@ -143,10 +259,14 @@ func importFromSSHDir() []importers.ImportedKey {
 		if err != nil {
 			continue
 		}
-		keys = append(keys, importers.ImportedKey{
+		key := importers.ImportedKey{
 			Name:       deriveImportedKeyName(path),
 			PrivateKey: string(data),
-		})
+		}
+		if _, err := previewImportedKey(key); err != nil {
+			continue
+		}
+		keys = append(keys, key)
 	}
 	return keys
 }
@@ -197,4 +317,9 @@ func loadExistingVaultFingerprints(paths config.Paths) (map[string]struct{}, err
 		}
 	}
 	return seen, nil
+}
+
+func containsFingerprint(fingerprints map[string]struct{}, fingerprint string) bool {
+	_, ok := fingerprints[fingerprint]
+	return ok
 }

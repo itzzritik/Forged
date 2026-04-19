@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -106,6 +107,6 @@ func NormalizePrivateKeyToOpenSSH(input []byte, comment string) (NormalizedPriva
 		Fingerprint: ssh.FingerprintSHA256(signer.PublicKey()),
 		Format:      format,
 		PublicKey:   strings.TrimSpace(string(ssh.MarshalAuthorizedKey(signer.PublicKey()))),
-		Type:        signer.PublicKey().Type(),
+		Type:        keytypes.FromSSHPublicKeyType(signer.PublicKey().Type()),
 	}, nil
 }

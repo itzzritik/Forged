@@ -1,10 +1,12 @@
+import { KEY_TYPE_ECDSA, KEY_TYPE_ED25519, KEY_TYPE_RSA, type KeyTypeId } from "./key-types";
+
 export interface ParsedSSHKey {
 	comment: string;
 	convertedToOpenSSH: boolean;
 	sourceFormat: "openssh" | "pkcs8-pem" | "legacy-pem";
 	privateKeyBytes: Uint8Array;
 	publicKeyBlob: Uint8Array;
-	type: "ed25519" | "rsa" | "ecdsa";
+	type: KeyTypeId;
 }
 
 const OPENSSH_HEADER = "-----BEGIN OPENSSH PRIVATE KEY-----";
@@ -259,13 +261,13 @@ function parseOpenSSHKey(content: string): ParsedSSHKey {
 	let type: ParsedSSHKey["type"];
 
 	if (keyType === "ssh-ed25519") {
-		type = "ed25519";
+		type = KEY_TYPE_ED25519;
 		priv.readBytes(); // public key (32 bytes), skip
 		priv.readBytes(); // private key (64 bytes: seed + public), skip
 	} else if (keyType === "ssh-rsa") {
-		type = "rsa";
+		type = KEY_TYPE_RSA;
 	} else if (keyType.startsWith("ecdsa-sha2-")) {
-		type = "ecdsa";
+		type = KEY_TYPE_ECDSA;
 	} else {
 		throw new Error(`Unsupported key type: ${keyType}`);
 	}
@@ -361,7 +363,7 @@ function detectPkcs8ImportSpec(pkcs8: Uint8Array): ImportSpec {
 	switch (algorithmOid) {
 		case OID_RSA_ENCRYPTION:
 			return {
-				type: "rsa",
+				type: KEY_TYPE_RSA,
 				algorithm: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
 			};
 		case OID_EC_PUBLIC_KEY: {
@@ -370,13 +372,13 @@ function detectPkcs8ImportSpec(pkcs8: Uint8Array): ImportSpec {
 			}
 			const curve = curveFromOid(decodeOid(algorithmChildren[1].value));
 			return {
-				type: "ecdsa",
+				type: KEY_TYPE_ECDSA,
 				algorithm: { name: "ECDSA", namedCurve: curve.namedCurve },
 			};
 		}
 		case OID_ED25519:
 			return {
-				type: "ed25519",
+				type: KEY_TYPE_ED25519,
 				algorithm: { name: "Ed25519" },
 			};
 		default:
@@ -412,7 +414,10 @@ function wrapSec1InPkcs8(sec1: Uint8Array, curveOid: string): Uint8Array {
 }
 
 function decodeBase64Url(value: string): Uint8Array {
-	const padded = value.replace(/-/g, "+").replace(/_/g, "/").padEnd(Math.ceil(value.length / 4) * 4, "=");
+	const padded = value
+		.replace(/-/g, "+")
+		.replace(/_/g, "/")
+		.padEnd(Math.ceil(value.length / 4) * 4, "=");
 	return decodeBase64(padded);
 }
 
@@ -460,17 +465,13 @@ function curveFromJwkCrv(crv: string): { namedCurve: EcKeyImportParams["namedCur
 
 function buildPublicKeyBlobFromJwk(jwk: JsonWebKey, type: ParsedSSHKey["type"]): Uint8Array {
 	switch (type) {
-		case "rsa": {
+		case KEY_TYPE_RSA: {
 			if (!jwk.n || !jwk.e) {
 				throw new Error("UNKNOWN_FORMAT");
 			}
-			return concatBytes(
-				encodeSSHString(new TextEncoder().encode("ssh-rsa")),
-				encodeMpint(decodeBase64Url(jwk.e)),
-				encodeMpint(decodeBase64Url(jwk.n))
-			);
+			return concatBytes(encodeSSHString(new TextEncoder().encode("ssh-rsa")), encodeMpint(decodeBase64Url(jwk.e)), encodeMpint(decodeBase64Url(jwk.n)));
 		}
-		case "ecdsa": {
+		case KEY_TYPE_ECDSA: {
 			if (!jwk.crv || !jwk.x || !jwk.y) {
 				throw new Error("UNKNOWN_FORMAT");
 			}
@@ -479,13 +480,15 @@ function buildPublicKeyBlobFromJwk(jwk: JsonWebKey, type: ParsedSSHKey["type"]):
 			const keyType = new TextEncoder().encode(`ecdsa-sha2-${curve.sshName}`);
 			return concatBytes(encodeSSHString(keyType), encodeSSHString(new TextEncoder().encode(curve.sshName)), encodeSSHString(point));
 		}
-		case "ed25519": {
+		case KEY_TYPE_ED25519: {
 			if (jwk.crv !== "Ed25519" || !jwk.x) {
 				throw new Error("UNKNOWN_FORMAT");
 			}
 			return concatBytes(encodeSSHString(new TextEncoder().encode("ssh-ed25519")), encodeSSHString(decodeBase64Url(jwk.x)));
 		}
 	}
+
+	throw new Error("UNKNOWN_FORMAT");
 }
 
 function buildEd25519PublicKeyBlob(publicKeyRaw: Uint8Array): Uint8Array {
@@ -541,7 +544,7 @@ function encodeOpenSSHPrivateKeyPemFromJwk(jwk: JsonWebKey, type: ParsedSSHKey["
 	let keyBody: Uint8Array;
 
 	switch (type) {
-		case "rsa": {
+		case KEY_TYPE_RSA: {
 			if (!jwk.n || !jwk.e || !jwk.d || !jwk.p || !jwk.q || !jwk.qi) {
 				throw new Error("UNKNOWN_FORMAT");
 			}
@@ -557,7 +560,7 @@ function encodeOpenSSHPrivateKeyPemFromJwk(jwk: JsonWebKey, type: ParsedSSHKey["
 			);
 			break;
 		}
-		case "ecdsa": {
+		case KEY_TYPE_ECDSA: {
 			if (!jwk.crv || !jwk.x || !jwk.y || !jwk.d) {
 				throw new Error("UNKNOWN_FORMAT");
 			}
@@ -572,7 +575,7 @@ function encodeOpenSSHPrivateKeyPemFromJwk(jwk: JsonWebKey, type: ParsedSSHKey["
 			);
 			break;
 		}
-		case "ed25519": {
+		case KEY_TYPE_ED25519: {
 			if (jwk.crv !== "Ed25519" || !jwk.x || !jwk.d) {
 				throw new Error("UNKNOWN_FORMAT");
 			}
@@ -582,6 +585,8 @@ function encodeOpenSSHPrivateKeyPemFromJwk(jwk: JsonWebKey, type: ParsedSSHKey["
 			keyBody = concatBytes(encodeSSHString(pub), encodeSSHString(priv), encodeSSHString(commentBytes));
 			break;
 		}
+		default:
+			throw new Error("UNKNOWN_FORMAT");
 	}
 
 	const privateBlockWithoutPad = concatBytes(encodeUint32(check), encodeUint32(check), encodeSSHString(keyTypeBytes), keyBody);
@@ -655,7 +660,7 @@ async function parsePemPrivateKey(content: string): Promise<ParsedSSHKey> {
 		case "RSA PRIVATE KEY":
 			pkcs8 = wrapPkcs1InPkcs8(pem.body);
 			importSpec = {
-				type: "rsa",
+				type: KEY_TYPE_RSA,
 				algorithm: { name: "RSASSA-PKCS1-v1_5", hash: "SHA-256" },
 			};
 			break;
@@ -664,7 +669,7 @@ async function parsePemPrivateKey(content: string): Promise<ParsedSSHKey> {
 			const curve = curveFromOid(curveOid);
 			pkcs8 = wrapSec1InPkcs8(pem.body, curveOid);
 			importSpec = {
-				type: "ecdsa",
+				type: KEY_TYPE_ECDSA,
 				algorithm: { name: "ECDSA", namedCurve: curve.namedCurve },
 			};
 			break;
@@ -674,16 +679,13 @@ async function parsePemPrivateKey(content: string): Promise<ParsedSSHKey> {
 	}
 
 	const pkcs8Bytes = Uint8Array.from(pkcs8);
-	if (importSpec.type === "ed25519") {
+	if (importSpec.type === KEY_TYPE_ED25519) {
 		const { privateKeySeed, publicKeyRaw } = parseEd25519Pkcs8(pkcs8Bytes);
 		const expectedPublicKeyBlob = buildEd25519PublicKeyBlob(publicKeyRaw);
 		const openSSHText = encodeOpenSSHEd25519PrivateKeyPem(privateKeySeed, publicKeyRaw, "");
 		const parsed = parseOpenSSHKey(openSSHText);
 
-		if (
-			parsed.publicKeyBlob.length !== expectedPublicKeyBlob.length ||
-			parsed.publicKeyBlob.some((byte, index) => byte !== expectedPublicKeyBlob[index])
-		) {
+		if (parsed.publicKeyBlob.length !== expectedPublicKeyBlob.length || parsed.publicKeyBlob.some((byte, index) => byte !== expectedPublicKeyBlob[index])) {
 			throw new Error("UNKNOWN_FORMAT");
 		}
 

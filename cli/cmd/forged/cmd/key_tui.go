@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"github.com/spf13/cobra"
 )
 
@@ -172,6 +173,9 @@ func listKeySelections() ([]keySelection, error) {
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
 		return nil, fmt.Errorf("parsing response: %w", err)
+	}
+	for i := range result.Keys {
+		result.Keys[i].Type = keytypes.Normalize(result.Keys[i].Type)
 	}
 
 	return result.Keys, nil

@@ -5,6 +5,7 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal, ModalBody, ModalFooter } from "@/components/ui/modal";
 import { useVaultContext } from "@/hooks/use-vault";
+import { KEY_TYPE_ED25519 } from "@/lib/key-types";
 import { exportPrivateKeyToOpenSSH } from "@/lib/ssh-key-parser";
 import { computeFingerprint, formatSSHPublicKey } from "@/lib/ssh-key-utils";
 import { addKeyToVault, encryptNewItemKey, encryptPrivateKey } from "@/lib/vault-crypto";
@@ -30,7 +31,7 @@ export const GenerateKeyModal = ({ onClose }: GenerateKeyModalProps) => {
 		try {
 			const keyPair = (await crypto.subtle.generateKey("Ed25519", true, ["sign", "verify"])) as CryptoKeyPair;
 			const publicKeyRaw = new Uint8Array(await crypto.subtle.exportKey("raw", keyPair.publicKey));
-			const privateKeyBytes = await exportPrivateKeyToOpenSSH(keyPair.privateKey, "ed25519");
+			const privateKeyBytes = await exportPrivateKeyToOpenSSH(keyPair.privateKey, KEY_TYPE_ED25519);
 
 			const publicKeyStr = formatSSHPublicKey(publicKeyRaw, trimmed);
 			const fingerprint = await computeFingerprint(publicKeyRaw);
@@ -44,7 +45,7 @@ export const GenerateKeyModal = ({ onClose }: GenerateKeyModalProps) => {
 			const newKey = {
 				id: crypto.randomUUID(),
 				name: trimmed,
-				type: "ed25519",
+				type: KEY_TYPE_ED25519,
 				public_key: publicKeyStr,
 				fingerprint,
 				comment: "",
