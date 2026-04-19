@@ -1,14 +1,19 @@
 package tui
 
 import (
+	"strconv"
 	"strings"
 
+	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/tui/components"
 	agentscreen "github.com/itzzritik/forged/cli/internal/tui/screens/agent"
 	dashboardscreen "github.com/itzzritik/forged/cli/internal/tui/screens/dashboard"
+	keyscreen "github.com/itzzritik/forged/cli/internal/tui/screens/keys"
+	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -37,12 +42,16 @@ type agentState struct {
 }
 
 type agentSigningState struct {
-	loading     bool
-	keys        []actions.KeySummary
-	selected    int
-	err         string
-	busy        bool
-	busyMessage string
+	loading      bool
+	all          []actions.KeySummary
+	rows         []actions.KeySummary
+	selected     int
+	offset       int
+	searchActive bool
+	input        textinput.Model
+	err          string
+	busy         bool
+	busyMessage  string
 }
 
 type agentSSHFinishedMsg struct {
@@ -159,22 +168,40 @@ func (m *model) renderAgentBody(contentWidth int) string {
 }
 
 func (m *model) renderAgentSigningBody(contentWidth int) string {
-	rows := make([]agentscreen.SigningKeyRow, 0, len(m.agent.signing.keys))
-	for index, key := range m.agent.signing.keys {
-		rows = append(rows, agentscreen.SigningKeyRow{
+	m.ensureAgentSigningInput()
+
+	rows := m.agentSigningVisibleRows()
+	browserRows := make([]keyscreen.BrowserRow, 0, len(rows))
+	for _, key := range rows {
+		row := keyscreen.BrowserRow{
 			Name:        key.Name,
+			Type:        key.Type,
 			Fingerprint: key.Fingerprint,
-			Selected:    index == m.agent.signing.selected,
-		})
+		}
+		if m.isAgentSigningKeyApplied(key) {
+			row.StatusIcon = "✓"
+		}
+		browserRows = append(browserRows, row)
 	}
 
 	return agentscreen.RenderSigning(agentscreen.SigningScreen{
 		Loading:     m.agent.signing.loading,
-		Error:       m.agent.signing.err,
 		Busy:        m.agent.signing.busy,
 		BusyMessage: m.agent.signing.busyMessage,
 		Status:      m.signingStatus,
-		Rows:        rows,
+		Browser: keyscreen.BrowserScreen{
+			SearchView:    m.agent.signing.input.View(),
+			SearchQuery:   m.agent.signing.input.Value(),
+			SearchActive:  m.agent.signing.searchActive,
+			CountLabel:    m.agentSigningCountLabel(),
+			Rows:          browserRows,
+			SelectedIndex: m.agentSigningSelectedIndex(),
+			Loading:       m.agent.signing.loading,
+			Error:         m.agent.signing.err,
+			ShowTopBorder: true,
+			ShowStatus:    true,
+			EmptySubtitle: "Generate or import a key to enable commit signing",
+		},
 	}, m.spinner.View(), contentWidth)
 }
 
@@ -183,6 +210,167 @@ func (m *model) keyMatchesCurrentSigning(publicKey string) bool {
 		return false
 	}
 	return strings.TrimSpace(publicKey) != "" && strings.TrimSpace(publicKey) == strings.TrimSpace(m.signingStatus.PublicKey)
+}
+
+func (m *model) ensureAgentSigningInput() {
+	if m.agent.signing.input.Cursor.BlinkSpeed != 0 {
+		m.resizeAgentInputs()
+		return
+	}
+	query := strings.TrimSpace(m.agent.signing.input.Value())
+	active := m.agent.signing.searchActive
+	m.agent.signing.input = newKeyInput("Search keys")
+	if query != "" {
+		m.agent.signing.input.SetValue(query)
+	}
+	if active {
+		m.agent.signing.input.Focus()
+	}
+	m.resizeAgentInputs()
+}
+
+func (m *model) resizeAgentInputs() {
+	m.resizeAgentSigningSearchInput()
+}
+
+func (m *model) resizeAgentSigningSearchInput() {
+	m.ensureAgentSigningInputState()
+	rowWidth := shell.BodyWidth(m.width)
+	searchWidth := max(1, rowWidth-keyBrowserSearchPrefixWidth-keyBrowserSearchCursorWidth)
+	if countLabel := strings.TrimSpace(m.agentSigningCountLabelForWidth(rowWidth)); countLabel != "" {
+		searchWidth = max(1, rowWidth-lipgloss.Width(countLabel)-keyBrowserSearchPrefixWidth-keyBrowserSearchGapWidth-keyBrowserSearchCursorWidth)
+	}
+	m.agent.signing.input.Width = searchWidth
+}
+
+func (m *model) ensureAgentSigningInputState() {
+	if m.agent.signing.input.Cursor.BlinkSpeed == 0 {
+		m.agent.signing.input = newKeyInput("Search keys")
+	}
+}
+
+func (m *model) refreshAgentSigningRows() {
+	query := strings.TrimSpace(m.agent.signing.input.Value())
+	resolution := actions.ResolveKeyQuery(m.agent.signing.all, query)
+	m.agent.signing.rows = resolution.Matches
+	if query == "" {
+		m.agent.signing.rows = actions.ResolveKeyQuery(m.agent.signing.all, "").Matches
+	}
+	m.resizeAgentSigningSearchInput()
+
+	if len(m.agent.signing.rows) == 0 {
+		m.agent.signing.selected = 0
+		m.agent.signing.offset = 0
+		return
+	}
+	if m.agent.signing.selected >= len(m.agent.signing.rows) {
+		m.agent.signing.selected = len(m.agent.signing.rows) - 1
+	}
+	if m.agent.signing.selected < 0 {
+		m.agent.signing.selected = 0
+	}
+	m.ensureAgentSigningVisible()
+}
+
+func (m *model) moveAgentSigningSelection(delta int) {
+	if len(m.agent.signing.rows) == 0 {
+		return
+	}
+	m.agent.signing.selected = min(max(m.agent.signing.selected+delta, 0), len(m.agent.signing.rows)-1)
+	m.ensureAgentSigningVisible()
+}
+
+func (m *model) ensureAgentSigningVisible() {
+	if m.agent.signing.selected < m.agent.signing.offset {
+		m.agent.signing.offset = m.agent.signing.selected
+	}
+	if m.agent.signing.selected >= m.agent.signing.offset+keyscreen.VisibleRows() {
+		m.agent.signing.offset = m.agent.signing.selected - keyscreen.VisibleRows() + 1
+	}
+	if m.agent.signing.offset < 0 {
+		m.agent.signing.offset = 0
+	}
+}
+
+func (m *model) agentSigningVisibleRows() []actions.KeySummary {
+	if len(m.agent.signing.rows) == 0 {
+		return nil
+	}
+	start := min(max(m.agent.signing.offset, 0), len(m.agent.signing.rows))
+	end := min(len(m.agent.signing.rows), start+keyscreen.VisibleRows())
+	return m.agent.signing.rows[start:end]
+}
+
+func (m *model) agentSigningSelectedIndex() int {
+	if m.agent.signing.selected < m.agent.signing.offset {
+		return 0
+	}
+	return m.agent.signing.selected - m.agent.signing.offset
+}
+
+func (m *model) agentSigningCountLabel() string {
+	return m.agentSigningCountLabelForWidth(shell.BodyWidth(m.width))
+}
+
+func (m *model) agentSigningCountLabelForWidth(width int) string {
+	total := len(m.agent.signing.all)
+	if total == 0 {
+		if m.agent.signing.loading {
+			return ""
+		}
+		return chooseKeyBrowserCountLabel(width, "0 keys", "0")
+	}
+
+	filtered := len(m.agent.signing.rows)
+	if strings.TrimSpace(m.agent.signing.input.Value()) != "" {
+		return chooseKeyBrowserCountLabel(
+			width,
+			strings.TrimSpace(strings.Join([]string{strconv.Itoa(filtered), "of", strconv.Itoa(total), "keys"}, " ")),
+			strconv.Itoa(filtered)+"/"+strconv.Itoa(total)+" keys",
+			strconv.Itoa(filtered)+"/"+strconv.Itoa(total),
+		)
+	}
+	if total == 1 {
+		return chooseKeyBrowserCountLabel(width, "1 key", "1")
+	}
+	return chooseKeyBrowserCountLabel(width, strconv.Itoa(total)+" keys", strconv.Itoa(total))
+}
+
+func (m *model) selectedAgentSigningKey() (actions.KeySummary, bool) {
+	if len(m.agent.signing.rows) == 0 || m.agent.signing.selected < 0 || m.agent.signing.selected >= len(m.agent.signing.rows) {
+		return actions.KeySummary{}, false
+	}
+	return m.agent.signing.rows[m.agent.signing.selected], true
+}
+
+func (m *model) isAgentSigningKeyApplied(key actions.KeySummary) bool {
+	if m.signingStatus.Mode != actions.CommitSigningForged {
+		return false
+	}
+	return strings.EqualFold(strings.TrimSpace(key.Name), strings.TrimSpace(m.signingStatus.KeyName))
+}
+
+func (m *model) selectedAgentSigningKeyApplied() bool {
+	key, ok := m.selectedAgentSigningKey()
+	if !ok {
+		return false
+	}
+	return m.isAgentSigningKeyApplied(key)
+}
+
+func (m *model) selectAgentSigningByName(name string) bool {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return false
+	}
+	for index, key := range m.agent.signing.rows {
+		if strings.EqualFold(strings.TrimSpace(key.Name), name) {
+			m.agent.signing.selected = index
+			m.ensureAgentSigningVisible()
+			return true
+		}
+	}
+	return false
 }
 
 func (m *model) updateAgentKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
@@ -221,10 +409,58 @@ func (m *model) updateAgentKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.ensureAgentSigningInput()
+
 	if m.agent.signing.busy {
 		switch msg.String() {
 		case "esc":
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	if m.agent.signing.loading {
+		if msg.String() == "esc" {
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
+	if m.agent.signing.searchActive {
+		switch msg.String() {
+		case "esc":
+			m.agent.signing.searchActive = false
+			m.agent.signing.input.Blur()
+			m.agent.signing.input.SetValue("")
+			m.refreshAgentSigningRows()
 			return m, nil
+		case "enter":
+			m.agent.signing.searchActive = false
+			m.agent.signing.input.Blur()
+			return m, nil
+		}
+		var cmd tea.Cmd
+		m.agent.signing.input, cmd = m.agent.signing.input.Update(msg)
+		m.refreshAgentSigningRows()
+		return m, cmd
+	}
+
+	if m.agent.signing.err != "" {
+		switch msg.String() {
+		case "esc":
+			m.agent.signing.err = ""
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		case "enter":
+			return m, m.startAgentSigningRoute()
 		}
 		return m, nil
 	}
@@ -236,17 +472,18 @@ func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.showCurrentRoute()
 		}
 		return m, tea.Quit
+	case "/":
+		m.agent.signing.err = ""
+		m.agent.signing.searchActive = true
+		m.agent.signing.input.Focus()
+		return m, textinput.Blink
 	case "up", "k":
 		m.agent.signing.err = ""
-		if m.agent.signing.selected > 0 {
-			m.agent.signing.selected--
-		}
+		m.moveAgentSigningSelection(-1)
 		return m, nil
 	case "down", "j":
 		m.agent.signing.err = ""
-		if len(m.agent.signing.keys) > 0 && m.agent.signing.selected < len(m.agent.signing.keys)-1 {
-			m.agent.signing.selected++
-		}
+		m.moveAgentSigningSelection(1)
 		return m, nil
 	case "d":
 		if !m.signingStatus.Enabled() {
@@ -255,11 +492,12 @@ func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.agent.signing.err = ""
 		return m, m.runDisableCommitSigning()
 	case "enter":
-		if len(m.agent.signing.keys) == 0 {
+		key, ok := m.selectedAgentSigningKey()
+		if !ok || m.isAgentSigningKeyApplied(key) {
 			return m, nil
 		}
 		m.agent.signing.err = ""
-		return m, m.runEnableCommitSigning(m.agent.signing.keys[m.agent.signing.selected].Name)
+		return m, m.runEnableCommitSigning(key.Name)
 	}
 
 	return m, nil
@@ -284,6 +522,14 @@ func (m *model) startAgentSigningRoute() tea.Cmd {
 	m.agent.signing.err = ""
 	m.agent.signing.busy = false
 	m.agent.signing.busyMessage = ""
+	m.agent.signing.all = nil
+	m.agent.signing.rows = nil
+	m.agent.signing.selected = 0
+	m.agent.signing.offset = 0
+	m.agent.signing.searchActive = false
+	m.agent.signing.input = newKeyInput("Search keys")
+	m.agent.signing.input.Blur()
+	m.resizeAgentInputs()
 	return tea.Batch(
 		m.spinner.Tick,
 		m.loadSigningStatusCmd(),
@@ -405,6 +651,9 @@ func (m *model) handleSigningStatusMsg(msg signingStatusMsg) (tea.Model, tea.Cmd
 	}
 	m.signingStatus = msg.status
 	m.signingLoaded = true
+	if m.isAgentSigningRoute() && msg.status.Mode == actions.CommitSigningForged {
+		m.selectAgentSigningByName(msg.status.KeyName)
+	}
 	return m, nil
 }
 
@@ -431,22 +680,21 @@ func (m *model) handleAgentSigningKeysMsg(msg agentSigningKeysMsg) (tea.Model, t
 	m.agent.signing.loading = false
 	if msg.err != nil {
 		m.agent.signing.err = msg.err.Error()
-		m.agent.signing.keys = nil
+		m.agent.signing.all = nil
+		m.agent.signing.rows = nil
 		return m, nil
 	}
 
 	m.agent.signing.err = ""
-	m.agent.signing.keys = msg.keys
+	m.agent.signing.all = msg.keys
+	m.refreshAgentSigningRows()
 	if routeName := strings.TrimSpace(m.session.Current().Params["name"]); routeName != "" {
-		for index, key := range msg.keys {
-			if strings.EqualFold(strings.TrimSpace(key.Name), routeName) {
-				m.agent.signing.selected = index
-				return m, nil
-			}
+		if m.selectAgentSigningByName(routeName) {
+			return m, nil
 		}
 	}
-	if m.agent.signing.selected >= len(msg.keys) {
-		m.agent.signing.selected = max(0, len(msg.keys)-1)
+	if m.signingStatus.Mode == actions.CommitSigningForged && m.selectAgentSigningByName(m.signingStatus.KeyName) {
+		return m, nil
 	}
 	return m, nil
 }
@@ -466,5 +714,8 @@ func (m *model) handleAgentSigningFinishedMsg(msg agentSigningFinishedMsg) (tea.
 	m.agent.signing.err = ""
 	m.signingStatus = msg.status
 	m.signingLoaded = true
+	if msg.status.Mode == actions.CommitSigningForged {
+		m.selectAgentSigningByName(msg.status.KeyName)
+	}
 	return m, nil
 }

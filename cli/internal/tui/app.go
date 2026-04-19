@@ -466,6 +466,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.passwordInput.SetWidth(max(18, shell.ClampBlockWidth(m.width, 40)-4))
 		}
 		m.resizeKeyInputs()
+		m.resizeAgentInputs()
 		return m, nil
 	case spinner.TickMsg:
 		if !m.usesSpinner() {
@@ -754,7 +755,7 @@ func (m *model) View() string {
 		body = shell.IndentBlock(body, shell.ContentLeftInset)
 	}
 	footer := shell.RenderFooter(m.footerActions()...)
-	tightFooter := m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser
+	tightFooter := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isAgentSigningRoute()
 	tightBody := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isTabbedDashboardRoot()
 	return shell.Render(m.width, header, body, footer, tightFooter, tightBody)
 }
@@ -1245,15 +1246,33 @@ func (m *model) footerActions() []shell.FooterAction {
 			}
 		}
 		if m.isAgentSigningRoute() {
+			if m.agent.signing.loading || m.agent.signing.busy {
+				return []shell.FooterAction{
+					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+				}
+			}
+			if m.agent.signing.err != "" {
+				return []shell.FooterAction{
+					{Key: "Enter", Label: "Retry"},
+					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+				}
+			}
+			if m.agent.signing.searchActive {
+				return []shell.FooterAction{
+					{Key: "Enter", Label: "Done"},
+					{Key: "Esc", Label: m.session.EscLabel(EscCancel)},
+				}
+			}
 			actions := []shell.FooterAction{
 				{Key: "↑/↓", Label: "Move"},
 			}
-			if len(m.agent.signing.keys) > 0 {
-				actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Use Key"})
+			if _, ok := m.selectedAgentSigningKey(); ok && !m.selectedAgentSigningKeyApplied() {
+				actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Use For Signing"})
 			}
 			if m.signingStatus.Enabled() {
 				actions = append(actions, shell.FooterAction{Key: "D", Label: "Disable Signing"})
 			}
+			actions = append(actions, shell.FooterAction{Key: "/", Label: "Search"})
 			actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 			return actions
 		}

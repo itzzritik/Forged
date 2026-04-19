@@ -500,13 +500,22 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 func (m *model) renderKeyBody(contentWidth int) string {
 	switch m.session.Current().ID {
 	case RouteKeysBrowser:
+		rows := m.keyBrowserVisibleRows()
+		browserRows := make([]keyscreen.BrowserRow, 0, len(rows))
+		for _, row := range rows {
+			browserRows = append(browserRows, keyscreen.BrowserRow{
+				Name:        row.Name,
+				Type:        row.Type,
+				Fingerprint: row.Fingerprint,
+			})
+		}
 		return keyscreen.RenderBrowser(keyscreen.BrowserScreen{
 			SearchView:   m.keyBrowser.input.View(),
 			SearchQuery:  m.keyBrowser.input.Value(),
 			SearchActive: m.keyBrowser.searchActive,
 			SearchNotice: m.keyBrowser.notice,
 			CountLabel:   m.keyBrowserCountLabel(),
-			Rows:         m.keyBrowserVisibleRows(),
+			Rows:         browserRows,
 			SelectedIndex: func() int {
 				if m.keyBrowser.selected < m.keyBrowser.offset {
 					return 0
