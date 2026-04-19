@@ -31,7 +31,7 @@ func RenderBrowser(screen BrowserScreen, spinner string, width int) string {
 		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth)), "\n")
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
-		sections = append(sections, theme.Danger.Render("✕ "+msg))
+		sections = append(sections, theme.Danger.Render("✕ "+displayMessage(msg)))
 		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, contentWidth)), "\n")
 	}
 
@@ -66,7 +66,7 @@ func renderSearchField(view string, active bool, notice string, width int) strin
 	}
 	lines = append(lines,
 		shell.FullBleed(theme.Divider(fieldWidth)),
-		theme.Kicker.Render("❯") + "  " + value,
+		theme.Kicker.Render("❯")+"  "+value,
 	)
 	return strings.Join(lines, "\n")
 }

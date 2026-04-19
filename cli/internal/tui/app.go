@@ -252,16 +252,17 @@ type model struct {
 	setupFinalizing bool
 	random          *rand.Rand
 
-	keyListID          int
-	keyDetailID        int
-	keyRenameID        int
-	keyDeleteID        int
-	keyGenerateID      int
-	keyImportPreviewID int
-	keyImportID        int
-	keyExportID        int
-	keyImportPickerID  int
-	keyExportPickerID  int
+	keyListID            int
+	keyDetailID          int
+	keyRenameID          int
+	keyDeleteID          int
+	keyGenerateID        int
+	keyImportPreviewID   int
+	keyImportID          int
+	keyExportID          int
+	keyImportPickerID    int
+	keyExportPickerID    int
+	keyTransferSuccessID int
 
 	keyBrowser  keyBrowserState
 	keyDetail   keyDetailState
@@ -603,6 +604,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyImportPickerMsg(msg)
 	case keyExportPickerMsg:
 		return m.handleKeyExportPickerMsg(msg)
+	case keyTransferAutoReturnMsg:
+		return m.handleKeyTransferAutoReturnMsg(msg)
 	case copyFinishedMsg:
 		if msg.err != nil {
 			if m.screen == screenLogin {

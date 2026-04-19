@@ -3,6 +3,7 @@ package keys
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
@@ -48,18 +49,17 @@ type ImportScreen struct {
 	PathFocused bool
 	PathVisible bool
 	Status      string
+	Warning     string
 	Error       string
 	Busy        bool
 }
 
 type ImportReviewItem struct {
-	Name                string
-	Fingerprint         string
-	Checked             bool
-	Active              bool
-	AlreadyInVault      bool
-	Converted           bool
-	CollapsedDuplicates int
+	Name        string
+	Fingerprint string
+	Checked     bool
+	Active      bool
+	Converted   bool
 }
 
 type ImportReviewScreen struct {
@@ -71,6 +71,7 @@ type ImportReviewScreen struct {
 	HasBelow    bool
 	Summary     []string
 	Guidance    string
+	Warning     string
 	Error       string
 }
 
@@ -82,6 +83,13 @@ type ExportScreen struct {
 	Status      string
 	Error       string
 	Busy        bool
+}
+
+type TransferSuccessScreen struct {
+	Context string
+	Title   string
+	Message string
+	Detail  string
 }
 
 func RenderRename(screen RenameScreen, spinner string, width int) string {
@@ -149,7 +157,7 @@ func RenderGenerate(screen GenerateScreen, spinner string, width int) string {
 		"",
 		renderTextField(screen.NameView, screen.Focused, fieldWidth),
 	)
-	if status := renderResultStatus(screen.Status, screen.Error, false, spinner); status != "" {
+	if status := renderResultStatus(screen.Status, "", screen.Error, false, spinner); status != "" {
 		sections = append(sections, "")
 		sections = append(sections, status)
 	} else {
@@ -189,7 +197,7 @@ func RenderImport(screen ImportScreen, spinner string, width int) string {
 		sections = append(sections, "", renderTextField(screen.PathView, screen.PathFocused, fieldWidth))
 	}
 
-	if status := renderResultStatus(screen.Status, screen.Error, false, spinner); status != "" {
+	if status := renderResultStatus(screen.Status, screen.Warning, screen.Error, false, spinner); status != "" {
 		sections = append(sections, "", status)
 	} else {
 		sections = append(sections, "")
@@ -229,8 +237,11 @@ func RenderImportReview(screen ImportReviewScreen, width int) string {
 	if guidance := strings.TrimSpace(screen.Guidance); guidance != "" {
 		lines = append(lines, "", theme.BodyMuted.Width(contentWidth).Render(guidance))
 	}
+	if warning := strings.TrimSpace(screen.Warning); warning != "" {
+		lines = append(lines, "", theme.Warning.Width(contentWidth).Render("! "+displayMessage(warning)))
+	}
 	if err := strings.TrimSpace(screen.Error); err != "" {
-		lines = append(lines, "", theme.Danger.Width(contentWidth).Render("✕ "+err))
+		lines = append(lines, "", theme.Danger.Width(contentWidth).Render("✕ "+displayMessage(err)))
 	}
 
 	sections = append(sections, "", strings.Join(lines, "\n"))
@@ -253,12 +264,40 @@ func RenderExport(screen ExportScreen, spinner string, width int) string {
 	if screen.PathVisible {
 		sections = append(sections, "", renderTextField(screen.PathView, screen.Focused, fieldWidth))
 	}
-	if status := renderResultStatus(screen.Status, screen.Error, false, spinner); status != "" {
+	if status := renderResultStatus(screen.Status, "", screen.Error, false, spinner); status != "" {
 		sections = append(sections, "")
 		sections = append(sections, status)
 	} else {
 		sections = append(sections, "")
 	}
+	return strings.Join(sections, "\n")
+}
+
+func RenderTransferSuccess(screen TransferSuccessScreen, width int) string {
+	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+	sections := make([]string, 0, 8)
+	if context := strings.TrimSpace(screen.Context); context != "" {
+		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
+	}
+
+	confetti := strings.Join([]string{
+		theme.Kicker.Render("✦"),
+		theme.Success.Render("✓"),
+		theme.Kicker.Render("✦"),
+	}, "   ")
+	sections = append(sections,
+		"",
+		confetti,
+		"",
+		theme.HeroTitle.Width(contentWidth).Render(screen.Title),
+	)
+	if message := strings.TrimSpace(screen.Message); message != "" {
+		sections = append(sections, theme.Success.Width(contentWidth).Render(screen.Message))
+	}
+	if detail := strings.TrimSpace(screen.Detail); detail != "" {
+		sections = append(sections, "", theme.BodyMuted.Width(contentWidth).Render(detail))
+	}
+
 	return strings.Join(sections, "\n")
 }
 
@@ -287,9 +326,6 @@ func renderImportReviewRow(item ImportReviewItem) string {
 		firstLine,
 		"    " + renderImportMetadataLine(item),
 	}
-	if item.CollapsedDuplicates > 0 {
-		lines = append(lines, "    "+theme.BodyMuted.Render(formatImportMergedRowsSummary(item.CollapsedDuplicates)))
-	}
 	return strings.Join(lines, "\n")
 }
 
@@ -310,9 +346,6 @@ func renderImportMetadataLine(item ImportReviewItem) string {
 
 func renderImportBadges(item ImportReviewItem) string {
 	var badges []string
-	if item.AlreadyInVault {
-		badges = append(badges, theme.Warning.Render("Duplicate"))
-	}
 	if item.Converted {
 		badges = append(badges, theme.Kicker.Render("Upgrade"))
 	}
@@ -326,36 +359,45 @@ func truncateImportFingerprint(value string) string {
 	return value[:13] + "..." + value[len(value)-4:]
 }
 
-func formatImportMergedRowsSummary(count int) string {
-	if count == 1 {
-		return "1 repeated row was merged"
-	}
-	return fmt.Sprintf("%d repeated rows were merged", count)
-}
-
 func inputFieldWidth(contentWidth int) int {
 	return max(28, min(contentWidth, 44))
 }
 
 func renderStatus(info string, err string, spinner string) string {
 	if strings.TrimSpace(err) != "" {
-		return theme.Danger.Render("✕ " + err)
+		return theme.Danger.Render("✕ " + displayMessage(err))
 	}
 	if strings.TrimSpace(info) != "" {
-		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + info)
+		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + displayMessage(info))
 	}
 	return ""
 }
 
-func renderResultStatus(info string, err string, busy bool, spinner string) string {
+func renderResultStatus(info string, warning string, err string, busy bool, spinner string) string {
 	if strings.TrimSpace(err) != "" {
-		return theme.Danger.Render("✕ " + err)
+		return theme.Danger.Render("✕ " + displayMessage(err))
+	}
+	if strings.TrimSpace(warning) != "" {
+		return theme.Warning.Render("! " + displayMessage(warning))
 	}
 	if strings.TrimSpace(info) == "" {
 		return ""
 	}
 	if busy {
-		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + info)
+		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + displayMessage(info))
 	}
-	return theme.Success.Render("✓ " + info)
+	return theme.Success.Render("✓ " + displayMessage(info))
+}
+
+func displayMessage(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) == 0 || !unicode.IsLower(runes[0]) {
+		return trimmed
+	}
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
 }

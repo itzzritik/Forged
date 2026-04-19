@@ -62,7 +62,7 @@ func DetectPrivateKeyFormat(input []byte) PrivateKeyFormat {
 func NormalizePrivateKeyToOpenSSH(input []byte, comment string) (NormalizedPrivateKey, error) {
 	normalizedInput := normalizePrivateKeyPEM(input)
 	if len(normalizedInput) == 0 {
-		return NormalizedPrivateKey{}, fmt.Errorf("private key is empty")
+		return NormalizedPrivateKey{}, fmt.Errorf("Private key is empty")
 	}
 
 	format := DetectPrivateKeyFormat(normalizedInput)
@@ -73,12 +73,12 @@ func NormalizePrivateKeyToOpenSSH(input []byte, comment string) (NormalizedPriva
 		if errors.As(err, &missing) {
 			return NormalizedPrivateKey{}, ErrPassphraseProtectedPrivateKey
 		}
-		return NormalizedPrivateKey{}, fmt.Errorf("parsing private key: %w", err)
+		return NormalizedPrivateKey{}, fmt.Errorf("Parsing private key: %w", err)
 	}
 
 	signer, err := ssh.NewSignerFromKey(rawKey)
 	if err != nil {
-		return NormalizedPrivateKey{}, fmt.Errorf("creating signer from private key: %w", err)
+		return NormalizedPrivateKey{}, fmt.Errorf("Creating signer from private key: %w", err)
 	}
 
 	storedBytes := append([]byte(nil), normalizedInput...)
@@ -87,17 +87,17 @@ func NormalizePrivateKeyToOpenSSH(input []byte, comment string) (NormalizedPriva
 	if format != PrivateKeyFormatOpenSSH {
 		block, err := ssh.MarshalPrivateKey(rawKey, comment)
 		if err != nil {
-			return NormalizedPrivateKey{}, fmt.Errorf("converting private key to OpenSSH: %w", err)
+			return NormalizedPrivateKey{}, fmt.Errorf("Converting private key to OpenSSH: %w", err)
 		}
 		storedBytes = pem.EncodeToMemory(block)
 		converted = true
 
 		convertedSigner, err := ssh.ParsePrivateKey(storedBytes)
 		if err != nil {
-			return NormalizedPrivateKey{}, fmt.Errorf("validating converted OpenSSH private key: %w", err)
+			return NormalizedPrivateKey{}, fmt.Errorf("Validating converted OpenSSH private key: %w", err)
 		}
 		if !bytes.Equal(convertedSigner.PublicKey().Marshal(), signer.PublicKey().Marshal()) {
-			return NormalizedPrivateKey{}, fmt.Errorf("converted OpenSSH private key does not match original public key")
+			return NormalizedPrivateKey{}, fmt.Errorf("Converted OpenSSH private key does not match original public key")
 		}
 	}
 

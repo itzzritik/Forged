@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -88,6 +89,11 @@ type keyExportPickerMsg struct {
 	err  error
 }
 
+type keyTransferAutoReturnMsg struct {
+	id    int
+	route RouteID
+}
+
 type keyBrowserState struct {
 	loading    bool
 	refreshing bool
@@ -145,6 +151,7 @@ type keyImportState struct {
 	pickerOpening bool
 	err           string
 	status        string
+	warning       string
 
 	sourceIndex  int
 	focus        int
@@ -154,6 +161,8 @@ type keyImportState struct {
 	previews     []actions.ImportPreview
 	reviewCursor int
 	discovered   int
+	duplicates   int
+	success      *keyTransferSuccessState
 }
 
 type keyExportState struct {
@@ -164,6 +173,7 @@ type keyExportState struct {
 
 	pathVisible bool
 	pathInput   textinput.Model
+	success     *keyTransferSuccessState
 }
 
 type keyImportSource struct {
@@ -174,6 +184,13 @@ type keyImportSource struct {
 }
 
 type keyImportStep string
+
+type keyTransferSuccessState struct {
+	Title        string
+	Message      string
+	Detail       string
+	autoReturnID int
+}
 
 const (
 	keyImportStepSource keyImportStep = "source"
@@ -244,9 +261,9 @@ func (m *model) keyRouteLoaded() bool {
 	case RouteKeysGenerate:
 		return strings.TrimSpace(m.keyGenerate.nameInput.Placeholder) != "" || m.keyGenerate.generating || strings.TrimSpace(m.keyGenerate.err) != "" || strings.TrimSpace(m.keyGenerate.status) != ""
 	case RouteKeysImport:
-		return len(keyImportSources) > 0 && (strings.TrimSpace(m.keyImport.err) != "" || strings.TrimSpace(m.keyImport.status) != "" || m.keyImport.loading || m.keyImport.importing || m.keyImport.pickerOpening || m.keyImport.pathVisible || strings.TrimSpace(m.keyImport.pathInput.Placeholder) != "" || len(m.keyImport.previews) > 0)
+		return len(keyImportSources) > 0 && (strings.TrimSpace(m.keyImport.err) != "" || strings.TrimSpace(m.keyImport.warning) != "" || strings.TrimSpace(m.keyImport.status) != "" || m.keyImport.loading || m.keyImport.importing || m.keyImport.pickerOpening || m.keyImport.pathVisible || strings.TrimSpace(m.keyImport.pathInput.Placeholder) != "" || len(m.keyImport.previews) > 0 || m.keyImport.success != nil)
 	case RouteKeysExport:
-		return strings.TrimSpace(m.keyExport.pathInput.Placeholder) != "" || strings.TrimSpace(m.keyExport.err) != "" || strings.TrimSpace(m.keyExport.status) != "" || m.keyExport.exporting || m.keyExport.pickerOpening || m.keyExport.pathVisible
+		return strings.TrimSpace(m.keyExport.pathInput.Placeholder) != "" || strings.TrimSpace(m.keyExport.err) != "" || strings.TrimSpace(m.keyExport.status) != "" || m.keyExport.exporting || m.keyExport.pickerOpening || m.keyExport.pathVisible || m.keyExport.success != nil
 	default:
 		return false
 	}
@@ -359,9 +376,6 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			{Key: "Enter", Label: "View"},
 			{Key: "E", Label: "Edit"},
 			{Key: "D", Label: "Delete"},
-			{Key: "G", Label: "Generate"},
-			{Key: "I", Label: "Import"},
-			{Key: "X", Label: "Export"},
 			{Key: "R", Label: "Refresh"},
 			{Key: "/", Label: "Search"},
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
@@ -416,10 +430,14 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 		if m.keyImport.loading || m.keyImport.importing || m.keyImport.pickerOpening {
 			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 		}
+		if m.keyImport.success != nil {
+			return []shell.FooterAction{{Key: "Esc", Label: "Dashboard"}}
+		}
 		if m.keyImport.step == keyImportStepReview {
 			actions := []shell.FooterAction{
 				{Key: "↑/↓", Label: "Move"},
 				{Key: "Space", Label: "Toggle"},
+				{Key: "A", Label: m.keyImportBulkToggleLabel()},
 			}
 			if selected := m.keyImportSelectedCount(); selected > 0 {
 				actions = append(actions, shell.FooterAction{Key: "Enter", Label: footerImportLabel(selected)})
@@ -452,6 +470,9 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 	case RouteKeysExport:
 		if m.keyExport.exporting || m.keyExport.pickerOpening {
 			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+		}
+		if m.keyExport.success != nil {
+			return []shell.FooterAction{{Key: "Esc", Label: "Dashboard"}}
 		}
 		if !m.keyExport.pathVisible {
 			return []shell.FooterAction{
@@ -528,19 +549,25 @@ func (m *model) renderKeyBody(contentWidth int) string {
 			Generating: m.keyGenerate.generating,
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysImport:
+		if m.keyImport.success != nil {
+			return keyscreen.RenderTransferSuccess(keyscreen.TransferSuccessScreen{
+				Context: "Import keys from another source into this vault",
+				Title:   m.keyImport.success.Title,
+				Message: m.keyImport.success.Message,
+				Detail:  m.keyImport.success.Detail,
+			}, contentWidth)
+		}
 		if m.keyImport.step == keyImportStepReview {
 			start, end := importReviewWindowBounds(len(m.keyImport.previews), m.keyImport.reviewCursor)
 			items := make([]keyscreen.ImportReviewItem, 0, max(end-start, 0))
 			for index := start; index < end; index++ {
 				preview := m.keyImport.previews[index]
 				items = append(items, keyscreen.ImportReviewItem{
-					Name:                preview.Key.Name,
-					Fingerprint:         preview.Fingerprint,
-					Checked:             preview.Selected,
-					Active:              index == m.keyImport.reviewCursor,
-					AlreadyInVault:      preview.AlreadyInVault,
-					Converted:           preview.Converted,
-					CollapsedDuplicates: preview.CollapsedDuplicates,
+					Name:        preview.Key.Name,
+					Fingerprint: preview.Fingerprint,
+					Checked:     preview.Selected,
+					Active:      index == m.keyImport.reviewCursor,
+					Converted:   preview.Converted,
 				})
 			}
 			return keyscreen.RenderImportReview(keyscreen.ImportReviewScreen{
@@ -552,6 +579,7 @@ func (m *model) renderKeyBody(contentWidth int) string {
 				HasBelow:    end < len(m.keyImport.previews),
 				Summary:     m.keyImportSummaryLines(),
 				Guidance:    m.keyImportGuidanceLine(),
+				Warning:     m.keyImportDuplicateWarning(),
 				Error:       m.keyImport.err,
 			}, contentWidth)
 		}
@@ -570,10 +598,19 @@ func (m *model) renderKeyBody(contentWidth int) string {
 			PathFocused: m.keyImport.focus == 1,
 			PathVisible: m.keyImport.pathVisible,
 			Status:      m.keyImport.status,
+			Warning:     m.keyImport.warning,
 			Error:       m.keyImport.err,
 			Busy:        m.keyImport.loading || m.keyImport.importing || m.keyImport.pickerOpening,
 		}, m.spinner.View(), contentWidth)
 	case RouteKeysExport:
+		if m.keyExport.success != nil {
+			return keyscreen.RenderTransferSuccess(keyscreen.TransferSuccessScreen{
+				Context: "Export this vault to a Forged JSON file",
+				Title:   m.keyExport.success.Title,
+				Message: m.keyExport.success.Message,
+				Detail:  m.keyExport.success.Detail,
+			}, contentWidth)
+		}
 		return keyscreen.RenderExport(keyscreen.ExportScreen{
 			Context:     "Export this vault to a Forged JSON file",
 			PathView:    m.keyExport.pathInput.View(),
@@ -677,15 +714,6 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.session.Push(Route{ID: RouteKeysDetail, Params: map[string]string{"name": key.Name, "source": "browser"}})
 			return m, m.showCurrentRoute()
 		}
-	case "g":
-		m.session.Push(Route{ID: RouteKeysGenerate})
-		return m, m.showCurrentRoute()
-	case "i":
-		m.session.Push(Route{ID: RouteKeysImport})
-		return m, m.showCurrentRoute()
-	case "x":
-		m.session.Push(Route{ID: RouteKeysExport})
-		return m, m.showCurrentRoute()
 	case "e":
 		if key, ok := m.selectedKeyRow(); ok {
 			m.session.Push(Route{ID: RouteKeysRename, Params: map[string]string{"old_name": key.Name, "source": "browser"}})
@@ -858,6 +886,13 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.keyImport.success != nil {
+		if msg.String() == "esc" {
+			m.keyImport.success = nil
+			return m, m.returnToDashboardRoute()
+		}
+		return m, nil
+	}
 
 	if m.keyImport.step == keyImportStepReview {
 		switch msg.String() {
@@ -875,12 +910,16 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case " ":
 			m.toggleCurrentImportReviewItem()
 			return m, nil
+		case "a", "A":
+			m.toggleAllImportReviewItems()
+			return m, nil
 		case "enter":
 			selected := m.keyImportSelectedCount()
 			if selected == 0 {
 				return m, nil
 			}
 			m.keyImport.err = ""
+			m.keyImport.warning = ""
 			m.keyImport.status = fmt.Sprintf("Importing %d keys", selected)
 			m.keyImport.importing = true
 			return m, tea.Batch(m.spinner.Tick, m.importSelectedPreviewsCmd(m.currentImportSource().ID, m.keyImport.discovered, m.keyImport.previews))
@@ -899,6 +938,7 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "tab":
 		if m.keyImport.pathVisible && m.keyImport.focus == 1 {
 			m.keyImport.err = ""
+			m.keyImport.warning = ""
 			m.keyImport.status = "Choosing import file"
 			m.keyImport.pickerOpening = true
 			return m, tea.Batch(m.spinner.Tick, m.openImportPicker(source.ID))
@@ -934,11 +974,13 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.keyImport.focus == 0 {
 			if source.NeedsPath {
 				m.keyImport.err = ""
+				m.keyImport.warning = ""
 				m.keyImport.status = "Choosing import file"
 				m.keyImport.pickerOpening = true
 				return m, tea.Batch(m.spinner.Tick, m.openImportPicker(source.ID))
 			}
 			m.keyImport.err = ""
+			m.keyImport.warning = ""
 			m.keyImport.status = importLoadingStatus(source.ID)
 			m.keyImport.loading = true
 			return m, tea.Batch(m.spinner.Tick, m.previewImportCmd(source.ID, ""))
@@ -948,10 +990,12 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			file = strings.TrimSpace(m.keyImport.pathInput.Value())
 			if file == "" {
 				m.keyImport.err = "Enter a file path"
+				m.keyImport.warning = ""
 				return m, nil
 			}
 		}
 		m.keyImport.err = ""
+		m.keyImport.warning = ""
 		m.keyImport.status = importLoadingStatus(source.ID)
 		m.keyImport.loading = true
 		return m, tea.Batch(m.spinner.Tick, m.previewImportCmd(source.ID, file))
@@ -970,6 +1014,13 @@ func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, m.showCurrentRoute()
 			}
 			return m, tea.Quit
+		}
+		return m, nil
+	}
+	if m.keyExport.success != nil {
+		if msg.String() == "esc" {
+			m.keyExport.success = nil
+			return m, m.returnToDashboardRoute()
 		}
 		return m, nil
 	}
@@ -1022,6 +1073,7 @@ func (m *model) updateKeyImportPath(msg tea.KeyMsg) tea.Cmd {
 	var cmd tea.Cmd
 	m.keyImport.pathInput, cmd = m.keyImport.pathInput.Update(msg)
 	m.keyImport.err = ""
+	m.keyImport.warning = ""
 	return cmd
 }
 
@@ -1119,6 +1171,7 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 			pathVisible: false,
 			pathInput:   newKeyInput("Enter import file path"),
 			step:        keyImportStepSource,
+			success:     nil,
 		}
 		m.keyImport.pathInput.CharLimit = 512
 		m.keyImport.pathInput.Placeholder = m.currentImportSource().Placeholder
@@ -1127,6 +1180,7 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 	case RouteKeysExport:
 		m.keyExport = keyExportState{
 			pathInput: newKeyInput("Export path"),
+			success:   nil,
 		}
 		m.keyExport.pathInput.CharLimit = 512
 		m.keyExport.pathInput.SetValue(actions.DefaultExportPath())
@@ -1502,8 +1556,7 @@ func (m *model) handleKeyRenameFinishedMsg(msg keyRenameFinishedMsg) (tea.Model,
 	m.session.ReplaceCurrent(Route{
 		ID: RouteKeysBrowser,
 		Params: map[string]string{
-			"query":  msg.result.NewName,
-			"notice": fmt.Sprintf("Renamed %s to %s", msg.result.OldName, msg.result.NewName),
+			"query": msg.result.NewName,
 		},
 	})
 	return m, m.showCurrentRoute()
@@ -1520,12 +1573,7 @@ func (m *model) handleKeyDeleteFinishedMsg(msg keyDeleteFinishedMsg) (tea.Model,
 	}
 	m.removeCachedKey(msg.name)
 
-	m.session.ReplaceCurrent(Route{
-		ID: RouteKeysBrowser,
-		Params: map[string]string{
-			"notice": fmt.Sprintf("Deleted %s", msg.name),
-		},
-	})
+	m.session.ReplaceCurrent(Route{ID: RouteKeysBrowser})
 	return m, m.showCurrentRoute()
 }
 
@@ -1559,21 +1607,28 @@ func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model,
 		return m, nil
 	}
 	m.keyImport.importing = false
+	m.keyImport.status = ""
 	if msg.err != nil {
 		m.keyImport.err = msg.err.Error()
+		m.keyImport.warning = ""
 		return m, nil
 	}
 	for _, key := range msg.result.Keys {
 		m.upsertCachedKey(key)
 	}
-	notice := importResultNotice(msg.result)
-	m.session.ReplaceCurrent(Route{
-		ID: RouteKeysBrowser,
-		Params: map[string]string{
-			"notice": notice,
-		},
-	})
-	return m, m.showCurrentRoute()
+	if msg.result.Imported == 0 {
+		m.keyImport.err = "No keys were imported"
+		m.keyImport.warning = ""
+		return m, nil
+	}
+	m.keyImport.err = ""
+	m.keyImport.warning = ""
+	m.keyImport.success = m.newKeyTransferSuccessState(
+		"Import complete",
+		importSuccessMessage(msg.result),
+		"Returning to dashboard...",
+	)
+	return m, m.scheduleKeyTransferAutoReturn(RouteKeysImport, m.keyImport.success.autoReturnID)
 }
 
 func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, tea.Cmd) {
@@ -1586,7 +1641,9 @@ func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, t
 		m.keyImport.step = keyImportStepSource
 		m.keyImport.previews = nil
 		m.keyImport.discovered = 0
+		m.keyImport.duplicates = 0
 		m.keyImport.status = ""
+		m.keyImport.warning = ""
 		m.keyImport.err = msg.err.Error()
 		if source.NeedsPath {
 			m.keyImport.pathVisible = true
@@ -1600,8 +1657,10 @@ func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, t
 		m.keyImport.step = keyImportStepSource
 		m.keyImport.previews = nil
 		m.keyImport.discovered = msg.result.Discovered
+		m.keyImport.duplicates = msg.result.Duplicates
 		m.keyImport.status = ""
-		m.keyImport.err = importEmptyResultMessage(source.ID)
+		m.keyImport.warning = importEmptyResultMessage(source.ID)
+		m.keyImport.err = ""
 		if source.NeedsPath {
 			m.keyImport.pathVisible = true
 			m.keyImport.focus = 1
@@ -1612,11 +1671,13 @@ func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, t
 	}
 
 	m.keyImport.err = ""
+	m.keyImport.warning = ""
 	m.keyImport.status = ""
 	m.keyImport.step = keyImportStepReview
 	m.keyImport.previews = append([]actions.ImportPreview(nil), msg.result.Previews...)
 	m.keyImport.reviewCursor = 0
 	m.keyImport.discovered = msg.result.Discovered
+	m.keyImport.duplicates = msg.result.Duplicates
 	return m, nil
 }
 
@@ -1635,11 +1696,17 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 		m.screen = screenDashboard
 		m.keyExport.exporting = false
 		m.keyExport.err = ""
-		m.keyExport.status = exportSuccessMessage(msg.result)
-		return m, nil
+		m.keyExport.status = ""
+		m.keyExport.success = m.newKeyTransferSuccessState(
+			"Export complete",
+			exportSuccessMessage(msg.result),
+			"Returning to dashboard...",
+		)
+		return m, m.scheduleKeyTransferAutoReturn(RouteKeysExport, m.keyExport.success.autoReturnID)
 	}
 
 	m.keyExport.exporting = false
+	m.keyExport.status = ""
 	if msg.err != nil {
 		if actions.IsSensitiveAuthRequired(msg.err) {
 			m.keyExport.exporting = false
@@ -1650,8 +1717,13 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 		return m, nil
 	}
 	m.keyExport.err = ""
-	m.keyExport.status = exportSuccessMessage(msg.result)
-	return m, nil
+	m.keyExport.status = ""
+	m.keyExport.success = m.newKeyTransferSuccessState(
+		"Export complete",
+		exportSuccessMessage(msg.result),
+		"Returning to dashboard...",
+	)
+	return m, m.scheduleKeyTransferAutoReturn(RouteKeysExport, m.keyExport.success.autoReturnID)
 }
 
 func (m *model) handleKeyImportPickerMsg(msg keyImportPickerMsg) (tea.Model, tea.Cmd) {
@@ -1664,6 +1736,7 @@ func (m *model) handleKeyImportPickerMsg(msg keyImportPickerMsg) (tea.Model, tea
 		m.keyImport.pathInput.SetValue(msg.path)
 		m.keyImport.pathVisible = false
 		m.keyImport.err = ""
+		m.keyImport.warning = ""
 		m.keyImport.status = importLoadingStatus(source.ID)
 		m.keyImport.loading = true
 		return m, tea.Batch(m.spinner.Tick, m.previewImportCmd(source.ID, msg.path))
@@ -1679,6 +1752,7 @@ func (m *model) handleKeyImportPickerMsg(msg keyImportPickerMsg) (tea.Model, tea
 	default:
 		m.keyImport.err = "File picker failed. Enter a file path instead"
 	}
+	m.keyImport.warning = ""
 	m.keyImport.status = ""
 	return m, textinput.Blink
 }
@@ -1967,8 +2041,11 @@ func (m *model) moveKeyImportSource(delta int) {
 	m.keyImport.previews = nil
 	m.keyImport.reviewCursor = 0
 	m.keyImport.discovered = 0
+	m.keyImport.duplicates = 0
 	m.keyImport.err = ""
+	m.keyImport.warning = ""
 	m.keyImport.status = ""
+	m.keyImport.success = nil
 	m.keyImport.pathInput.Placeholder = source.Placeholder
 	if !source.NeedsPath {
 		m.keyImport.pathVisible = false
@@ -2010,22 +2087,18 @@ func (m *model) upsertCachedKey(summary actions.KeySummary) {
 	m.selectKeyBrowserByName(summary.Name)
 }
 
-func importResultNotice(result actions.ImportResult) string {
-	label := actions.ImportSourceLabel(result.Source)
-	switch {
-	case result.Imported == 0 && result.Discovered == 0:
-		return "No keys were found to import"
-	case result.Imported == 0:
-		return fmt.Sprintf("No keys were imported from %s", label)
-	case result.Skipped > 0:
-		return fmt.Sprintf("Imported %d keys from %s, skipped %d", result.Imported, label, result.Skipped)
-	default:
-		return fmt.Sprintf("Imported %d keys from %s", result.Imported, label)
+func exportSuccessMessage(result actions.ExportResult) string {
+	if result.KeyCount == 1 {
+		return fmt.Sprintf("1 Key exported to %s", filepath.Base(result.Path))
 	}
+	return fmt.Sprintf("%d Keys exported to %s", result.KeyCount, filepath.Base(result.Path))
 }
 
-func exportSuccessMessage(result actions.ExportResult) string {
-	return fmt.Sprintf("Exported %d keys to %s", result.KeyCount, filepath.Base(result.Path))
+func importSuccessMessage(result actions.ImportResult) string {
+	if result.Imported == 1 {
+		return "1 Key added to this vault"
+	}
+	return fmt.Sprintf("%d Keys added to this vault", result.Imported)
 }
 
 func (m *model) moveKeyImportReviewCursor(delta int) {
@@ -2049,6 +2122,38 @@ func (m *model) toggleCurrentImportReviewItem() {
 	}
 	m.keyImport.previews[m.keyImport.reviewCursor].Selected = !m.keyImport.previews[m.keyImport.reviewCursor].Selected
 	m.keyImport.err = ""
+	m.keyImport.warning = ""
+}
+
+func (m *model) toggleAllImportReviewItems() {
+	if len(m.keyImport.previews) == 0 {
+		return
+	}
+	nextSelected := !m.allKeyImportReviewItemsSelected()
+	for index := range m.keyImport.previews {
+		m.keyImport.previews[index].Selected = nextSelected
+	}
+	m.keyImport.err = ""
+	m.keyImport.warning = ""
+}
+
+func (m *model) allKeyImportReviewItemsSelected() bool {
+	if len(m.keyImport.previews) == 0 {
+		return false
+	}
+	for _, preview := range m.keyImport.previews {
+		if !preview.Selected {
+			return false
+		}
+	}
+	return true
+}
+
+func (m *model) keyImportBulkToggleLabel() string {
+	if m.allKeyImportReviewItemsSelected() {
+		return "Unselect All"
+	}
+	return "Select All"
 }
 
 func (m *model) keyImportSelectedCount() int {
@@ -2062,55 +2167,23 @@ func (m *model) keyImportSelectedCount() int {
 }
 
 func (m *model) keyImportSummaryLines() []string {
-	duplicateCount := 0
 	upgradeCount := 0
-	collapsedCount := 0
 	for _, preview := range m.keyImport.previews {
-		if preview.AlreadyInVault {
-			duplicateCount++
-		}
 		if preview.Converted {
 			upgradeCount++
 		}
-		collapsedCount += preview.CollapsedDuplicates
 	}
 
 	lines := make([]string, 0, 4)
-	if duplicateCount > 0 {
-		lines = append(lines, formatImportDuplicateSummary(duplicateCount))
-	}
 	if upgradeCount > 0 {
 		lines = append(lines, formatImportUpgradeSummary(upgradeCount))
 	}
-	if duplicateCount > 0 {
-		lines = append(lines, "Duplicates start unselected")
-	}
-	if collapsedCount > 0 {
-		lines = append(lines, formatImportMergedRowsSummary(collapsedCount))
-	}
-	if len(lines) == 0 {
-		lines = append(lines, formatImportReadySummary(len(m.keyImport.previews)))
-	}
+	lines = append(lines, formatImportReadySummary(m.keyImportSelectedCount()))
 	return lines
 }
 
 func (m *model) keyImportGuidanceLine() string {
-	if m.keyImportSelectedCount() == 0 && m.keyImportAllRowsAreDuplicates() {
-		return "No new keys found. Press [Esc] to go back."
-	}
 	return "Select keys you want to import."
-}
-
-func (m *model) keyImportAllRowsAreDuplicates() bool {
-	if len(m.keyImport.previews) == 0 {
-		return false
-	}
-	for _, preview := range m.keyImport.previews {
-		if !preview.AlreadyInVault {
-			return false
-		}
-	}
-	return true
 }
 
 func importReviewWindowBounds(total, cursor int) (int, int) {
@@ -2139,9 +2212,9 @@ func importLoadingStatus(source string) string {
 
 func importEmptyResultMessage(source string) string {
 	if strings.TrimSpace(strings.ToLower(source)) == "ssh-dir" {
-		return "No SSH keys found in ~/.ssh."
+		return "No new SSH Keys found in ~/.ssh, Aborting"
 	}
-	return "No SSH keys found in this file."
+	return "No new SSH Key found in this file, Aborting"
 }
 
 func keyImportReviewSourceLabel(source string) string {
@@ -2161,11 +2234,11 @@ func keyImportReviewSourceLabel(source string) string {
 	}
 }
 
-func formatImportDuplicateSummary(count int) string {
+func formatImportDuplicateWarning(count int) string {
 	if count == 1 {
-		return "1 key is already in your vault"
+		return "1 duplicate key will not be imported"
 	}
-	return fmt.Sprintf("%d keys are already in your vault", count)
+	return fmt.Sprintf("%d duplicate keys will not be imported", count)
 }
 
 func formatImportUpgradeSummary(count int) string {
@@ -2175,18 +2248,61 @@ func formatImportUpgradeSummary(count int) string {
 	return fmt.Sprintf("%d keys will be upgraded to OpenSSH", count)
 }
 
-func formatImportMergedRowsSummary(count int) string {
-	if count == 1 {
-		return "1 repeated row was merged"
-	}
-	return fmt.Sprintf("%d repeated rows were merged", count)
-}
-
 func formatImportReadySummary(count int) string {
 	if count == 1 {
 		return "1 key ready to import"
 	}
 	return fmt.Sprintf("%d keys ready to import", count)
+}
+
+func (m *model) keyImportDuplicateWarning() string {
+	if m.keyImport.duplicates <= 0 {
+		return ""
+	}
+	return formatImportDuplicateWarning(m.keyImport.duplicates)
+}
+
+func (m *model) newKeyTransferSuccessState(title, message, detail string) *keyTransferSuccessState {
+	m.keyTransferSuccessID++
+	return &keyTransferSuccessState{
+		Title:        title,
+		Message:      message,
+		Detail:       detail,
+		autoReturnID: m.keyTransferSuccessID,
+	}
+}
+
+func (m *model) scheduleKeyTransferAutoReturn(route RouteID, id int) tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg {
+		return keyTransferAutoReturnMsg{id: id, route: route}
+	})
+}
+
+func (m *model) returnToDashboardRoute() tea.Cmd {
+	if m.session.Back() {
+		return m.showCurrentRoute()
+	}
+	m.session.ReplaceCurrent(Route{ID: RouteDashboardHome})
+	return m.showCurrentRoute()
+}
+
+func (m *model) handleKeyTransferAutoReturnMsg(msg keyTransferAutoReturnMsg) (tea.Model, tea.Cmd) {
+	switch msg.route {
+	case RouteKeysImport:
+		if m.keyImport.success == nil || m.keyImport.success.autoReturnID != msg.id || m.session.Current().ID != RouteKeysImport {
+			return m, nil
+		}
+		m.keyImport.success = nil
+		return m, m.returnToDashboardRoute()
+	case RouteKeysExport:
+		if m.keyExport.success == nil || m.keyExport.success.autoReturnID != msg.id || m.session.Current().ID != RouteKeysExport {
+			return m, nil
+		}
+		m.keyExport.success = nil
+		return m, m.returnToDashboardRoute()
+	default:
+		return m, nil
+	}
 }
 
 func footerImportLabel(selected int) string {

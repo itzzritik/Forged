@@ -28,7 +28,7 @@ func RenderDetail(screen DetailScreen, spinner string, width int) string {
 		}, spinner, contentWidth)
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
-		return theme.Danger.Render("✕ " + msg)
+		return theme.Danger.Render("✕ " + displayMessage(msg))
 	}
 
 	lines := []string{
@@ -92,13 +92,13 @@ func boolLabel(value bool) string {
 
 func renderDetailStatus(status string, statusError string, busy bool, spinner string) string {
 	if strings.TrimSpace(statusError) != "" {
-		return theme.Danger.Render("✕ " + statusError)
+		return theme.Danger.Render("✕ " + displayMessage(statusError))
 	}
 	if busy && strings.TrimSpace(status) != "" {
-		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + status)
+		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + displayMessage(status))
 	}
 	if strings.TrimSpace(status) != "" {
-		return theme.Success.Render("✓ " + status)
+		return theme.Success.Render("✓ " + displayMessage(status))
 	}
 	return " "
 }

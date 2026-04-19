@@ -41,7 +41,7 @@ func DefaultExportPath() string {
 func ExportVault(paths config.Paths, outPath string, password []byte) (ExportResult, error) {
 	outPath = strings.TrimSpace(outPath)
 	if outPath == "" {
-		return ExportResult{}, fmt.Errorf("enter an export path")
+		return ExportResult{}, fmt.Errorf("Enter an export path")
 	}
 	outPath = expandUserPath(outPath)
 
@@ -50,7 +50,7 @@ func ExportVault(paths config.Paths, outPath string, password []byte) (ExportRes
 		return ExportResult{}, err
 	}
 	if strings.TrimSpace(authResult.ExportToken) == "" {
-		return ExportResult{}, fmt.Errorf("export authorization did not return a token")
+		return ExportResult{}, fmt.Errorf("Export authorization did not return a token")
 	}
 
 	client := ipc.NewClient(paths.CtlSocket())
@@ -61,7 +61,7 @@ func ExportVault(paths config.Paths, outPath string, password []byte) (ExportRes
 
 	var keys []exportedKey
 	if err := json.Unmarshal(resp.Data, &keys); err != nil {
-		return ExportResult{}, fmt.Errorf("parsing export payload: %w", err)
+		return ExportResult{}, fmt.Errorf("Parsing export payload: %w", err)
 	}
 
 	items := make([]map[string]any, 0, len(keys))
@@ -91,10 +91,10 @@ func ExportVault(paths config.Paths, outPath string, password []byte) (ExportRes
 
 	data, err := json.MarshalIndent(export, "", "  ")
 	if err != nil {
-		return ExportResult{}, fmt.Errorf("marshaling export: %w", err)
+		return ExportResult{}, fmt.Errorf("Marshaling export: %w", err)
 	}
 	if err := os.WriteFile(outPath, data, 0o600); err != nil {
-		return ExportResult{}, fmt.Errorf("writing export file: %w", err)
+		return ExportResult{}, fmt.Errorf("Writing export file: %w", err)
 	}
 
 	return ExportResult{Path: outPath, KeyCount: len(keys)}, nil

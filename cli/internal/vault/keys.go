@@ -97,29 +97,29 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 	defer ks.mu.Unlock()
 
 	if ks.nameExists(name) {
-		return Key{}, fmt.Errorf("key %q already exists", name)
+		return Key{}, fmt.Errorf("Key %q already exists", name)
 	}
 
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
-		return Key{}, fmt.Errorf("generating ed25519 key: %w", err)
+		return Key{}, fmt.Errorf("Generating Ed25519 key: %w", err)
 	}
 
 	sshPub, err := ssh.NewPublicKey(pub)
 	if err != nil {
-		return Key{}, fmt.Errorf("converting public key: %w", err)
+		return Key{}, fmt.Errorf("Converting public key: %w", err)
 	}
 
 	pemBlock, err := ssh.MarshalPrivateKey(priv, comment)
 	if err != nil {
-		return Key{}, fmt.Errorf("marshaling private key: %w", err)
+		return Key{}, fmt.Errorf("Marshaling private key: %w", err)
 	}
 
 	privateKeyBytes := pem.EncodeToMemory(pemBlock)
 
 	cipherKey := make([]byte, KeySize)
 	if _, err := rand.Read(cipherKey); err != nil {
-		return Key{}, fmt.Errorf("generating cipher key: %w", err)
+		return Key{}, fmt.Errorf("Generating cipher key: %w", err)
 	}
 
 	encPriv, err := EncryptCombined(cipherKey, privateKeyBytes)
@@ -127,7 +127,7 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 		for i := range cipherKey {
 			cipherKey[i] = 0
 		}
-		return Key{}, fmt.Errorf("encrypting private key: %w", err)
+		return Key{}, fmt.Errorf("Encrypting private key: %w", err)
 	}
 
 	encCK, err := EncryptCombined(ks.vault.key, cipherKey)
@@ -135,7 +135,7 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 		for i := range cipherKey {
 			cipherKey[i] = 0
 		}
-		return Key{}, fmt.Errorf("encrypting cipher key: %w", err)
+		return Key{}, fmt.Errorf("Encrypting cipher key: %w", err)
 	}
 
 	for i := range cipherKey {
@@ -166,7 +166,7 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.Keys = ks.vault.Data.Keys[:len(ks.vault.Data.Keys)-1]
 		ks.vault.Data.VersionVector = originalVersionVector
-		return Key{}, fmt.Errorf("saving vault: %w", err)
+		return Key{}, fmt.Errorf("Saving vault: %w", err)
 	}
 
 	return key, nil
@@ -177,7 +177,7 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 	defer ks.mu.Unlock()
 
 	if ks.nameExists(name) {
-		return Key{}, fmt.Errorf("key %q already exists", name)
+		return Key{}, fmt.Errorf("Key %q already exists", name)
 	}
 
 	normalized, err := NormalizePrivateKeyToOpenSSH(privateKeyBytes, comment)
@@ -187,7 +187,7 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 
 	cipherKey := make([]byte, KeySize)
 	if _, err := rand.Read(cipherKey); err != nil {
-		return Key{}, fmt.Errorf("generating cipher key: %w", err)
+		return Key{}, fmt.Errorf("Generating cipher key: %w", err)
 	}
 
 	encPriv, err := EncryptCombined(cipherKey, normalized.Bytes)
@@ -195,7 +195,7 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 		for i := range cipherKey {
 			cipherKey[i] = 0
 		}
-		return Key{}, fmt.Errorf("encrypting private key: %w", err)
+		return Key{}, fmt.Errorf("Encrypting private key: %w", err)
 	}
 
 	encCK, err := EncryptCombined(ks.vault.key, cipherKey)
@@ -203,7 +203,7 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 		for i := range cipherKey {
 			cipherKey[i] = 0
 		}
-		return Key{}, fmt.Errorf("encrypting cipher key: %w", err)
+		return Key{}, fmt.Errorf("Encrypting cipher key: %w", err)
 	}
 
 	for i := range cipherKey {
@@ -234,7 +234,7 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.Keys = ks.vault.Data.Keys[:len(ks.vault.Data.Keys)-1]
 		ks.vault.Data.VersionVector = originalVersionVector
-		return Key{}, fmt.Errorf("saving vault: %w", err)
+		return Key{}, fmt.Errorf("Saving vault: %w", err)
 	}
 
 	return key, nil
@@ -243,7 +243,7 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 func (ks *KeyStore) AddFromFile(name, path, comment string) (Key, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Key{}, fmt.Errorf("reading key file: %w", err)
+		return Key{}, fmt.Errorf("Reading key file: %w", err)
 	}
 	return ks.Add(name, data, comment)
 }
@@ -254,7 +254,7 @@ func (ks *KeyStore) Remove(name string) error {
 
 	idx := ks.indexOf(name)
 	if idx < 0 {
-		return fmt.Errorf("key %q not found", name)
+		return fmt.Errorf("Key %q not found", name)
 	}
 
 	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
@@ -269,7 +269,7 @@ func (ks *KeyStore) Remove(name string) error {
 		ks.vault.Data.Keys = append(ks.vault.Data.Keys[:idx], append([]Key{removed}, ks.vault.Data.Keys[idx:]...)...)
 		ks.vault.Data.Tombstones = originalTombstones
 		ks.vault.Data.VersionVector = originalVersionVector
-		return fmt.Errorf("saving vault: %w", err)
+		return fmt.Errorf("Saving vault: %w", err)
 	}
 
 	return nil
@@ -280,12 +280,12 @@ func (ks *KeyStore) Rename(oldName, newName string) error {
 	defer ks.mu.Unlock()
 
 	if ks.nameExists(newName) {
-		return fmt.Errorf("key %q already exists", newName)
+		return fmt.Errorf("Key %q already exists", newName)
 	}
 
 	idx := ks.indexOf(oldName)
 	if idx < 0 {
-		return fmt.Errorf("key %q not found", oldName)
+		return fmt.Errorf("Key %q not found", oldName)
 	}
 
 	original := cloneKey(ks.vault.Data.Keys[idx])
@@ -298,7 +298,7 @@ func (ks *KeyStore) Rename(oldName, newName string) error {
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.Keys[idx] = original
 		ks.vault.Data.VersionVector = originalVersionVector
-		return fmt.Errorf("saving vault: %w", err)
+		return fmt.Errorf("Saving vault: %w", err)
 	}
 
 	return nil
@@ -316,7 +316,7 @@ func (ks *KeyStore) Export(name string) (string, error) {
 			return k.PublicKey, nil
 		}
 	}
-	return "", fmt.Errorf("key %q not found", name)
+	return "", fmt.Errorf("Key %q not found", name)
 }
 
 func (ks *KeyStore) RecordUsage(name string) {
@@ -337,7 +337,7 @@ func (ks *KeyStore) SetGitSigning(keyName string, enabled bool) error {
 
 	idx := ks.indexOf(keyName)
 	if idx < 0 {
-		return fmt.Errorf("key %q not found", keyName)
+		return fmt.Errorf("Key %q not found", keyName)
 	}
 
 	originalKeys := cloneKeys(ks.vault.Data.Keys)
