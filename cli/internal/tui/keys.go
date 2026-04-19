@@ -10,6 +10,7 @@ import (
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/picker"
@@ -195,6 +196,11 @@ type keyTransferSuccessState struct {
 const (
 	keyImportStepSource keyImportStep = "source"
 	keyImportStepReview keyImportStep = "review"
+
+	keyBrowserSearchPrefixWidth = 3
+	keyBrowserSearchGapWidth    = 4
+	keyBrowserSearchCursorWidth = 1
+	keyBrowserSearchMinInput    = 4
 )
 
 var keyImportSources = []keyImportSource{
@@ -648,6 +654,8 @@ func (m *model) updateKeyKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	m.ensureKeyBrowserInput()
+
 	if m.keyBrowser.loading {
 		if msg.String() == "esc" {
 			if m.session.Back() {
@@ -1820,6 +1828,23 @@ func (m *model) prepareKeyBrowser(keys []actions.KeySummary, query string, notic
 	m.refreshKeyBrowserRows()
 }
 
+func (m *model) ensureKeyBrowserInput() {
+	if m.keyBrowser.input.Cursor.BlinkSpeed != 0 {
+		return
+	}
+
+	value := m.keyBrowser.input.Value()
+	m.keyBrowser.input = newKeyInput("Search keys")
+	if value != "" {
+		m.keyBrowser.input.SetValue(value)
+	}
+	if m.keyBrowser.searchActive {
+		m.keyBrowser.input.Focus()
+	} else {
+		m.keyBrowser.input.Blur()
+	}
+}
+
 func (m *model) refreshKeyBrowserRows() {
 	query := strings.TrimSpace(m.keyBrowser.input.Value())
 	resolution := actions.ResolveKeyQuery(m.keyBrowser.all, query)
@@ -1827,6 +1852,7 @@ func (m *model) refreshKeyBrowserRows() {
 	if query == "" {
 		m.keyBrowser.rows = actions.ResolveKeyQuery(m.keyBrowser.all, "").Matches
 	}
+	m.resizeKeyBrowserSearchInput()
 
 	if len(m.keyBrowser.rows) == 0 {
 		m.keyBrowser.selected = 0
@@ -1884,6 +1910,7 @@ func (m *model) applyKeyBrowserRoute(route Route) {
 	notice := route.Params["notice"]
 	searchActive := route.Params["search"] == "true"
 	if query == "" && notice == "" && !searchActive {
+		m.ensureKeyBrowserInput()
 		m.resizeKeyInputs()
 		return
 	}
@@ -1977,22 +2004,31 @@ func (m *model) keyBrowserVisibleRows() []actions.KeySummary {
 }
 
 func (m *model) keyBrowserCountLabel() string {
+	return m.keyBrowserCountLabelForWidth(shell.BodyWidth(m.width))
+}
+
+func (m *model) keyBrowserCountLabelForWidth(width int) string {
 	total := len(m.keyBrowser.all)
 	if total == 0 {
 		if m.keyBrowser.loading {
 			return ""
 		}
-		return "0 keys"
+		return chooseKeyBrowserCountLabel(width, "0 keys", "0")
 	}
 
 	filtered := len(m.keyBrowser.rows)
 	if strings.TrimSpace(m.keyBrowser.input.Value()) != "" {
-		return fmt.Sprintf("%d of %d keys", filtered, total)
+		return chooseKeyBrowserCountLabel(
+			width,
+			fmt.Sprintf("%d of %d keys", filtered, total),
+			fmt.Sprintf("%d/%d keys", filtered, total),
+			fmt.Sprintf("%d/%d", filtered, total),
+		)
 	}
 	if total == 1 {
-		return "1 key"
+		return chooseKeyBrowserCountLabel(width, "1 key", "1")
 	}
-	return fmt.Sprintf("%d keys", total)
+	return chooseKeyBrowserCountLabel(width, fmt.Sprintf("%d keys", total), fmt.Sprintf("%d", total))
 }
 
 func (m *model) selectedKeyRow() (actions.KeySummary, bool) {
@@ -2003,13 +2039,31 @@ func (m *model) selectedKeyRow() (actions.KeySummary, bool) {
 }
 
 func (m *model) resizeKeyInputs() {
-	searchWidth := max(18, shell.BodyWidth(m.width)-3)
-	m.keyBrowser.input.Width = searchWidth
+	m.resizeKeyBrowserSearchInput()
 	m.keyRename.input.Width = max(18, min(shell.ClampBlockWidth(m.width, 44), 44))
 	inputWidth := max(18, min(shell.ClampBlockWidth(m.width, 44), 44))
 	m.keyGenerate.nameInput.Width = inputWidth
 	m.keyImport.pathInput.Width = max(18, min(shell.ClampBlockWidth(m.width, 54), 54))
 	m.keyExport.pathInput.Width = max(18, min(shell.ClampBlockWidth(m.width, 54), 54))
+}
+
+func (m *model) resizeKeyBrowserSearchInput() {
+	rowWidth := shell.BodyWidth(m.width)
+	searchWidth := max(1, rowWidth-keyBrowserSearchPrefixWidth-keyBrowserSearchCursorWidth)
+	if countLabel := strings.TrimSpace(m.keyBrowserCountLabelForWidth(rowWidth)); countLabel != "" {
+		searchWidth = max(1, rowWidth-lipgloss.Width(countLabel)-keyBrowserSearchPrefixWidth-keyBrowserSearchGapWidth-keyBrowserSearchCursorWidth)
+	}
+	m.keyBrowser.input.Width = searchWidth
+}
+
+func chooseKeyBrowserCountLabel(width int, variants ...string) string {
+	maxCountWidth := max(0, width-keyBrowserSearchPrefixWidth-keyBrowserSearchGapWidth-keyBrowserSearchMinInput-keyBrowserSearchCursorWidth)
+	for _, variant := range variants {
+		if lipgloss.Width(variant) <= maxCountWidth {
+			return variant
+		}
+	}
+	return ""
 }
 
 func newKeyInput(placeholder string) textinput.Model {

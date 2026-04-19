@@ -61,36 +61,32 @@ func renderSearchField(view string, active bool, notice string, countLabel strin
 	}
 
 	fieldWidth := max(20, width+shell.ContentLeftInset+shell.ContentRightInset)
-	lines := []string{renderBrowserMetaRow(notice, countLabel, width)}
+	lines := []string{renderBrowserMetaRow(notice, width)}
 	lines = append(lines,
 		shell.FullBleed(theme.Divider(fieldWidth)),
-		theme.Kicker.Render("❯")+"  "+value,
+		shell.JoinRow(width, theme.Kicker.Render("❯")+"  "+value, renderBrowserCountLabel(countLabel)),
 	)
 	return strings.Join(lines, "\n")
 }
 
-func renderBrowserMetaRow(notice string, countLabel string, width int) string {
-	right := ""
-	if count := strings.TrimSpace(countLabel); count != "" {
-		right = theme.BodyMuted.Render(count)
-	}
-
+func renderBrowserMetaRow(notice string, width int) string {
 	left := ""
 	if msg := strings.TrimSpace(displayMessage(notice)); msg != "" {
-		maxLeftWidth := width
-		if right != "" {
-			maxLeftWidth = max(0, width-lipgloss.Width(right)-2)
-		}
-		if maxLeftWidth > 0 {
-			left = theme.Warning.Render(truncateRunes(msg, maxLeftWidth))
-		}
+		left = theme.Warning.Render(truncateRunes(msg, width))
 	}
 
-	row := shell.JoinRow(width, left, right)
+	row := shell.JoinRow(width, left, "")
 	if strings.TrimSpace(row) == "" {
 		return " "
 	}
 	return row
+}
+
+func renderBrowserCountLabel(countLabel string) string {
+	if strings.TrimSpace(countLabel) == "" {
+		return ""
+	}
+	return theme.BodyMuted.Render(countLabel)
 }
 
 func renderBrowserTable(screen BrowserScreen, width int) string {
