@@ -66,6 +66,7 @@ type Snapshot struct {
 	DaemonPID          int
 	IPCSocketReady     bool
 	AgentSocketReady   bool
+	AgentDisabled      bool
 	SSHEnabled         bool
 	ManagedConfigReady bool
 	IdentityAgentOwner config.SSHAgentOwner

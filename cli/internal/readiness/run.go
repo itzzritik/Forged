@@ -34,7 +34,7 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 		return state.result, err
 	}
 	e.emitProgress(opts, ProgressSSH)
-	if err := e.ensureSSHStage(state); err != nil {
+	if err := e.ensureSSHStage(state, opts); err != nil {
 		return state.result, err
 	}
 	e.emitProgress(opts, ProgressVault)
@@ -84,10 +84,12 @@ func (e *Engine) ensureConfigStage(state *repairState) error {
 	return nil
 }
 
-func (e *Engine) ensureSSHStage(state *repairState) error {
-	if state.result.Snapshot.SSHEnabled &&
-		state.result.Snapshot.ManagedConfigReady &&
-		state.result.Snapshot.IdentityAgentOwner.IsForged() {
+func (e *Engine) ensureSSHStage(state *repairState, opts RunOptions) error {
+	if state.result.Snapshot.AgentDisabled && opts.Mode == ModeInteractiveLauncher {
+		return nil
+	}
+
+	if sshHealthy(state.result.Snapshot) && !state.result.Snapshot.AgentDisabled {
 		return nil
 	}
 
@@ -98,14 +100,18 @@ func (e *Engine) ensureSSHStage(state *repairState) error {
 	if err := e.refreshSnapshot(state); err != nil {
 		return err
 	}
-	if state.result.Snapshot.SSHEnabled &&
-		state.result.Snapshot.ManagedConfigReady &&
-		state.result.Snapshot.IdentityAgentOwner.IsForged() {
+	if sshHealthy(state.result.Snapshot) && !state.result.Snapshot.AgentDisabled {
 		e.markFixed(&state.result.Summary, "ssh")
 		return nil
 	}
 	e.markFailed(&state.result.Summary, "ssh")
 	return nil
+}
+
+func sshHealthy(snapshot Snapshot) bool {
+	return snapshot.SSHEnabled &&
+		snapshot.ManagedConfigReady &&
+		snapshot.IdentityAgentOwner.IsForged()
 }
 
 func (e *Engine) ensureVaultAndCredentialsStage(state *repairState, opts RunOptions) error {

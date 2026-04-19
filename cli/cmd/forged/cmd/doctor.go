@@ -129,6 +129,12 @@ func renderDoctorRuntime(snapshot readiness.Snapshot, summary readiness.RepairSu
 }
 
 func renderDoctorSSH(snapshot readiness.Snapshot, summary readiness.RepairSummary, paths config.Paths) {
+	if snapshot.AgentDisabled {
+		warn("SSH agent", "Agent disabled")
+		warn("SSH config", "Agent disabled")
+		return
+	}
+
 	switch {
 	case snapshot.SSHEnabled && containsFix(summary, "ssh"):
 		fixed("SSH agent", "Forged SSH config configured")
@@ -149,6 +155,11 @@ func renderDoctorSSH(snapshot readiness.Snapshot, summary readiness.RepairSummar
 }
 
 func renderDoctorIdentityOwner(snapshot readiness.Snapshot, summary readiness.RepairSummary) {
+	if snapshot.AgentDisabled {
+		warn("IdentityAgent owner", "Agent disabled")
+		return
+	}
+
 	switch {
 	case snapshot.IdentityAgentOwner.IsForged() && containsFix(summary, "ssh"):
 		fixed("IdentityAgent owner", "Forged")
@@ -203,14 +214,16 @@ func doctorIssueCount(snapshot readiness.Snapshot) int {
 	if !snapshot.IPCSocketReady {
 		issues++
 	}
-	if !snapshot.SSHEnabled {
-		issues++
-	}
-	if !snapshot.ManagedConfigReady {
-		issues++
-	}
-	if !snapshot.IdentityAgentOwner.IsForged() {
-		issues++
+	if !snapshot.AgentDisabled {
+		if !snapshot.SSHEnabled {
+			issues++
+		}
+		if !snapshot.ManagedConfigReady {
+			issues++
+		}
+		if !snapshot.IdentityAgentOwner.IsForged() {
+			issues++
+		}
 	}
 	if snapshot.Service.Installed && !snapshot.Service.ConfigValid {
 		issues++

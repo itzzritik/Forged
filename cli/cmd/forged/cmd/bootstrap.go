@@ -22,6 +22,7 @@ func ensureDefaultConfig(paths config.Paths) error {
 	content := fmt.Sprintf(`[agent]
 socket = %q
 log_level = "info"
+disabled = false
 
 [sync]
 enabled = false

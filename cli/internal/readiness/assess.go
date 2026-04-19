@@ -62,6 +62,7 @@ func (e *Engine) Assess() (Snapshot, error) {
 		VaultExists:        e.pathExists(e.Paths.VaultFile()),
 		ConfigExists:       e.pathExists(e.Paths.ConfigFile()),
 		ManagedConfigReady: e.pathExists(e.Paths.SSHManagedConfig()),
+		AgentDisabled:      config.IsAgentDisabled(e.Paths),
 		SSHEnabled:         e.isSSH(e.Paths),
 	}
 
@@ -103,15 +104,16 @@ func classifyState(s Snapshot) State {
 		return StateUninitialized
 	}
 
+	sshHealthy := s.SSHEnabled &&
+		s.ManagedConfigReady &&
+		s.IdentityAgentOwner.IsForged()
 	healthy := s.ConfigExists &&
 		s.Service.Installed &&
 		s.Service.ConfigValid &&
 		s.Service.Running &&
 		s.IPCSocketReady &&
 		s.AgentSocketReady &&
-		s.SSHEnabled &&
-		s.ManagedConfigReady &&
-		s.IdentityAgentOwner.IsForged()
+		(s.AgentDisabled || sshHealthy)
 	if healthy {
 		if s.KeyCount == 0 {
 			return StateReadyEmpty
@@ -251,6 +253,7 @@ func ensureDefaultConfigFile(paths config.Paths) error {
 	content := fmt.Sprintf(`[agent]
 socket = %q
 log_level = "info"
+disabled = false
 
 [sync]
 enabled = false

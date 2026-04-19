@@ -87,7 +87,9 @@ func (s State) SummaryRows() []SummaryRow {
 	}
 
 	sshState := "Not active"
-	if s.Snapshot.SSHEnabled && s.Snapshot.ManagedConfigReady {
+	if s.Snapshot.AgentDisabled {
+		sshState = "Disabled"
+	} else if s.Snapshot.SSHEnabled && s.Snapshot.ManagedConfigReady {
 		sshState = "Active"
 	}
 

@@ -807,6 +807,10 @@ func (m *model) headerStatusItems() []shell.StatusItem {
 }
 
 func (m *model) systemHeaderItem() shell.StatusItem {
+	if m.systemHeader == systemHeaderHealthy && m.snapshot.AgentDisabled {
+		return shell.StatusItem{Label: "Agent disabled", Tone: shell.StatusToneWarning}
+	}
+
 	switch m.systemHeader {
 	case systemHeaderChecking:
 		return shell.StatusItem{Label: "Checking health", Icon: m.spinner.View()}
@@ -2752,7 +2756,7 @@ func (m *model) finishRepairTasks(result readiness.RunResult) {
 				task.State = repairscreen.TaskDone
 			}
 		case "SSH":
-			if result.Snapshot.SSHEnabled && result.Snapshot.ManagedConfigReady {
+			if result.Snapshot.AgentDisabled || (result.Snapshot.SSHEnabled && result.Snapshot.ManagedConfigReady) {
 				task.State = repairscreen.TaskDone
 			}
 		case "Agent":

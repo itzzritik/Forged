@@ -76,8 +76,10 @@ func EnableSSHAgent(paths Paths) error {
 	}, "\n")
 
 	body := insertForgedInclude(content, block)
-
-	return os.WriteFile(configPath, []byte(body), 0o600)
+	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
+		return err
+	}
+	return SetAgentDisabled(paths, false)
 }
 
 func DisableSSHAgent(paths Paths) error {
@@ -92,7 +94,7 @@ func DisableSSHAgent(paths Paths) error {
 	}
 	if content == "" {
 		if _, err := os.Stat(paths.SSHManagedConfig()); os.IsNotExist(err) {
-			return nil
+			return SetAgentDisabled(paths, true)
 		}
 	}
 
@@ -108,7 +110,7 @@ func DisableSSHAgent(paths Paths) error {
 		return err
 	}
 
-	return nil
+	return SetAgentDisabled(paths, true)
 }
 
 func includeLine(path string) string {
