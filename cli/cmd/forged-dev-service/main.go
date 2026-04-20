@@ -62,7 +62,7 @@ func install(binary string) error {
 	paths := config.DefaultPaths()
 	if _, err := os.Stat(paths.VaultFile()); err != nil {
 		if errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("vault not found at %s; run ./bin/forged or ./bin/forged doctor --fix first", paths.VaultFile())
+			return fmt.Errorf("vault not found at %s; run ./bin/forged first", paths.VaultFile())
 		}
 		return fmt.Errorf("checking vault: %w", err)
 	}

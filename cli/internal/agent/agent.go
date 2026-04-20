@@ -161,15 +161,15 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 }
 
 func (a *ForgedAgent) Add(key agent.AddedKey) error {
-	return fmt.Errorf("use 'forged key import' or 'forged key generate' to add keys")
+	return fmt.Errorf("use the Forged Key tab to import or generate keys")
 }
 
 func (a *ForgedAgent) Remove(key ssh.PublicKey) error {
-	return fmt.Errorf("use 'forged key delete' to remove keys")
+	return fmt.Errorf("use the Forged Key tab to remove keys")
 }
 
 func (a *ForgedAgent) RemoveAll() error {
-	return fmt.Errorf("use 'forged key delete' to remove keys")
+	return fmt.Errorf("use the Forged Key tab to remove keys")
 }
 
 func (a *ForgedAgent) Lock(passphrase []byte) error {
@@ -287,7 +287,7 @@ func (a *ForgedAgent) ensurePrivateKeyAccess() error {
 		return err
 	}
 	if result.PasswordRequired {
-		return fmt.Errorf("private-key access is locked; unlock Forged from Manage or run `forged vault unlock`")
+		return fmt.Errorf("private-key access is locked; unlock Forged from Manage")
 	}
 	return nil
 }

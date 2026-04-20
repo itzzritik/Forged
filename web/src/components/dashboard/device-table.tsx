@@ -96,7 +96,7 @@ export const DeviceTable = () => {
 			data={devices}
 			emptyState={{
 				title: "No devices registered",
-				description: "Devices are registered when you run forged sync from a new machine.",
+				description: "Devices appear after you sync your vault from a new machine in Forged.",
 			}}
 			entityLabel="devices"
 			getRowId={(device) => device.id}

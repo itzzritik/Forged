@@ -1,20 +1,14 @@
 package cmd
 
 import (
-	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
 
-	"github.com/itzzritik/forged/cli/internal/config"
-	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/spf13/cobra"
 )
 
 var (
-	jsonOutput    bool
-	verbose       bool
-	configPath    string
 	versionOutput bool
 
 	version = "dev"
@@ -22,17 +16,26 @@ var (
 )
 
 var retiredCommandHints = map[string]string{
-	"generate": "Run `forged key generate`.",
-	"list":     "Run `forged key list`.",
-	"view":     "Run `forged key view <name>`.",
-	"rename":   "Run `forged key rename <old> <new>`.",
-	"remove":   "Run `forged key delete <name>`.",
-	"import":   "Run `forged key import`.",
-	"export":   "Run `forged key export`.",
-	"config":   "Run `forged` or `forged doctor`.",
-	"register": "Run `forged login`.",
-	"add":      "Run `forged key import`.",
-	"version":  "Run `forged --version`.",
+	"agent":    "Run `forged` and use the Agent tab.",
+	"doctor":   "Run `forged` and use the Doctor tab.",
+	"key":      "Run `forged` and use the Key tab.",
+	"login":    "Run `forged` and use Manage > Log In.",
+	"logout":   "Run `forged` and use Manage > Log Out.",
+	"register": "Run `forged` and use Manage > Log In.",
+	"setup":    "Run `forged`.",
+	"status":   "Run `forged`.",
+	"sync":     "Run `forged` and use Manage > Sync Now.",
+	"vault":    "Run `forged` and use Manage.",
+	"config":   "Run `forged` or `forged version`.",
+	"generate": "Run `forged` and use the Key tab.",
+	"list":     "Run `forged` and use the Key tab.",
+	"view":     "Run `forged` and use the Key tab.",
+	"rename":   "Run `forged` and use the Key tab.",
+	"remove":   "Run `forged` and use the Key tab.",
+	"import":   "Run `forged` and use the Key tab.",
+	"export":   "Run `forged` and use the Key tab.",
+	"add":      "Run `forged` and use the Key tab.",
+	"version":  "Run `forged version` or `forged --version`.",
 }
 
 func Execute() error {
@@ -70,9 +73,6 @@ func newRootCmd() *cobra.Command {
 }
 
 func installPersistentFlags(cmd *cobra.Command) {
-	cmd.PersistentFlags().BoolVar(&jsonOutput, "json", false, "output in JSON format")
-	cmd.PersistentFlags().BoolVar(&verbose, "verbose", false, "verbose logging")
-	cmd.PersistentFlags().StringVar(&configPath, "config", "", "override config file path")
 	cmd.Flags().BoolVarP(&versionOutput, "version", "v", false, "print version information")
 }
 
@@ -91,13 +91,7 @@ func installRootSubcommands(cmd *cobra.Command) {
 
 	cmd.AddCommand(
 		daemonCmd,
-		loginCmd,
-		logoutCmd,
-		syncCmd,
-		doctorCmd,
-		newKeyCmd(),
-		newVaultCmd(),
-		newAgentCmd(),
+		versionCmd,
 		logsCmd,
 		signCmd,
 		sshRoutePrepareCmd,
@@ -106,21 +100,13 @@ func installRootSubcommands(cmd *cobra.Command) {
 }
 
 func runRootCommand(cmd *cobra.Command, args []string) error {
-	paths := config.DefaultPaths()
-	engine := readiness.New(paths)
-
 	if versionOutput {
 		return printVersion(cmd)
 	}
-	if shouldLaunchBareForged(args) {
-		return runBareForged(cmd)
+	if !shouldLaunchBareForged(args) {
+		return fmt.Errorf("forged requires an interactive terminal. Use `forged help` or `forged version`")
 	}
-
-	result, err := engine.Run(readiness.RunOptions{Mode: readiness.ModeAssessOnly})
-	if err != nil {
-		return err
-	}
-	return renderRootSummary(result.Snapshot, result.Next)
+	return runBareForged(cmd)
 }
 
 func rewriteCLIError(err error) error {
@@ -140,26 +126,7 @@ func rewriteCLIError(err error) error {
 }
 
 func printVersion(cmd *cobra.Command) error {
-	if jsonOutput {
-		enc := json.NewEncoder(cmd.OutOrStdout())
-		enc.SetIndent("", "  ")
-		return enc.Encode(map[string]string{
-			"version": version,
-			"commit":  commit,
-		})
-	}
-
 	fmt.Fprintf(cmd.OutOrStdout(), "forged %s (%s)\n", version, commit)
-	return nil
-}
-
-func printOutput(data any) error {
-	if jsonOutput {
-		enc := json.NewEncoder(os.Stdout)
-		enc.SetIndent("", "  ")
-		return enc.Encode(data)
-	}
-	fmt.Println(data)
 	return nil
 }
 

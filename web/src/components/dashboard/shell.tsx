@@ -88,7 +88,7 @@ const NoVault = () => (
 	<div className="flex h-full flex-col items-center justify-center gap-3 px-6 text-center">
 		<p className="font-mono text-foreground text-sm">No vault synced yet.</p>
 		<p className="font-mono text-muted-foreground text-xs">
-			Run <code className="text-primary">forged sync</code> from your CLI to push your vault to the cloud.
+			Open Forged on a linked machine and use <code className="text-primary">Manage &gt; Sync Now</code> to push your vault to the cloud.
 		</p>
 	</div>
 );

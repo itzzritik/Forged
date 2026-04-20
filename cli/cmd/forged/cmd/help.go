@@ -28,16 +28,6 @@ func configureHelp(root *cobra.Command) {
 	})
 }
 
-func configureGroupHelp(cmd *cobra.Command, purpose string, examples []string) {
-	cmd.SetHelpFunc(func(current *cobra.Command, _ []string) {
-		if current != cmd {
-			renderCommandHelp(current.OutOrStdout(), current)
-			return
-		}
-		renderGroupHelp(current.OutOrStdout(), current, purpose, examples)
-	})
-}
-
 func renderRootHelp(w io.Writer) {
 	sections := []helpSection{
 		{
@@ -47,17 +37,12 @@ func renderRootHelp(w io.Writer) {
 			},
 		},
 		{
-			Title: "Account",
+			Title: "Info",
 			Entries: []helpEntry{
-				{Name: "login", Description: "log in or create an account"},
-				{Name: "logout", Description: "remove account access from this machine"},
-				{Name: "sync", Description: "refresh with the cloud"},
+				{Name: "help", Description: "show help"},
+				{Name: "version", Description: "print version information"},
 			},
 		},
-		{Title: "Keys", Entries: []helpEntry{{Name: "key", Description: "manage keys"}}},
-		{Title: "Vault", Entries: []helpEntry{{Name: "vault", Description: "manage vault access"}}},
-		{Title: "Agent", Entries: []helpEntry{{Name: "agent", Description: "use Forged for SSH and Git signing"}}},
-		{Title: "Recovery", Entries: []helpEntry{{Name: "doctor", Description: "repair this machine"}}},
 	}
 
 	fmt.Fprintln(w, "Forged manages SSH keys, vault access, and Git signing.")
@@ -73,13 +58,8 @@ func renderRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "Examples:")
 	for _, example := range []string{
 		"  forged",
-		"  forged key",
-		"  forged key generate",
-		"  forged key import",
-		"  forged key export",
-		"  forged vault change-password",
-		"  forged agent signing",
-		"  forged doctor --fix",
+		"  forged help",
+		"  forged version",
 	} {
 		fmt.Fprintln(w, example)
 	}
@@ -88,33 +68,6 @@ func renderRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "Flags:")
 	fmt.Fprintln(w, "  -h, --help      help for forged")
 	fmt.Fprintln(w, "  -v, --version   print version information")
-}
-
-func renderGroupHelp(w io.Writer, cmd *cobra.Command, purpose string, examples []string) {
-	fmt.Fprintf(w, "%s\n\n", purpose)
-	fmt.Fprintln(w, "Usage:")
-	fmt.Fprintf(w, "  %s [command]\n", cmd.CommandPath())
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Run without a subcommand to open the interactive manager.")
-	fmt.Fprintln(w)
-	fmt.Fprintln(w, "Commands:")
-	for _, child := range cmd.Commands() {
-		if child.Hidden {
-			continue
-		}
-		fmt.Fprintf(w, "  %-20s %s\n", child.Use, child.Short)
-	}
-
-	if len(examples) > 0 {
-		fmt.Fprintln(w)
-		fmt.Fprintln(w, "Examples:")
-		for _, example := range examples {
-			fmt.Fprintf(w, "  %s\n", example)
-		}
-	}
-
-	fmt.Fprintln(w)
-	fmt.Fprintf(w, "Flags:\n  -h, --help   help for %s\n", strings.ReplaceAll(cmd.CommandPath(), "forged ", ""))
 }
 
 func renderCommandHelp(w io.Writer, cmd *cobra.Command) {

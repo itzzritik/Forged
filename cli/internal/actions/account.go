@@ -54,7 +54,7 @@ func CredentialsPath(paths config.Paths) string {
 func LoadCredentials(paths config.Paths) (AccountCredentials, error) {
 	data, err := os.ReadFile(CredentialsPath(paths))
 	if err != nil {
-		return AccountCredentials{}, fmt.Errorf("not logged in. Run: forged login")
+		return AccountCredentials{}, fmt.Errorf("not logged in. Open Forged and use Manage > Log In")
 	}
 
 	var creds AccountCredentials

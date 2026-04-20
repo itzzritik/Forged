@@ -15,12 +15,17 @@ import (
 	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/itzzritik/forged/cli/internal/tui"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 var isInteractiveTerminal = terminalIsInteractive
 
+func terminalIsInteractive() bool {
+	return term.IsTerminal(int(os.Stdin.Fd())) && term.IsTerminal(int(os.Stdout.Fd()))
+}
+
 func shouldLaunchBareForged(args []string) bool {
-	return len(args) == 0 && !jsonOutput && isInteractiveTerminal()
+	return len(args) == 0 && isInteractiveTerminal()
 }
 
 func runBareForged(cmd *cobra.Command) error {

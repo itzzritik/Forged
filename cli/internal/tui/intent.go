@@ -31,12 +31,14 @@ const (
 	RouteDoctorOverview RouteID = "doctor/overview"
 )
 
+func DashboardIntent() Intent {
+	return NewIntent(RouteDashboardHome)
+}
+
 type Intent struct {
-	Entry       RouteID
-	Boundary    RouteID
-	CommandPath []string
-	Args        []string
-	Params      map[string]string
+	Entry    RouteID
+	Boundary RouteID
+	Params   map[string]string
 }
 
 func NewIntent(entry RouteID) Intent {
@@ -45,16 +47,6 @@ func NewIntent(entry RouteID) Intent {
 		Boundary: entry,
 		Params:   map[string]string{},
 	}
-}
-
-func (i Intent) WithCommandPath(path ...string) Intent {
-	i.CommandPath = append([]string(nil), path...)
-	return i
-}
-
-func (i Intent) WithArgs(args ...string) Intent {
-	i.Args = append([]string(nil), args...)
-	return i
 }
 
 func (i Intent) WithParam(key, value string) Intent {

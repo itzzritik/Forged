@@ -3,8 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"syscall"
-	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
@@ -25,69 +23,6 @@ var daemonCmd = &cobra.Command{
 
 		d := daemon.New(paths)
 		return d.Run(password)
-	},
-}
-
-var startCmd = &cobra.Command{
-	Use:   "start",
-	Short: "Start daemon as background service",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		paths := config.DefaultPaths()
-
-		if _, running := daemon.IsRunning(paths); running {
-			fmt.Println("Daemon is already running")
-			return nil
-		}
-
-		if !daemon.ServiceInstalled() {
-			return fmt.Errorf("service not installed. Run: forged doctor --fix")
-		}
-
-		if err := daemon.StartService(); err != nil {
-			return fmt.Errorf("starting service: %w", err)
-		}
-
-		time.Sleep(2 * time.Second)
-
-		if pid, running := daemon.IsRunning(paths); running {
-			fmt.Printf("Daemon started (PID %d)\n", pid)
-		} else {
-			fmt.Println("Service started. Check: forged logs")
-		}
-		return nil
-	},
-}
-
-var stopCmd = &cobra.Command{
-	Use:   "stop",
-	Short: "Stop daemon",
-	RunE: func(cmd *cobra.Command, args []string) error {
-		paths := config.DefaultPaths()
-
-		if daemon.ServiceInstalled() {
-			if err := daemon.StopService(); err != nil {
-				return fmt.Errorf("stopping service: %w", err)
-			}
-			fmt.Println("Daemon stopped")
-			return nil
-		}
-
-		pid, running := daemon.IsRunning(paths)
-		if !running {
-			return fmt.Errorf("daemon is not running")
-		}
-
-		process, err := os.FindProcess(pid)
-		if err != nil {
-			return fmt.Errorf("finding process: %w", err)
-		}
-
-		if err := process.Signal(syscall.SIGTERM); err != nil {
-			return fmt.Errorf("sending signal: %w", err)
-		}
-
-		fmt.Printf("Daemon stopped (PID %d)\n", pid)
-		return nil
 	},
 }
 

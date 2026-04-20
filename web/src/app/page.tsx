@@ -51,13 +51,14 @@ function Nav() {
 
 const ROUTING_DEMO: TerminalStep[] = [
 	{
-		command: "forged status",
-		output: ["Daemon: running (PID 4129)", "Keys:   3 loaded", "Socket: /Users/user/.forged/agent.sock"],
+		command: "forged",
+		output: ["[TUI] Agent ready", "[TUI] Vault up to date", "[TUI] 3 keys available"],
 		pauseAfter: 2000,
 	},
 	{
-		command: "forged list",
+		command: "forged",
 		output: [
+			"[TUI] Key > View",
 			"  NAME      TYPE         FINGERPRINT                                        SIGNING",
 			"  --------  -----------  -------------------------------------------------  -------",
 			"  github    ssh-ed25519  SHA256:+DiY3wvvV6TuJJhbpZisF/zLDA0zPMSvHdkr4UvCOqU  yes",
