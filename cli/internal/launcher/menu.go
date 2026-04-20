@@ -21,7 +21,7 @@ func BuildMenu(snapshot readiness.Snapshot) []MenuItem {
 	if snapshot.State == readiness.StateUninitialized {
 		return []MenuItem{
 			{ID: ActionSetupVault, Label: "Set up a new vault"},
-			{ID: ActionLogin, Label: "Sign in to an existing Forged account"},
+			{ID: ActionLogin, Label: "Log in to an existing Forged account"},
 		}
 	}
 
@@ -40,8 +40,8 @@ func BuildMenu(snapshot readiness.Snapshot) []MenuItem {
 		return items
 	}
 	if snapshot.KeyCount == 0 {
-		return append(items, MenuItem{ID: ActionLogin, Label: "Sign in to sync across devices"})
+		return append(items, MenuItem{ID: ActionLogin, Label: "Log in to sync across devices"})
 	}
 
-	return append([]MenuItem{{ID: ActionLogin, Label: "Sign in to sync across devices"}}, items...)
+	return append([]MenuItem{{ID: ActionLogin, Label: "Log in to sync across devices"}}, items...)
 }

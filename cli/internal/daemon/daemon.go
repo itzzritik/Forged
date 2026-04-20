@@ -241,6 +241,7 @@ func (d *Daemon) startIPC() error {
 
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
 	d.ipcServer.SetSyncLinkHandler(d.handleSyncLink)
+	d.ipcServer.SetSyncUnlinkHandler(d.handleSyncUnlink)
 	d.ipcServer.SetSensitiveAuthBroker(d.authBroker)
 	d.ipcServer.SetOnKeyChange(func() {
 		if err := d.refreshSSHRouting(); err != nil {
@@ -366,6 +367,32 @@ func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
 		return err
 	}
 	d.logger.Info("sync link refreshed", "user_id", args.UserID)
+	return nil
+}
+
+func (d *Daemon) handleSyncUnlink() error {
+	if d.syncBus != nil {
+		if err := d.syncBus.AuthUnlinked(context.Background()); err != nil {
+			return err
+		}
+	}
+
+	d.syncBus = nil
+	if d.ipcServer != nil {
+		d.ipcServer.SetSyncBus(nil)
+	}
+	if d.agent != nil {
+		d.agent.SetSyncCoordinator(nil)
+	}
+
+	if err := os.Remove(d.paths.SyncStateFile()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing sync state: %w", err)
+	}
+	if err := os.Remove(d.paths.SyncDirtyFile()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing sync dirty flag: %w", err)
+	}
+
+	d.logger.Info("sync unlinked")
 	return nil
 }
 

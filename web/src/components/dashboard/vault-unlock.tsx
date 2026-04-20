@@ -143,7 +143,7 @@ export const VaultUnlock = ({ onUnlock, error }: VaultUnlockProps) => {
 
 						<div className="text-center">
 							<button className="cursor-pointer text-muted-foreground text-xs transition-colors hover:text-foreground" onClick={handleLogout} type="button">
-								Sign out
+								Log out
 							</button>
 						</div>
 					</div>

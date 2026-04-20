@@ -114,7 +114,7 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 	creds, err := LoadCredentials(paths)
 	if err != nil {
 		return ChangePasswordResult{
-			Detail: "Local vault updated. Sign in and sync later to update recovery.",
+			Detail: "Local vault updated. Log in and sync later to update recovery.",
 		}, nil
 	}
 

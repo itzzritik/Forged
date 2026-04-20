@@ -214,6 +214,40 @@ func (b *Bus) AuthLinked(ctx context.Context, userID, serverURL string) error {
 	return err
 }
 
+func (b *Bus) AuthUnlinked(ctx context.Context) error {
+	for {
+		b.mu.Lock()
+		if b.syncing {
+			done := b.syncDone
+			b.queuedPush = false
+			b.queuedRefresh = false
+			b.mu.Unlock()
+			if err := waitForSync(ctx, done); err != nil {
+				return err
+			}
+			continue
+		}
+
+		if b.timer != nil {
+			b.timer.Stop()
+			b.timer = nil
+		}
+		if b.retryTimer != nil {
+			b.retryTimer.Stop()
+			b.retryTimer = nil
+		}
+
+		deviceID := b.state.DeviceID
+		cleared := DefaultSyncState(deviceID)
+		*b.state = cleared
+		b.retryIndex = 0
+		b.lastAgentRefresh = time.Time{}
+		b.persistLocked()
+		b.mu.Unlock()
+		return nil
+	}
+}
+
 func (b *Bus) ForceSync(ctx context.Context, reason string) error {
 	for {
 		b.mu.Lock()

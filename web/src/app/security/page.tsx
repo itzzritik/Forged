@@ -47,7 +47,7 @@ function Nav() {
 						GitHub
 					</a>
 					<GlitchButton className="h-8 px-5 text-[12px]" href="/login">
-						Sign in
+						Log in
 					</GlitchButton>
 				</div>
 			</div>

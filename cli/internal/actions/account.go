@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -26,6 +27,7 @@ type AccountCredentials struct {
 	Token     string `json:"token"`
 	UserID    string `json:"user_id"`
 	Email     string `json:"email"`
+	Name      string `json:"name,omitempty"`
 }
 
 type LoginSession struct {
@@ -40,7 +42,7 @@ type LoginProgress struct {
 
 func (s LoginSession) Wait(ctx context.Context) (AccountCredentials, error) {
 	if s.wait == nil {
-		return AccountCredentials{}, fmt.Errorf("login session is not ready")
+		return AccountCredentials{}, fmt.Errorf("log-in flow is not ready")
 	}
 	return s.wait(ctx)
 }
@@ -59,6 +61,7 @@ func LoadCredentials(paths config.Paths) (AccountCredentials, error) {
 	if err := json.Unmarshal(data, &creds); err != nil {
 		return AccountCredentials{}, fmt.Errorf("corrupted credentials file")
 	}
+	populateAccountDisplayName(&creds)
 	return creds, nil
 }
 
@@ -68,6 +71,7 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 		return err
 	}
 
+	populateAccountDisplayName(&creds)
 	data, _ := json.MarshalIndent(creds, "", "  ")
 	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return err
@@ -89,8 +93,19 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 }
 
 func ClearCredentials(paths config.Paths) error {
+	if _, running := daemon.IsRunning(paths); running {
+		if _, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSyncUnlink, nil); err != nil {
+			return fmt.Errorf("unlinking running daemon: %w", err)
+		}
+	}
+
 	if err := os.Remove(CredentialsPath(paths)); err != nil && !os.IsNotExist(err) {
 		return err
+	}
+	for _, path := range []string{paths.SyncStateFile(), paths.SyncDirtyFile()} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
 	}
 	return nil
 }
@@ -162,6 +177,7 @@ func pollLogin(ctx context.Context, server string, pollURL string) (AccountCrede
 			Token  string `json:"token"`
 			UserID string `json:"user_id"`
 			Email  string `json:"email"`
+			Name   string `json:"name"`
 			Error  string `json:"error"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&result)
@@ -171,11 +187,16 @@ func pollLogin(ctx context.Context, server string, pollURL string) (AccountCrede
 
 		switch result.Status {
 		case "complete":
+			name := strings.TrimSpace(result.Name)
+			if name == "" {
+				name = decodeAccountName(result.Token)
+			}
 			return AccountCredentials{
 				ServerURL: server,
 				Token:     result.Token,
 				UserID:    result.UserID,
 				Email:     result.Email,
+				Name:      name,
 			}, nil
 		case "error":
 			return AccountCredentials{}, fmt.Errorf("authentication failed: %s", result.Error)
@@ -184,7 +205,7 @@ func pollLogin(ctx context.Context, server string, pollURL string) (AccountCrede
 		}
 	}
 
-	return AccountCredentials{}, fmt.Errorf("login timed out after 5 minutes")
+	return AccountCredentials{}, fmt.Errorf("timed out while waiting to log in")
 }
 
 func OpenBrowser(url string) {
@@ -252,6 +273,66 @@ func createAuthSessionWithRetry(server string, payload []byte, progress func(Log
 	}
 
 	return nil, lastErr
+}
+
+func populateAccountDisplayName(creds *AccountCredentials) {
+	if creds == nil {
+		return
+	}
+	if strings.TrimSpace(creds.Name) != "" {
+		return
+	}
+	if name := decodeAccountName(creds.Token); name != "" {
+		creds.Name = name
+		return
+	}
+	creds.Name = fallbackAccountName(creds.Email)
+}
+
+func decodeAccountName(token string) string {
+	parts := strings.Split(strings.TrimSpace(token), ".")
+	if len(parts) < 2 {
+		return ""
+	}
+
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+
+	var claims struct {
+		Name string `json:"name"`
+	}
+	if err := json.Unmarshal(payload, &claims); err != nil {
+		return ""
+	}
+	return strings.TrimSpace(claims.Name)
+}
+
+func fallbackAccountName(email string) string {
+	local := strings.TrimSpace(email)
+	if local == "" {
+		return ""
+	}
+	if at := strings.Index(local, "@"); at > 0 {
+		local = local[:at]
+	}
+	local = strings.ReplaceAll(local, ".", " ")
+	local = strings.ReplaceAll(local, "_", " ")
+	local = strings.ReplaceAll(local, "-", " ")
+	words := strings.Fields(local)
+	if len(words) == 0 {
+		return ""
+	}
+	for index, word := range words {
+		runes := []rune(strings.ToLower(word))
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+		words[index] = string(runes)
+	}
+	return strings.Join(words, " ")
 }
 
 func loginAttemptError(err error, statusCode int, attempt int) error {

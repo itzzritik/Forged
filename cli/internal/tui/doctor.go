@@ -494,7 +494,7 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Sync Account",
-				Status: "✓ Signed in",
+				Status: "✓ Logged in",
 				Detail: "Multi-device sync available",
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -505,7 +505,7 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "Sync Account",
-			Status: "! Not signed in",
+			Status: "! Not logged in",
 			Detail: "Multi-device sync unavailable",
 			Tone:   doctorscreen.ToneWarning,
 		},

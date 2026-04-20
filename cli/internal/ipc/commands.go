@@ -15,6 +15,7 @@ const (
 	CmdActivity          = "activity"
 	CmdSyncTrigger       = "sync-trigger"
 	CmdSyncLink          = "sync-link"
+	CmdSyncUnlink        = "sync-unlink"
 	CmdStatus            = "status"
 	CmdSSHRoutePrepare   = "ssh-route-prepare"
 	CmdSSHRouteSuccess   = "ssh-route-success"

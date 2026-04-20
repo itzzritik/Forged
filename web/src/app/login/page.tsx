@@ -136,7 +136,7 @@ function LoginContent() {
 							</svg>
 						</div>
 					</div>
-					<h1 className="mt-8 font-bold text-3xl text-white tracking-tighter sm:text-4xl">Sign in</h1>
+					<h1 className="mt-8 font-bold text-3xl text-white tracking-tighter sm:text-4xl">Log in</h1>
 					<p className="mt-3 text-[#a1a1aa] text-sm tracking-wide">Authenticate to begin your session</p>
 				</div>
 

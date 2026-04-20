@@ -273,6 +273,7 @@ type model struct {
 	dashboardTabIndex    int
 	dashboardPageIndices []int
 	accountEmail         string
+	accountName          string
 	loginScreen          accountscreen.LoginScreen
 	passwordInput        *components.PasswordInput
 	passwordFlow         passwordFlow
@@ -436,7 +437,7 @@ func (m *model) Init() tea.Cmd {
 	case RouteAccountLogin:
 		m.screen = screenLogin
 		m.loginScreen = accountscreen.LoginScreen{
-			Title:   "Sign In to Sync Vault",
+			Title:   "Log In to Sync Vault",
 			Context: "Preparing secure browser approval.",
 			Status:  "Checking local health",
 			Waiting: true,
@@ -530,7 +531,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loginScreen = accountscreen.LoginScreen{
-			Title:            "Sign In to Sync Vault",
+			Title:            "Log In to Sync Vault",
 			Context:          "Verify this code in your browser before approving.",
 			Status:           "Waiting for browser approval",
 			VerificationCode: msg.session.VerificationCode,
@@ -573,13 +574,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 
 		m.snapshot.LoggedIn = true
 		m.accountEmail = msg.creds.Email
+		m.accountName = msg.creds.Name
 		m.passwordAuth = msg.creds.Email
 		if !m.snapshot.VaultExists {
 			m.showPasswordScreen(passwordRestore, msg.creds.Email, "", true)
 			return m, m.passwordInput.Init()
 		}
 
-		return m, m.startRepair(repairPurposePostLogin, nil, false, "Finishing account setup", "Linking the signed-in account to the local daemon and refreshing machine state.", msg.creds.Email)
+		return m, m.startRepair(repairPurposePostLogin, nil, false, "Finishing account setup", "Linking the logged-in account to the local daemon and refreshing machine state.", msg.creds.Email)
 	case restoreFinishedMsg:
 		if msg.id != m.restoreID {
 			return m, nil
@@ -718,6 +720,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleManageUnlockFinishedMsg(msg)
 	case manageChangePasswordFinishedMsg:
 		return m.handleManageChangePasswordFinishedMsg(msg)
+	case manageLogoutFinishedMsg:
+		return m.handleManageLogoutFinishedMsg(msg)
 	case manageAutoReturnMsg:
 		return m.handleManageAutoReturnMsg(msg)
 	case agentSSHFinishedMsg:
@@ -841,11 +845,11 @@ func (m *model) commitSigningHeaderItem() shell.StatusItem {
 	}
 	switch m.signingStatus.Mode {
 	case actions.CommitSigningForged:
-		return shell.StatusItem{Label: "Forged signing", Tone: shell.StatusToneSuccess}
+		return shell.StatusItem{Label: "Commits signing", Tone: shell.StatusToneSuccess}
 	case actions.CommitSigningExternal:
 		return shell.StatusItem{Label: "External signing", Tone: shell.StatusToneWarning}
 	default:
-		return shell.StatusItem{Label: "Commit not signing", Tone: shell.StatusToneWarning}
+		return shell.StatusItem{Label: "Commits not signing", Tone: shell.StatusToneWarning}
 	}
 }
 
@@ -879,6 +883,9 @@ func (m *model) headerPageTitle() string {
 		if m.isManageHomeRoute() {
 			return "Manage"
 		}
+		if m.isManageProfileRoute() {
+			return "Profile"
+		}
 		if m.isManageSuccessRoute() {
 			return m.manageSuccessTitle()
 		}
@@ -901,7 +908,7 @@ func (m *model) headerPageTitle() string {
 		if strings.TrimSpace(m.loginScreen.Title) != "" {
 			return m.loginScreen.Title
 		}
-		return "Sign In to Sync Vault"
+		return "Log In to Sync Vault"
 	case screenPassword:
 		switch m.passwordFlow {
 		case passwordKeyView:
@@ -942,6 +949,13 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 				{Label: "Manage", Current: true},
 			}
 		}
+		if m.isManageProfileRoute() {
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Manage"},
+				{Label: "Profile", Current: true},
+			}
+		}
 		if m.isManageSuccessRoute() {
 			return []shell.Breadcrumb{
 				{Label: "Home"},
@@ -968,6 +982,17 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 				{Label: "Doctor", Current: true},
 			}
 		}
+		if m.session.Current().ID == RouteSyncHome {
+			label := "Sync"
+			if !m.snapshot.LoggedIn {
+				label = "Enable Sync"
+			}
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Manage"},
+				{Label: label, Current: true},
+			}
+		}
 		if section := m.currentDashboardSection(); section != nil {
 			return []shell.Breadcrumb{
 				{Label: "Home"},
@@ -981,7 +1006,7 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 		return []shell.Breadcrumb{
 			{Label: "Home"},
 			{Label: "Account"},
-			{Label: "Sign In", Current: true},
+			{Label: "Log In", Current: true},
 		}
 	case screenPassword:
 		switch m.passwordFlow {
@@ -1087,6 +1112,9 @@ func (m *model) renderBody(contentWidth int) string {
 		if m.isManageHomeRoute() {
 			return m.renderManageBody(contentWidth)
 		}
+		if m.isManageProfileRoute() {
+			return m.renderManageProfileBody(contentWidth)
+		}
 		if m.isManageSuccessRoute() {
 			return m.renderManageSuccessBody(contentWidth)
 		}
@@ -1165,7 +1193,7 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 
 	if m.passwordAuth != "" {
 		sections = append(sections,
-			theme.Success.Render("✓")+" "+theme.BodyMuted.Render(" Signed in as")+" "+theme.Body.Render(m.passwordAuth),
+			theme.Success.Render("✓")+" "+theme.BodyMuted.Render(" Logged in as")+" "+theme.Body.Render(m.passwordAuth),
 			"",
 		)
 	}
@@ -1265,6 +1293,11 @@ func (m *model) footerActions() []shell.FooterAction {
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
 		}
+		if m.isManageProfileRoute() {
+			return []shell.FooterAction{
+				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+			}
+		}
 		if m.isManageSuccessRoute() {
 			return []shell.FooterAction{
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
@@ -1322,6 +1355,18 @@ func (m *model) footerActions() []shell.FooterAction {
 			}
 		}
 		if m.currentDashboardSection() != nil {
+			if m.session.Current().ID == RouteSyncHome {
+				if !m.snapshot.LoggedIn {
+					return []shell.FooterAction{
+						{Key: "Enter", Label: "Log In"},
+						{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+					}
+				}
+				return []shell.FooterAction{
+					{Key: "Enter", Label: "Sync Now"},
+					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+				}
+			}
 			return []shell.FooterAction{
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
@@ -1400,6 +1445,17 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateManageKeys(msg)
 	}
 
+	if m.isManageProfileRoute() {
+		switch msg.String() {
+		case "esc":
+			if m.session.Back() {
+				return m, m.showCurrentRoute()
+			}
+			return m, tea.Quit
+		}
+		return m, nil
+	}
+
 	if m.isAgentHomeRoute() {
 		return m.updateAgentKeys(msg)
 	}
@@ -1418,6 +1474,16 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.currentDashboardSection() != nil {
 		switch msg.String() {
+		case "enter":
+			if m.session.Current().ID == RouteSyncHome {
+				if !m.snapshot.LoggedIn {
+					if m.session.Current().ID != RouteAccountLogin {
+						m.session.Push(Route{ID: RouteAccountLogin})
+					}
+					return m, m.startLoginFlow()
+				}
+				return m, m.runManageSync()
+			}
 		case "esc":
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
@@ -1442,6 +1508,7 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if tabs[m.dashboardTabIndex].Label == "Manage" {
 				m.notice = notice{}
+				m.manage.logoutArmed = false
 				m.manage.selected = m.dashboardPageIndices[m.dashboardTabIndex]
 			}
 			if tabs[m.dashboardTabIndex].Label == "Agent" {
@@ -1457,6 +1524,7 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			if tabs[m.dashboardTabIndex].Label == "Manage" {
 				m.notice = notice{}
+				m.manage.logoutArmed = false
 				m.manage.selected = m.dashboardPageIndices[m.dashboardTabIndex]
 			}
 			if tabs[m.dashboardTabIndex].Label == "Agent" {
@@ -1822,6 +1890,7 @@ func (m *model) switchDashboardTab(delta int, tabs []dashboardTab) tea.Cmd {
 		return nil
 	}
 
+	m.manage.logoutArmed = false
 	m.dashboardTabIndex = next
 	switch tabs[m.dashboardTabIndex].Label {
 	case "Manage":
@@ -1844,13 +1913,13 @@ func (m *model) currentDashboardSection() *dashboardSection {
 	case RouteAccountStatus:
 		context := "Review your Forged account and manage the features linked to this machine."
 		if email := strings.TrimSpace(m.accountEmail); email != "" {
-			context = "Signed in as " + email + " and ready to manage linked account access on this machine."
+			context = "Logged in as " + email + " and ready to manage linked account access on this machine."
 		}
 		actions := []dashboardSectionAction{
-			{Label: "Profile", Description: "Review signed-in account identity and linked access"},
+			{Label: "Profile", Description: "Review logged-in account identity and linked access"},
 		}
 		if m.snapshot.LoggedIn {
-			actions = append(actions, dashboardSectionAction{Label: "Log out", Description: "Remove linked account access from this machine"})
+			actions = append(actions, dashboardSectionAction{Label: "Log Out", Description: "Remove linked account access from this machine"})
 		}
 		return &dashboardSection{
 			Title:   "Account",
@@ -1858,21 +1927,18 @@ func (m *model) currentDashboardSection() *dashboardSection {
 			Actions: actions,
 		}
 	case RouteSyncHome:
-		context := "Keep this machine aligned with your linked Forged vault and review the current sync state."
-		actions := []dashboardSectionAction{
-			{Label: "Sync status", Description: "Review the current linked sync state"},
-			{Label: "Sync now", Description: "Trigger a fresh sync when account features are enabled"},
-		}
 		if !m.snapshot.LoggedIn {
-			context = "Sign in to enable multi-device vault sync and linked recovery features."
-			actions = []dashboardSectionAction{
-				{Label: "Sign in", Description: "Connect this machine to your Forged account"},
+			return &dashboardSection{
+				Title: "Enable Sync",
+				Context: strings.Join([]string{
+					"Sync your encrypted vault across devices with your Forged account.",
+					"Your keys stay encrypted and available on every machine you trust.",
+				}, "\n"),
 			}
 		}
 		return &dashboardSection{
 			Title:   "Sync",
-			Context: context,
-			Actions: actions,
+			Context: m.manageSyncSummary(),
 		}
 	default:
 		return nil
@@ -1988,7 +2054,7 @@ func (m *model) startLoginFlow() tea.Cmd {
 	m.screen = screenLogin
 	m.notice = notice{}
 	m.loginScreen = accountscreen.LoginScreen{
-		Title:   "Sign In to Sync Vault",
+		Title:   "Log In to Sync Vault",
 		Context: "Preparing secure browser approval.",
 		Status:  "Opening approval link",
 		Waiting: true,
@@ -2151,6 +2217,12 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 	m.systemHeader = m.systemHeaderForSnapshot(result.Snapshot)
 	if m.repairAuthEmail != "" {
 		m.accountEmail = m.repairAuthEmail
+	}
+	if result.Snapshot.LoggedIn {
+		m.loadStoredAccountIdentity()
+	} else {
+		m.accountName = ""
+		m.accountEmail = ""
 	}
 	m.finishRepairTasks(result)
 
@@ -2360,6 +2432,9 @@ func (m *model) showCurrentRoute() tea.Cmd {
 		if m.session.Current().ID == RouteVaultHome {
 			return m.probeSensitiveStateCmd()
 		}
+		if m.session.Current().ID == RouteAccountStatus {
+			m.loadStoredAccountIdentity()
+		}
 		if m.session.Current().ID == RouteDoctorOverview {
 			return m.refreshSnapshotCmd()
 		}
@@ -2402,8 +2477,11 @@ func (m *model) pendingDashboardRouteTitle() string {
 	case RouteAgentSigning:
 		return "Commit Signing"
 	case RouteAccountStatus:
-		return "Account"
+		return "Profile"
 	case RouteSyncHome:
+		if !m.snapshot.LoggedIn {
+			return "Enable Sync"
+		}
 		return "Sync"
 	case RouteDoctorOverview:
 		return "Doctor"
@@ -2491,12 +2569,18 @@ func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
 	case RouteAccountStatus:
 		return []shell.Breadcrumb{
 			{Label: "Home"},
-			{Label: "Account", Current: true},
+			{Label: "Manage"},
+			{Label: "Profile", Current: true},
 		}
 	case RouteSyncHome:
+		label := "Sync"
+		if !m.snapshot.LoggedIn {
+			label = "Enable Sync"
+		}
 		return []shell.Breadcrumb{
 			{Label: "Home"},
-			{Label: "Sync", Current: true},
+			{Label: "Manage"},
+			{Label: label, Current: true},
 		}
 	case RouteDoctorOverview:
 		return []shell.Breadcrumb{

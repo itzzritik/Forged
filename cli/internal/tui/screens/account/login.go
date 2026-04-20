@@ -72,7 +72,7 @@ func renderLink(raw string, copied bool) string {
 		return ""
 	}
 
-	label := theme.BodyStrong.Render("Login URL")
+	label := theme.BodyStrong.Render("Log In Link")
 	if copied {
 		label += "  " + theme.Success.Render("✓") + " " + theme.BodyMuted.Render("Copied")
 	}
@@ -101,12 +101,12 @@ func renderError(message string, width int) string {
 		return ""
 	}
 
-	title := "Sign-in could not start"
+	title := "Unable to start log-in flow"
 	detail := message
 
 	switch {
 	case strings.Contains(message, "could not reach server"):
-		title = "Unable to reach the sign-in service"
+		title = "Unable to reach the log-in service"
 		detail = "Check connectivity, then open the link again."
 	case strings.Contains(message, "timed out"):
 		title = "Approval timed out"

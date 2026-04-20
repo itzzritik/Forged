@@ -66,7 +66,7 @@ const UserIcon = () => (
 
 const LogOutIcon = () => (
 	<svg
-		aria-label="Sign out"
+		aria-label="Log out"
 		fill="none"
 		height="16"
 		role="img"
@@ -157,7 +157,7 @@ export const Sidebar = ({ collapsed, user }: SidebarProps) => {
 				)}
 				{!collapsed && (
 					<button
-						aria-label="Sign out"
+						aria-label="Log out"
 						className="shrink-0 cursor-pointer text-muted-foreground transition-colors hover:text-sidebar-foreground"
 						onClick={async () => {
 							const { clearSyncKey } = await import("@/lib/vault-store");

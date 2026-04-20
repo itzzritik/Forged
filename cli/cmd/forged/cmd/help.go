@@ -49,7 +49,7 @@ func renderRootHelp(w io.Writer) {
 		{
 			Title: "Account",
 			Entries: []helpEntry{
-				{Name: "login", Description: "sign in or create an account"},
+				{Name: "login", Description: "log in or create an account"},
 				{Name: "logout", Description: "remove account access from this machine"},
 				{Name: "sync", Description: "refresh with the cloud"},
 			},

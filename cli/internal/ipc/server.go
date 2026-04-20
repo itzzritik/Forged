@@ -33,6 +33,7 @@ type Server struct {
 	wg          sync.WaitGroup
 	syncBus     *forgedsync.Bus
 	syncLink    func(SyncLinkArgs) error
+	syncUnlink  func() error
 	authBroker  *sensitiveauth.Broker
 	onKeyChange func()
 	onReadSync  func()
@@ -45,6 +46,10 @@ func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
 
 func (s *Server) SetSyncLinkHandler(handler func(SyncLinkArgs) error) {
 	s.syncLink = handler
+}
+
+func (s *Server) SetSyncUnlinkHandler(handler func() error) {
+	s.syncUnlink = handler
 }
 
 func (s *Server) SetSensitiveAuthBroker(broker *sensitiveauth.Broker) {
@@ -162,6 +167,8 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleSyncTrigger(req.Args)
 	case CmdSyncLink:
 		return s.handleSyncLink(req.Args)
+	case CmdSyncUnlink:
+		return s.handleSyncUnlink()
 	case CmdSSHRoutePrepare:
 		return s.handleSSHRoutePrepare(req.Args)
 	case CmdSSHRouteSuccess:
@@ -532,6 +539,16 @@ func (s *Server) handleSyncLink(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("sync link handler unavailable"))
 	}
 	if err := s.syncLink(a); err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(nil)
+}
+
+func (s *Server) handleSyncUnlink() Response {
+	if s.syncUnlink == nil {
+		return ErrorResponse(fmt.Errorf("sync unlink handler unavailable"))
+	}
+	if err := s.syncUnlink(); err != nil {
 		return ErrorResponse(err)
 	}
 	return OkResponse(nil)

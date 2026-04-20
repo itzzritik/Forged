@@ -6,7 +6,9 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/itzzritik/forged/cli/internal/actions"
+	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/tui/components"
+	accountscreen "github.com/itzzritik/forged/cli/internal/tui/screens/account"
 	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
@@ -35,6 +37,7 @@ type manageState struct {
 	changePasswordID int
 	autoReturnID     int
 	syncBusy         bool
+	logoutArmed      bool
 	success          *manageSuccessState
 }
 
@@ -64,6 +67,10 @@ type manageChangePasswordFinishedMsg struct {
 	err    error
 }
 
+type manageLogoutFinishedMsg struct {
+	err error
+}
+
 type manageAutoReturnMsg struct {
 	id int
 }
@@ -77,6 +84,10 @@ func (m *model) isManageSuccessRoute() bool {
 		m.snapshot.VaultExists &&
 		m.session.Current().ID == RouteVaultChangePassword &&
 		m.manage.success != nil
+}
+
+func (m *model) isManageProfileRoute() bool {
+	return m.screen == screenDashboard && m.snapshot.VaultExists && m.session.Current().ID == RouteAccountStatus
 }
 
 func (m *model) manageSuccessTitle() string {
@@ -94,14 +105,18 @@ func (m *model) manageItems() []manageItem {
 	} else {
 		items = append(items, manageItem{
 			ID:      manageItemSignIn,
-			Label:   "Sign In",
-			Summary: "Sign in to enable your Forged profile and synced vault features",
+			Label:   "Log In",
+			Summary: "Log in to enable your Forged profile and synced vault features",
 		})
 	}
 
+	syncLabel := "Sync Now"
+	if !m.snapshot.LoggedIn {
+		syncLabel = "Enable Sync"
+	}
 	items = append(items, manageItem{
 		ID:      manageItemSync,
-		Label:   "Sync Now",
+		Label:   syncLabel,
 		Summary: m.manageSyncSummary(),
 	})
 
@@ -128,7 +143,7 @@ func (m *model) manageItems() []manageItem {
 	if m.snapshot.LoggedIn {
 		items = append(items, manageItem{
 			ID:      manageItemLogout,
-			Label:   "Logout",
+			Label:   "Log Out",
 			Summary: "Log out of your Forged account on this machine",
 		})
 	}
@@ -141,8 +156,8 @@ func (m *model) manageDashboardPages() []dashboardPage {
 	pages := make([]dashboardPage, 0, len(items))
 	for _, item := range items {
 		pages = append(pages, dashboardPage{
-			Label:   item.Label,
-			Summary: item.Summary,
+			Label:   m.manageLabel(item),
+			Summary: m.manageSummaryText(item),
 		})
 	}
 	return pages
@@ -180,7 +195,7 @@ func (m *model) renderManageBody(contentWidth int) string {
 	listItems := make([]components.SelectionListItem, 0, len(items))
 	for index, item := range items {
 		listItems = append(listItems, components.SelectionListItem{
-			Label:    item.Label,
+			Label:    m.manageLabel(item),
 			Selected: index == m.manage.selected,
 		})
 	}
@@ -188,11 +203,24 @@ func (m *model) renderManageBody(contentWidth int) string {
 	sections := make([]string, 0, 3)
 	sections = append(sections, components.RenderSelectionList(listItems, contentWidth, manageListMinHeight))
 
-	if item, ok := m.selectedManageItem(); ok && strings.TrimSpace(item.Summary) != "" {
-		sections = append(sections, "", theme.BodyMuted.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(item.Summary))
+	if item, ok := m.selectedManageItem(); ok {
+		if summary := strings.TrimSpace(m.manageSummaryText(item)); summary != "" {
+			style := theme.BodyMuted
+			if item.ID == manageItemLogout && m.manage.logoutArmed {
+				style = theme.Warning
+			}
+			sections = append(sections, "", style.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(summary))
+		}
 	}
 
 	return strings.Join(sections, "\n")
+}
+
+func (m *model) renderManageProfileBody(contentWidth int) string {
+	return accountscreen.RenderProfile(accountscreen.ProfileScreen{
+		Name:  m.accountDisplayName(),
+		Email: strings.TrimSpace(m.accountEmail),
+	}, contentWidth)
 }
 
 func (m *model) renderManageSuccessBody(contentWidth int) string {
@@ -219,12 +247,14 @@ func (m *model) updateManageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "up", "k":
 		m.notice = notice{}
+		m.manage.logoutArmed = false
 		if m.manage.selected > 0 {
 			m.manage.selected--
 		}
 		return m, nil
 	case "down", "j":
 		m.notice = notice{}
+		m.manage.logoutArmed = false
 		if len(items) > 0 && m.manage.selected < len(items)-1 {
 			m.manage.selected++
 		}
@@ -247,26 +277,54 @@ func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
 	}
 
 	switch item.ID {
+	case manageItemProfile:
+		m.manage.logoutArmed = false
+		m.loadStoredAccountIdentity()
+		if m.session.Current().ID != RouteAccountStatus {
+			m.session.Push(Route{ID: RouteAccountStatus})
+		}
+		return m, m.showCurrentRoute()
+	case manageItemSignIn:
+		m.manage.logoutArmed = false
+		if m.session.Current().ID != RouteAccountLogin {
+			m.session.Push(Route{ID: RouteAccountLogin})
+		}
+		return m, m.startLoginFlow()
 	case manageItemSync:
+		m.manage.logoutArmed = false
 		if !m.snapshot.LoggedIn {
-			if m.session.Current().ID != RouteAccountLogin {
-				m.session.Push(Route{ID: RouteAccountLogin})
+			if m.session.Current().ID != RouteSyncHome {
+				m.session.Push(Route{ID: RouteSyncHome})
 			}
-			return m, m.startLoginFlow()
+			return m, m.showCurrentRoute()
 		}
 		return m, m.runManageSync()
 	case manageItemVaultLock:
+		m.manage.logoutArmed = false
 		return m, m.runManageLock()
 	case manageItemVaultUnlock:
+		m.manage.logoutArmed = false
 		if m.session.Current().ID != RouteVaultUnlock {
 			m.session.Push(Route{ID: RouteVaultUnlock})
 		}
 		return m, m.showCurrentRoute()
 	case manageItemChangePassword:
+		m.manage.logoutArmed = false
 		if m.session.Current().ID != RouteVaultChangePassword {
 			m.session.Push(Route{ID: RouteVaultChangePassword})
 		}
 		return m, m.showCurrentRoute()
+	case manageItemLogout:
+		if !m.snapshot.LoggedIn {
+			m.manage.logoutArmed = false
+			return m, nil
+		}
+		if !m.manage.logoutArmed {
+			m.manage.logoutArmed = true
+			return m, nil
+		}
+		m.manage.logoutArmed = false
+		return m, m.runManageLogout()
 	default:
 		return m, nil
 	}
@@ -288,6 +346,13 @@ func (m *model) runManageSync() tea.Cmd {
 			return manageSyncFinishedMsg{err: triggerSync()}
 		},
 	)
+}
+
+func (m *model) runManageLogout() tea.Cmd {
+	paths := config.DefaultPaths()
+	return func() tea.Msg {
+		return manageLogoutFinishedMsg{err: actions.ClearCredentials(paths)}
+	}
 }
 
 func (m *model) unlockSensitiveCmd(password []byte) tea.Cmd {
@@ -374,6 +439,65 @@ func (m *model) returnFromManageFlow() tea.Cmd {
 	return m.showCurrentRoute()
 }
 
+func (m *model) loadStoredAccountIdentity() {
+	creds, err := actions.LoadCredentials(config.DefaultPaths())
+	if err != nil {
+		return
+	}
+	m.accountEmail = strings.TrimSpace(creds.Email)
+	m.accountName = strings.TrimSpace(creds.Name)
+}
+
+func (m *model) accountDisplayName() string {
+	if name := strings.TrimSpace(m.accountName); name != "" {
+		return name
+	}
+	if email := strings.TrimSpace(m.accountEmail); email != "" {
+		return fallbackAccountNameFromEmail(email)
+	}
+	return ""
+}
+
+func (m *model) manageSummaryText(item manageItem) string {
+	if item.ID == manageItemLogout && m.manage.logoutArmed {
+		return "Are you sure you want to log out? Press Enter again to continue"
+	}
+	return item.Summary
+}
+
+func (m *model) manageLabel(item manageItem) string {
+	if item.ID == manageItemLogout && m.manage.logoutArmed {
+		return "Are you sure?"
+	}
+	return item.Label
+}
+
+func fallbackAccountNameFromEmail(email string) string {
+	local := strings.TrimSpace(email)
+	if local == "" {
+		return ""
+	}
+	if at := strings.Index(local, "@"); at > 0 {
+		local = local[:at]
+	}
+	local = strings.ReplaceAll(local, ".", " ")
+	local = strings.ReplaceAll(local, "_", " ")
+	local = strings.ReplaceAll(local, "-", " ")
+	words := strings.Fields(local)
+	if len(words) == 0 {
+		return ""
+	}
+	for index, word := range words {
+		runes := []rune(strings.ToLower(word))
+		if len(runes) == 0 {
+			continue
+		}
+		runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
+		words[index] = string(runes)
+	}
+	return strings.Join(words, " ")
+}
+
 func (m *model) handleManageLockFinishedMsg(msg manageLockFinishedMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
 		return m, nil
@@ -387,6 +511,24 @@ func (m *model) handleManageLockFinishedMsg(msg manageLockFinishedMsg) (tea.Mode
 func (m *model) handleManageSyncFinishedMsg(msg manageSyncFinishedMsg) (tea.Model, tea.Cmd) {
 	m.manage.syncBusy = false
 	return m, m.pollRuntimeStatus(0)
+}
+
+func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		return m, nil
+	}
+
+	m.snapshot.LoggedIn = false
+	m.accountName = ""
+	m.accountEmail = ""
+	m.manage.syncBusy = false
+	m.manage.logoutArmed = false
+	m.runtimeStatus.Linked = false
+	m.runtimeStatus.Syncing = false
+	m.runtimeStatus.Error = ""
+	m.runtimeStatus.LastSuccessfulPullAt = time.Time{}
+	m.runtimeStatus.LastSuccessfulPushAt = time.Time{}
+	return m, tea.Batch(m.refreshSnapshotCmd(), m.pollRuntimeStatus(0))
 }
 
 func (m *model) handleManageUnlockFinishedMsg(msg manageUnlockFinishedMsg) (tea.Model, tea.Cmd) {
@@ -458,7 +600,7 @@ func (m *model) handleManageAutoReturnMsg(msg manageAutoReturnMsg) (tea.Model, t
 
 func (m *model) manageSyncSummary() string {
 	if !m.snapshot.LoggedIn {
-		return "Sign in to enable multi-device sync"
+		return "Keep your encrypted vault in sync across the devices you trust"
 	}
 	if !m.runtimeLoaded {
 		return "Loading sync state"

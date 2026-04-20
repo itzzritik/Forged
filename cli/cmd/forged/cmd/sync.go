@@ -28,7 +28,7 @@ func saveCredentials(creds syncCredentials) error {
 
 var loginCmd = &cobra.Command{
 	Use:   "login",
-	Short: "Authenticate with cloud server",
+	Short: "Log in to your Forged account",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		server, _ := cmd.Flags().GetString("server")
 
@@ -42,9 +42,9 @@ var loginCmd = &cobra.Command{
 			return err
 		}
 
-		fmt.Println("Opening browser to login...")
+		fmt.Println("Opening browser to log in...")
 		fmt.Printf("Verification code: %s\n", session.VerificationCode)
-		fmt.Printf("Login URL:\n  %s\n\n", session.URL)
+		fmt.Printf("Log In Link:\n  %s\n\n", session.URL)
 		fmt.Println("Waiting for authentication...")
 
 		creds, err := session.Wait(cmd.Context())
@@ -62,7 +62,7 @@ var loginCmd = &cobra.Command{
 
 var registerCmd = &cobra.Command{
 	Use:   "register",
-	Short: "Create cloud account (same as login)",
+	Short: "Create cloud account (same as log in)",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		return loginCmd.RunE(cmd, args)
 	},
@@ -70,12 +70,12 @@ var registerCmd = &cobra.Command{
 
 var logoutCmd = &cobra.Command{
 	Use:   "logout",
-	Short: "Clear cloud credentials",
+	Short: "Log out and unlink sync on this machine",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if err := actions.ClearCredentials(config.DefaultPaths()); err != nil {
 			return err
 		}
-		fmt.Println("Logged out")
+		fmt.Println("Logged out and unlinked sync")
 		return nil
 	},
 }

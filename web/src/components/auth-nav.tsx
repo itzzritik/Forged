@@ -21,7 +21,7 @@ export function AuthNavButton() {
 
 	return (
 		<GlitchButton className="h-8 px-5 text-[12px]" href="/login">
-			Sign in
+			Log in
 		</GlitchButton>
 	);
 }
