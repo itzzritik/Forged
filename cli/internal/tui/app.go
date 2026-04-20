@@ -69,6 +69,7 @@ const (
 	passwordCreate       passwordFlow = "create"
 	passwordRestore      passwordFlow = "restore"
 	passwordRepair       passwordFlow = "repair"
+	passwordDoctorRepair passwordFlow = "doctor-repair"
 	passwordKeyView      passwordFlow = "key-view"
 	passwordKeyExport    passwordFlow = "key-export"
 	passwordManageUnlock passwordFlow = "manage-unlock"
@@ -82,6 +83,7 @@ const (
 	repairPurposeSetup     repairPurpose = "setup"
 	repairPurposeUnlock    repairPurpose = "unlock"
 	repairPurposePostLogin repairPurpose = "post-login"
+	repairPurposeDoctor    repairPurpose = "doctor"
 )
 
 type setupVariant string
@@ -886,6 +888,9 @@ func (m *model) headerPageTitle() string {
 		if m.isAgentSigningRoute() {
 			return "Commit Signing"
 		}
+		if m.isDoctorOverviewRoute() {
+			return "Doctor"
+		}
 		if section := m.currentDashboardSection(); section != nil {
 			return section.Title
 		}
@@ -957,6 +962,12 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 				{Label: "Commit Signing", Current: true},
 			}
 		}
+		if m.isDoctorOverviewRoute() {
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Doctor", Current: true},
+			}
+		}
 		if section := m.currentDashboardSection(); section != nil {
 			return []shell.Breadcrumb{
 				{Label: "Home"},
@@ -997,6 +1008,12 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 				{Label: "Home"},
 				{Label: "Manage"},
 				{Label: "Change Master Password", Current: true},
+			}
+		case passwordDoctorRepair:
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Doctor"},
+				{Label: "Fix Issues", Current: true},
 			}
 		}
 		label := "Unlock"
@@ -1078,6 +1095,12 @@ func (m *model) renderBody(contentWidth int) string {
 		}
 		if m.isAgentSigningRoute() {
 			return m.renderAgentSigningBody(contentWidth)
+		}
+		if m.isDoctorDashboardTab() {
+			return m.renderDoctorDashboardBody(contentWidth)
+		}
+		if m.isDoctorOverviewRoute() {
+			return m.renderDoctorBody(contentWidth)
 		}
 		if section := m.currentDashboardSection(); section != nil {
 			return m.renderDashboardSection(contentWidth, *section)
@@ -1285,6 +1308,12 @@ func (m *model) footerActions() []shell.FooterAction {
 			actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 			return actions
 		}
+		if m.isDoctorDashboardTab() {
+			return m.doctorFooterActions(true)
+		}
+		if m.isDoctorOverviewRoute() {
+			return m.doctorFooterActions(false)
+		}
 		if m.isWelcomeState() {
 			return []shell.FooterAction{
 				{Key: "↑/↓", Label: "Move"},
@@ -1379,6 +1408,14 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateAgentSigningKeys(msg)
 	}
 
+	if m.isDoctorDashboardTab() {
+		return m.updateDoctorDashboardKeys(msg)
+	}
+
+	if m.isDoctorOverviewRoute() {
+		return m.updateDoctorKeys(msg)
+	}
+
 	if m.currentDashboardSection() != nil {
 		switch msg.String() {
 		case "esc":
@@ -1428,27 +1465,9 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		case "left", "h":
-			if m.dashboardTabIndex > 0 {
-				m.dashboardTabIndex--
-			}
-			if tabs[m.dashboardTabIndex].Label == "Manage" {
-				return m, m.probeSensitiveStateCmd()
-			}
-			if tabs[m.dashboardTabIndex].Label == "Agent" {
-				return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSigningStatusCmd())
-			}
-			return m, nil
+			return m, m.switchDashboardTab(-1, tabs)
 		case "right", "l":
-			if m.dashboardTabIndex < len(tabs)-1 {
-				m.dashboardTabIndex++
-			}
-			if tabs[m.dashboardTabIndex].Label == "Manage" {
-				return m, m.probeSensitiveStateCmd()
-			}
-			if tabs[m.dashboardTabIndex].Label == "Agent" {
-				return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSigningStatusCmd())
-			}
-			return m, nil
+			return m, m.switchDashboardTab(1, tabs)
 		case "enter":
 			if tabs[m.dashboardTabIndex].Label == "Manage" {
 				items := m.manageItems()
@@ -1639,6 +1658,12 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.submitManageUnlock(password)
+		case passwordDoctorRepair:
+			if err != nil {
+				m.passwordInput.SetError(err.Error())
+				return m, nil
+			}
+			return m, m.startDoctorRepair(password)
 		case passwordManageChange:
 			return m, m.submitManageChangePassword()
 		default:
@@ -1696,10 +1721,7 @@ func (m *model) dashboardTabs() []dashboardTab {
 		},
 		{
 			Label: "Doctor",
-			Pages: []dashboardPage{
-				{Label: "Overview", Summary: "Review system health and current checks", Route: RouteDoctorOverview},
-				{Label: "Fix issues", Summary: "Repair runtime issues on this machine", Route: RouteDoctorOverview},
-			},
+			Pages: nil,
 		},
 	}
 }
@@ -1784,18 +1806,32 @@ func (m *model) dashboardRootScreen() ([]dashboardscreen.Tab, []dashboardscreen.
 	return tabItems, pageItems, summary
 }
 
-func (m *model) dashboardAreaRoute(label string) RouteID {
-	switch label {
-	case "Key":
-		return RouteKeysBrowser
+func (m *model) switchDashboardTab(delta int, tabs []dashboardTab) tea.Cmd {
+	if len(tabs) == 0 || delta == 0 {
+		return nil
+	}
+
+	next := m.dashboardTabIndex + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(tabs) {
+		next = len(tabs) - 1
+	}
+	if next == m.dashboardTabIndex {
+		return nil
+	}
+
+	m.dashboardTabIndex = next
+	switch tabs[m.dashboardTabIndex].Label {
 	case "Manage":
-		return RouteVaultHome
+		return m.probeSensitiveStateCmd()
 	case "Agent":
-		return RouteAgentHome
+		return tea.Batch(m.refreshSnapshotCmd(), m.loadSigningStatusCmd())
 	case "Doctor":
-		return RouteDoctorOverview
+		return m.refreshSnapshotCmd()
 	default:
-		return ""
+		return nil
 	}
 }
 
@@ -1837,15 +1873,6 @@ func (m *model) currentDashboardSection() *dashboardSection {
 			Title:   "Sync",
 			Context: context,
 			Actions: actions,
-		}
-	case RouteDoctorOverview:
-		return &dashboardSection{
-			Title:   "Doctor",
-			Context: "Inspect runtime health, check the local service, and surface issues that need attention on this machine.",
-			Actions: []dashboardSectionAction{
-				{Label: "Health overview", Description: "Review the current machine health contract"},
-				{Label: "Fix issues", Description: "Run the guided repair flow when the machine needs attention"},
-			},
 		}
 	default:
 		return nil
@@ -2085,7 +2112,7 @@ func (m *model) startRepair(purpose repairPurpose, password []byte, createVaultF
 			}
 
 			opts := readiness.RunOptions{
-				Mode: readiness.ModeInteractiveLauncher,
+				Mode: m.repairModeForPurpose(purpose),
 				Progress: func(stage readiness.ProgressStage) {
 					if !(createVaultFirst && stage == readiness.ProgressVault) {
 						progress(stage)
@@ -2157,6 +2184,10 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 		if m.repairUsedPassword {
 			errorText = "That password did not unlock this device."
 		}
+		if m.repairPurpose == repairPurposeDoctor {
+			m.showPasswordScreenOnRoute(RouteVaultUnlock, passwordDoctorRepair, m.repairAuthEmail, errorText, false)
+			return m.passwordInput.Init()
+		}
 		m.showPasswordScreen(m.passwordFlowForSnapshot(result.Snapshot), m.repairAuthEmail, errorText, m.repairAuthEmail != "")
 		return m.passwordInput.Init()
 	case readiness.NextActionNeedsInteractiveSetup:
@@ -2214,6 +2245,13 @@ func (m *model) startStartupRepair() tea.Cmd {
 		"Reviewing the current state and applying safe fixes where needed.",
 		"",
 	)
+}
+
+func (m *model) repairModeForPurpose(purpose repairPurpose) readiness.Mode {
+	if purpose == repairPurposeDoctor {
+		return readiness.ModeInteractiveDoctor
+	}
+	return readiness.ModeInteractiveLauncher
 }
 
 func (m *model) restartAfterVaultReady() tea.Cmd {
@@ -2279,6 +2317,10 @@ func (m *model) showPasswordScreenOnRoute(route RouteID, flow passwordFlow, auth
 		m.passwordTitle = "Change Master Password"
 		m.passwordContext = "Enter your current password, then choose a new master password for this vault."
 		m.passwordInput = components.NewChangePasswordInput()
+	case passwordDoctorRepair:
+		m.passwordTitle = "Fix Issues"
+		m.passwordContext = "Enter your master password to repair this machine and restore secure access."
+		m.passwordInput = components.NewUnlockPasswordInput()
 	default:
 		m.passwordTitle = "Unlock Forged"
 		m.passwordContext = "Enter your master password to verify the local vault and finish repairing the background service."
@@ -2317,6 +2359,9 @@ func (m *model) showCurrentRoute() tea.Cmd {
 	case RouteVaultHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
 		if m.session.Current().ID == RouteVaultHome {
 			return m.probeSensitiveStateCmd()
+		}
+		if m.session.Current().ID == RouteDoctorOverview {
+			return m.refreshSnapshotCmd()
 		}
 		return nil
 	default:
