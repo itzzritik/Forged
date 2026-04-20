@@ -15,12 +15,6 @@ func ResolveCommand(path []string, args []string) Intent {
 		return intent
 	case "login":
 		return intentWithEntry(intent, RouteAccountLogin)
-	case "logout":
-		return intentWithEntry(intent, RouteAccountLogout)
-	case "sync":
-		return intentWithEntry(intent, RouteSyncRun)
-	case "sync status":
-		return intentWithEntry(intent, RouteSyncStatus)
 	case "doctor":
 		return intentWithEntry(intent, RouteDoctorOverview)
 	case "key":
@@ -69,9 +63,9 @@ func ResolveCommand(path []string, args []string) Intent {
 	case "agent":
 		return intentWithEntry(intent, RouteAgentHome)
 	case "agent enable":
-		return intentWithEntry(intent, RouteAgentEnable)
+		return intentWithEntry(intent, RouteAgentHome)
 	case "agent disable":
-		return intentWithEntry(intent, RouteAgentDisable)
+		return intentWithEntry(intent, RouteAgentHome)
 	case "agent signing":
 		intent = intentWithEntry(intent, RouteAgentSigning)
 		if len(args) > 0 {

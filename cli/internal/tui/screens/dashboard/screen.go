@@ -5,6 +5,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/tui/components"
+	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -95,24 +96,29 @@ func Render(screen Screen, width int) string {
 }
 
 func renderTabbedDashboard(screen Screen, width int) string {
-	sections := make([]string, 0, 6)
+	topSections := make([]string, 0, 5)
 	if notice := renderNotice(screen.Notice); notice != "" {
-		sections = append(sections, notice, "")
+		topSections = append(topSections, notice, "")
 	}
 
 	tabWidth := max(16, width)
-	sections = append(sections, renderTabs(screen.Tabs, tabWidth))
+	topSections = append(topSections, renderTabs(screen.Tabs, tabWidth))
 
 	if len(screen.Pages) > 0 {
-		sections = append(sections, strings.Repeat("\n", tabPageGap-1))
-		sections = append(sections, renderPages(screen.Pages, width))
+		topSections = append(topSections, strings.Repeat("\n", tabPageGap-1))
+		topSections = append(topSections, renderPages(screen.Pages, width))
 	}
 
-	if strings.TrimSpace(screen.Summary) != "" {
-		sections = append(sections, "", theme.BodyMuted.Width(max(24, min(width, theme.HeroMaxWidth))).Render(screen.Summary))
+	top := strings.Join(topSections, "\n")
+	if strings.TrimSpace(screen.Summary) == "" {
+		return top
 	}
 
-	return strings.Join(sections, "\n")
+	bottom := theme.BodyMuted.Width(max(24, min(width, theme.HeroMaxWidth))).Render(screen.Summary)
+	if strings.TrimSpace(top) != "" {
+		top += "\n"
+	}
+	return shell.DockBottom(top, bottom)
 }
 
 func renderDashboard(screen Screen, width int) string {

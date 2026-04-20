@@ -186,11 +186,6 @@ type SensitiveState struct {
 	Known    bool
 }
 
-type dashboardSectionAction struct {
-	Label       string
-	Description string
-}
-
 type dashboardPage struct {
 	Label   string
 	Summary string
@@ -205,7 +200,6 @@ type dashboardTab struct {
 type dashboardSection struct {
 	Title   string
 	Context string
-	Actions []dashboardSectionAction
 }
 
 type systemHeaderState string
@@ -260,6 +254,7 @@ type model struct {
 
 	spinner spinner.Model
 	width   int
+	height  int
 	result  Result
 
 	screen   screenMode
@@ -472,6 +467,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		m.width = msg.Width
+		m.height = msg.Height
 		if m.passwordInput != nil {
 			m.passwordInput.SetWidth(max(18, shell.ClampBlockWidth(m.width, 40)-4))
 		}
@@ -772,7 +768,7 @@ func (m *model) View() string {
 	footer := shell.RenderFooter(m.footerActions()...)
 	tightFooter := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isAgentSigningRoute()
 	tightBody := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isTabbedDashboardRoot()
-	return shell.Render(m.width, header, body, footer, tightFooter, tightBody)
+	return shell.Render(m.width, m.height, header, body, footer, tightFooter, tightBody)
 }
 
 func (m *model) isTabbedDashboardRoot() bool {
@@ -1223,29 +1219,7 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 }
 
 func (m *model) renderDashboardSection(contentWidth int, section dashboardSection) string {
-	sections := make([]string, 0, len(section.Actions)*4+2)
-
-	if strings.TrimSpace(section.Context) != "" {
-		sections = append(sections, theme.Body.Width(max(28, min(contentWidth, theme.HeroMaxWidth))).Render(section.Context))
-	}
-
-	if len(section.Actions) > 0 {
-		if len(sections) > 0 {
-			sections = append(sections, "")
-		}
-		for index, action := range section.Actions {
-			sections = append(sections, theme.Bullet.Render("•")+" "+theme.BodyStrong.Render(action.Label))
-			if strings.TrimSpace(action.Description) != "" {
-				desc := theme.BodyMuted.Width(max(24, min(contentWidth-2, theme.HeroMaxWidth))).Render(action.Description)
-				sections = append(sections, shell.IndentBlock(desc, 2))
-			}
-			if index < len(section.Actions)-1 {
-				sections = append(sections, "")
-			}
-		}
-	}
-
-	return strings.Join(sections, "\n")
+	return theme.Body.Width(max(28, min(contentWidth, theme.HeroMaxWidth))).Render(strings.TrimSpace(section.Context))
 }
 
 func (m *model) footerActions() []shell.FooterAction {
@@ -1910,22 +1884,6 @@ func (m *model) currentDashboardSection() *dashboardSection {
 	}
 
 	switch m.session.Current().ID {
-	case RouteAccountStatus:
-		context := "Review your Forged account and manage the features linked to this machine."
-		if email := strings.TrimSpace(m.accountEmail); email != "" {
-			context = "Logged in as " + email + " and ready to manage linked account access on this machine."
-		}
-		actions := []dashboardSectionAction{
-			{Label: "Profile", Description: "Review logged-in account identity and linked access"},
-		}
-		if m.snapshot.LoggedIn {
-			actions = append(actions, dashboardSectionAction{Label: "Log Out", Description: "Remove linked account access from this machine"})
-		}
-		return &dashboardSection{
-			Title:   "Account",
-			Context: context,
-			Actions: actions,
-		}
 	case RouteSyncHome:
 		if !m.snapshot.LoggedIn {
 			return &dashboardSection{

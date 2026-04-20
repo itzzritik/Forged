@@ -10,6 +10,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/tui/components"
 	accountscreen "github.com/itzzritik/forged/cli/internal/tui/screens/account"
 	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
+	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -200,8 +201,8 @@ func (m *model) renderManageBody(contentWidth int) string {
 		})
 	}
 
-	sections := make([]string, 0, 3)
-	sections = append(sections, components.RenderSelectionList(listItems, contentWidth, manageListMinHeight))
+	top := components.RenderSelectionList(listItems, contentWidth, manageListMinHeight)
+	bottom := ""
 
 	if item, ok := m.selectedManageItem(); ok {
 		if summary := strings.TrimSpace(m.manageSummaryText(item)); summary != "" {
@@ -209,11 +210,14 @@ func (m *model) renderManageBody(contentWidth int) string {
 			if item.ID == manageItemLogout && m.manage.logoutArmed {
 				style = theme.Warning
 			}
-			sections = append(sections, "", style.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(summary))
+			bottom = style.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(summary)
 		}
 	}
 
-	return strings.Join(sections, "\n")
+	if bottom == "" {
+		return top
+	}
+	return shell.DockBottom(top+"\n", bottom)
 }
 
 func (m *model) renderManageProfileBody(contentWidth int) string {

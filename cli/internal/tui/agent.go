@@ -158,13 +158,19 @@ func (m *model) renderAgentBody(contentWidth int) string {
 	}
 
 	sections := []string{components.RenderSelectionList(listItems, contentWidth, agentListMinHeight)}
+	bottomSections := make([]string, 0, 2)
 	if item, ok := m.selectedAgentItem(); ok && strings.TrimSpace(item.Summary) != "" {
-		sections = append(sections, "", theme.BodyMuted.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(item.Summary))
+		bottomSections = append(bottomSections, theme.BodyMuted.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(item.Summary))
 	}
 	if errText := strings.TrimSpace(m.agent.statusErr); errText != "" {
-		sections = append(sections, "", theme.Danger.Render("✕ "+errText))
+		bottomSections = append(bottomSections, theme.Danger.Render("✕ "+errText))
 	}
-	return strings.Join(sections, "\n")
+
+	top := strings.Join(sections, "\n")
+	if len(bottomSections) == 0 {
+		return top
+	}
+	return shell.DockBottom(top+"\n", strings.Join(bottomSections, "\n\n"))
 }
 
 func (m *model) renderAgentSigningBody(contentWidth int) string {

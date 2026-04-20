@@ -8,14 +8,10 @@ const (
 	RouteRepairResult  RouteID = "repair/result"
 
 	RouteAccountLogin  RouteID = "account/login"
-	RouteAccountLogout RouteID = "account/logout"
 	RouteAccountStatus RouteID = "account/status"
 
-	RouteSyncHome   RouteID = "sync/home"
-	RouteSyncStatus RouteID = "sync/status"
-	RouteSyncRun    RouteID = "sync/run"
+	RouteSyncHome RouteID = "sync/home"
 
-	RouteKeysHome     RouteID = "keys/home"
 	RouteKeysBrowser  RouteID = "keys/browser"
 	RouteKeysDetail   RouteID = "keys/detail"
 	RouteKeysRename   RouteID = "keys/rename"
@@ -30,8 +26,6 @@ const (
 	RouteVaultChangePassword RouteID = "vault/change-password"
 
 	RouteAgentHome    RouteID = "agent/home"
-	RouteAgentEnable  RouteID = "agent/enable"
-	RouteAgentDisable RouteID = "agent/disable"
 	RouteAgentSigning RouteID = "agent/signing"
 
 	RouteDoctorOverview RouteID = "doctor/overview"

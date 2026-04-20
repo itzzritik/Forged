@@ -35,20 +35,28 @@ type BrowserScreen struct {
 
 func RenderBrowser(screen BrowserScreen, spinner string, width int) string {
 	contentWidth := max(36, width)
-	sections := []string{}
+	searchField := renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth)
 
 	if screen.Loading {
-		sections = append(sections, theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" Loading keys"))
-		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth)), "\n")
+		top := strings.Join([]string{
+			theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " Loading keys"),
+			"",
+		}, "\n")
+		return shell.DockBottom(top, searchField)
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
-		sections = append(sections, theme.Danger.Render("✕ "+displayMessage(msg)))
-		return strings.Join(append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth)), "\n")
+		top := strings.Join([]string{
+			theme.Danger.Render("✕ " + displayMessage(msg)),
+			"",
+		}, "\n")
+		return shell.DockBottom(top, searchField)
 	}
 
-	sections = append(sections, renderBrowserTable(screen, contentWidth))
-	sections = append(sections, "", renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth))
-	return strings.Join(sections, "\n")
+	top := strings.Join([]string{
+		renderBrowserTable(screen, contentWidth),
+		"",
+	}, "\n")
+	return shell.DockBottom(top, searchField)
 }
 
 func VisibleRows() int {
