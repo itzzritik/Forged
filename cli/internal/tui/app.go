@@ -827,7 +827,7 @@ func (m *model) systemHeaderItem() shell.StatusItem {
 	case systemHeaderChecking:
 		return shell.StatusItem{Label: "Checking health", Icon: m.spinner.View()}
 	case systemHeaderFixing:
-		return shell.StatusItem{Label: "Restoring Health", Icon: m.spinner.View()}
+		return shell.StatusItem{Label: "Restoring health", Icon: m.spinner.View()}
 	case systemHeaderHealthy:
 		return shell.StatusItem{Label: "System healthy", Tone: shell.StatusToneSuccess}
 	default:
@@ -841,11 +841,11 @@ func (m *model) commitSigningHeaderItem() shell.StatusItem {
 	}
 	switch m.signingStatus.Mode {
 	case actions.CommitSigningForged:
-		return shell.StatusItem{Label: "Commits signing", Tone: shell.StatusToneSuccess}
+		return shell.StatusItem{Label: "Commit signing", Tone: shell.StatusToneSuccess}
 	case actions.CommitSigningExternal:
 		return shell.StatusItem{Label: "External signing", Tone: shell.StatusToneWarning}
 	default:
-		return shell.StatusItem{Label: "Commits not signing", Tone: shell.StatusToneWarning}
+		return shell.StatusItem{Label: "Commit not signing", Tone: shell.StatusToneWarning}
 	}
 }
 

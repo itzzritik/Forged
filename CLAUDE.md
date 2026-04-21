@@ -1,7 +1,1 @@
-- Minimal, clean, modular code. No bloat, no redundancy.
-- No unnecessary comments. Only comment *why*, never *what*.
-- Never use em dash characters.
-- Latest stable versions for all dependencies. Always verify docs before implementing.
-- Read `ARCHITECTURE.md` for design decisions and phase/batch breakdown.
-- Prefer stdlib over third-party when adequate.
-- Wrap errors with context: `fmt.Errorf("doing x: %w", err)`.
+@AGENTS.md
