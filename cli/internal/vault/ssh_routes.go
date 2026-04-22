@@ -22,10 +22,10 @@ func (ks *KeyStore) SSHRoutes() map[string]SSHRoute {
 
 func (ks *KeyStore) RecordSSHRoute(target, fingerprint string, updated time.Time) error {
 	if target == "" {
-		return fmt.Errorf("empty ssh route target")
+		return fmt.Errorf("Empty SSH route target")
 	}
 	if fingerprint == "" {
-		return fmt.Errorf("empty ssh route key")
+		return fmt.Errorf("Empty SSH route key")
 	}
 
 	ks.mu.Lock()
@@ -44,7 +44,7 @@ func (ks *KeyStore) RecordSSHRoute(target, fingerprint string, updated time.Time
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.SSH.Routes = originalRoutes
 		ks.vault.Data.VersionVector = originalVersionVector
-		return fmt.Errorf("saving vault: %w", err)
+		return fmt.Errorf("Saving vault: %w", err)
 	}
 
 	return nil
@@ -52,7 +52,7 @@ func (ks *KeyStore) RecordSSHRoute(target, fingerprint string, updated time.Time
 
 func (ks *KeyStore) ClearSSHRoute(target string, updated time.Time) error {
 	if target == "" {
-		return fmt.Errorf("empty ssh route target")
+		return fmt.Errorf("Empty SSH route target")
 	}
 
 	ks.mu.Lock()
@@ -70,7 +70,7 @@ func (ks *KeyStore) ClearSSHRoute(target string, updated time.Time) error {
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.SSH.Routes = originalRoutes
 		ks.vault.Data.VersionVector = originalVersionVector
-		return fmt.Errorf("saving vault: %w", err)
+		return fmt.Errorf("Saving vault: %w", err)
 	}
 
 	return nil

@@ -55,13 +55,13 @@ func New(paths config.Paths) *Daemon {
 
 func (d *Daemon) Run(password []byte) error {
 	if err := d.setupLogging(); err != nil {
-		return fmt.Errorf("setting up logging: %w", err)
+		return fmt.Errorf("Setting up logging: %w", err)
 	}
 
 	d.logger.Info("starting forged daemon")
 
 	if err := d.cleanStaleState(); err != nil {
-		return fmt.Errorf("cleaning stale state: %w", err)
+		return fmt.Errorf("Cleaning stale state: %w", err)
 	}
 
 	defer d.shutdown()
@@ -139,7 +139,7 @@ func (d *Daemon) refreshSSHRouting() error {
 	}
 	if err := d.sshRouting.Refresh(); err != nil {
 		d.logger.Warn("refreshing ssh routing failed", "error", err)
-		return fmt.Errorf("refreshing ssh routing: %w", err)
+		return fmt.Errorf("Refreshing SSH routing: %w", err)
 	}
 	return nil
 }
@@ -168,7 +168,7 @@ func (d *Daemon) setupLogging() error {
 func (d *Daemon) cleanStaleState() error {
 	for _, sock := range []string{d.paths.AgentSocket(), d.paths.CtlSocket()} {
 		if err := platform.CleanStaleSocket(sock); err != nil {
-			return fmt.Errorf("socket %s: %w", sock, err)
+			return fmt.Errorf("Socket %s: %w", sock, err)
 		}
 	}
 
@@ -179,13 +179,13 @@ func (d *Daemon) cleanStaleState() error {
 				if err := process.Signal(syscall.Signal(0)); err == nil {
 					if command, inspectErr := processCommandLine(pid); inspectErr == nil {
 						if isForgedDaemonCommand(command) {
-							return fmt.Errorf("daemon already running (PID %d)", pid)
+							return fmt.Errorf("Daemon already running (PID %d)", pid)
 						}
 						if d.logger != nil {
 							d.logger.Warn("ignoring stale daemon pid file because pid belongs to another process", "pid", pid, "command", command)
 						}
 					} else {
-						return fmt.Errorf("daemon already running (PID %d)", pid)
+						return fmt.Errorf("Daemon already running (PID %d)", pid)
 					}
 				}
 			}
@@ -199,7 +199,7 @@ func (d *Daemon) cleanStaleState() error {
 func (d *Daemon) writePID() error {
 	pidPath := d.paths.PIDFile()
 	if err := os.MkdirAll(filepath.Dir(pidPath), 0700); err != nil {
-		return fmt.Errorf("creating pid directory: %w", err)
+		return fmt.Errorf("Creating PID directory: %w", err)
 	}
 	return os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0600)
 }
@@ -207,7 +207,7 @@ func (d *Daemon) writePID() error {
 func (d *Daemon) startIPC() error {
 	ctlPath := d.paths.CtlSocket()
 	if err := os.MkdirAll(filepath.Dir(ctlPath), 0700); err != nil {
-		return fmt.Errorf("creating socket directory: %w", err)
+		return fmt.Errorf("Creating socket directory: %w", err)
 	}
 
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
@@ -229,7 +229,7 @@ func (d *Daemon) startIPC() error {
 	})
 	d.ipcServer.SetSSHRouteHandler(d.routeService)
 	if err := d.ipcServer.Start(); err != nil {
-		return fmt.Errorf("starting ipc server: %w", err)
+		return fmt.Errorf("Starting IPC server: %w", err)
 	}
 
 	d.logger.Info("ipc server started", "socket", ctlPath)
@@ -239,7 +239,7 @@ func (d *Daemon) startIPC() error {
 func (d *Daemon) startAgent() error {
 	agentPath := d.paths.AgentSocket()
 	if err := os.MkdirAll(filepath.Dir(agentPath), 0700); err != nil {
-		return fmt.Errorf("creating socket directory: %w", err)
+		return fmt.Errorf("Creating socket directory: %w", err)
 	}
 
 	d.agent = forgedagent.New(d.keyStore)
@@ -248,7 +248,7 @@ func (d *Daemon) startAgent() error {
 	d.agent.SetSensitiveAuthorizer(d.authBroker)
 	d.agentServer = forgedagent.NewServer(agentPath, d.agent, d.logger)
 	if err := d.agentServer.Start(); err != nil {
-		return fmt.Errorf("starting agent server: %w", err)
+		return fmt.Errorf("Starting agent server: %w", err)
 	}
 
 	d.logger.Info("ssh agent started", "socket", agentPath)
@@ -298,13 +298,13 @@ func (d *Daemon) initSync() {
 
 func (d *Daemon) configureSync(creds syncCredentials) (*forgedsync.SyncState, error) {
 	if d.vault == nil {
-		return nil, fmt.Errorf("vault is locked; open Forged to unlock")
+		return nil, fmt.Errorf("Vault is locked; open Forged to unlock")
 	}
 
 	stateStore := forgedsync.NewStateStore(d.paths.SyncStateFile())
 	state, err := stateStore.Load()
 	if err != nil {
-		return nil, fmt.Errorf("loading sync state: %w", err)
+		return nil, fmt.Errorf("Loading sync state: %w", err)
 	}
 	if state == nil {
 		defaultState := forgedsync.DefaultSyncState(uuid.NewString())
@@ -336,7 +336,7 @@ func (d *Daemon) configureSync(creds syncCredentials) (*forgedsync.SyncState, er
 
 func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
 	if !d.HasActiveSession() {
-		return fmt.Errorf("vault is locked; open Forged to unlock")
+		return fmt.Errorf("Vault is locked; open Forged to unlock")
 	}
 	if _, err := d.configureSync(syncCredentials{
 		ServerURL: args.ServerURL,
@@ -346,7 +346,7 @@ func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
 		return err
 	}
 	if d.syncBus == nil {
-		return fmt.Errorf("sync bus unavailable")
+		return fmt.Errorf("Sync bus unavailable")
 	}
 	if args.UserID == "" {
 		return nil
@@ -374,10 +374,10 @@ func (d *Daemon) handleSyncUnlink() error {
 	}
 
 	if err := os.Remove(d.paths.SyncStateFile()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing sync state: %w", err)
+		return fmt.Errorf("Removing sync state: %w", err)
 	}
 	if err := os.Remove(d.paths.SyncDirtyFile()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("removing sync dirty flag: %w", err)
+		return fmt.Errorf("Removing sync dirty flag: %w", err)
 	}
 
 	d.logger.Info("sync unlinked")
@@ -429,7 +429,7 @@ func (d *Daemon) hydrateWithPassword(password []byte) error {
 		v, err = vault.Open(vaultPath, password)
 	}
 	if err != nil {
-		return fmt.Errorf("vault: %w", err)
+		return fmt.Errorf("Vault: %w", err)
 	}
 	return d.activateVaultLocked(v, "master_password")
 }
@@ -444,7 +444,7 @@ func (d *Daemon) hydrateWithSymmetricKey(symmetricKey []byte, source string) err
 
 	v, err := vault.OpenWithSymmetricKey(d.paths.VaultFile(), symmetricKey)
 	if err != nil {
-		return fmt.Errorf("vault: %w", err)
+		return fmt.Errorf("Vault: %w", err)
 	}
 	return d.activateVaultLocked(v, source)
 }
@@ -585,7 +585,7 @@ func IsRunning(paths config.Paths) (int, bool) {
 
 func processCommandLine(pid int) (string, error) {
 	if runtime.GOOS == "windows" {
-		return "", fmt.Errorf("process inspection unavailable")
+		return "", fmt.Errorf("Process inspection unavailable")
 	}
 	output, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
 	if err != nil {

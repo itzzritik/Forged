@@ -17,7 +17,7 @@ const (
 
 func DecideFirstLinkAction(state SyncState, linkedUserID string, local, remote vault.VaultData, remoteExists bool) (vault.VaultData, FirstLinkAction, error) {
 	if state.LinkedUserID != "" && state.LinkedUserID != linkedUserID {
-		return vault.VaultData{}, "", fmt.Errorf("local vault is linked to a different account")
+		return vault.VaultData{}, "", fmt.Errorf("Local vault is linked to a different account")
 	}
 
 	alreadyLinked := state.LinkedUserID == linkedUserID && (state.LastKnownServerVersion > 0 || len(state.LastSyncedBaseBlob) > 0)

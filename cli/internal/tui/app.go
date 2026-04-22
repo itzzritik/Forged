@@ -378,51 +378,51 @@ type model struct {
 func Run(intent Intent, deps Dependencies) (Result, error) {
 	switch {
 	case deps.Repair == nil:
-		return Result{}, fmt.Errorf("tui repair dependency is required")
+		return Result{}, fmt.Errorf("TUI repair dependency is required")
 	case deps.CreateVault == nil:
-		return Result{}, fmt.Errorf("tui create-vault dependency is required")
+		return Result{}, fmt.Errorf("TUI create-vault dependency is required")
 	case deps.RestoreVault == nil:
-		return Result{}, fmt.Errorf("tui restore-vault dependency is required")
+		return Result{}, fmt.Errorf("TUI restore-vault dependency is required")
 	case deps.StartLogin == nil:
-		return Result{}, fmt.Errorf("tui login dependency is required")
+		return Result{}, fmt.Errorf("TUI log-in dependency is required")
 	case deps.SaveCredentials == nil:
-		return Result{}, fmt.Errorf("tui save-credentials dependency is required")
+		return Result{}, fmt.Errorf("TUI save-credentials dependency is required")
 	case deps.TriggerSync == nil:
-		return Result{}, fmt.Errorf("tui trigger-sync dependency is required")
+		return Result{}, fmt.Errorf("TUI trigger-sync dependency is required")
 	case deps.LockSensitive == nil:
-		return Result{}, fmt.Errorf("tui lock-sensitive dependency is required")
+		return Result{}, fmt.Errorf("TUI lock-sensitive dependency is required")
 	case deps.LoadSnapshot == nil:
-		return Result{}, fmt.Errorf("tui load-snapshot dependency is required")
+		return Result{}, fmt.Errorf("TUI load-snapshot dependency is required")
 	case deps.LoadStatus == nil:
-		return Result{}, fmt.Errorf("tui load-status dependency is required")
+		return Result{}, fmt.Errorf("TUI load-status dependency is required")
 	case deps.LoadSecurityState == nil:
-		return Result{}, fmt.Errorf("tui load-security-state dependency is required")
+		return Result{}, fmt.Errorf("TUI load-security-state dependency is required")
 	case deps.SetMasterPasswordInterval == nil:
-		return Result{}, fmt.Errorf("tui set-master-password-interval dependency is required")
+		return Result{}, fmt.Errorf("TUI set-master-password-interval dependency is required")
 	case deps.SetExternalUsePolicy == nil:
-		return Result{}, fmt.Errorf("tui set-external-use-policy dependency is required")
+		return Result{}, fmt.Errorf("TUI set-external-use-policy dependency is required")
 	case deps.ProbeSensitive == nil:
-		return Result{}, fmt.Errorf("tui probe-sensitive dependency is required")
+		return Result{}, fmt.Errorf("TUI probe-sensitive dependency is required")
 	case deps.HasLocalUnlockTrust == nil:
-		return Result{}, fmt.Errorf("tui local-unlock-trust dependency is required")
+		return Result{}, fmt.Errorf("TUI local-unlock-trust dependency is required")
 	case deps.UnlockSensitiveLaunch == nil:
-		return Result{}, fmt.Errorf("tui launch-unlock dependency is required")
+		return Result{}, fmt.Errorf("TUI launch-unlock dependency is required")
 	case deps.ChangePassword == nil:
-		return Result{}, fmt.Errorf("tui change-password dependency is required")
+		return Result{}, fmt.Errorf("TUI change-password dependency is required")
 	case deps.LoadSigningStatus == nil:
-		return Result{}, fmt.Errorf("tui load-signing-status dependency is required")
+		return Result{}, fmt.Errorf("TUI load-signing-status dependency is required")
 	case deps.EnableSSHAgent == nil:
-		return Result{}, fmt.Errorf("tui enable-ssh-agent dependency is required")
+		return Result{}, fmt.Errorf("TUI enable-SSH-agent dependency is required")
 	case deps.DisableSSHAgent == nil:
-		return Result{}, fmt.Errorf("tui disable-ssh-agent dependency is required")
+		return Result{}, fmt.Errorf("TUI disable-SSH-agent dependency is required")
 	case deps.EnableCommitSigning == nil:
-		return Result{}, fmt.Errorf("tui enable-commit-signing dependency is required")
+		return Result{}, fmt.Errorf("TUI enable-commit-signing dependency is required")
 	case deps.DisableCommitSigning == nil:
-		return Result{}, fmt.Errorf("tui disable-commit-signing dependency is required")
+		return Result{}, fmt.Errorf("TUI disable-commit-signing dependency is required")
 	case deps.CopyText == nil:
-		return Result{}, fmt.Errorf("tui copy-text dependency is required")
+		return Result{}, fmt.Errorf("TUI copy-text dependency is required")
 	case deps.OpenLink == nil:
-		return Result{}, fmt.Errorf("tui open-link dependency is required")
+		return Result{}, fmt.Errorf("TUI open-link dependency is required")
 	}
 
 	final, err := tea.NewProgram(newModel(intent, deps, components.NewSpinner())).Run()
@@ -432,7 +432,7 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 
 	rendered, ok := final.(*model)
 	if !ok {
-		return Result{}, fmt.Errorf("unexpected tui model type %T", final)
+		return Result{}, fmt.Errorf("Unexpected TUI model type %T", final)
 	}
 	if rendered.fatalErr != nil {
 		return Result{}, rendered.fatalErr
@@ -810,6 +810,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyImportFinishedMsg(msg)
 	case keyExportFinishedMsg:
 		return m.handleKeyExportFinishedMsg(msg)
+	case keyExportAuthorizedMsg:
+		return m.handleKeyExportAuthorizedMsg(msg)
 	case keyImportPickerMsg:
 		return m.handleKeyImportPickerMsg(msg)
 	case keyExportPickerMsg:
@@ -1874,8 +1876,8 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			m.passwordBusy = true
-			m.passwordInput.SetInfo("Exporting vault")
-			return m, tea.Batch(m.spinner.Tick, m.exportVault(password))
+			m.passwordInput.SetInfo("Verifying password")
+			return m, tea.Batch(m.spinner.Tick, m.authorizeKeyExport(password))
 		case passwordStartupUnlock:
 			if err != nil {
 				m.passwordInput.SetError(err.Error())

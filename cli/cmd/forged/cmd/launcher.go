@@ -180,7 +180,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 
 func createLocalVault(paths config.Paths, password []byte) error {
 	if _, err := os.Stat(paths.VaultFile()); err == nil {
-		return fmt.Errorf("vault already exists at %s", paths.VaultFile())
+		return fmt.Errorf("Vault already exists at %s", paths.VaultFile())
 	}
 
 	v, _, err := createVaultAtPaths(paths, password)
@@ -205,7 +205,7 @@ func copyTextToClipboard(value string) error {
 	case "windows":
 		commands = [][]string{{"clip"}}
 	default:
-		return fmt.Errorf("clipboard copy is not supported on %s", runtime.GOOS)
+		return fmt.Errorf("Clipboard copy is not supported on %s", runtime.GOOS)
 	}
 
 	var lastErr error
@@ -224,9 +224,9 @@ func copyTextToClipboard(value string) error {
 	}
 
 	if lastErr != nil {
-		return fmt.Errorf("copy failed: %w", lastErr)
+		return fmt.Errorf("Copy failed: %w", lastErr)
 	}
-	return fmt.Errorf("no clipboard helper is available")
+	return fmt.Errorf("No clipboard helper is available")
 }
 
 func openLinkInBrowser(url string) error {
@@ -239,7 +239,7 @@ func openLinkInBrowser(url string) error {
 	case "windows":
 		argv = []string{"rundll32", "url.dll,FileProtocolHandler", url}
 	default:
-		return fmt.Errorf("open-link is not supported on %s", runtime.GOOS)
+		return fmt.Errorf("Opening links is not supported on %s", runtime.GOOS)
 	}
 
 	cmd := exec.Command(argv[0], argv[1:]...)

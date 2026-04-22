@@ -91,12 +91,12 @@ func (s *Server) Start() error {
 
 	ln, err := net.Listen("unix", s.socketPath)
 	if err != nil {
-		return fmt.Errorf("listening on %s: %w", s.socketPath, err)
+		return fmt.Errorf("Listening on %s: %w", s.socketPath, err)
 	}
 
 	if err := os.Chmod(s.socketPath, 0600); err != nil {
 		ln.Close()
-		return fmt.Errorf("setting socket permissions: %w", err)
+		return fmt.Errorf("Setting socket permissions: %w", err)
 	}
 
 	s.listener = ln
@@ -190,18 +190,18 @@ func (s *Server) dispatch(req Request) Response {
 	case "status":
 		return s.handleStatus()
 	default:
-		return ErrorResponse(fmt.Errorf("unknown command: %s", req.Command))
+		return ErrorResponse(fmt.Errorf("Unknown command: %s", req.Command))
 	}
 }
 
 func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
 	if s.sshRoutes == nil {
-		return ErrorResponse(fmt.Errorf("ssh routing unavailable"))
+		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
 	}
 
 	var args SSHRoutePrepareArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
 	if err := s.sshRoutes.Prepare(sshrouting.PrepareRequest{
@@ -220,12 +220,12 @@ func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
 
 func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
 	if s.sshRoutes == nil {
-		return ErrorResponse(fmt.Errorf("ssh routing unavailable"))
+		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
 	}
 
 	var args SSHRouteSuccessArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
 	if err := s.sshRoutes.Success(args.Attempt); err != nil {
@@ -263,7 +263,7 @@ type addArgs struct {
 func (s *Server) handleAdd(raw json.RawMessage) Response {
 	var a addArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 	keyStore, err := s.requireKeyStore()
 	if err != nil {
@@ -290,7 +290,7 @@ type generateArgs struct {
 func (s *Server) handleGenerate(raw json.RawMessage) Response {
 	var a generateArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 	keyStore, err := s.requireKeyStore()
 	if err != nil {
@@ -316,7 +316,7 @@ type removeArgs struct {
 func (s *Server) handleRemove(raw json.RawMessage) Response {
 	var a removeArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
 	resolvedName, err := s.resolveKeyName(a.Name)
@@ -342,7 +342,7 @@ type renameArgs struct {
 func (s *Server) handleRename(raw json.RawMessage) Response {
 	var a renameArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
 	resolvedOldName, err := s.resolveKeyName(a.OldName)
@@ -370,7 +370,7 @@ type exportArgs struct {
 func (s *Server) handleExport(raw json.RawMessage) Response {
 	var a exportArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
 	resolvedName, err := s.resolveKeyName(a.Name)
@@ -399,7 +399,7 @@ type viewArgs struct {
 func (s *Server) handleView(raw json.RawMessage) Response {
 	var a viewArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
 	resolvedName, err := s.resolveKeyName(a.Name)
@@ -413,12 +413,12 @@ func (s *Server) handleView(raw json.RawMessage) Response {
 	}
 	key, ok := keyStore.Get(resolvedName)
 	if !ok {
-		return ErrorResponse(fmt.Errorf("key %q not found", resolvedName))
+		return ErrorResponse(fmt.Errorf("Key %q not found", resolvedName))
 	}
 
 	if a.Full {
 		if s.authBroker == nil || !s.authBroker.IsUnlocked() {
-			return ErrorResponse(fmt.Errorf("sensitive private-key access requires authentication"))
+			return ErrorResponse(fmt.Errorf("Sensitive private-key access requires authentication"))
 		}
 	}
 
@@ -458,15 +458,15 @@ type exportAllArgs struct {
 
 func (s *Server) handleExportAll(raw json.RawMessage) Response {
 	if s.authBroker == nil {
-		return ErrorResponse(fmt.Errorf("sensitive auth broker unavailable"))
+		return ErrorResponse(fmt.Errorf("Sensitive auth broker unavailable"))
 	}
 
 	var a exportAllArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 	if a.Token == "" || !s.authBroker.ConsumeExportToken(a.Token) {
-		return ErrorResponse(fmt.Errorf("sensitive export requires fresh authentication"))
+		return ErrorResponse(fmt.Errorf("Sensitive export requires fresh authentication"))
 	}
 
 	_, keyStore, err := s.requireVaultAndKeyStore()
@@ -491,7 +491,7 @@ func (s *Server) handleExportAll(raw json.RawMessage) Response {
 	for _, k := range keys {
 		privateKey, err := keyStore.PrivateKeyBytes(k.Name)
 		if err != nil {
-			return ErrorResponse(fmt.Errorf("decrypting key %s: %w", k.Name, err))
+			return ErrorResponse(fmt.Errorf("Decrypting key %s: %w", k.Name, err))
 		}
 		privPEM := string(privateKey)
 		for i := range privateKey {
@@ -537,11 +537,11 @@ type syncTriggerArgs struct {
 func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 	var a syncTriggerArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
 	if a.ServerURL == "" || a.Token == "" {
-		return ErrorResponse(fmt.Errorf("server_url and token required"))
+		return ErrorResponse(fmt.Errorf("Server URL and token required"))
 	}
 
 	v, _, err := s.requireVaultAndKeyStore()
@@ -551,7 +551,7 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 
 	if s.syncBus != nil {
 		if err := s.syncBus.ForceSync(context.Background(), "manual_sync"); err != nil {
-			return ErrorResponse(fmt.Errorf("sync failed: %w", err))
+			return ErrorResponse(fmt.Errorf("Sync failed: %w", err))
 		}
 		state := s.syncBus.SnapshotState()
 		return OkResponse(map[string]any{"version": state.LastKnownServerVersion})
@@ -559,14 +559,14 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 
 	blob, err := v.ExportForSync()
 	if err != nil {
-		return ErrorResponse(fmt.Errorf("exporting vault: %w", err))
+		return ErrorResponse(fmt.Errorf("Exporting vault: %w", err))
 	}
 
 	client := forgedsync.NewClient(a.ServerURL, a.Token, "")
 
 	status, err := client.Status()
 	if err != nil {
-		return ErrorResponse(fmt.Errorf("checking sync status: %w", err))
+		return ErrorResponse(fmt.Errorf("Checking sync status: %w", err))
 	}
 
 	var expectedVersion int64
@@ -577,7 +577,7 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 	protectedKey := base64.StdEncoding.EncodeToString(v.ProtectedKeyBytes())
 	result, err := client.Push(blob, v.KDFParams(), protectedKey, expectedVersion)
 	if err != nil {
-		return ErrorResponse(fmt.Errorf("sync push: %w", err))
+		return ErrorResponse(fmt.Errorf("Sync push: %w", err))
 	}
 
 	return OkResponse(map[string]any{"version": result.Version})
@@ -586,13 +586,13 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 func (s *Server) handleSyncLink(raw json.RawMessage) Response {
 	var a SyncLinkArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 	if a.ServerURL == "" || a.Token == "" || a.UserID == "" {
-		return ErrorResponse(fmt.Errorf("server_url, token, and user_id required"))
+		return ErrorResponse(fmt.Errorf("Server URL, token, and user ID required"))
 	}
 	if s.syncLink == nil {
-		return ErrorResponse(fmt.Errorf("sync link handler unavailable"))
+		return ErrorResponse(fmt.Errorf("Sync link handler unavailable"))
 	}
 	if err := s.syncLink(a); err != nil {
 		return ErrorResponse(err)
@@ -602,7 +602,7 @@ func (s *Server) handleSyncLink(raw json.RawMessage) Response {
 
 func (s *Server) handleSyncUnlink() Response {
 	if s.syncUnlink == nil {
-		return ErrorResponse(fmt.Errorf("sync unlink handler unavailable"))
+		return ErrorResponse(fmt.Errorf("Sync unlink handler unavailable"))
 	}
 	if err := s.syncUnlink(); err != nil {
 		return ErrorResponse(err)
@@ -622,12 +622,12 @@ type sensitivePasswordArgs struct {
 
 func (s *Server) handleSensitiveAuth(raw json.RawMessage) Response {
 	if s.authBroker == nil {
-		return ErrorResponse(fmt.Errorf("sensitive auth broker unavailable"))
+		return ErrorResponse(fmt.Errorf("Sensitive auth broker unavailable"))
 	}
 
 	var a sensitiveAuthArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
 	action, err := sensitiveauth.ParseAction(a.Action)
@@ -649,12 +649,12 @@ func (s *Server) handleSensitiveAuth(raw json.RawMessage) Response {
 
 func (s *Server) handleSensitivePassword(raw json.RawMessage) Response {
 	if s.authBroker == nil {
-		return ErrorResponse(fmt.Errorf("sensitive auth broker unavailable"))
+		return ErrorResponse(fmt.Errorf("Sensitive auth broker unavailable"))
 	}
 
 	var a sensitivePasswordArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
-		return ErrorResponse(fmt.Errorf("invalid args: %w", err))
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
 	action, err := sensitiveauth.ParseAction(a.Action)
@@ -753,7 +753,7 @@ func (s *Server) currentVaultState() (*vault.Vault, *vault.KeyStore) {
 func (s *Server) requireKeyStore() (*vault.KeyStore, error) {
 	_, keyStore := s.currentVaultState()
 	if keyStore == nil {
-		return nil, fmt.Errorf("vault is locked; open Forged to unlock")
+		return nil, fmt.Errorf("Vault is locked; open Forged to unlock")
 	}
 	return keyStore, nil
 }
@@ -761,7 +761,7 @@ func (s *Server) requireKeyStore() (*vault.KeyStore, error) {
 func (s *Server) requireVaultAndKeyStore() (*vault.Vault, *vault.KeyStore, error) {
 	v, keyStore := s.currentVaultState()
 	if v == nil || keyStore == nil {
-		return nil, nil, fmt.Errorf("vault is locked; open Forged to unlock")
+		return nil, nil, fmt.Errorf("Vault is locked; open Forged to unlock")
 	}
 	return v, keyStore, nil
 }

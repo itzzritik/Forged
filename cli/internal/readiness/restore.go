@@ -18,8 +18,8 @@ import (
 )
 
 var (
-	errInvalidRestorePassword = errors.New("invalid restore password")
-	errNoRemoteLinkedVault    = errors.New("no remote linked vault")
+	errInvalidRestorePassword = errors.New("Invalid restore password")
+	errNoRemoteLinkedVault    = errors.New("No remote linked vault")
 )
 
 var (
@@ -57,7 +57,7 @@ func prepareLinkedRestore(paths config.Paths) (linkedRestorePlan, error) {
 	stateStore := forgedsync.NewStateStore(paths.SyncStateFile())
 	state, err := stateStore.Load()
 	if err != nil {
-		return linkedRestorePlan{}, fmt.Errorf("loading sync state: %w", err)
+		return linkedRestorePlan{}, fmt.Errorf("Loading sync state: %w", err)
 	}
 	if state == nil {
 		defaultState := forgedsync.DefaultSyncState(uuid.NewString())
@@ -73,7 +73,7 @@ func prepareLinkedRestore(paths config.Paths) (linkedRestorePlan, error) {
 		return linkedRestorePlan{}, errNoRemoteLinkedVault
 	}
 	if err != nil {
-		return linkedRestorePlan{}, fmt.Errorf("fetching linked vault: %w", err)
+		return linkedRestorePlan{}, fmt.Errorf("Fetching linked vault: %w", err)
 	}
 
 	return linkedRestorePlan{
@@ -87,15 +87,15 @@ func prepareLinkedRestore(paths config.Paths) (linkedRestorePlan, error) {
 func loadLinkedCredentials(path string) (linkedCredentials, error) {
 	raw, err := os.ReadFile(path)
 	if err != nil {
-		return linkedCredentials{}, fmt.Errorf("reading linked account credentials: %w", err)
+		return linkedCredentials{}, fmt.Errorf("Reading linked account credentials: %w", err)
 	}
 
 	var creds linkedCredentials
 	if err := json.Unmarshal(raw, &creds); err != nil {
-		return linkedCredentials{}, fmt.Errorf("parsing linked account credentials: %w", err)
+		return linkedCredentials{}, fmt.Errorf("Parsing linked account credentials: %w", err)
 	}
 	if creds.ServerURL == "" || creds.Token == "" {
-		return linkedCredentials{}, fmt.Errorf("linked account credentials are incomplete")
+		return linkedCredentials{}, fmt.Errorf("Linked account credentials are incomplete")
 	}
 
 	return creds, nil
@@ -109,7 +109,7 @@ func applyLinkedRestore(paths config.Paths, plan linkedRestorePlan, password []b
 
 	raw := vault.MarshalVault(header, ciphertext)
 	if err := writeAtomicFile(paths.VaultFile(), raw); err != nil {
-		return fmt.Errorf("writing restored vault: %w", err)
+		return fmt.Errorf("Writing restored vault: %w", err)
 	}
 
 	plan.state.LinkedUserID = plan.creds.UserID
@@ -123,7 +123,7 @@ func applyLinkedRestore(paths config.Paths, plan linkedRestorePlan, password []b
 	plan.state.NextRetryAt = time.Time{}
 
 	if err := plan.stateStore.Save(plan.state); err != nil {
-		return fmt.Errorf("saving restored sync state: %w", err)
+		return fmt.Errorf("Saving restored sync state: %w", err)
 	}
 
 	return nil
@@ -131,10 +131,10 @@ func applyLinkedRestore(paths config.Paths, plan linkedRestorePlan, password []b
 
 func buildRestoredVault(result forgedsync.PullResult, password []byte) (vault.Header, []byte, error) {
 	if result.KDFParams == nil || result.ProtectedSymmetricKey == nil || *result.ProtectedSymmetricKey == "" {
-		return vault.Header{}, nil, fmt.Errorf("remote vault metadata is incomplete")
+		return vault.Header{}, nil, fmt.Errorf("Remote vault metadata is incomplete")
 	}
 	if len(result.Blob) < vault.NonceSize {
-		return vault.Header{}, nil, fmt.Errorf("remote vault blob is invalid")
+		return vault.Header{}, nil, fmt.Errorf("Remote vault blob is invalid")
 	}
 
 	kdf, err := decodeRestoreKDF(result)
@@ -152,7 +152,7 @@ func buildRestoredVault(result forgedsync.PullResult, password []byte) (vault.He
 
 	stretchedKey, err := vault.DeriveStretchedKey(masterKey)
 	if err != nil {
-		return vault.Header{}, nil, fmt.Errorf("deriving stretched restore key: %w", err)
+		return vault.Header{}, nil, fmt.Errorf("Deriving stretched restore key: %w", err)
 	}
 	defer wipeBytes(stretchedKey)
 
@@ -163,7 +163,7 @@ func buildRestoredVault(result forgedsync.PullResult, password []byte) (vault.He
 	defer wipeBytes(symmetricKey)
 
 	if _, err := vault.DecryptCombined(symmetricKey, result.Blob); err != nil {
-		return vault.Header{}, nil, fmt.Errorf("decrypting linked vault: %w", err)
+		return vault.Header{}, nil, fmt.Errorf("Decrypting linked vault: %w", err)
 	}
 
 	var nonce [vault.NonceSize]byte
@@ -180,10 +180,10 @@ func buildRestoredVault(result forgedsync.PullResult, password []byte) (vault.He
 func decodeRestoreKDF(result forgedsync.PullResult) (vault.KDFParams, error) {
 	salt, err := base64.StdEncoding.DecodeString(result.KDFParams.Salt)
 	if err != nil {
-		return vault.KDFParams{}, fmt.Errorf("decoding remote vault salt: %w", err)
+		return vault.KDFParams{}, fmt.Errorf("Decoding remote vault salt: %w", err)
 	}
 	if len(salt) != vault.SaltSize {
-		return vault.KDFParams{}, fmt.Errorf("remote vault salt has unexpected length %d", len(salt))
+		return vault.KDFParams{}, fmt.Errorf("Remote vault salt has unexpected length %d", len(salt))
 	}
 
 	var kdf vault.KDFParams
@@ -199,10 +199,10 @@ func decodeProtectedRestoreKey(encoded string) ([vault.ProtectedKeySize]byte, er
 
 	raw, err := base64.StdEncoding.DecodeString(encoded)
 	if err != nil {
-		return protectedKey, fmt.Errorf("decoding protected symmetric key: %w", err)
+		return protectedKey, fmt.Errorf("Decoding protected symmetric key: %w", err)
 	}
 	if len(raw) != vault.ProtectedKeySize {
-		return protectedKey, fmt.Errorf("protected symmetric key has unexpected length %d", len(raw))
+		return protectedKey, fmt.Errorf("Protected symmetric key has unexpected length %d", len(raw))
 	}
 
 	copy(protectedKey[:], raw)

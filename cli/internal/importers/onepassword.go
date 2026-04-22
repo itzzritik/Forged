@@ -47,7 +47,7 @@ func Parse1Password(data []byte) ([]ImportedKey, error) {
 func parse1Password1PUX(data []byte) ([]ImportedKey, error) {
 	reader, err := zip.NewReader(bytes.NewReader(data), int64(len(data)))
 	if err != nil {
-		return nil, fmt.Errorf("opening 1pux archive: %w", err)
+		return nil, fmt.Errorf("Opening 1pux archive: %w", err)
 	}
 
 	var exportData []byte
@@ -55,23 +55,23 @@ func parse1Password1PUX(data []byte) ([]ImportedKey, error) {
 		if f.Name == "export.data" {
 			rc, err := f.Open()
 			if err != nil {
-				return nil, fmt.Errorf("reading export.data: %w", err)
+				return nil, fmt.Errorf("Reading export.data: %w", err)
 			}
 			exportData, err = io.ReadAll(rc)
 			rc.Close()
 			if err != nil {
-				return nil, fmt.Errorf("reading export.data: %w", err)
+				return nil, fmt.Errorf("Reading export.data: %w", err)
 			}
 			break
 		}
 	}
 	if exportData == nil {
-		return nil, fmt.Errorf("export.data not found in archive")
+		return nil, fmt.Errorf("Export.data not found in archive")
 	}
 
 	var export onePasswordExport
 	if err := json.Unmarshal(exportData, &export); err != nil {
-		return nil, fmt.Errorf("parsing export.data: %w", err)
+		return nil, fmt.Errorf("Parsing export.data: %w", err)
 	}
 
 	var keys []ImportedKey
@@ -130,7 +130,7 @@ func parse1PasswordCSV(data []byte) ([]ImportedKey, error) {
 
 	rows, err := reader.ReadAll()
 	if err != nil {
-		return nil, fmt.Errorf("parsing 1Password CSV: %w", err)
+		return nil, fmt.Errorf("Parsing 1Password CSV: %w", err)
 	}
 	if len(rows) == 0 {
 		return nil, nil

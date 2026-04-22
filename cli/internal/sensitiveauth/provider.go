@@ -6,10 +6,10 @@ import (
 )
 
 var (
-	ErrNativeUnavailable      = errors.New("native authentication unavailable")
-	ErrNativeBroken           = errors.New("native authentication broken")
-	ErrAuthenticationCanceled = errors.New("authentication canceled")
-	ErrAuthenticationFailed   = errors.New("authentication failed")
+	ErrNativeUnavailable      = errors.New("Native authentication unavailable")
+	ErrNativeBroken           = errors.New("Native authentication broken")
+	ErrAuthenticationCanceled = errors.New("Authentication canceled")
+	ErrAuthenticationFailed   = errors.New("Authentication failed")
 )
 
 type NativeProvider interface {

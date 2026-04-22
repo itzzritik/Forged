@@ -18,7 +18,7 @@ import (
 
 const localEnrollmentKeyInfo = "forged-local-enrollment"
 
-var ErrLocalUnlockTrustUnavailable = errors.New("local unlock trust unavailable")
+var ErrLocalUnlockTrustUnavailable = errors.New("Local unlock trust unavailable")
 
 type EnrollmentResult struct {
 	Refreshed  bool
@@ -29,21 +29,21 @@ type EnrollmentResult struct {
 func RecoverEnrolledSymmetricKey(paths config.Paths) ([]byte, error) {
 	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
 	if err != nil {
-		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("reading local unlock enrollment: %w", err))
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Reading local unlock enrollment: %w", err))
 	}
 	if enrollmentExpired(paths, enrollment) {
-		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("local unlock enrollment expired"))
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Local unlock enrollment expired"))
 	}
 
 	installID, err := osReadTrimmed(paths.InstallIDFile())
 	if err != nil {
-		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("reading install id: %w", err))
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Reading install ID: %w", err))
 	}
 	if enrollment.InstallID == "" || enrollment.InstallID != installID {
-		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("local unlock enrollment install id mismatch"))
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Local unlock enrollment install ID mismatch"))
 	}
 	if expectedUser := strings.TrimSpace(enrollment.LocalUser); expectedUser != "" && expectedUser != CurrentLocalUser() {
-		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("local unlock enrollment user mismatch"))
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Local unlock enrollment user mismatch"))
 	}
 
 	store := NewSecureStore()
@@ -52,7 +52,7 @@ func RecoverEnrolledSymmetricKey(paths config.Paths) ([]byte, error) {
 
 	deviceKey, err := store.LoadDeviceKey(ctx, installID)
 	if err != nil {
-		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("loading secure-store device key: %w", err))
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Loading secure-store device key: %w", err))
 	}
 	defer zeroSensitiveBytes(deviceKey)
 
@@ -64,7 +64,7 @@ func RecoverEnrolledSymmetricKey(paths config.Paths) ([]byte, error) {
 
 	symmetricKey, err := vault.DecryptCombined(localKey, enrollment.WrappedVaultSymmetricKey)
 	if err != nil {
-		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("unwrapping local vault key: %w", err))
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Unwrapping local vault key: %w", err))
 	}
 	return symmetricKey, nil
 }
@@ -89,7 +89,7 @@ func VerifyAndRefreshLocalEnrollment(paths config.Paths, password []byte) (Enrol
 
 func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (EnrollmentResult, error) {
 	if len(symmetricKey) == 0 {
-		return EnrollmentResult{}, fmt.Errorf("vault symmetric key required")
+		return EnrollmentResult{}, fmt.Errorf("Vault symmetric key required")
 	}
 
 	store := NewSecureStore()
@@ -193,7 +193,7 @@ func deriveLocalEnrollmentKey(deviceKey []byte) ([]byte, error) {
 	reader := hkdf.New(sha256.New, deviceKey, nil, []byte(localEnrollmentKeyInfo))
 	key := make([]byte, vault.KeySize)
 	if _, err := reader.Read(key); err != nil {
-		return nil, fmt.Errorf("deriving local enrollment key: %w", err)
+		return nil, fmt.Errorf("Deriving local enrollment key: %w", err)
 	}
 	return key, nil
 }

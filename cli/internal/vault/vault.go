@@ -71,7 +71,7 @@ type Tombstone struct {
 
 func Create(path string, password []byte) (*Vault, error) {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
-		return nil, fmt.Errorf("creating vault directory: %w", err)
+		return nil, fmt.Errorf("Creating vault directory: %w", err)
 	}
 
 	kdf := DefaultKDFParams()
@@ -83,7 +83,7 @@ func Create(path string, password []byte) (*Vault, error) {
 		for i := range masterKey {
 			masterKey[i] = 0
 		}
-		return nil, fmt.Errorf("deriving stretched key: %w", err)
+		return nil, fmt.Errorf("Deriving stretched key: %w", err)
 	}
 
 	// Zero the master key -- no longer needed
@@ -96,7 +96,7 @@ func Create(path string, password []byte) (*Vault, error) {
 		for i := range stretchedKey {
 			stretchedKey[i] = 0
 		}
-		return nil, fmt.Errorf("generating symmetric key: %w", err)
+		return nil, fmt.Errorf("Generating symmetric key: %w", err)
 	}
 
 	protectedKeyData, err := EncryptCombined(stretchedKey, symmetricKey)
@@ -107,7 +107,7 @@ func Create(path string, password []byte) (*Vault, error) {
 		for i := range symmetricKey {
 			symmetricKey[i] = 0
 		}
-		return nil, fmt.Errorf("encrypting symmetric key: %w", err)
+		return nil, fmt.Errorf("Encrypting symmetric key: %w", err)
 	}
 
 	// Zero the stretched key -- no longer needed
@@ -184,7 +184,7 @@ func OpenWithSymmetricKey(path string, symmetricKey []byte) (*Vault, error) {
 func openVault(path string, password []byte) (*Vault, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading vault: %w", err)
+		return nil, fmt.Errorf("Reading vault: %w", err)
 	}
 
 	header, ciphertext, err := UnmarshalVault(data)
@@ -199,7 +199,7 @@ func openVault(path string, password []byte) (*Vault, error) {
 		for i := range masterKey {
 			masterKey[i] = 0
 		}
-		return nil, fmt.Errorf("deriving stretched key: %w", err)
+		return nil, fmt.Errorf("Deriving stretched key: %w", err)
 	}
 
 	symmetricKey, err := DecryptCombined(stretchedKey, header.ProtectedKey[:])
@@ -210,7 +210,7 @@ func openVault(path string, password []byte) (*Vault, error) {
 		for i := range stretchedKey {
 			stretchedKey[i] = 0
 		}
-		return nil, fmt.Errorf("decrypting protected key: %w", err)
+		return nil, fmt.Errorf("Decrypting protected key: %w", err)
 	}
 
 	// Zero master key and stretched key -- no longer needed
@@ -234,7 +234,7 @@ func openVault(path string, password []byte) (*Vault, error) {
 		for i := range symmetricKey {
 			symmetricKey[i] = 0
 		}
-		return nil, fmt.Errorf("parsing vault data: %w", err)
+		return nil, fmt.Errorf("Parsing vault data: %w", err)
 	}
 	normalizeVaultKeyTypes(&vd)
 
@@ -252,7 +252,7 @@ func openVault(path string, password []byte) (*Vault, error) {
 func openVaultWithSymmetricKey(path string, symmetricKey []byte) (*Vault, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading vault: %w", err)
+		return nil, fmt.Errorf("Reading vault: %w", err)
 	}
 
 	header, ciphertext, err := UnmarshalVault(data)
@@ -274,7 +274,7 @@ func openVaultWithSymmetricKey(path string, symmetricKey []byte) (*Vault, error)
 		for i := range workingKey {
 			workingKey[i] = 0
 		}
-		return nil, fmt.Errorf("parsing vault data: %w", err)
+		return nil, fmt.Errorf("Parsing vault data: %w", err)
 	}
 	normalizeVaultKeyTypes(&vd)
 
@@ -291,7 +291,7 @@ func (v *Vault) Save() error {
 	normalizeVaultKeyTypes(&v.Data)
 	plaintext, err := json.Marshal(v.Data)
 	if err != nil {
-		return fmt.Errorf("serializing vault: %w", err)
+		return fmt.Errorf("Serializing vault: %w", err)
 	}
 
 	nonce, ciphertext, err := Encrypt(v.key, plaintext)
@@ -350,7 +350,7 @@ func (v *Vault) ChangePassword(newPassword []byte) error {
 		for i := range newMasterKey {
 			newMasterKey[i] = 0
 		}
-		return fmt.Errorf("deriving new stretched key: %w", err)
+		return fmt.Errorf("Deriving new stretched key: %w", err)
 	}
 
 	newProtectedKey, err := EncryptCombined(newStretchedKey, v.key)
@@ -361,7 +361,7 @@ func (v *Vault) ChangePassword(newPassword []byte) error {
 		for i := range newStretchedKey {
 			newStretchedKey[i] = 0
 		}
-		return fmt.Errorf("encrypting new protected key: %w", err)
+		return fmt.Errorf("Encrypting new protected key: %w", err)
 	}
 
 	for i := range newMasterKey {
@@ -384,7 +384,7 @@ func (v *Vault) ExportForSync() ([]byte, error) {
 	normalizeVaultKeyTypes(&v.Data)
 	plaintext, err := json.Marshal(v.Data)
 	if err != nil {
-		return nil, fmt.Errorf("serializing vault: %w", err)
+		return nil, fmt.Errorf("Serializing vault: %w", err)
 	}
 	return EncryptCombined(v.key, plaintext)
 }
@@ -396,7 +396,7 @@ func (v *Vault) ImportFromSync(data []byte) error {
 	}
 	var vd VaultData
 	if err := json.Unmarshal(plaintext, &vd); err != nil {
-		return fmt.Errorf("parsing synced vault: %w", err)
+		return fmt.Errorf("Parsing synced vault: %w", err)
 	}
 	normalizeVaultKeyTypes(&vd)
 	v.Data = vd
@@ -407,7 +407,7 @@ func atomicWrite(path string, data []byte) error {
 	dir := filepath.Dir(path)
 	tmp, err := os.CreateTemp(dir, ".vault-*.tmp")
 	if err != nil {
-		return fmt.Errorf("creating temp file: %w", err)
+		return fmt.Errorf("Creating temp file: %w", err)
 	}
 	tmpPath := tmp.Name()
 
@@ -417,20 +417,20 @@ func atomicWrite(path string, data []byte) error {
 	}()
 
 	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("writing temp file: %w", err)
+		return fmt.Errorf("Writing temp file: %w", err)
 	}
 	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("syncing temp file: %w", err)
+		return fmt.Errorf("Syncing temp file: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing temp file: %w", err)
+		return fmt.Errorf("Closing temp file: %w", err)
 	}
 
 	if err := os.Chmod(tmpPath, 0600); err != nil {
-		return fmt.Errorf("setting permissions: %w", err)
+		return fmt.Errorf("Setting permissions: %w", err)
 	}
 	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("renaming vault file: %w", err)
+		return fmt.Errorf("Renaming vault file: %w", err)
 	}
 
 	return nil
@@ -440,12 +440,12 @@ func (v *Vault) acquireLock() error {
 	lockPath := v.path + ".lock"
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
-		return fmt.Errorf("opening lock file: %w", err)
+		return fmt.Errorf("Opening lock file: %w", err)
 	}
 
 	if err := platform.LockFile(f); err != nil {
 		f.Close()
-		return fmt.Errorf("vault is locked by another process")
+		return fmt.Errorf("Vault is locked by another process")
 	}
 
 	v.lockFile = f

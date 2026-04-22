@@ -24,7 +24,7 @@ func ListenPipe(name string) (net.Listener, error) {
 
 	ln, err := winio.ListenPipe(name, cfg)
 	if err != nil {
-		return nil, fmt.Errorf("listening on pipe %s: %w", name, err)
+		return nil, fmt.Errorf("Listening on pipe %s: %w", name, err)
 	}
 	return ln, nil
 }
@@ -40,7 +40,7 @@ func IsSocketAlive(path string) bool {
 
 func CleanStaleSocket(path string) error {
 	if IsSocketAlive(path) {
-		return fmt.Errorf("pipe %s is in use by another process", path)
+		return fmt.Errorf("Pipe %s is in use by another process", path)
 	}
 	return nil
 }

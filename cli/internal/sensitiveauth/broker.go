@@ -70,6 +70,13 @@ func (b *Broker) AuthorizeForced(ctx context.Context, action Action) (AuthorizeR
 }
 
 func (b *Broker) authorize(ctx context.Context, action Action, force bool) (AuthorizeResult, error) {
+	if action == ActionExport {
+		return AuthorizeResult{
+			PasswordRequired: true,
+			Prompt:           action.PasswordPrompt(),
+		}, nil
+	}
+
 	now := time.Now()
 	if !force && b.hasActiveSession(now) {
 		return b.allow(action, now), nil
@@ -106,12 +113,12 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 			if action == ActionExternal {
 				return AuthorizeResult{}, externalUseCanceledError()
 			}
-			return AuthorizeResult{}, fmt.Errorf("authentication canceled")
+			return AuthorizeResult{}, fmt.Errorf("Authentication canceled")
 		default:
 			if action == ActionExternal {
 				return AuthorizeResult{}, externalUseFailedError()
 			}
-			return AuthorizeResult{}, fmt.Errorf("authentication failed")
+			return AuthorizeResult{}, fmt.Errorf("Authentication failed")
 		}
 	}
 
@@ -131,11 +138,11 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 
 func (b *Broker) AuthorizeWithPassword(action Action, password []byte) (AuthorizeResult, error) {
 	if err := b.password.Verify(password); err != nil {
-		return AuthorizeResult{}, fmt.Errorf("authentication failed")
+		return AuthorizeResult{}, fmt.Errorf("Authentication failed")
 	}
 	if b.session != nil && !b.session.HasActiveSession() {
 		if err := b.session.HydrateFromPassword(password); err != nil {
-			return AuthorizeResult{}, fmt.Errorf("unlocking vault session: %w", err)
+			return AuthorizeResult{}, fmt.Errorf("Unlocking vault session: %w", err)
 		}
 	}
 	return b.grant(action, time.Now()), nil
@@ -209,7 +216,7 @@ func (b *Broker) allow(action Action, now time.Time) AuthorizeResult {
 
 func (b *Broker) authorizeExternalUnavailable(action Action, capability CapabilityState) (AuthorizeResult, error) {
 	if action != ActionExternal {
-		return AuthorizeResult{}, fmt.Errorf("external unavailable policy only applies to external use")
+		return AuthorizeResult{}, fmt.Errorf("External unavailable policy only applies to external use")
 	}
 
 	if externalUsePolicy(b.paths) != config.ExternalUsePolicyAllow {
@@ -232,27 +239,27 @@ func (b *Broker) authorizeExternalUnavailable(action Action, capability Capabili
 }
 
 func externalUseBrokenError() error {
-	return fmt.Errorf("system authentication is broken; repair Forged before using SSH auth or commit signing")
+	return fmt.Errorf("System authentication is broken; repair Forged before using SSH auth or commit signing")
 }
 
 func externalUseCanceledError() error {
-	return fmt.Errorf("system authentication was canceled")
+	return fmt.Errorf("System authentication was canceled")
 }
 
 func externalUseFailedError() error {
-	return fmt.Errorf("system authentication failed")
+	return fmt.Errorf("System authentication failed")
 }
 
 func externalUseDeniedError() error {
-	return fmt.Errorf("system authentication is unavailable on this machine, and external use is denied")
+	return fmt.Errorf("System authentication is unavailable on this machine, and external use is denied")
 }
 
 func externalUseNoLocalTrustError() error {
-	return fmt.Errorf("system authentication is unavailable on this machine, and local unlock trust is not available")
+	return fmt.Errorf("System authentication is unavailable on this machine, and local unlock trust is not available")
 }
 
 func externalUseHydrationError() error {
-	return fmt.Errorf("system authentication is unavailable on this machine, and Forged could not unlock local trust")
+	return fmt.Errorf("System authentication is unavailable on this machine, and Forged could not unlock local trust")
 }
 
 func externalUsePolicy(paths config.Paths) string {

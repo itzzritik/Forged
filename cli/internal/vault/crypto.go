@@ -51,17 +51,17 @@ func DeriveKey(password []byte, params KDFParams) []byte {
 func Encrypt(key, plaintext []byte) (nonce []byte, ciphertext []byte, err error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating cipher: %w", err)
+		return nil, nil, fmt.Errorf("Creating cipher: %w", err)
 	}
 
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, nil, fmt.Errorf("creating GCM: %w", err)
+		return nil, nil, fmt.Errorf("Creating GCM: %w", err)
 	}
 
 	nonce = make([]byte, aead.NonceSize())
 	if _, err := rand.Read(nonce); err != nil {
-		return nil, nil, fmt.Errorf("generating nonce: %w", err)
+		return nil, nil, fmt.Errorf("Generating nonce: %w", err)
 	}
 
 	ciphertext = aead.Seal(nil, nonce, plaintext, nil)
@@ -71,17 +71,17 @@ func Encrypt(key, plaintext []byte) (nonce []byte, ciphertext []byte, err error)
 func Decrypt(key, nonce, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
-		return nil, fmt.Errorf("creating cipher: %w", err)
+		return nil, fmt.Errorf("Creating cipher: %w", err)
 	}
 
 	aead, err := cipher.NewGCM(block)
 	if err != nil {
-		return nil, fmt.Errorf("creating GCM: %w", err)
+		return nil, fmt.Errorf("Creating GCM: %w", err)
 	}
 
 	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("decryption failed (wrong password or corrupted vault): %w", err)
+		return nil, fmt.Errorf("Decryption failed (wrong password or corrupted vault): %w", err)
 	}
 
 	return plaintext, nil
@@ -91,7 +91,7 @@ func DeriveStretchedKey(masterKey []byte) ([]byte, error) {
 	hkdfReader := hkdf.New(sha256.New, masterKey, nil, []byte("forged-stretch"))
 	stretched := make([]byte, KeySize)
 	if _, err := hkdfReader.Read(stretched); err != nil {
-		return nil, fmt.Errorf("deriving stretched key: %w", err)
+		return nil, fmt.Errorf("Deriving stretched key: %w", err)
 	}
 	return stretched, nil
 }
@@ -109,7 +109,7 @@ func EncryptCombined(key, plaintext []byte) ([]byte, error) {
 
 func DecryptCombined(key, data []byte) ([]byte, error) {
 	if len(data) < NonceSize {
-		return nil, fmt.Errorf("data too short for decryption")
+		return nil, fmt.Errorf("Data too short for decryption")
 	}
 	return Decrypt(key, data[:NonceSize], data[NonceSize:])
 }

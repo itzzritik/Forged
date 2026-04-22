@@ -32,12 +32,12 @@ func (s *Server) Start() error {
 
 	ln, err := net.Listen("unix", s.socketPath)
 	if err != nil {
-		return fmt.Errorf("listening on %s: %w", s.socketPath, err)
+		return fmt.Errorf("Listening on %s: %w", s.socketPath, err)
 	}
 
 	if err := os.Chmod(s.socketPath, 0600); err != nil {
 		ln.Close()
-		return fmt.Errorf("setting socket permissions: %w", err)
+		return fmt.Errorf("Setting socket permissions: %w", err)
 	}
 
 	s.listener = ln

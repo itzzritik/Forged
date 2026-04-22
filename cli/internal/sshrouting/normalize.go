@@ -34,12 +34,12 @@ type PrepareInput struct {
 func ParseCanonicalTarget(raw string) (Target, error) {
 	u, err := url.Parse(raw)
 	if err != nil {
-		return Target{}, fmt.Errorf("parse canonical target: %w", err)
+		return Target{}, fmt.Errorf("Parsing canonical target: %w", err)
 	}
 
 	port, err := parsePort(u.Port(), 22)
 	if err != nil {
-		return Target{}, fmt.Errorf("parse port: %w", err)
+		return Target{}, fmt.Errorf("Parsing port: %w", err)
 	}
 
 	target := Target{
@@ -58,13 +58,13 @@ func ParseCanonicalTarget(raw string) (Target, error) {
 		path := strings.TrimPrefix(u.Path, "/")
 		parts := strings.Split(path, "/")
 		if len(parts) < 2 {
-			return Target{}, fmt.Errorf("canonical git target missing owner/repo: %q", raw)
+			return Target{}, fmt.Errorf("Canonical git target is missing owner/repo: %q", raw)
 		}
 		target.Owner = parts[0]
 		target.Repo = parts[1]
 		return target, nil
 	default:
-		return Target{}, fmt.Errorf("unsupported canonical target scheme %q", u.Scheme)
+		return Target{}, fmt.Errorf("Unsupported canonical target scheme %q", u.Scheme)
 	}
 }
 
@@ -72,12 +72,12 @@ func ResolveSSHTarget(input PrepareInput) (Target, error) {
 	host := strings.TrimSpace(input.Host)
 	user := strings.TrimSpace(input.User)
 	if host == "" || user == "" {
-		return Target{}, fmt.Errorf("ssh target requires host and user")
+		return Target{}, fmt.Errorf("SSH target requires host and user")
 	}
 
 	port, err := parsePort(strings.TrimSpace(input.Port), 22)
 	if err != nil {
-		return Target{}, fmt.Errorf("parse ssh port: %w", err)
+		return Target{}, fmt.Errorf("Parsing SSH port: %w", err)
 	}
 
 	return Target{

@@ -17,7 +17,7 @@ func VerifyPassword(path string, password []byte) error {
 func RecoverSymmetricKey(path string, password []byte) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return nil, fmt.Errorf("reading vault: %w", err)
+		return nil, fmt.Errorf("Reading vault: %w", err)
 	}
 
 	header, _, err := UnmarshalVault(data)
@@ -30,13 +30,13 @@ func RecoverSymmetricKey(path string, password []byte) ([]byte, error) {
 
 	stretchedKey, err := DeriveStretchedKey(masterKey)
 	if err != nil {
-		return nil, fmt.Errorf("deriving stretched key: %w", err)
+		return nil, fmt.Errorf("Deriving stretched key: %w", err)
 	}
 	defer zeroBytes(stretchedKey)
 
 	symmetricKey, err := DecryptCombined(stretchedKey, header.ProtectedKey[:])
 	if err != nil {
-		return nil, fmt.Errorf("invalid master password")
+		return nil, fmt.Errorf("Invalid master password")
 	}
 
 	return symmetricKey, nil

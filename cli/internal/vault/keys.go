@@ -415,7 +415,7 @@ func (ks *KeyStore) SignerByPublicKey(pub ssh.PublicKey) (ssh.Signer, string, st
 	defer ks.mu.RUnlock()
 
 	if ks.vault == nil {
-		return nil, "", "", fmt.Errorf("vault is locked")
+		return nil, "", "", fmt.Errorf("Vault is locked")
 	}
 
 	wanted := pub.Marshal()
@@ -440,11 +440,11 @@ func (ks *KeyStore) SignerByPublicKey(pub ssh.PublicKey) (ssh.Signer, string, st
 		}
 		_ = platform.Munlock(privateKey)
 		if err != nil {
-			return nil, "", "", fmt.Errorf("parsing private key for %s: %w", key.Name, err)
+			return nil, "", "", fmt.Errorf("Parsing private key for %s: %w", key.Name, err)
 		}
 		return signer, key.Name, key.Fingerprint, nil
 	}
-	return nil, "", "", fmt.Errorf("key not found in vault")
+	return nil, "", "", fmt.Errorf("Key not found in vault")
 }
 
 func (ks *KeyStore) Signers() ([]ssh.Signer, error) {
@@ -452,7 +452,7 @@ func (ks *KeyStore) Signers() ([]ssh.Signer, error) {
 	defer ks.mu.RUnlock()
 
 	if ks.vault == nil {
-		return nil, fmt.Errorf("vault is locked")
+		return nil, fmt.Errorf("Vault is locked")
 	}
 
 	signers := make([]ssh.Signer, 0, len(ks.vault.Data.Keys))
@@ -468,7 +468,7 @@ func (ks *KeyStore) Signers() ([]ssh.Signer, error) {
 		}
 		_ = platform.Munlock(privateKey)
 		if err != nil {
-			return nil, fmt.Errorf("parsing private key for %s: %w", ks.vault.Data.Keys[i].Name, err)
+			return nil, fmt.Errorf("Parsing private key for %s: %w", ks.vault.Data.Keys[i].Name, err)
 		}
 		signers = append(signers, signer)
 	}
@@ -481,32 +481,32 @@ func (ks *KeyStore) nameExists(name string) bool {
 
 func (ks *KeyStore) decryptPrivateKeyLocked(key *Key) ([]byte, error) {
 	if key == nil {
-		return nil, fmt.Errorf("key not found")
+		return nil, fmt.Errorf("Key not found")
 	}
 	if ks.vault == nil {
-		return nil, fmt.Errorf("vault is locked")
+		return nil, fmt.Errorf("Vault is locked")
 	}
 	if key.EncryptedCipherKey == "" || key.EncryptedPrivateKey == "" {
-		return nil, fmt.Errorf("private key is unavailable")
+		return nil, fmt.Errorf("Private key is unavailable")
 	}
 
 	cipherKeyData, err := base64.StdEncoding.DecodeString(key.EncryptedCipherKey)
 	if err != nil {
-		return nil, fmt.Errorf("decoding cipher key for %s: %w", key.Name, err)
+		return nil, fmt.Errorf("Decoding cipher key for %s: %w", key.Name, err)
 	}
 	cipherKey, err := DecryptCombined(ks.vault.key, cipherKeyData)
 	if err != nil {
-		return nil, fmt.Errorf("decrypting cipher key for %s: %w", key.Name, err)
+		return nil, fmt.Errorf("Decrypting cipher key for %s: %w", key.Name, err)
 	}
 	defer zeroBytes(cipherKey)
 
 	privateKeyData, err := base64.StdEncoding.DecodeString(key.EncryptedPrivateKey)
 	if err != nil {
-		return nil, fmt.Errorf("decoding private key for %s: %w", key.Name, err)
+		return nil, fmt.Errorf("Decoding private key for %s: %w", key.Name, err)
 	}
 	privateKey, err := DecryptCombined(cipherKey, privateKeyData)
 	if err != nil {
-		return nil, fmt.Errorf("decrypting private key for %s: %w", key.Name, err)
+		return nil, fmt.Errorf("Decrypting private key for %s: %w", key.Name, err)
 	}
 	return privateKey, nil
 }

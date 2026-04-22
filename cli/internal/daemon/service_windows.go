@@ -49,13 +49,13 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 
 	tmpFile := filepath.Join(os.TempDir(), "forged-task.xml")
 	if err := os.WriteFile(tmpFile, []byte(xml), 0600); err != nil {
-		return fmt.Errorf("writing task xml: %w", err)
+		return fmt.Errorf("Writing task XML: %w", err)
 	}
 	defer os.Remove(tmpFile)
 
 	cmd := exec.Command("schtasks", "/Create", "/TN", taskName, "/XML", tmpFile, "/F")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("creating scheduled task: %s: %w", string(out), err)
+		return fmt.Errorf("Creating scheduled task: %s: %w", string(out), err)
 	}
 
 	return nil
@@ -64,7 +64,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 func StartService() error {
 	cmd := exec.Command("schtasks", "/Run", "/TN", taskName)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("starting task: %s: %w", string(out), err)
+		return fmt.Errorf("Starting task: %s: %w", string(out), err)
 	}
 	return nil
 }
@@ -127,7 +127,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 func findBinary() (string, error) {
 	self, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("cannot find forged binary: %w", err)
+		return "", fmt.Errorf("Cannot find Forged binary: %w", err)
 	}
 	return filepath.Abs(self)
 }

@@ -53,37 +53,37 @@ func WriteHeader(w io.Writer, h Header) error {
 func ReadHeader(r io.Reader) (Header, error) {
 	var magic [8]byte
 	if _, err := io.ReadFull(r, magic[:]); err != nil {
-		return Header{}, fmt.Errorf("reading magic: %w", err)
+		return Header{}, fmt.Errorf("Reading magic: %w", err)
 	}
 	if magic != Magic {
-		return Header{}, fmt.Errorf("not a forged vault file (invalid magic bytes)")
+		return Header{}, fmt.Errorf("Not a Forged vault file (invalid magic bytes)")
 	}
 
 	var h Header
 	if err := binary.Read(r, binary.LittleEndian, &h.Version); err != nil {
-		return Header{}, fmt.Errorf("reading version: %w", err)
+		return Header{}, fmt.Errorf("Reading version: %w", err)
 	}
 	if h.Version != CurrentVersion {
-		return Header{}, fmt.Errorf("vault version %d is not supported (expected %d), please recreate your vault", h.Version, CurrentVersion)
+		return Header{}, fmt.Errorf("Vault version %d is not supported (expected %d), please recreate your vault", h.Version, CurrentVersion)
 	}
 
 	if _, err := io.ReadFull(r, h.KDF.Salt[:]); err != nil {
-		return Header{}, fmt.Errorf("reading salt: %w", err)
+		return Header{}, fmt.Errorf("Reading salt: %w", err)
 	}
 	if err := binary.Read(r, binary.LittleEndian, &h.KDF.TimeCost); err != nil {
-		return Header{}, fmt.Errorf("reading time cost: %w", err)
+		return Header{}, fmt.Errorf("Reading time cost: %w", err)
 	}
 	if err := binary.Read(r, binary.LittleEndian, &h.KDF.MemoryCost); err != nil {
-		return Header{}, fmt.Errorf("reading memory cost: %w", err)
+		return Header{}, fmt.Errorf("Reading memory cost: %w", err)
 	}
 	if err := binary.Read(r, binary.LittleEndian, &h.KDF.Parallelism); err != nil {
-		return Header{}, fmt.Errorf("reading parallelism: %w", err)
+		return Header{}, fmt.Errorf("Reading parallelism: %w", err)
 	}
 	if _, err := io.ReadFull(r, h.ProtectedKey[:]); err != nil {
-		return Header{}, fmt.Errorf("reading protected key: %w", err)
+		return Header{}, fmt.Errorf("Reading protected key: %w", err)
 	}
 	if _, err := io.ReadFull(r, h.Nonce[:]); err != nil {
-		return Header{}, fmt.Errorf("reading nonce: %w", err)
+		return Header{}, fmt.Errorf("Reading nonce: %w", err)
 	}
 
 	return h, nil
@@ -99,7 +99,7 @@ func MarshalVault(h Header, ciphertext []byte) []byte {
 
 func UnmarshalVault(data []byte) (Header, []byte, error) {
 	if len(data) < HeaderSize {
-		return Header{}, nil, fmt.Errorf("vault file too small (%d bytes)", len(data))
+		return Header{}, nil, fmt.Errorf("Vault file too small (%d bytes)", len(data))
 	}
 	r := bytes.NewReader(data)
 	h, err := ReadHeader(r)

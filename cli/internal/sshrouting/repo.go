@@ -14,7 +14,7 @@ func ResolveGitTarget(cwd, branch string) (Target, error) {
 	if branch == "" {
 		out, err := gitOutput(cwd, "branch", "--show-current")
 		if err != nil {
-			return Target{}, fmt.Errorf("resolve current branch: %w", err)
+			return Target{}, fmt.Errorf("Resolving current branch: %w", err)
 		}
 		branch = strings.TrimSpace(out)
 	}
@@ -30,7 +30,7 @@ func ResolveGitTarget(cwd, branch string) (Target, error) {
 		mustGitConfig(cwd, "remote."+remoteName+".url"),
 	)
 	if remoteURL == "" {
-		return Target{}, fmt.Errorf("no push destination configured")
+		return Target{}, fmt.Errorf("No push destination configured")
 	}
 
 	return normalizeGitRemote(remoteURL)
@@ -44,7 +44,7 @@ func CurrentRemote() (Remote, error) {
 
 	target, err := ResolveGitTarget(cwd, "")
 	if err != nil {
-		return Remote{}, fmt.Errorf("current repo has no origin")
+		return Remote{}, fmt.Errorf("Current repo has no origin")
 	}
 	return remoteFromTarget(target.Canonical, target), nil
 }
@@ -52,27 +52,27 @@ func CurrentRemote() (Remote, error) {
 func normalizeGitRemote(raw string) (Target, error) {
 	trimmed := strings.TrimSpace(strings.TrimSuffix(raw, ".git"))
 	if trimmed == "" {
-		return Target{}, fmt.Errorf("empty remote")
+		return Target{}, fmt.Errorf("Empty remote")
 	}
 
 	if strings.HasPrefix(trimmed, "ssh://") {
 		u, err := url.Parse(trimmed)
 		if err != nil {
-			return Target{}, fmt.Errorf("parsing remote: %w", err)
+			return Target{}, fmt.Errorf("Parsing remote: %w", err)
 		}
 		if u.Scheme != "ssh" {
-			return Target{}, fmt.Errorf("unsupported remote scheme %q", u.Scheme)
+			return Target{}, fmt.Errorf("Unsupported remote scheme %q", u.Scheme)
 		}
 
 		port, err := parsePort(u.Port(), 22)
 		if err != nil {
-			return Target{}, fmt.Errorf("parse port: %w", err)
+			return Target{}, fmt.Errorf("Parsing port: %w", err)
 		}
 
 		path := strings.TrimPrefix(u.Path, "/")
 		parts := strings.Split(path, "/")
 		if len(parts) < 2 {
-			return Target{}, fmt.Errorf("git remote missing owner/repo %q", raw)
+			return Target{}, fmt.Errorf("Git remote is missing owner/repo %q", raw)
 		}
 
 		user := strings.ToLower(u.User.Username())
@@ -91,7 +91,7 @@ func normalizeGitRemote(raw string) (Target, error) {
 	at := strings.Index(trimmed, "@")
 	colon := strings.Index(trimmed, ":")
 	if at < 0 || colon < 0 || colon < at {
-		return Target{}, fmt.Errorf("unsupported git remote %q", raw)
+		return Target{}, fmt.Errorf("Unsupported git remote %q", raw)
 	}
 
 	user := strings.ToLower(trimmed[:at])
@@ -99,7 +99,7 @@ func normalizeGitRemote(raw string) (Target, error) {
 	path := strings.TrimPrefix(trimmed[colon+1:], "/")
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 {
-		return Target{}, fmt.Errorf("git remote missing owner/repo %q", raw)
+		return Target{}, fmt.Errorf("Git remote is missing owner/repo %q", raw)
 	}
 
 	return Target{

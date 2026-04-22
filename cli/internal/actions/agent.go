@@ -176,14 +176,14 @@ func findSignBinary() (string, error) {
 
 	self, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("cannot find forged-sign binary")
+		return "", fmt.Errorf("Cannot find forged-sign binary")
 	}
 
 	candidate := filepath.Join(filepath.Dir(self), "forged-sign")
 	if _, err := os.Stat(candidate); err == nil {
 		return candidate, nil
 	}
-	return "", fmt.Errorf("forged-sign not found in PATH or next to forged binary")
+	return "", fmt.Errorf("Forged-sign not found in PATH or next to the Forged binary")
 }
 
 func writeAllowedSigners(publicKey string) error {
@@ -222,7 +222,7 @@ func applyGitSigningConfig(publicKey string, signPath string) error {
 	} {
 		cmd := exec.Command(args[0], args[1:]...)
 		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("running %v: %s: %w", args, string(out), err)
+			return fmt.Errorf("Running %v: %s: %w", args, string(out), err)
 		}
 	}
 	return nil

@@ -99,7 +99,7 @@ func (s *Service) Success(attempt string) error {
 	current, ok := s.attempts[attempt]
 	if !ok {
 		s.mu.Unlock()
-		return fmt.Errorf("attempt %q not found", attempt)
+		return fmt.Errorf("Attempt %q not found", attempt)
 	}
 	s.deleteAttemptLocked(current)
 	s.mu.Unlock()

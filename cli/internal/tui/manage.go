@@ -743,9 +743,9 @@ func (m *model) currentMasterPasswordIntervalIndex() int {
 
 func formatExternalUsePolicy(value string) string {
 	if value == config.ExternalUsePolicyAllow {
-		return "always allow external use"
+		return "Always allow external use"
 	}
-	return "always deny external use"
+	return "Always deny external use"
 }
 
 func (m *model) shouldShowExternalUsePolicy() bool {
@@ -769,7 +769,7 @@ func (m *model) saveManageSecuritySettingCmd(item manageItemID, value string) te
 		case manageItemExternalPolicy:
 			err = setPolicy(value)
 		default:
-			return manageSecuritySavedMsg{item: item, err: fmt.Errorf("unknown security setting")}
+			return manageSecuritySavedMsg{item: item, err: fmt.Errorf("Unknown security setting")}
 		}
 		if err != nil {
 			return manageSecuritySavedMsg{item: item, err: err}

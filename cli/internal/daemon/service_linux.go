@@ -48,7 +48,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 
 	f, err := os.Create(unitPath())
 	if err != nil {
-		return fmt.Errorf("creating unit file: %w", err)
+		return fmt.Errorf("Creating unit file: %w", err)
 	}
 	defer f.Close()
 
@@ -61,7 +61,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	}
 
 	if err := unitTemplate.Execute(f, data); err != nil {
-		return fmt.Errorf("writing unit file: %w", err)
+		return fmt.Errorf("Writing unit file: %w", err)
 	}
 
 	exec.Command("systemctl", "--user", "daemon-reload").Run()
@@ -73,7 +73,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 func StartService() error {
 	cmd := exec.Command("systemctl", "--user", "start", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("starting service: %s: %w", string(out), err)
+		return fmt.Errorf("Starting service: %s: %w", string(out), err)
 	}
 	return nil
 }
@@ -81,7 +81,7 @@ func StartService() error {
 func StopService() error {
 	cmd := exec.Command("systemctl", "--user", "stop", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("stopping service: %s: %w", string(out), err)
+		return fmt.Errorf("Stopping service: %s: %w", string(out), err)
 	}
 	return nil
 }
@@ -89,7 +89,7 @@ func StopService() error {
 func RestartService() error {
 	cmd := exec.Command("systemctl", "--user", "restart", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("restarting service: %s: %w", string(out), err)
+		return fmt.Errorf("Restarting service: %s: %w", string(out), err)
 	}
 	return nil
 }
@@ -157,7 +157,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 func findBinary() (string, error) {
 	self, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("cannot find forged binary: %w", err)
+		return "", fmt.Errorf("Cannot find Forged binary: %w", err)
 	}
 	return filepath.Abs(self)
 }

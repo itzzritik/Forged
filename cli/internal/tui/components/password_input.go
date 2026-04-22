@@ -3,6 +3,7 @@ package components
 import (
 	"fmt"
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
@@ -192,7 +193,7 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 
 	primary := p.fields[0].Value()
 	if len(primary) == 0 {
-		return nil, fmt.Errorf("enter your master password")
+		return nil, fmt.Errorf("Enter your master password")
 	}
 
 	if p.kind == PasswordKindCreate {
@@ -200,7 +201,7 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 			return nil, fmt.Errorf("Use at least 8 characters")
 		}
 		if primary != p.fields[1].Value() {
-			return nil, fmt.Errorf("passwords do not match")
+			return nil, fmt.Errorf("Passwords do not match")
 		}
 	}
 
@@ -219,7 +220,7 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 func (p *PasswordInput) SubmitChangePassword() ([]byte, []byte, error) {
 	p.ClearStatus()
 	if p.kind != PasswordKindChange {
-		return nil, nil, fmt.Errorf("change-password input is not active")
+		return nil, nil, fmt.Errorf("Change-password input is not active")
 	}
 
 	current := p.fields[0].Value()
@@ -279,14 +280,27 @@ func (p *PasswordInput) View(spinner string, labels ...string) string {
 	}
 
 	if p.err != "" {
-		sections = append(sections, theme.Danger.Render("✕ "+p.err))
+		sections = append(sections, theme.Danger.Render("✕ "+sentenceCase(p.err)))
 	} else if p.ok != "" {
-		sections = append(sections, theme.Success.Render("✓ "+p.ok))
+		sections = append(sections, theme.Success.Render("✓ "+sentenceCase(p.ok)))
 	} else if p.info != "" {
-		sections = append(sections, theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+p.info))
+		sections = append(sections, theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+sentenceCase(p.info)))
 	} else {
 		sections = append(sections, "")
 	}
 
 	return lipgloss.JoinVertical(lipgloss.Left, sections...)
+}
+
+func sentenceCase(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) == 0 || !unicode.IsLower(runes[0]) {
+		return trimmed
+	}
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
 }

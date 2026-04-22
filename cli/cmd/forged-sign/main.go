@@ -19,7 +19,7 @@ func main() {
 	args := os.Args[1:]
 
 	if len(args) == 0 {
-		fmt.Fprintln(os.Stderr, "forged-sign: no arguments provided")
+		fmt.Fprintln(os.Stderr, "forged-sign: No arguments provided")
 		os.Exit(1)
 	}
 
@@ -51,7 +51,7 @@ func main() {
 	}
 
 	if operation != "sign" {
-		fmt.Fprintf(os.Stderr, "forged-sign: unsupported operation: %s\n", operation)
+		fmt.Fprintf(os.Stderr, "forged-sign: Unsupported operation: %s\n", operation)
 		os.Exit(1)
 	}
 
@@ -63,7 +63,7 @@ func main() {
 
 func signFile(keyFile, bufferFile, namespace string) error {
 	if bufferFile == "" {
-		return fmt.Errorf("no buffer file specified")
+		return fmt.Errorf("No buffer file specified")
 	}
 	if namespace == "" {
 		namespace = "git"
@@ -76,18 +76,18 @@ func signFile(keyFile, bufferFile, namespace string) error {
 
 	data, err := os.ReadFile(bufferFile)
 	if err != nil {
-		return fmt.Errorf("reading buffer file: %w", err)
+		return fmt.Errorf("Reading buffer file: %w", err)
 	}
 
 	var signingPubKey ssh.PublicKey
 	if keyFile != "" {
 		keyData, err := os.ReadFile(keyFile)
 		if err != nil {
-			return fmt.Errorf("reading key file: %w", err)
+			return fmt.Errorf("Reading key file: %w", err)
 		}
 		pub, _, _, _, err := ssh.ParseAuthorizedKey(keyData)
 		if err != nil {
-			return fmt.Errorf("parsing public key: %w", err)
+			return fmt.Errorf("Parsing public key: %w", err)
 		}
 		signingPubKey = pub
 	}
@@ -95,7 +95,7 @@ func signFile(keyFile, bufferFile, namespace string) error {
 	socketPath := paths.AgentSocket()
 	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 	if err != nil {
-		return fmt.Errorf("cannot connect to forged agent at %s: %w", socketPath, err)
+		return fmt.Errorf("Cannot connect to Forged agent at %s: %w", socketPath, err)
 	}
 	defer conn.Close()
 
@@ -103,7 +103,7 @@ func signFile(keyFile, bufferFile, namespace string) error {
 
 	signers, err := agentClient.Signers()
 	if err != nil {
-		return fmt.Errorf("getting signers: %w", err)
+		return fmt.Errorf("Getting signers: %w", err)
 	}
 
 	var signer ssh.Signer
@@ -116,18 +116,18 @@ func signFile(keyFile, bufferFile, namespace string) error {
 			}
 		}
 		if signer == nil {
-			return fmt.Errorf("signing key not found in agent")
+			return fmt.Errorf("Signing key not found in agent")
 		}
 	} else {
 		if len(signers) == 0 {
-			return fmt.Errorf("no keys available in agent")
+			return fmt.Errorf("No keys available in agent")
 		}
 		signer = signers[0]
 	}
 
 	sig, err := sshsig.Sign(bytes.NewReader(data), signer, sshsig.HashSHA512, namespace)
 	if err != nil {
-		return fmt.Errorf("signing: %w", err)
+		return fmt.Errorf("Signing: %w", err)
 	}
 
 	sigFile := bufferFile + ".sig"

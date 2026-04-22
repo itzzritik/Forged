@@ -39,7 +39,7 @@ func (s *sessionAgent) List() ([]*agent.Key, error) {
 		return nil, nil
 	}
 	if s.base.keyStore == nil {
-		return nil, fmt.Errorf("vault is locked")
+		return nil, fmt.Errorf("Vault is locked")
 	}
 
 	keys := s.base.keyStore.List()
@@ -79,7 +79,7 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	s.base.mu.RLock()
 	if s.base.locked {
 		s.base.mu.RUnlock()
-		return nil, fmt.Errorf("agent is locked")
+		return nil, fmt.Errorf("Agent is locked")
 	}
 	s.base.mu.RUnlock()
 
@@ -91,10 +91,10 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	defer s.base.mu.RUnlock()
 
 	if s.base.locked {
-		return nil, fmt.Errorf("agent is locked")
+		return nil, fmt.Errorf("Agent is locked")
 	}
 	if s.base.keyStore == nil {
-		return nil, fmt.Errorf("vault is locked")
+		return nil, fmt.Errorf("Vault is locked")
 	}
 
 	signer, name, fingerprint, err := s.base.keyStore.SignerByPublicKey(key)
@@ -114,12 +114,12 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	}
 
 	if _, ok := allowed[fingerprint]; !ok {
-		return nil, fmt.Errorf("key not allowed for client")
+		return nil, fmt.Errorf("Key not allowed for client")
 	}
 
 	sig, err := signWithFlags(signer, data, flags)
 	if err != nil {
-		return nil, fmt.Errorf("signing with key %s: %w", name, err)
+		return nil, fmt.Errorf("Signing with key %s: %w", name, err)
 	}
 
 	s.routes.RecordSignature(s.clientPID, fingerprint)

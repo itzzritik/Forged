@@ -32,10 +32,10 @@ type ForgedSSHKey struct {
 func ParseForged(data []byte) ([]ImportedKey, error) {
 	var export ForgedExport
 	if err := json.Unmarshal(data, &export); err != nil {
-		return nil, fmt.Errorf("parsing Forged export: %w", err)
+		return nil, fmt.Errorf("Parsing Forged export: %w", err)
 	}
 	if export.Format != "forged-export" {
-		return nil, fmt.Errorf("not a Forged export file")
+		return nil, fmt.Errorf("Not a Forged export file")
 	}
 
 	var keys []ImportedKey

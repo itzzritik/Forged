@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net"
+	"strings"
+	"unicode"
 )
 
 type Request struct {
@@ -29,21 +31,21 @@ func OkResponse(data any) Response {
 }
 
 func ErrorResponse(err error) Response {
-	return Response{Status: "error", Error: err.Error()}
+	return Response{Status: "error", Error: sentenceCase(err.Error())}
 }
 
 func WriteMessage(conn net.Conn, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
-		return fmt.Errorf("marshaling message: %w", err)
+		return fmt.Errorf("Marshaling message: %w", err)
 	}
 
 	length := uint32(len(data))
 	if err := binary.Write(conn, binary.BigEndian, length); err != nil {
-		return fmt.Errorf("writing length: %w", err)
+		return fmt.Errorf("Writing length: %w", err)
 	}
 	if _, err := conn.Write(data); err != nil {
-		return fmt.Errorf("writing payload: %w", err)
+		return fmt.Errorf("Writing payload: %w", err)
 	}
 	return nil
 }
@@ -54,20 +56,33 @@ func ReadMessage(conn net.Conn, v any) error {
 		if err == io.EOF {
 			return err
 		}
-		return fmt.Errorf("reading length: %w", err)
+		return fmt.Errorf("Reading length: %w", err)
 	}
 
 	if length > 10*1024*1024 {
-		return fmt.Errorf("message too large (%d bytes)", length)
+		return fmt.Errorf("Message too large (%d bytes)", length)
 	}
 
 	buf := make([]byte, length)
 	if _, err := io.ReadFull(conn, buf); err != nil {
-		return fmt.Errorf("reading payload: %w", err)
+		return fmt.Errorf("Reading payload: %w", err)
 	}
 
 	if err := json.Unmarshal(buf, v); err != nil {
-		return fmt.Errorf("unmarshaling message: %w", err)
+		return fmt.Errorf("Unmarshaling message: %w", err)
 	}
 	return nil
+}
+
+func sentenceCase(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) == 0 || !unicode.IsLower(runes[0]) {
+		return trimmed
+	}
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
 }

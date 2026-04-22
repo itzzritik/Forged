@@ -6,9 +6,9 @@ import (
 )
 
 var (
-	ErrSecureStoreUnavailable = errors.New("secure storage unavailable")
-	ErrSecureStoreBroken      = errors.New("secure storage broken")
-	ErrSecureStoreNotFound    = errors.New("secure storage item not found")
+	ErrSecureStoreUnavailable = errors.New("Secure storage unavailable")
+	ErrSecureStoreBroken      = errors.New("Secure storage broken")
+	ErrSecureStoreNotFound    = errors.New("Secure storage item not found")
 )
 
 type SecureStore interface {

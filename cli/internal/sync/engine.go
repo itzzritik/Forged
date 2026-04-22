@@ -35,7 +35,7 @@ func NewEngine(v *vault.Vault, client API, logger *slog.Logger) *Engine {
 
 func (e *Engine) PushCurrent(ctx context.Context, state *SyncState) error {
 	if state == nil {
-		return fmt.Errorf("sync state required")
+		return fmt.Errorf("Sync state required")
 	}
 
 	_ = ctx
@@ -57,7 +57,7 @@ func (e *Engine) PushCurrent(ctx context.Context, state *SyncState) error {
 
 func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultData, PullResult, error) {
 	if state == nil {
-		return vault.VaultData{}, PullResult{}, fmt.Errorf("sync state required")
+		return vault.VaultData{}, PullResult{}, fmt.Errorf("Sync state required")
 	}
 
 	_ = ctx
@@ -102,7 +102,7 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 
 func (e *Engine) MergeAndRetry(ctx context.Context, state *SyncState) error {
 	if state == nil {
-		return fmt.Errorf("sync state required")
+		return fmt.Errorf("Sync state required")
 	}
 
 	local := e.vault.Data
@@ -129,7 +129,7 @@ func (e *Engine) MergeAndRetry(ctx context.Context, state *SyncState) error {
 
 func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, serverURL string) error {
 	if state == nil {
-		return fmt.Errorf("sync state required")
+		return fmt.Errorf("Sync state required")
 	}
 
 	local := e.vault.Data
@@ -283,7 +283,7 @@ func remoteMetadataMissing(result PullResult) bool {
 
 func (e *Engine) repairRemoteMetadata(ctx context.Context, state *SyncState, version int64) error {
 	if state == nil {
-		return fmt.Errorf("sync state required")
+		return fmt.Errorf("Sync state required")
 	}
 
 	if e.logger != nil {

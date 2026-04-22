@@ -23,10 +23,10 @@ type bitwardenItem struct {
 func ParseBitwarden(data []byte) ([]ImportedKey, error) {
 	var export bitwardenExport
 	if err := json.Unmarshal(data, &export); err != nil {
-		return nil, fmt.Errorf("parsing Bitwarden export: %w", err)
+		return nil, fmt.Errorf("Parsing Bitwarden export: %w", err)
 	}
 	if export.Encrypted {
-		return nil, fmt.Errorf("encrypted Bitwarden exports are not supported -- export as unencrypted JSON")
+		return nil, fmt.Errorf("Encrypted Bitwarden exports are not supported -- export as unencrypted JSON")
 	}
 
 	var keys []ImportedKey

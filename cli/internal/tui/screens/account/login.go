@@ -2,6 +2,7 @@ package account
 
 import (
 	"strings"
+	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
@@ -102,13 +103,14 @@ func renderError(message string, width int) string {
 	}
 
 	title := "Unable to start log-in flow"
-	detail := message
+	detail := sentenceCase(message)
+	lower := strings.ToLower(message)
 
 	switch {
-	case strings.Contains(message, "could not reach server"):
+	case strings.Contains(lower, "could not reach server"):
 		title = "Unable to reach the log-in service"
 		detail = "Check connectivity, then open the link again."
-	case strings.Contains(message, "timed out"):
+	case strings.Contains(lower, "timed out"):
 		title = "Approval timed out"
 		detail = "Open the link again to continue."
 	}
@@ -120,4 +122,17 @@ func renderError(message string, width int) string {
 		lines = append(lines, theme.Body.Width(max(24, width)).Render(detail))
 	}
 	return strings.Join(lines, "\n")
+}
+
+func sentenceCase(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) == 0 || !unicode.IsLower(runes[0]) {
+		return trimmed
+	}
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
 }

@@ -92,7 +92,7 @@ func (a *ForgedAgent) List() ([]*agent.Key, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 	if a.keyStore == nil {
-		return nil, fmt.Errorf("vault is locked")
+		return nil, fmt.Errorf("Vault is locked")
 	}
 
 	keys := a.keyStore.List()
@@ -121,7 +121,7 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 	a.mu.RLock()
 	if a.locked {
 		a.mu.RUnlock()
-		return nil, fmt.Errorf("agent is locked")
+		return nil, fmt.Errorf("Agent is locked")
 	}
 	if a.keyStore == nil {
 		a.mu.RUnlock()
@@ -140,10 +140,10 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 	defer a.mu.RUnlock()
 
 	if a.locked {
-		return nil, fmt.Errorf("agent is locked")
+		return nil, fmt.Errorf("Agent is locked")
 	}
 	if a.keyStore == nil {
-		return nil, fmt.Errorf("vault is locked")
+		return nil, fmt.Errorf("Vault is locked")
 	}
 
 	signer, name, _, err := a.keyStore.SignerByPublicKey(key)
@@ -181,7 +181,7 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 	}
 
 	if err != nil {
-		return nil, fmt.Errorf("signing with key %s: %w", name, err)
+		return nil, fmt.Errorf("Signing with key %s: %w", name, err)
 	}
 
 	a.keyStore.RecordUsage(name)
@@ -189,15 +189,15 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 }
 
 func (a *ForgedAgent) Add(key agent.AddedKey) error {
-	return fmt.Errorf("use the Forged Key tab to import or generate keys")
+	return fmt.Errorf("Use the Forged Key tab to import or generate keys")
 }
 
 func (a *ForgedAgent) Remove(key ssh.PublicKey) error {
-	return fmt.Errorf("use the Forged Key tab to remove keys")
+	return fmt.Errorf("Use the Forged Key tab to remove keys")
 }
 
 func (a *ForgedAgent) RemoveAll() error {
-	return fmt.Errorf("use the Forged Key tab to remove keys")
+	return fmt.Errorf("Use the Forged Key tab to remove keys")
 }
 
 func (a *ForgedAgent) Lock(passphrase []byte) error {
@@ -242,7 +242,7 @@ func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
 		return nil, nil
 	}
 	if a.keyStore == nil {
-		return nil, fmt.Errorf("vault is locked")
+		return nil, fmt.Errorf("Vault is locked")
 	}
 
 	return a.keyStore.Signers()
@@ -298,7 +298,7 @@ func (a *ForgedAgent) ensurePrivateKeyAccess() error {
 		return err
 	}
 	if result.PasswordRequired {
-		return fmt.Errorf("system authentication is required for external use")
+		return fmt.Errorf("System authentication is required for external use")
 	}
 	return nil
 }

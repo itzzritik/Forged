@@ -85,7 +85,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 
 	logDir := filepath.Dir(paths.LogFile())
 	if err := os.MkdirAll(logDir, 0700); err != nil {
-		return fmt.Errorf("creating log directory: %w", err)
+		return fmt.Errorf("Creating log directory: %w", err)
 	}
 
 	plist := plistPath()
@@ -107,16 +107,16 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 
 	tmp, err := os.CreateTemp(filepath.Dir(plist), launchdLabel+".*.plist")
 	if err != nil {
-		return fmt.Errorf("creating plist: %w", err)
+		return fmt.Errorf("Creating plist: %w", err)
 	}
 	defer os.Remove(tmp.Name())
 
 	if _, err := tmp.Write(raw); err != nil {
 		tmp.Close()
-		return fmt.Errorf("writing plist: %w", err)
+		return fmt.Errorf("Writing plist: %w", err)
 	}
 	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("closing plist: %w", err)
+		return fmt.Errorf("Closing plist: %w", err)
 	}
 
 	if err := validateLaunchdPlist(tmp.Name()); err != nil {
@@ -124,7 +124,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	}
 
 	if err := os.Rename(tmp.Name(), plist); err != nil {
-		return fmt.Errorf("installing plist: %w", err)
+		return fmt.Errorf("Installing plist: %w", err)
 	}
 
 	return nil
@@ -299,7 +299,7 @@ func waitForDaemonExit(paths config.Paths) {
 func findBinary() (string, error) {
 	self, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("cannot find forged binary: %w", err)
+		return "", fmt.Errorf("Cannot find Forged binary: %w", err)
 	}
 	abs, err := filepath.Abs(self)
 	if err != nil {
@@ -386,7 +386,7 @@ func migrateLegacyLaunchdService(paths config.Paths) error {
 			return err
 		}
 		if err := InstallService(paths, runtime); err != nil {
-			return fmt.Errorf("installing migrated launchd service: %w", err)
+			return fmt.Errorf("Installing migrated launchd service: %w", err)
 		}
 		return nil
 	}
@@ -406,7 +406,7 @@ func removeLegacyLaunchdPlists() error {
 func renderLaunchdPlist(data launchdTemplateData) ([]byte, error) {
 	var buf bytes.Buffer
 	if err := plistTemplate.Execute(&buf, data); err != nil {
-		return nil, fmt.Errorf("rendering plist: %w", err)
+		return nil, fmt.Errorf("Rendering plist: %w", err)
 	}
 	return buf.Bytes(), nil
 }
@@ -414,7 +414,7 @@ func renderLaunchdPlist(data launchdTemplateData) ([]byte, error) {
 func validateLaunchdPlist(path string) error {
 	cmd := exec.Command("plutil", "-lint", path)
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("validating plist: %s: %w", strings.TrimSpace(string(out)), err)
+		return fmt.Errorf("Validating plist: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

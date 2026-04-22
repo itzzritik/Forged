@@ -23,8 +23,8 @@ type Client struct {
 var _ API = (*Client)(nil)
 
 var (
-	ErrNoRemoteVault   = errors.New("no vault on server")
-	ErrVersionConflict = errors.New("version conflict")
+	ErrNoRemoteVault   = errors.New("No vault on server")
+	ErrVersionConflict = errors.New("Version conflict")
 )
 
 func NewClient(serverURL, token, deviceID string) *Client {
@@ -82,7 +82,7 @@ func (c *Client) Push(blob []byte, kdf vault.KDFParams, protectedKey string, exp
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return PushResult{}, fmt.Errorf("push request failed: %w", err)
+		return PushResult{}, fmt.Errorf("Push request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -92,7 +92,7 @@ func (c *Client) Push(blob []byte, kdf vault.KDFParams, protectedKey string, exp
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return PushResult{}, fmt.Errorf("push failed (%d): %s", resp.StatusCode, string(respBody))
+		return PushResult{}, fmt.Errorf("Push failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 
 	var result PushResult
@@ -115,13 +115,13 @@ func (c *Client) Rekey(kdf vault.KDFParams, protectedKey string) error {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return fmt.Errorf("rekey request failed: %w", err)
+		return fmt.Errorf("Rekey request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("rekey failed (%d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("Rekey failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 	return nil
 }
@@ -144,7 +144,7 @@ func (c *Client) Pull() (PullResult, error) {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return PullResult{}, fmt.Errorf("pull request failed: %w", err)
+		return PullResult{}, fmt.Errorf("Pull request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -154,7 +154,7 @@ func (c *Client) Pull() (PullResult, error) {
 
 	if resp.StatusCode != http.StatusOK {
 		respBody, _ := io.ReadAll(resp.Body)
-		return PullResult{}, fmt.Errorf("pull failed (%d): %s", resp.StatusCode, string(respBody))
+		return PullResult{}, fmt.Errorf("Pull failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 
 	var jsonResp struct {
@@ -164,12 +164,12 @@ func (c *Client) Pull() (PullResult, error) {
 		ProtectedSymmetricKey *string        `json:"protected_symmetric_key"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&jsonResp); err != nil {
-		return PullResult{}, fmt.Errorf("parsing pull response: %w", err)
+		return PullResult{}, fmt.Errorf("Parsing pull response: %w", err)
 	}
 
 	blob, err := base64.StdEncoding.DecodeString(jsonResp.Blob)
 	if err != nil {
-		return PullResult{}, fmt.Errorf("decoding blob: %w", err)
+		return PullResult{}, fmt.Errorf("Decoding blob: %w", err)
 	}
 
 	return PullResult{
@@ -197,7 +197,7 @@ func (c *Client) Status() (StatusResult, error) {
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
-		return StatusResult{}, fmt.Errorf("status request failed: %w", err)
+		return StatusResult{}, fmt.Errorf("Status request failed: %w", err)
 	}
 	defer resp.Body.Close()
 

@@ -42,7 +42,7 @@ type LoginProgress struct {
 
 func (s LoginSession) Wait(ctx context.Context) (AccountCredentials, error) {
 	if s.wait == nil {
-		return AccountCredentials{}, fmt.Errorf("log-in flow is not ready")
+		return AccountCredentials{}, fmt.Errorf("Log-in flow is not ready")
 	}
 	return s.wait(ctx)
 }
@@ -54,12 +54,12 @@ func CredentialsPath(paths config.Paths) string {
 func LoadCredentials(paths config.Paths) (AccountCredentials, error) {
 	data, err := os.ReadFile(CredentialsPath(paths))
 	if err != nil {
-		return AccountCredentials{}, fmt.Errorf("not logged in. Open Forged and use Manage > Log In")
+		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Manage > Log In")
 	}
 
 	var creds AccountCredentials
 	if err := json.Unmarshal(data, &creds); err != nil {
-		return AccountCredentials{}, fmt.Errorf("corrupted credentials file")
+		return AccountCredentials{}, fmt.Errorf("Corrupted credentials file")
 	}
 	populateAccountDisplayName(&creds)
 	return creds, nil
@@ -87,7 +87,7 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 		UserID:    creds.UserID,
 	})
 	if err != nil {
-		return fmt.Errorf("linking running daemon: %w", err)
+		return fmt.Errorf("Linking running daemon: %w", err)
 	}
 	return nil
 }
@@ -95,7 +95,7 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 func ClearCredentials(paths config.Paths) error {
 	if _, running := daemon.IsRunning(paths); running {
 		if _, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSyncUnlink, nil); err != nil {
-			return fmt.Errorf("unlinking running daemon: %w", err)
+			return fmt.Errorf("Unlinking running daemon: %w", err)
 		}
 	}
 
@@ -117,12 +117,12 @@ func BeginLogin(server string, openBrowser func(string)) (LoginSession, error) {
 func BeginLoginWithProgress(server string, openBrowser func(string), progress func(LoginProgress)) (LoginSession, error) {
 	code, err := randomHex(16)
 	if err != nil {
-		return LoginSession{}, fmt.Errorf("generating code: %w", err)
+		return LoginSession{}, fmt.Errorf("Generating code: %w", err)
 	}
 
 	verification, err := randomHex(2)
 	if err != nil {
-		return LoginSession{}, fmt.Errorf("generating verification: %w", err)
+		return LoginSession{}, fmt.Errorf("Generating verification: %w", err)
 	}
 
 	payload, _ := json.Marshal(map[string]string{
@@ -199,13 +199,13 @@ func pollLogin(ctx context.Context, server string, pollURL string) (AccountCrede
 				Name:      name,
 			}, nil
 		case "error":
-			return AccountCredentials{}, fmt.Errorf("authentication failed: %s", result.Error)
+			return AccountCredentials{}, fmt.Errorf("Authentication failed: %s", result.Error)
 		case "pending":
 			continue
 		}
 	}
 
-	return AccountCredentials{}, fmt.Errorf("timed out while waiting to log in")
+	return AccountCredentials{}, fmt.Errorf("Timed out while waiting to log in")
 }
 
 func OpenBrowser(url string) {
@@ -236,7 +236,7 @@ func createAuthSessionWithRetry(server string, payload []byte, progress func(Log
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		req, err := http.NewRequest(http.MethodPost, server+"/api/v1/auth/sessions", bytes.NewReader(payload))
 		if err != nil {
-			return nil, fmt.Errorf("creating auth session request: %w", err)
+			return nil, fmt.Errorf("Creating auth session request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 
@@ -338,9 +338,9 @@ func fallbackAccountName(email string) string {
 func loginAttemptError(err error, statusCode int, attempt int) error {
 	suffix := fmt.Sprintf(" after %d attempts", attempt)
 	if err != nil {
-		return fmt.Errorf("could not reach server: %v%s", err, suffix)
+		return fmt.Errorf("Could not reach server: %v%s", err, suffix)
 	}
-	return fmt.Errorf("could not create auth session (status %d)%s", statusCode, suffix)
+	return fmt.Errorf("Could not create auth session (status %d)%s", statusCode, suffix)
 }
 
 func readLoginErrorBody(body io.Reader) string {

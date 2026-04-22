@@ -17,7 +17,7 @@ func AgentPeerPID(conn net.Conn) (int, error) {
 
 	raw, err := unixConn.SyscallConn()
 	if err != nil {
-		return 0, fmt.Errorf("syscall conn: %w", err)
+		return 0, fmt.Errorf("Syscall conn: %w", err)
 	}
 
 	var pid int

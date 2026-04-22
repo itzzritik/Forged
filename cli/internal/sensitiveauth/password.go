@@ -18,11 +18,11 @@ func NewPasswordVerifier(paths config.Paths, logger *slog.Logger) *PasswordVerif
 
 func (v *PasswordVerifier) Verify(password []byte) error {
 	if len(password) == 0 {
-		return fmt.Errorf("master password required")
+		return fmt.Errorf("Master password required")
 	}
 	result, err := VerifyAndRefreshLocalEnrollment(v.paths, password)
 	if err != nil {
-		return fmt.Errorf("authentication failed")
+		return fmt.Errorf("Authentication failed")
 	}
 	if !result.Refreshed && v.logger != nil && result.Reason != "" {
 		v.logger.Warn("local unlock enrollment not refreshed", "capability", result.Capability, "reason", result.Reason)

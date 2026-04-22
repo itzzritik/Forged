@@ -104,7 +104,7 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 		return printVersion(cmd)
 	}
 	if !shouldLaunchBareForged(args) {
-		return fmt.Errorf("forged requires an interactive terminal. Use `forged help` or `forged version`")
+		return fmt.Errorf("Forged requires an interactive terminal. Use `forged help` or `forged version`")
 	}
 	return runBareForged(cmd)
 }

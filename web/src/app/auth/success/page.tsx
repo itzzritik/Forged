@@ -30,7 +30,7 @@ export default async function AuthSuccessPage({ searchParams }: { searchParams: 
 							</svg>
 						</div>
 					</div>
-					<h1 className="mb-3 font-bold text-2xl text-white tracking-tight">Authentication Failed</h1>
+					<h1 className="mb-3 font-bold text-2xl text-white tracking-tight">Authentication failed</h1>
 					<p className="mb-8 font-mono text-[#a1a1aa] text-sm">{decodeURIComponent(error)}</p>
 					<Link className="font-mono text-[#a1a1aa] text-xs uppercase tracking-wider transition-colors hover:text-white" href="/login">
 						Try again

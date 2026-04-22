@@ -45,17 +45,41 @@ func ExportVault(paths config.Paths, outPath string, password []byte) (ExportRes
 	}
 	outPath = expandUserPath(outPath)
 
-	authResult, err := authorizeSensitiveResult(paths, sensitiveauth.ActionExport, password)
+	token, err := AuthorizeExport(paths, password)
 	if err != nil {
 		return ExportResult{}, err
 	}
+
+	return ExportVaultWithToken(paths, outPath, token)
+}
+
+func AuthorizeExport(paths config.Paths, password []byte) (string, error) {
+	authResult, err := authorizeSensitiveResult(paths, sensitiveauth.ActionExport, password)
+	if err != nil {
+		return "", err
+	}
 	if strings.TrimSpace(authResult.ExportToken) == "" {
-		return ExportResult{}, fmt.Errorf("Export authorization did not return a token")
+		return "", fmt.Errorf("Export authorization did not return a token")
+	}
+	return strings.TrimSpace(authResult.ExportToken), nil
+}
+
+func ExportVaultWithToken(paths config.Paths, outPath string, token string) (ExportResult, error) {
+	outPath = strings.TrimSpace(outPath)
+	if outPath == "" {
+		return ExportResult{}, fmt.Errorf("Enter an export path")
+	}
+	outPath = expandUserPath(outPath)
+	if strings.TrimSpace(token) == "" {
+		return ExportResult{}, &SensitiveAuthRequiredError{Prompt: sensitiveauth.ActionExport.PasswordPrompt()}
 	}
 
 	client := ipc.NewClient(paths.CtlSocket())
-	resp, err := client.Call(ipc.CmdExportAll, map[string]string{"token": authResult.ExportToken})
+	resp, err := client.Call(ipc.CmdExportAll, map[string]string{"token": strings.TrimSpace(token)})
 	if err != nil {
+		if strings.Contains(err.Error(), "sensitive export requires fresh authentication") {
+			return ExportResult{}, &SensitiveAuthRequiredError{Prompt: sensitiveauth.ActionExport.PasswordPrompt()}
+		}
 		return ExportResult{}, err
 	}
 

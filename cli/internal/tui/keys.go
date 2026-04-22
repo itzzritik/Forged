@@ -79,6 +79,12 @@ type keyExportFinishedMsg struct {
 	err    error
 }
 
+type keyExportAuthorizedMsg struct {
+	id    int
+	token string
+	err   error
+}
+
 type keyImportPickerMsg struct {
 	id   int
 	path string
@@ -172,6 +178,7 @@ type keyExportState struct {
 	pickerOpening bool
 	err           string
 	status        string
+	token         string
 
 	pathVisible bool
 	pathInput   textinput.Model
@@ -1209,10 +1216,8 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 		m.keyExport.pathInput.SetValue(actions.DefaultExportPath())
 		m.keyExport.pathVisible = false
 		m.resizeKeyInputs()
-		m.keyExport.err = ""
-		m.keyExport.status = "Choosing export file"
-		m.keyExport.pickerOpening = true
-		return tea.Batch(m.spinner.Tick, m.openExportPicker(strings.TrimSpace(m.keyExport.pathInput.Value())))
+		m.showPasswordScreenOnRoute(RouteKeysExport, passwordKeyExport, "", "", false)
+		return m.passwordInput.Init()
 	default:
 		return nil
 	}
@@ -1278,7 +1283,7 @@ func (m *model) copyKeyText(value string, status string) tea.Cmd {
 	copyText := m.copyText
 	return func() tea.Msg {
 		if strings.TrimSpace(value) == "" {
-			return keyCopyFinishedMsg{err: fmt.Errorf("nothing to copy")}
+			return keyCopyFinishedMsg{err: fmt.Errorf("Nothing to copy")}
 		}
 		if err := copyText(value); err != nil {
 			return keyCopyFinishedMsg{err: err}
@@ -1297,7 +1302,7 @@ func (m *model) copyPrivateKey(password []byte) tea.Cmd {
 			return keyPrivateCopyFinishedMsg{err: err}
 		}
 		if strings.TrimSpace(detail.PrivateKey) == "" {
-			return keyPrivateCopyFinishedMsg{err: fmt.Errorf("private key is unavailable")}
+			return keyPrivateCopyFinishedMsg{err: fmt.Errorf("Private key is unavailable")}
 		}
 		if err := copyText(detail.PrivateKey); err != nil {
 			return keyPrivateCopyFinishedMsg{err: err}
@@ -1372,9 +1377,32 @@ func (m *model) exportVault(password []byte) tea.Cmd {
 	id := m.keyExportID
 	paths := config.DefaultPaths()
 	outPath := strings.TrimSpace(m.keyExport.pathInput.Value())
+	token := strings.TrimSpace(m.keyExport.token)
 	return func() tea.Msg {
-		result, err := actions.ExportVault(paths, outPath, password)
+		var (
+			result actions.ExportResult
+			err    error
+		)
+		if len(password) > 0 {
+			result, err = actions.ExportVault(paths, outPath, password)
+		} else {
+			result, err = actions.ExportVaultWithToken(paths, outPath, token)
+		}
 		return keyExportFinishedMsg{id: id, result: result, err: err}
+	}
+}
+
+func (m *model) authorizeKeyExport(password []byte) tea.Cmd {
+	m.keyExportID++
+	id := m.keyExportID
+	paths := config.DefaultPaths()
+	passwordCopy := append([]byte(nil), password...)
+	return func() tea.Msg {
+		token, err := actions.AuthorizeExport(paths, passwordCopy)
+		for i := range passwordCopy {
+			passwordCopy[i] = 0
+		}
+		return keyExportAuthorizedMsg{id: id, token: token, err: err}
 	}
 }
 
@@ -1734,6 +1762,7 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 	if msg.err != nil {
 		if actions.IsSensitiveAuthRequired(msg.err) {
 			m.keyExport.exporting = false
+			m.keyExport.token = ""
 			m.showPasswordScreen(passwordKeyExport, "", "", true)
 			return m, m.passwordInput.Init()
 		}
@@ -1748,6 +1777,25 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 		"Returning to dashboard...",
 	)
 	return m, m.scheduleKeyTransferAutoReturn(RouteKeysExport, m.keyExport.success.autoReturnID)
+}
+
+func (m *model) handleKeyExportAuthorizedMsg(msg keyExportAuthorizedMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.keyExportID || m.passwordFlow != passwordKeyExport {
+		return m, nil
+	}
+	m.passwordBusy = false
+	if msg.err != nil {
+		m.passwordInput.SetError(msg.err.Error())
+		return m, nil
+	}
+	m.passwordOverlay = false
+	m.passwordAuth = ""
+	m.screen = screenDashboard
+	m.keyExport.token = strings.TrimSpace(msg.token)
+	m.keyExport.err = ""
+	m.keyExport.status = "Choosing export file"
+	m.keyExport.pickerOpening = true
+	return m, tea.Batch(m.spinner.Tick, m.openExportPicker(strings.TrimSpace(m.keyExport.pathInput.Value())))
 }
 
 func (m *model) handleKeyImportPickerMsg(msg keyImportPickerMsg) (tea.Model, tea.Cmd) {

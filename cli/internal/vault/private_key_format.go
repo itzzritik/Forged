@@ -20,7 +20,7 @@ const (
 	PrivateKeyFormatUnknown   PrivateKeyFormat = "unknown"
 )
 
-var ErrPassphraseProtectedPrivateKey = errors.New("passphrase-protected private keys are not supported")
+var ErrPassphraseProtectedPrivateKey = errors.New("Passphrase-protected private keys are not supported")
 
 type NormalizedPrivateKey struct {
 	Bytes       []byte

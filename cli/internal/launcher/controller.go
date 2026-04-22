@@ -47,7 +47,7 @@ func (c *Controller) Run() error {
 
 		out, ok := final.(*Model)
 		if !ok {
-			return fmt.Errorf("unexpected launcher model type %T", final)
+			return fmt.Errorf("Unexpected launcher model type %T", final)
 		}
 		if out.err != nil {
 			return out.err

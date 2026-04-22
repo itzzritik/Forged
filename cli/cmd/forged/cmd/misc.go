@@ -23,7 +23,7 @@ var logsCmd = &cobra.Command{
 		paths := config.DefaultPaths()
 		logPath := paths.LogFile()
 		if _, err := os.Stat(logPath); os.IsNotExist(err) {
-			return fmt.Errorf("no log file found at %s", logPath)
+			return fmt.Errorf("No log file found at %s", logPath)
 		}
 		tailCmd := exec.Command("tail", "-f", logPath)
 		tailCmd.Stdout = os.Stdout

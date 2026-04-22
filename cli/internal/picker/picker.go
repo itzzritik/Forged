@@ -9,8 +9,8 @@ import (
 )
 
 var (
-	ErrUnavailable = errors.New("file picker unavailable")
-	ErrCanceled    = errors.New("file picker canceled")
+	ErrUnavailable = errors.New("File picker unavailable")
+	ErrCanceled    = errors.New("File picker canceled")
 )
 
 func ChooseFile() (string, error) {

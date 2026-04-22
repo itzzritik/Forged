@@ -30,14 +30,14 @@ func ParseAction(raw string) (Action, error) {
 	case ActionView, ActionExport, ActionExternal:
 		return Action(raw), nil
 	default:
-		return "", fmt.Errorf("unsupported sensitive action %q", raw)
+		return "", fmt.Errorf("Unsupported sensitive action %q", raw)
 	}
 }
 
 func (a Action) PasswordPrompt() string {
 	switch a {
 	case ActionExport:
-		return "Native authentication unavailable. Enter your master password to unlock private-key access and export:"
+		return "Enter your master password to export this vault."
 	case ActionExternal:
 		return ""
 	default:

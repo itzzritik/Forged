@@ -39,7 +39,7 @@ func getStartupPassword() ([]byte, error) {
 
 	info, err := os.Stdin.Stat()
 	if err != nil {
-		return nil, fmt.Errorf("inspecting stdin: %w", err)
+		return nil, fmt.Errorf("Inspecting stdin: %w", err)
 	}
 	if info.Mode()&os.ModeNamedPipe == 0 && !info.Mode().IsRegular() {
 		return nil, nil
@@ -47,7 +47,7 @@ func getStartupPassword() ([]byte, error) {
 
 	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
-		return nil, fmt.Errorf("reading password from stdin: %w", err)
+		return nil, fmt.Errorf("Reading password from stdin: %w", err)
 	}
 	password := data
 	if len(password) > 0 && password[len(password)-1] == '\n' {

@@ -22,7 +22,7 @@ func (c *Client) Call(command string, args any) (Response, error) {
 func (c *Client) CallWithTimeout(command string, args any, timeout time.Duration) (Response, error) {
 	conn, err := net.DialTimeout("unix", c.socketPath, 2*time.Second)
 	if err != nil {
-		return Response{}, fmt.Errorf("daemon is not running. Open Forged to start it")
+		return Response{}, fmt.Errorf("Daemon is not running. Open Forged to start it")
 	}
 	defer conn.Close()
 
@@ -35,19 +35,19 @@ func (c *Client) CallWithTimeout(command string, args any, timeout time.Duration
 	if args != nil {
 		b, err := json.Marshal(args)
 		if err != nil {
-			return Response{}, fmt.Errorf("marshaling args: %w", err)
+			return Response{}, fmt.Errorf("Marshaling args: %w", err)
 		}
 		rawArgs = b
 	}
 
 	req := Request{Command: command, Args: rawArgs}
 	if err := WriteMessage(conn, req); err != nil {
-		return Response{}, fmt.Errorf("sending request: %w", err)
+		return Response{}, fmt.Errorf("Sending request: %w", err)
 	}
 
 	var resp Response
 	if err := ReadMessage(conn, &resp); err != nil {
-		return Response{}, fmt.Errorf("reading response: %w", err)
+		return Response{}, fmt.Errorf("Reading response: %w", err)
 	}
 
 	if resp.Status == "error" {

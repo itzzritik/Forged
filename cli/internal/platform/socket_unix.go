@@ -23,7 +23,7 @@ func CleanStaleSocket(path string) error {
 		return nil
 	}
 	if IsSocketAlive(path) {
-		return fmt.Errorf("socket %s is in use by another process", path)
+		return fmt.Errorf("Socket %s is in use by another process", path)
 	}
 	return os.Remove(path)
 }

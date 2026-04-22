@@ -59,7 +59,7 @@ func (e *SensitiveAuthRequiredError) Error() string {
 	if strings.TrimSpace(e.Prompt) != "" {
 		return e.Prompt
 	}
-	return "sensitive authentication requires a password"
+	return "Sensitive authentication requires a password"
 }
 
 func IsSensitiveAuthRequired(err error) bool {
@@ -82,7 +82,7 @@ func ListKeys(paths config.Paths) ([]KeySummary, error) {
 		Keys []KeySummary `json:"keys"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("parsing key list: %w", err)
+		return nil, fmt.Errorf("Parsing key list: %w", err)
 	}
 	for i := range result.Keys {
 		result.Keys[i].Type = keytypes.Normalize(result.Keys[i].Type)
@@ -144,7 +144,7 @@ func ExportPublicKey(paths config.Paths, name string) (GenerateResult, error) {
 		ResolvedName string `json:"resolved_name"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return GenerateResult{}, fmt.Errorf("parsing key export: %w", err)
+		return GenerateResult{}, fmt.Errorf("Parsing key export: %w", err)
 	}
 
 	detail, err := ViewKey(paths, result.ResolvedName)
@@ -172,7 +172,7 @@ func GenerateKey(paths config.Paths, name, comment string) (GenerateResult, erro
 
 	var result GenerateResult
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return GenerateResult{}, fmt.Errorf("parsing generate result: %w", err)
+		return GenerateResult{}, fmt.Errorf("Parsing generate result: %w", err)
 	}
 	result.Type = keytypes.Normalize(result.Type)
 	result.Comment = comment
@@ -190,7 +190,7 @@ func viewKey(paths config.Paths, name string, full bool) (KeyDetail, error) {
 
 	var result KeyDetail
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return KeyDetail{}, fmt.Errorf("parsing key detail: %w", err)
+		return KeyDetail{}, fmt.Errorf("Parsing key detail: %w", err)
 	}
 	result.Type = keytypes.Normalize(result.Type)
 	return result, nil
@@ -215,7 +215,7 @@ func authorizeSensitiveResultWithOptions(paths config.Paths, action sensitiveaut
 	parseResult := func(raw json.RawMessage) (sensitiveauth.AuthorizeResult, error) {
 		var result sensitiveauth.AuthorizeResult
 		if err := json.Unmarshal(raw, &result); err != nil {
-			return sensitiveauth.AuthorizeResult{}, fmt.Errorf("parsing auth response: %w", err)
+			return sensitiveauth.AuthorizeResult{}, fmt.Errorf("Parsing auth response: %w", err)
 		}
 		return result, nil
 	}
@@ -262,7 +262,7 @@ func RenameKey(paths config.Paths, oldName, newName string) (RenameResult, error
 		NewName string `json:"new_name"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return RenameResult{}, fmt.Errorf("parsing rename result: %w", err)
+		return RenameResult{}, fmt.Errorf("Parsing rename result: %w", err)
 	}
 	return RenameResult{OldName: result.OldName, NewName: result.NewName}, nil
 }
@@ -279,7 +279,7 @@ func DeleteKey(paths config.Paths, name string) (string, error) {
 		ResolvedName string `json:"resolved_name"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return "", fmt.Errorf("parsing delete result: %w", err)
+		return "", fmt.Errorf("Parsing delete result: %w", err)
 	}
 	if strings.TrimSpace(result.ResolvedName) == "" {
 		return name, nil

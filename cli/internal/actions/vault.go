@@ -51,7 +51,7 @@ func unlockSensitive(paths config.Paths, password []byte, force bool) (UnlockRes
 			return UnlockResult{PasswordRequired: true, Prompt: unlockPrompt(err, sensitiveauth.ActionView.PasswordPrompt())}, nil
 		case strings.Contains(err.Error(), "authentication canceled"):
 			return UnlockResult{PasswordRequired: true, Prompt: "Authentication was canceled. Enter your master password to continue."}, nil
-		case strings.Contains(err.Error(), "authentication failed"):
+		case strings.Contains(err.Error(), "Authentication failed"):
 			return UnlockResult{PasswordRequired: true, Prompt: "Authentication failed. Enter your master password to continue."}, nil
 		default:
 			return UnlockResult{}, err
@@ -107,7 +107,7 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 	}()
 
 	if err := v.ChangePassword(newPassword); err != nil {
-		return ChangePasswordResult{}, fmt.Errorf("changing password: %w", err)
+		return ChangePasswordResult{}, fmt.Errorf("Changing password: %w", err)
 	}
 	passwordChanged = true
 	_ = sensitiveauth.InvalidateLocalEnrollment(paths)
@@ -170,7 +170,7 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 	}
 
 	if err := daemon.StopService(); err != nil {
-		return false, fmt.Errorf("stopping local service: %w", err)
+		return false, fmt.Errorf("Stopping local service: %w", err)
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -181,7 +181,7 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return false, fmt.Errorf("waiting for local service to stop")
+	return false, fmt.Errorf("Waiting for local service to stop")
 }
 
 func applyEnrollmentDetail(result *ChangePasswordResult, enrollment sensitiveauth.EnrollmentResult, err error) {
