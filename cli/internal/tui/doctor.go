@@ -176,7 +176,12 @@ func (m *model) doctorRows() []doctorRow {
 		m.doctorSSHAgentRow(),
 		m.doctorSSHConfigRow(paths),
 		m.doctorIdentityAgentRow(paths),
+		m.doctorSystemAuthRow(),
+		m.doctorSecureStoreRow(),
 		m.doctorSyncAccountRow(),
+	}
+	if m.shouldShowExternalUsePolicy() {
+		rows = append(rows, m.doctorExternalUsePolicyRow())
 	}
 
 	sort.SliceStable(rows, func(i, j int) bool {
@@ -499,7 +504,7 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 				Tone:   doctorscreen.ToneSuccess,
 			},
 			severity: doctorSeveritySuccess,
-			order:    9,
+			order:    12,
 		}
 	}
 	return doctorRow{
@@ -510,6 +515,143 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 			Tone:   doctorscreen.ToneWarning,
 		},
 		severity: doctorSeverityWarning,
-		order:    9,
+		order:    12,
+	}
+}
+
+func (m *model) doctorSystemAuthRow() doctorRow {
+	if !m.securityLoaded {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "System Auth",
+				Status: "! Checking",
+				Detail: "Loading security state",
+				Tone:   doctorscreen.ToneWarning,
+			},
+			severity: doctorSeverityWarning,
+			order:    9,
+		}
+	}
+	switch m.securityState.SystemAuthCapability {
+	case securityCapabilityAvailable:
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "System Auth",
+				Status: "✓ Available",
+				Detail: "System authentication is ready for sensitive actions",
+				Tone:   doctorscreen.ToneSuccess,
+			},
+			severity: doctorSeveritySuccess,
+			order:    9,
+		}
+	case securityCapabilityUnavailableByPlatform, securityCapabilityUnavailableByEnv:
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "System Auth",
+				Status: "! Unavailable",
+				Detail: "External use follows your configured policy on this machine",
+				Tone:   doctorscreen.ToneWarning,
+			},
+			severity: doctorSeverityWarning,
+			order:    9,
+		}
+	default:
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "System Auth",
+				Status: "✕ Broken",
+				Detail: "System authentication is expected but not working",
+				Tone:   doctorscreen.ToneDanger,
+			},
+			severity: doctorSeverityDanger,
+			order:    9,
+		}
+	}
+}
+
+func (m *model) doctorSecureStoreRow() doctorRow {
+	if !m.securityLoaded {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Secure Store",
+				Status: "! Checking",
+				Detail: "Loading security state",
+				Tone:   doctorscreen.ToneWarning,
+			},
+			severity: doctorSeverityWarning,
+			order:    10,
+		}
+	}
+	switch m.securityState.SecureStoreCapability {
+	case securityCapabilityAvailable:
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Secure Store",
+				Status: "✓ Available",
+				Detail: "Local unlock trust can be stored securely",
+				Tone:   doctorscreen.ToneSuccess,
+			},
+			severity: doctorSeveritySuccess,
+			order:    10,
+		}
+	case securityCapabilityUnavailableByPlatform, securityCapabilityUnavailableByEnv:
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Secure Store",
+				Status: "! Unavailable",
+				Detail: "Master-password trust cannot be remembered securely",
+				Tone:   doctorscreen.ToneWarning,
+			},
+			severity: doctorSeverityWarning,
+			order:    10,
+		}
+	default:
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Secure Store",
+				Status: "✕ Broken",
+				Detail: "Local unlock trust cannot be persisted",
+				Tone:   doctorscreen.ToneDanger,
+			},
+			severity: doctorSeverityDanger,
+			order:    10,
+		}
+	}
+}
+
+func (m *model) doctorExternalUsePolicyRow() doctorRow {
+	if !m.securityLoaded {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "External Use",
+				Status: "! Checking",
+				Detail: "Loading security state",
+				Tone:   doctorscreen.ToneWarning,
+			},
+			severity: doctorSeverityWarning,
+			order:    11,
+		}
+	}
+	if m.securityState.ExternalUsePolicy == config.ExternalUsePolicyAllow {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "External Use",
+				Status: "! Allow external",
+				Detail: "SSH auth and signing may proceed without system auth on unsupported environments",
+				Tone:   doctorscreen.ToneWarning,
+			},
+			severity: doctorSeverityWarning,
+			order:    11,
+		}
+	}
+	return doctorRow{
+		screen: doctorscreen.Row{
+			Check:  "External Use",
+			Status: "✓ Deny by default",
+			Detail: "SSH auth and signing are blocked when system auth is unavailable",
+			Tone:   doctorscreen.ToneSuccess,
+		},
+		severity: doctorSeveritySuccess,
+		order:    11,
 	}
 }

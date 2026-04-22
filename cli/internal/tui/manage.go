@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"strings"
 	"time"
 
@@ -17,14 +18,15 @@ import (
 type manageItemID string
 
 const (
-	manageItemProfile        manageItemID = "profile"
-	manageItemSignIn         manageItemID = "sign-in"
-	manageItemSync           manageItemID = "sync"
-	manageItemVaultLock      manageItemID = "vault-lock"
-	manageItemVaultUnlock    manageItemID = "vault-unlock"
-	manageItemChangePassword manageItemID = "change-password"
-	manageItemLogout         manageItemID = "logout"
-	manageListMinHeight                   = 6
+	manageItemProfile           manageItemID = "profile"
+	manageItemSignIn            manageItemID = "sign-in"
+	manageItemSync              manageItemID = "sync"
+	manageItemMasterInterval    manageItemID = "master-password-interval"
+	manageItemExternalPolicy    manageItemID = "external-use-policy"
+	manageItemChangePassword    manageItemID = "change-password"
+	manageItemLogout            manageItemID = "logout"
+	manageListMinHeight                      = 6
+	manageIntervalListMinHeight              = 3
 )
 
 type manageItem struct {
@@ -34,12 +36,15 @@ type manageItem struct {
 }
 
 type manageState struct {
-	selected         int
-	changePasswordID int
-	autoReturnID     int
-	syncBusy         bool
-	logoutArmed      bool
-	success          *manageSuccessState
+	selected               int
+	masterIntervalSelected int
+	changePasswordID       int
+	autoReturnID           int
+	syncBusy               bool
+	logoutArmed            bool
+	settingItem            manageItemID
+	settingErr             string
+	success                *manageSuccessState
 }
 
 type manageSuccessState struct {
@@ -49,17 +54,8 @@ type manageSuccessState struct {
 	autoReturnID int
 }
 
-type manageLockFinishedMsg struct {
-	err error
-}
-
 type manageSyncFinishedMsg struct {
 	err error
-}
-
-type manageUnlockFinishedMsg struct {
-	result actions.UnlockResult
-	err    error
 }
 
 type manageChangePasswordFinishedMsg struct {
@@ -76,6 +72,12 @@ type manageAutoReturnMsg struct {
 	id int
 }
 
+type manageSecuritySavedMsg struct {
+	item  manageItemID
+	state SecurityState
+	err   error
+}
+
 func (m *model) isManageHomeRoute() bool {
 	return m.screen == screenDashboard && m.snapshot.VaultExists && m.session.Current().ID == RouteVaultHome
 }
@@ -89,6 +91,10 @@ func (m *model) isManageSuccessRoute() bool {
 
 func (m *model) isManageProfileRoute() bool {
 	return m.screen == screenDashboard && m.snapshot.VaultExists && m.session.Current().ID == RouteAccountStatus
+}
+
+func (m *model) isManageMasterIntervalRoute() bool {
+	return m.screen == screenDashboard && m.snapshot.VaultExists && m.session.Current().ID == RouteVaultMasterPasswordInterval
 }
 
 func (m *model) manageSuccessTitle() string {
@@ -121,17 +127,18 @@ func (m *model) manageItems() []manageItem {
 		Summary: m.manageSyncSummary(),
 	})
 
-	if m.runtimeStatus.Unlocked {
+	items = append(items,
+		manageItem{
+			ID:      manageItemMasterInterval,
+			Label:   "Master Password Interval",
+			Summary: m.masterPasswordIntervalSummary(),
+		},
+	)
+	if m.shouldShowExternalUsePolicy() {
 		items = append(items, manageItem{
-			ID:      manageItemVaultLock,
-			Label:   "Vault Lock",
-			Summary: "Lock this vault until your password is entered again",
-		})
-	} else {
-		items = append(items, manageItem{
-			ID:      manageItemVaultUnlock,
-			Label:   "Vault Unlock",
-			Summary: "Authenticate to unlock this vault",
+			ID:      manageItemExternalPolicy,
+			Label:   "External Use Policy",
+			Summary: m.externalUsePolicySummary(),
 		})
 	}
 
@@ -210,6 +217,9 @@ func (m *model) renderManageBody(contentWidth int) string {
 			if item.ID == manageItemLogout && m.manage.logoutArmed {
 				style = theme.Warning
 			}
+			if item.ID == m.manage.settingItem && strings.TrimSpace(m.manage.settingErr) != "" {
+				style = theme.Warning
+			}
 			bottom = style.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(summary)
 		}
 	}
@@ -225,6 +235,42 @@ func (m *model) renderManageProfileBody(contentWidth int) string {
 		Name:  m.accountDisplayName(),
 		Email: strings.TrimSpace(m.accountEmail),
 	}, contentWidth)
+}
+
+func (m *model) renderManageMasterIntervalBody(contentWidth int) string {
+	descriptionWidth := max(28, min(contentWidth, theme.HeroMaxWidth))
+	description := theme.Body.Width(descriptionWidth).Render(
+		"Choose how often Forged asks for your master password again on this device.",
+	)
+
+	options := masterPasswordIntervalOptions()
+	selected := m.manage.masterIntervalSelected
+	if selected < 0 {
+		selected = 0
+	}
+	if selected >= len(options) {
+		selected = len(options) - 1
+	}
+
+	items := make([]components.SelectionListItem, 0, len(options))
+	for index, option := range options {
+		items = append(items, components.SelectionListItem{
+			Label:    option.Label,
+			Selected: index == selected,
+		})
+	}
+
+	top := strings.Join([]string{
+		description,
+		"",
+		components.RenderSelectionList(items, contentWidth, manageIntervalListMinHeight),
+	}, "\n")
+
+	summary := theme.BodyMuted.Width(descriptionWidth).Render(masterPasswordIntervalOptionSummary(options[selected].Value))
+	if errText := strings.TrimSpace(m.manage.settingErr); errText != "" {
+		summary = theme.Warning.Width(descriptionWidth).Render(errText)
+	}
+	return shell.DockBottom(top+"\n", summary)
 }
 
 func (m *model) renderManageSuccessBody(contentWidth int) string {
@@ -252,6 +298,8 @@ func (m *model) updateManageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "up", "k":
 		m.notice = notice{}
 		m.manage.logoutArmed = false
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
 		if m.manage.selected > 0 {
 			m.manage.selected--
 		}
@@ -259,6 +307,8 @@ func (m *model) updateManageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "down", "j":
 		m.notice = notice{}
 		m.manage.logoutArmed = false
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
 		if len(items) > 0 && m.manage.selected < len(items)-1 {
 			m.manage.selected++
 		}
@@ -270,6 +320,50 @@ func (m *model) updateManageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m.openManageItem(item)
+	}
+
+	return m, nil
+}
+
+func (m *model) updateManageMasterIntervalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	options := masterPasswordIntervalOptions()
+	if len(options) == 0 {
+		return m, nil
+	}
+	if m.manage.masterIntervalSelected < 0 {
+		m.manage.masterIntervalSelected = 0
+	}
+	if m.manage.masterIntervalSelected >= len(options) {
+		m.manage.masterIntervalSelected = len(options) - 1
+	}
+
+	switch msg.String() {
+	case "esc":
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
+		if m.session.Back() {
+			return m, m.showCurrentRoute()
+		}
+		return m, tea.Quit
+	case "up", "k":
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
+		if m.manage.masterIntervalSelected > 0 {
+			m.manage.masterIntervalSelected--
+		}
+		return m, nil
+	case "down", "j":
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
+		if m.manage.masterIntervalSelected < len(options)-1 {
+			m.manage.masterIntervalSelected++
+		}
+		return m, nil
+	case "enter":
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
+		selected := options[m.manage.masterIntervalSelected]
+		return m, m.saveManageSecuritySettingCmd(manageItemMasterInterval, selected.Value)
 	}
 
 	return m, nil
@@ -303,15 +397,20 @@ func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
 			return m, m.showCurrentRoute()
 		}
 		return m, m.runManageSync()
-	case manageItemVaultLock:
+	case manageItemMasterInterval:
 		m.manage.logoutArmed = false
-		return m, m.runManageLock()
-	case manageItemVaultUnlock:
-		m.manage.logoutArmed = false
-		if m.session.Current().ID != RouteVaultUnlock {
-			m.session.Push(Route{ID: RouteVaultUnlock})
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
+		m.manage.masterIntervalSelected = m.currentMasterPasswordIntervalIndex()
+		if m.session.Current().ID != RouteVaultMasterPasswordInterval {
+			m.session.Push(Route{ID: RouteVaultMasterPasswordInterval})
 		}
 		return m, m.showCurrentRoute()
+	case manageItemExternalPolicy:
+		m.manage.logoutArmed = false
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
+		return m, m.saveManageSecuritySettingCmd(manageItemExternalPolicy, m.nextExternalUsePolicy())
 	case manageItemChangePassword:
 		m.manage.logoutArmed = false
 		if m.session.Current().ID != RouteVaultChangePassword {
@@ -334,13 +433,6 @@ func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) runManageLock() tea.Cmd {
-	lock := m.lockSensitive
-	return func() tea.Msg {
-		return manageLockFinishedMsg{err: lock()}
-	}
-}
-
 func (m *model) runManageSync() tea.Cmd {
 	triggerSync := m.triggerSync
 	m.manage.syncBusy = true
@@ -359,15 +451,6 @@ func (m *model) runManageLogout() tea.Cmd {
 	}
 }
 
-func (m *model) unlockSensitiveCmd(password []byte) tea.Cmd {
-	unlock := m.unlockSensitive
-	passwordCopy := append([]byte(nil), password...)
-	return func() tea.Msg {
-		result, err := unlock(passwordCopy)
-		return manageUnlockFinishedMsg{result: result, err: err}
-	}
-}
-
 func (m *model) changePasswordCmd(id int, currentPassword []byte, newPassword []byte) tea.Cmd {
 	changePassword := m.changePassword
 	currentCopy := append([]byte(nil), currentPassword...)
@@ -376,26 +459,6 @@ func (m *model) changePasswordCmd(id int, currentPassword []byte, newPassword []
 		result, err := changePassword(currentCopy, newCopy)
 		return manageChangePasswordFinishedMsg{id: id, result: result, err: err}
 	}
-}
-
-func (m *model) startManageUnlockFlow() tea.Cmd {
-	m.showPasswordScreenOnRoute(RouteVaultUnlock, passwordManageUnlock, "", "", false)
-	if !m.hasLocalUnlockTrust() {
-		m.passwordContext = "Enter your master password to unlock this vault."
-		return m.passwordInput.Init()
-	}
-	m.passwordBusy = true
-	m.passwordHideInput = true
-	m.passwordBusyMessage = "Waiting for authentication"
-	return tea.Batch(m.spinner.Tick, m.unlockSensitiveCmd(nil))
-}
-
-func (m *model) submitManageUnlock(password []byte) tea.Cmd {
-	m.passwordBusy = true
-	m.passwordHideInput = false
-	m.passwordBusyMessage = ""
-	m.passwordInput.SetInfo("Unlocking vault")
-	return tea.Batch(m.spinner.Tick, m.unlockSensitiveCmd(password))
 }
 
 func (m *model) submitManageChangePassword() tea.Cmd {
@@ -470,6 +533,9 @@ func (m *model) manageSummaryText(item manageItem) string {
 	if item.ID == manageItemLogout && m.manage.logoutArmed {
 		return "Are you sure you want to log out? Press Enter again to continue"
 	}
+	if item.ID == m.manage.settingItem && strings.TrimSpace(m.manage.settingErr) != "" {
+		return m.manage.settingErr
+	}
 	return item.Summary
 }
 
@@ -506,16 +572,6 @@ func fallbackAccountNameFromEmail(email string) string {
 	return strings.Join(words, " ")
 }
 
-func (m *model) handleManageLockFinishedMsg(msg manageLockFinishedMsg) (tea.Model, tea.Cmd) {
-	if msg.err != nil {
-		return m, nil
-	}
-
-	m.runtimeStatus.Unlocked = false
-	m.runtimeStatus.SensitiveKnown = true
-	return m, m.pollRuntimeStatus(0)
-}
-
 func (m *model) handleManageSyncFinishedMsg(msg manageSyncFinishedMsg) (tea.Model, tea.Cmd) {
 	m.manage.syncBusy = false
 	return m, m.pollRuntimeStatus(0)
@@ -537,39 +593,6 @@ func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.
 	m.runtimeStatus.LastSuccessfulPullAt = time.Time{}
 	m.runtimeStatus.LastSuccessfulPushAt = time.Time{}
 	return m, tea.Batch(m.refreshSnapshotCmd(), m.pollRuntimeStatus(0))
-}
-
-func (m *model) handleManageUnlockFinishedMsg(msg manageUnlockFinishedMsg) (tea.Model, tea.Cmd) {
-	if m.passwordFlow != passwordManageUnlock {
-		return m, nil
-	}
-
-	m.passwordBusy = false
-	m.passwordBusyMessage = ""
-	if msg.err != nil {
-		m.passwordHideInput = false
-		m.passwordInput.SetError(msg.err.Error())
-		return m, nil
-	}
-
-	if msg.result.PasswordRequired {
-		m.passwordHideInput = false
-		prompt := strings.TrimSpace(msg.result.Prompt)
-		if prompt == "" {
-			prompt = "Authentication unavailable. Enter your master password to unlock this vault."
-		}
-		m.passwordContext = prompt
-		m.passwordInput.ClearStatus()
-		return m, m.passwordInput.Init()
-	}
-
-	m.runtimeStatus.Unlocked = true
-	m.runtimeStatus.SensitiveKnown = true
-	m.passwordHideInput = false
-	return m, tea.Batch(
-		m.returnFromManageFlow(),
-		m.pollRuntimeStatus(0),
-	)
 }
 
 func (m *model) handleManageChangePasswordFinishedMsg(msg manageChangePasswordFinishedMsg) (tea.Model, tea.Cmd) {
@@ -639,4 +662,137 @@ func latestSyncTime(status RuntimeStatus) time.Time {
 	default:
 		return status.LastSuccessfulPullAt
 	}
+}
+
+func (m *model) masterPasswordIntervalSummary() string {
+	if !m.securityLoaded {
+		return "Loading security settings"
+	}
+	return fmt.Sprintf("Ask for your master password again every %s on this device.", formatMasterPasswordInterval(m.currentMasterPasswordInterval()))
+}
+
+func (m *model) externalUsePolicySummary() string {
+	if !m.securityLoaded {
+		return "Loading security settings"
+	}
+	current := m.currentExternalUsePolicy()
+	next := m.nextExternalUsePolicy()
+	if current == config.ExternalUsePolicyAllow {
+		return fmt.Sprintf("Allow external signing and SSH auth when system authentication is unavailable. Press Enter to switch to %s.", formatExternalUsePolicy(next))
+	}
+	return fmt.Sprintf("Deny external signing and SSH auth when system authentication is unavailable. Press Enter to switch to %s.", formatExternalUsePolicy(next))
+}
+
+func (m *model) currentMasterPasswordInterval() string {
+	return config.NormalizeMasterPasswordInterval(m.securityState.MasterPasswordInterval)
+}
+
+func (m *model) currentExternalUsePolicy() string {
+	value := strings.TrimSpace(m.securityState.ExternalUsePolicy)
+	if value == "" {
+		return config.ExternalUsePolicyDeny
+	}
+	return value
+}
+
+func (m *model) nextExternalUsePolicy() string {
+	if m.currentExternalUsePolicy() == config.ExternalUsePolicyAllow {
+		return config.ExternalUsePolicyDeny
+	}
+	return config.ExternalUsePolicyAllow
+}
+
+func formatMasterPasswordInterval(value string) string {
+	switch value {
+	case config.MasterPasswordInterval15Days:
+		return "15 days"
+	case config.MasterPasswordInterval30Days:
+		return "1 month"
+	default:
+		return "7 days"
+	}
+}
+
+type masterPasswordIntervalOption struct {
+	Value string
+	Label string
+}
+
+func masterPasswordIntervalOptions() []masterPasswordIntervalOption {
+	return []masterPasswordIntervalOption{
+		{Value: config.MasterPasswordInterval7Days, Label: "7 days"},
+		{Value: config.MasterPasswordInterval15Days, Label: "15 days"},
+		{Value: config.MasterPasswordInterval30Days, Label: "1 month"},
+	}
+}
+
+func masterPasswordIntervalOptionSummary(value string) string {
+	return "Current setting: " + formatMasterPasswordInterval(value)
+}
+
+func (m *model) currentMasterPasswordIntervalIndex() int {
+	current := m.currentMasterPasswordInterval()
+	options := masterPasswordIntervalOptions()
+	for index, option := range options {
+		if option.Value == current {
+			return index
+		}
+	}
+	return 0
+}
+
+func formatExternalUsePolicy(value string) string {
+	if value == config.ExternalUsePolicyAllow {
+		return "always allow external use"
+	}
+	return "always deny external use"
+}
+
+func (m *model) shouldShowExternalUsePolicy() bool {
+	switch m.securityState.SystemAuthCapability {
+	case securityCapabilityUnavailableByPlatform, securityCapabilityUnavailableByEnv:
+		return true
+	default:
+		return false
+	}
+}
+
+func (m *model) saveManageSecuritySettingCmd(item manageItemID, value string) tea.Cmd {
+	setInterval := m.setMasterPasswordInterval
+	setPolicy := m.setExternalUsePolicy
+	loadSecurity := m.loadSecurityState
+	return func() tea.Msg {
+		var err error
+		switch item {
+		case manageItemMasterInterval:
+			err = setInterval(value)
+		case manageItemExternalPolicy:
+			err = setPolicy(value)
+		default:
+			return manageSecuritySavedMsg{item: item, err: fmt.Errorf("unknown security setting")}
+		}
+		if err != nil {
+			return manageSecuritySavedMsg{item: item, err: err}
+		}
+		state, err := loadSecurity()
+		return manageSecuritySavedMsg{item: item, state: state, err: err}
+	}
+}
+
+func (m *model) handleManageSecuritySavedMsg(msg manageSecuritySavedMsg) (tea.Model, tea.Cmd) {
+	m.manage.settingItem = msg.item
+	if msg.err != nil {
+		m.manage.settingErr = msg.err.Error()
+		return m, nil
+	}
+	m.manage.settingErr = ""
+	m.securityState = msg.state
+	m.securityLoaded = true
+	if msg.item == manageItemMasterInterval {
+		m.manage.masterIntervalSelected = m.currentMasterPasswordIntervalIndex()
+		if m.session.Current().ID == RouteVaultMasterPasswordInterval && m.session.Back() {
+			return m, m.showCurrentRoute()
+		}
+	}
+	return m, nil
 }

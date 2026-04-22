@@ -93,13 +93,18 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	if s.base.locked {
 		return nil, fmt.Errorf("agent is locked")
 	}
+	if s.base.keyStore == nil {
+		return nil, fmt.Errorf("vault is locked")
+	}
 
-	signer, name, fingerprint, err := s.base.findSigner(key)
+	signer, name, fingerprint, err := s.base.keyStore.SignerByPublicKey(key)
 	if err != nil {
 		s.base.mu.RUnlock()
 		if refreshErr := s.base.refreshMissingKey("sign_missing_key"); refreshErr == nil {
 			s.base.mu.RLock()
-			signer, name, fingerprint, err = s.base.findSigner(key)
+			if s.base.keyStore != nil {
+				signer, name, fingerprint, err = s.base.keyStore.SignerByPublicKey(key)
+			}
 		} else {
 			s.base.mu.RLock()
 		}

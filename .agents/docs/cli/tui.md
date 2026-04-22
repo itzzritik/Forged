@@ -36,6 +36,19 @@ down `Session` stack.
   Sub-states (`keyBrowserState`, `agentState`, `manageState`, etc.) are
   fields, not child models. Adding a new screen means adding fields and
   switch cases, not a child tea.Model.
+- **Manage now owns the user-facing security settings.** The Manage tab
+  includes direct rows for:
+  - `Master Password Interval`
+  - `External Use Policy`
+  Pressing `Enter` updates the setting in `config.toml` immediately and
+  refreshes local security state in place.
+- **Doctor now surfaces security capability state.** The Doctor table
+  includes:
+  - `System Auth`
+  - `Secure Store`
+  - `External Use`
+  These rows are driven by local capability probing plus the saved
+  security policy, not by daemon runtime status.
 - **System header has four states** (`checking`, `fixing`, `healthy`,
   `unhealthy`). It is cosmetic — `bootAssessed` guards real flow. Do not
   gate logic on the header state.
@@ -54,16 +67,30 @@ down `Session` stack.
     password screen when local unlock trust is clearly missing
   Touch ID / Hello failure or cancel falls back to the master-password
   screen for this launch only.
-- **Startup/manually-triggered unlock screens reuse the welcome product
-  rail.** While `passwordStartupUnlock` or `passwordManageUnlock` is on
-  screen, the header keeps the brand/version frame and shows the same
-  product rail used by the welcome state instead of live health,
-  signing, and sync status.
+- **Startup unlock screens reuse the welcome product rail.** While
+  `passwordStartupUnlock` is on screen, the header keeps the
+  brand/version frame and shows the same product rail used by the
+  welcome state instead of live health, signing, and sync status.
+- **Open TUI sessions re-lock in place after daemon session loss.**
+  When runtime status flips from unlocked to locked after system
+  lock/sleep or other shared-session invalidation, the foreground TUI
+  switches back to `passwordStartupUnlock`. If local unlock trust exists,
+  the screen stays visibly locked and waits for explicit `Enter` before
+  retrying native auth. If local unlock trust is missing, it goes
+  straight to the master-password prompt.
+- **Open TUI sessions also idle-lock after 4 minutes with no key input.**
+  The TUI owns this timer. When it fires, it calls the same
+  `sensitive-lock` path used by shared-session invalidation, so external
+  SSH/signing trust is cleared too. The timer resets only on real
+  `tea.KeyMsg` input, not on resize, spinner ticks, or background status
+  polling.
 - **Fixed body height of 19 rows** in `shell/layout.go`. Screens that
   overflow clip; add scrolling in the screen render, not the shell.
 - **Runtime status and sensitive state come from two separate IPC calls**
-  (`CmdStatus`, `CmdSensitiveProbe`); they refresh on a 2-second tick. A
-  stale value lingers for up to 2s after a mutation.
+  (`CmdStatus`, `CmdSensitiveProbe`); runtime status polling now
+  continues across all vault-backed screens so an already-open TUI can
+  observe shared-session loss after lock/sleep. A stale value can still
+  linger for up to ~2s after a mutation.
 - IF the daemon restarts THEN in-flight IPC calls fail and the TUI
   surfaces the error on the next tick — no retry loop.
 

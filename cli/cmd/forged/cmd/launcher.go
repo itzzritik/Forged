@@ -48,6 +48,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 		},
 		SaveCredentials: func(creds actions.AccountCredentials) error { return actions.SaveCredentials(paths, creds) },
 		TriggerSync:     func() error { return actions.TriggerSync(paths) },
+		LockSensitive:   func() error { return actions.LockSensitive(paths) },
 		LoadSnapshot:    engine.Assess,
 		LoadStatus: func() (tui.RuntimeStatus, error) {
 			resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdStatus, nil)
@@ -84,6 +85,24 @@ func runInteractiveIntent(intent tui.Intent) error {
 				runtimeStatus.SensitiveKnown = true
 			}
 			return runtimeStatus, nil
+		},
+		LoadSecurityState: func() (tui.SecurityState, error) {
+			state, err := actions.LoadSecurityState(paths)
+			if err != nil {
+				return tui.SecurityState{}, err
+			}
+			return tui.SecurityState{
+				MasterPasswordInterval: state.MasterPasswordInterval,
+				ExternalUsePolicy:      state.ExternalUsePolicy,
+				SystemAuthCapability:   state.SystemAuthCapability,
+				SecureStoreCapability:  state.SecureStoreCapability,
+			}, nil
+		},
+		SetMasterPasswordInterval: func(value string) error {
+			return actions.SetMasterPasswordInterval(paths, value)
+		},
+		SetExternalUsePolicy: func(value string) error {
+			return actions.SetExternalUsePolicy(paths, value)
 		},
 		ProbeSensitive: func() (tui.SensitiveState, error) {
 			client := ipc.NewClient(paths.CtlSocket())
@@ -136,8 +155,6 @@ func runInteractiveIntent(intent tui.Intent) error {
 		HasLocalUnlockTrust: func() bool {
 			return sensitiveauth.HasLocalEnrollment(paths)
 		},
-		LockSensitive:   func() error { return actions.LockSensitive(paths) },
-		UnlockSensitive: func(password []byte) (actions.UnlockResult, error) { return actions.UnlockSensitive(paths, password) },
 		UnlockSensitiveLaunch: func(password []byte) (actions.UnlockResult, error) {
 			return actions.UnlockSensitiveLaunch(paths, password)
 		},

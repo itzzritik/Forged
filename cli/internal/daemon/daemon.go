@@ -450,15 +450,7 @@ func (d *Daemon) hydrateWithSymmetricKey(symmetricKey []byte, source string) err
 }
 
 func (d *Daemon) activateVaultLocked(v *vault.Vault, source string) error {
-	if err := v.DecryptAllPrivateKeys(); err != nil {
-		v.Close()
-		return fmt.Errorf("hydrating private keys: %w", err)
-	}
-
 	keyStore := vault.NewKeyStore(v)
-	for _, key := range v.Data.Keys {
-		platform.Mlock(key.PrivateKey)
-	}
 
 	d.vault = v
 	d.keyStore = keyStore
@@ -509,12 +501,6 @@ func (d *Daemon) clearActiveSession(reason string) {
 	}
 
 	if d.vault != nil {
-		for _, key := range d.vault.Data.Keys {
-			for i := range key.PrivateKey {
-				key.PrivateKey[i] = 0
-			}
-			platform.Munlock(key.PrivateKey)
-		}
 		d.vault.Close()
 		d.vault = nil
 		d.keyStore = nil

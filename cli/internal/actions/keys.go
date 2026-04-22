@@ -201,6 +201,11 @@ func authorizeSensitive(paths config.Paths, action sensitiveauth.Action, passwor
 	return err
 }
 
+func AuthorizeExternalUse(paths config.Paths) error {
+	_, err := authorizeSensitiveResult(paths, sensitiveauth.ActionExternal, nil)
+	return err
+}
+
 func authorizeSensitiveResult(paths config.Paths, action sensitiveauth.Action, password []byte) (sensitiveauth.AuthorizeResult, error) {
 	return authorizeSensitiveResultWithOptions(paths, action, password, false)
 }

@@ -21,10 +21,13 @@ const (
 	helperTypeSubscribe = "subscribe-locks"
 	helperTypeEvent     = "event"
 
-	helperStatusOK          = "ok"
-	helperStatusCanceled    = "canceled"
-	helperStatusUnavailable = "unavailable"
-	helperStatusFailed      = "failed"
+	helperStatusOK                  = "ok"
+	helperStatusCanceled            = "canceled"
+	helperStatusUnavailable         = "unavailable"
+	helperStatusUnavailablePlatform = "unavailable_by_platform"
+	helperStatusUnavailableEnv      = "unavailable_by_environment"
+	helperStatusBroken              = "broken"
+	helperStatusFailed              = "failed"
 
 	helperEventSessionLocked = "session_locked"
 )

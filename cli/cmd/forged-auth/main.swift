@@ -57,8 +57,11 @@ final class HelperRuntime {
         switch req.type {
         case "authorize":
             authorize(request: req)
-        case "subscribe-locks", "status":
+        case "subscribe-locks":
             emit(HelperResponse(id: req.id, type: req.type, status: "ok", provider: "local-authentication", message: nil))
+        case "status":
+            let (status, message) = capabilityStatus()
+            emit(HelperResponse(id: req.id, type: req.type, status: status, provider: "local-authentication", message: message))
         default:
             emit(HelperResponse(id: req.id, type: req.type, status: "failed", provider: "local-authentication", message: "unsupported request"))
         }
@@ -73,7 +76,8 @@ final class HelperRuntime {
         let policy: LAPolicy = .deviceOwnerAuthentication
 
         guard context.canEvaluatePolicy(policy, error: &policyError) else {
-            emit(HelperResponse(id: request.id, type: request.type, status: "unavailable", provider: "local-authentication", message: policyError?.localizedDescription))
+            let status = helperUnavailableStatus(policyError as? LAError)
+            emit(HelperResponse(id: request.id, type: request.type, status: status, provider: "local-authentication", message: policyError?.localizedDescription))
             return
         }
 
@@ -90,8 +94,11 @@ final class HelperRuntime {
                 case .userCancel, .appCancel, .systemCancel:
                     self.emit(HelperResponse(id: request.id, type: request.type, status: "canceled", provider: "local-authentication", message: laError.localizedDescription))
                     return
-                case .biometryNotAvailable, .biometryNotEnrolled, .biometryLockout, .passcodeNotSet, .notInteractive:
-                    self.emit(HelperResponse(id: request.id, type: request.type, status: "unavailable", provider: "local-authentication", message: laError.localizedDescription))
+                case .notInteractive:
+                    self.emit(HelperResponse(id: request.id, type: request.type, status: "unavailable_by_environment", provider: "local-authentication", message: laError.localizedDescription))
+                    return
+                case .biometryNotAvailable, .biometryNotEnrolled, .biometryLockout, .passcodeNotSet:
+                    self.emit(HelperResponse(id: request.id, type: request.type, status: "unavailable_by_platform", provider: "local-authentication", message: laError.localizedDescription))
                     return
                 default:
                     break
@@ -109,7 +116,34 @@ final class HelperRuntime {
             FileHandle.standardOutput.write("\n".data(using: .utf8)!)
         }
     }
+
+    private func capabilityStatus() -> (String, String?) {
+        let context = LAContext()
+        if #available(macOS 10.12.2, *) {
+            context.touchIDAuthenticationAllowableReuseDuration = 0
+        }
+        var policyError: NSError?
+        let policy: LAPolicy = .deviceOwnerAuthentication
+
+        if context.canEvaluatePolicy(policy, error: &policyError) {
+            return ("ok", nil)
+        }
+
+        return (helperUnavailableStatus(policyError as? LAError), policyError?.localizedDescription)
+    }
 }
 
 let runtime = HelperRuntime()
 runtime.run()
+
+func helperUnavailableStatus(_ error: LAError?) -> String {
+    guard let error else { return "unavailable_by_environment" }
+    switch error.code {
+    case .notInteractive:
+        return "unavailable_by_environment"
+    case .biometryNotAvailable, .biometryNotEnrolled, .biometryLockout, .passcodeNotSet:
+        return "unavailable_by_platform"
+    default:
+        return "unavailable_by_environment"
+    }
+}

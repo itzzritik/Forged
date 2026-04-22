@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/hiddeco/sshsig"
+	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -68,6 +69,11 @@ func signFile(keyFile, bufferFile, namespace string) error {
 		namespace = "git"
 	}
 
+	paths := config.DefaultPaths()
+	if err := actions.AuthorizeExternalUse(paths); err != nil {
+		return err
+	}
+
 	data, err := os.ReadFile(bufferFile)
 	if err != nil {
 		return fmt.Errorf("reading buffer file: %w", err)
@@ -86,7 +92,7 @@ func signFile(keyFile, bufferFile, namespace string) error {
 		signingPubKey = pub
 	}
 
-	socketPath := config.DefaultPaths().AgentSocket()
+	socketPath := paths.AgentSocket()
 	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("cannot connect to forged agent at %s: %w", socketPath, err)

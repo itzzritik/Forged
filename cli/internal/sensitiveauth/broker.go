@@ -5,17 +5,21 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"sync"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 )
 
 type Broker struct {
+	paths    config.Paths
 	logger   *slog.Logger
 	helper   *HelperClient
 	password *PasswordVerifier
 	leases   *leaseState
 	session  SessionController
+	nativeMu sync.RWMutex
+	native   CapabilityState
 }
 
 type SessionController interface {
@@ -27,10 +31,12 @@ type SessionController interface {
 
 func NewBroker(paths config.Paths, helperPath string, logger *slog.Logger, session SessionController) *Broker {
 	b := &Broker{
+		paths:    paths,
 		logger:   logger,
 		password: NewPasswordVerifier(paths, logger),
 		leases:   newLeaseState(),
 		session:  session,
+		native:   CapabilityBroken,
 	}
 
 	if helperPath != "" {
@@ -41,6 +47,7 @@ func NewBroker(paths config.Paths, helperPath string, logger *slog.Logger, sessi
 			}
 		} else {
 			b.helper = helper
+			b.native = CapabilityAvailable
 		}
 	}
 
@@ -69,7 +76,7 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 	}
 
 	if b.helper != nil {
-		err := b.helper.Authorize(ctx, action)
+		capability, err := b.helper.Authorize(ctx, action)
 		switch {
 		case err == nil:
 			if b.session != nil && !b.session.HasActiveSession() {
@@ -83,14 +90,37 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 					}, nil
 				}
 			}
+			b.setNativeCapability(capability)
 			return b.grant(action, time.Now()), nil
 		case errors.Is(err, ErrNativeUnavailable):
-			// Fall through to terminal password prompt.
+			b.setNativeCapability(capability)
+			if action == ActionExternal {
+				return b.authorizeExternalUnavailable(action, capability)
+			}
+		case errors.Is(err, ErrNativeBroken):
+			b.setNativeCapability(CapabilityBroken)
+			if action == ActionExternal {
+				return AuthorizeResult{}, externalUseBrokenError()
+			}
 		case errors.Is(err, ErrAuthenticationCanceled):
+			if action == ActionExternal {
+				return AuthorizeResult{}, externalUseCanceledError()
+			}
 			return AuthorizeResult{}, fmt.Errorf("authentication canceled")
 		default:
+			if action == ActionExternal {
+				return AuthorizeResult{}, externalUseFailedError()
+			}
 			return AuthorizeResult{}, fmt.Errorf("authentication failed")
 		}
+	}
+
+	if action == ActionExternal {
+		capability := b.nativeCapability()
+		if capability.IsUnavailable() {
+			return b.authorizeExternalUnavailable(action, capability)
+		}
+		return AuthorizeResult{}, externalUseBrokenError()
 	}
 
 	return AuthorizeResult{
@@ -175,4 +205,72 @@ func (b *Broker) allow(action Action, now time.Time) AuthorizeResult {
 		result.ExportToken = b.leases.IssueExportToken(now)
 	}
 	return result
+}
+
+func (b *Broker) authorizeExternalUnavailable(action Action, capability CapabilityState) (AuthorizeResult, error) {
+	if action != ActionExternal {
+		return AuthorizeResult{}, fmt.Errorf("external unavailable policy only applies to external use")
+	}
+
+	if externalUsePolicy(b.paths) != config.ExternalUsePolicyAllow {
+		return AuthorizeResult{}, externalUseDeniedError()
+	}
+
+	if b.session != nil && !b.session.HasActiveSession() {
+		if err := b.session.HydrateFromEnrollment(); err != nil {
+			if errors.Is(err, ErrLocalUnlockTrustUnavailable) {
+				return AuthorizeResult{}, externalUseNoLocalTrustError()
+			}
+			return AuthorizeResult{}, externalUseHydrationError()
+		}
+	}
+
+	if b.logger != nil {
+		b.logger.Warn("allowing external use without system authentication", "capability", capability)
+	}
+	return b.grant(action, time.Now()), nil
+}
+
+func externalUseBrokenError() error {
+	return fmt.Errorf("system authentication is broken; repair Forged before using SSH auth or commit signing")
+}
+
+func externalUseCanceledError() error {
+	return fmt.Errorf("system authentication was canceled")
+}
+
+func externalUseFailedError() error {
+	return fmt.Errorf("system authentication failed")
+}
+
+func externalUseDeniedError() error {
+	return fmt.Errorf("system authentication is unavailable on this machine, and external use is denied")
+}
+
+func externalUseNoLocalTrustError() error {
+	return fmt.Errorf("system authentication is unavailable on this machine, and local unlock trust is not available")
+}
+
+func externalUseHydrationError() error {
+	return fmt.Errorf("system authentication is unavailable on this machine, and Forged could not unlock local trust")
+}
+
+func externalUsePolicy(paths config.Paths) string {
+	cfg, err := config.Load(paths.ConfigFile())
+	if err != nil {
+		return config.ExternalUsePolicyDeny
+	}
+	return cfg.Security.ExternalUsePolicy
+}
+
+func (b *Broker) setNativeCapability(capability CapabilityState) {
+	b.nativeMu.Lock()
+	defer b.nativeMu.Unlock()
+	b.native = capability
+}
+
+func (b *Broker) nativeCapability() CapabilityState {
+	b.nativeMu.RLock()
+	defer b.nativeMu.RUnlock()
+	return b.native
 }

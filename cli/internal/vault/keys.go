@@ -1,6 +1,7 @@
 package vault
 
 import (
+	"bytes"
 	"crypto/ed25519"
 	"crypto/rand"
 	"encoding/base64"
@@ -13,6 +14,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/itzzritik/forged/cli/internal/keytypes"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -150,7 +152,6 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 		PublicKey:           strings.TrimSpace(string(ssh.MarshalAuthorizedKey(sshPub))),
 		EncryptedPrivateKey: base64.StdEncoding.EncodeToString(encPriv),
 		EncryptedCipherKey:  base64.StdEncoding.EncodeToString(encCK),
-		PrivateKey:          privateKeyBytes,
 		Comment:             comment,
 		Fingerprint:         ssh.FingerprintSHA256(sshPub),
 		CreatedAt:           now,
@@ -161,13 +162,19 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 	}
 
 	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
-	ks.vault.Data.Keys = append(ks.vault.Data.Keys, key)
+	storedKey := key
+	storedKey.PrivateKey = nil
+	ks.vault.Data.Keys = append(ks.vault.Data.Keys, storedKey)
 	ks.bumpVersionVector()
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.Keys = ks.vault.Data.Keys[:len(ks.vault.Data.Keys)-1]
 		ks.vault.Data.VersionVector = originalVersionVector
 		return Key{}, fmt.Errorf("Saving vault: %w", err)
 	}
+	for i := range privateKeyBytes {
+		privateKeyBytes[i] = 0
+	}
+	key.PrivateKey = nil
 
 	return key, nil
 }
@@ -218,7 +225,6 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 		PublicKey:           normalized.PublicKey,
 		EncryptedPrivateKey: base64.StdEncoding.EncodeToString(encPriv),
 		EncryptedCipherKey:  base64.StdEncoding.EncodeToString(encCK),
-		PrivateKey:          normalized.Bytes,
 		Comment:             comment,
 		Fingerprint:         normalized.Fingerprint,
 		CreatedAt:           now,
@@ -229,13 +235,19 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 	}
 
 	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
-	ks.vault.Data.Keys = append(ks.vault.Data.Keys, key)
+	storedKey := key
+	storedKey.PrivateKey = nil
+	ks.vault.Data.Keys = append(ks.vault.Data.Keys, storedKey)
 	ks.bumpVersionVector()
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.Keys = ks.vault.Data.Keys[:len(ks.vault.Data.Keys)-1]
 		ks.vault.Data.VersionVector = originalVersionVector
 		return Key{}, fmt.Errorf("Saving vault: %w", err)
 	}
+	for i := range normalized.Bytes {
+		normalized.Bytes[i] = 0
+	}
+	key.PrivateKey = nil
 
 	return key, nil
 }
@@ -319,6 +331,17 @@ func (ks *KeyStore) Export(name string) (string, error) {
 	return "", fmt.Errorf("Key %q not found", name)
 }
 
+func (ks *KeyStore) PrivateKeyBytes(name string) ([]byte, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	idx := ks.indexOf(name)
+	if idx < 0 {
+		return nil, fmt.Errorf("Key %q not found", name)
+	}
+	return ks.decryptPrivateKeyLocked(&ks.vault.Data.Keys[idx])
+}
+
 func (ks *KeyStore) RecordUsage(name string) {
 	ks.mu.Lock()
 	defer ks.mu.Unlock()
@@ -387,8 +410,113 @@ func (ks *KeyStore) GetGitSigningKey() (Key, bool) {
 	return Key{}, false
 }
 
+func (ks *KeyStore) SignerByPublicKey(pub ssh.PublicKey) (ssh.Signer, string, string, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	if ks.vault == nil {
+		return nil, "", "", fmt.Errorf("vault is locked")
+	}
+
+	wanted := pub.Marshal()
+	for i := range ks.vault.Data.Keys {
+		key := &ks.vault.Data.Keys[i]
+		parsed, err := parseAuthorizedPublicKey(key.PublicKey)
+		if err != nil {
+			continue
+		}
+		if !bytes.Equal(parsed.Marshal(), wanted) {
+			continue
+		}
+
+		privateKey, err := ks.decryptPrivateKeyLocked(key)
+		if err != nil {
+			return nil, "", "", err
+		}
+		_ = platform.Mlock(privateKey)
+		signer, err := ssh.ParsePrivateKey(privateKey)
+		for j := range privateKey {
+			privateKey[j] = 0
+		}
+		_ = platform.Munlock(privateKey)
+		if err != nil {
+			return nil, "", "", fmt.Errorf("parsing private key for %s: %w", key.Name, err)
+		}
+		return signer, key.Name, key.Fingerprint, nil
+	}
+	return nil, "", "", fmt.Errorf("key not found in vault")
+}
+
+func (ks *KeyStore) Signers() ([]ssh.Signer, error) {
+	ks.mu.RLock()
+	defer ks.mu.RUnlock()
+
+	if ks.vault == nil {
+		return nil, fmt.Errorf("vault is locked")
+	}
+
+	signers := make([]ssh.Signer, 0, len(ks.vault.Data.Keys))
+	for i := range ks.vault.Data.Keys {
+		privateKey, err := ks.decryptPrivateKeyLocked(&ks.vault.Data.Keys[i])
+		if err != nil {
+			return nil, err
+		}
+		_ = platform.Mlock(privateKey)
+		signer, err := ssh.ParsePrivateKey(privateKey)
+		for j := range privateKey {
+			privateKey[j] = 0
+		}
+		_ = platform.Munlock(privateKey)
+		if err != nil {
+			return nil, fmt.Errorf("parsing private key for %s: %w", ks.vault.Data.Keys[i].Name, err)
+		}
+		signers = append(signers, signer)
+	}
+	return signers, nil
+}
+
 func (ks *KeyStore) nameExists(name string) bool {
 	return ks.indexOf(name) >= 0
+}
+
+func (ks *KeyStore) decryptPrivateKeyLocked(key *Key) ([]byte, error) {
+	if key == nil {
+		return nil, fmt.Errorf("key not found")
+	}
+	if ks.vault == nil {
+		return nil, fmt.Errorf("vault is locked")
+	}
+	if key.EncryptedCipherKey == "" || key.EncryptedPrivateKey == "" {
+		return nil, fmt.Errorf("private key is unavailable")
+	}
+
+	cipherKeyData, err := base64.StdEncoding.DecodeString(key.EncryptedCipherKey)
+	if err != nil {
+		return nil, fmt.Errorf("decoding cipher key for %s: %w", key.Name, err)
+	}
+	cipherKey, err := DecryptCombined(ks.vault.key, cipherKeyData)
+	if err != nil {
+		return nil, fmt.Errorf("decrypting cipher key for %s: %w", key.Name, err)
+	}
+	defer zeroBytes(cipherKey)
+
+	privateKeyData, err := base64.StdEncoding.DecodeString(key.EncryptedPrivateKey)
+	if err != nil {
+		return nil, fmt.Errorf("decoding private key for %s: %w", key.Name, err)
+	}
+	privateKey, err := DecryptCombined(cipherKey, privateKeyData)
+	if err != nil {
+		return nil, fmt.Errorf("decrypting private key for %s: %w", key.Name, err)
+	}
+	return privateKey, nil
+}
+
+func parseAuthorizedPublicKey(authorizedKey string) (ssh.PublicKey, error) {
+	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(authorizedKey))
+	if err != nil {
+		return nil, err
+	}
+	return pub, nil
 }
 
 func (ks *KeyStore) indexOf(name string) int {
@@ -442,7 +570,6 @@ func cloneKeys(keys []Key) []Key {
 
 func cloneKey(key Key) Key {
 	cloned := key
-	cloned.PrivateKey = append([]byte(nil), key.PrivateKey...)
 	cloned.Tags = append([]string(nil), key.Tags...)
 	if key.LastUsedAt != nil {
 		lastUsedAt := *key.LastUsedAt

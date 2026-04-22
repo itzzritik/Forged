@@ -439,7 +439,14 @@ func (s *Server) handleView(raw json.RawMessage) Response {
 		out["last_used_at"] = key.LastUsedAt.Format(time.RFC3339)
 	}
 	if a.Full {
-		out["private_key"] = string(key.PrivateKey)
+		privateKey, err := keyStore.PrivateKeyBytes(resolvedName)
+		if err != nil {
+			return ErrorResponse(err)
+		}
+		out["private_key"] = string(privateKey)
+		for i := range privateKey {
+			privateKey[i] = 0
+		}
 	}
 
 	return OkResponse(out)
@@ -462,12 +469,9 @@ func (s *Server) handleExportAll(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("sensitive export requires fresh authentication"))
 	}
 
-	v, keyStore, err := s.requireVaultAndKeyStore()
+	_, keyStore, err := s.requireVaultAndKeyStore()
 	if err != nil {
 		return ErrorResponse(err)
-	}
-	if err := v.DecryptAllPrivateKeys(); err != nil {
-		return ErrorResponse(fmt.Errorf("decrypting keys: %w", err))
 	}
 
 	type exportedKey struct {
@@ -485,7 +489,14 @@ func (s *Server) handleExportAll(raw json.RawMessage) Response {
 	keys := keyStore.List()
 	exported := make([]exportedKey, 0, len(keys))
 	for _, k := range keys {
-		privPEM := string(k.PrivateKey)
+		privateKey, err := keyStore.PrivateKeyBytes(k.Name)
+		if err != nil {
+			return ErrorResponse(fmt.Errorf("decrypting key %s: %w", k.Name, err))
+		}
+		privPEM := string(privateKey)
+		for i := range privateKey {
+			privateKey[i] = 0
+		}
 		exported = append(exported, exportedKey{
 			Name:        k.Name,
 			Type:        k.Type,
@@ -721,11 +732,15 @@ func (s *Server) refreshForRead(reason string) {
 }
 
 func (s *Server) afterKeyMutation(reason string) {
-	if s.syncBus != nil {
-		s.syncBus.LocalMutation(reason)
-	}
+	s.afterVaultMutation(reason)
 	if s.onKeyChange != nil {
 		s.onKeyChange()
+	}
+}
+
+func (s *Server) afterVaultMutation(reason string) {
+	if s.syncBus != nil {
+		s.syncBus.LocalMutation(reason)
 	}
 }
 

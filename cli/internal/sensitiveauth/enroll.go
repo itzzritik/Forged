@@ -4,6 +4,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -17,6 +18,8 @@ import (
 
 const localEnrollmentKeyInfo = "forged-local-enrollment"
 
+var ErrLocalUnlockTrustUnavailable = errors.New("local unlock trust unavailable")
+
 type EnrollmentResult struct {
 	Refreshed  bool
 	Capability CapabilityState
@@ -26,21 +29,21 @@ type EnrollmentResult struct {
 func RecoverEnrolledSymmetricKey(paths config.Paths) ([]byte, error) {
 	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
 	if err != nil {
-		return nil, fmt.Errorf("reading local unlock enrollment: %w", err)
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("reading local unlock enrollment: %w", err))
 	}
-	if time.Now().UTC().After(enrollment.ExpiresAt) {
-		return nil, fmt.Errorf("local unlock enrollment expired")
+	if enrollmentExpired(paths, enrollment) {
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("local unlock enrollment expired"))
 	}
 
 	installID, err := osReadTrimmed(paths.InstallIDFile())
 	if err != nil {
-		return nil, fmt.Errorf("reading install id: %w", err)
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("reading install id: %w", err))
 	}
 	if enrollment.InstallID == "" || enrollment.InstallID != installID {
-		return nil, fmt.Errorf("local unlock enrollment install id mismatch")
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("local unlock enrollment install id mismatch"))
 	}
 	if expectedUser := strings.TrimSpace(enrollment.LocalUser); expectedUser != "" && expectedUser != CurrentLocalUser() {
-		return nil, fmt.Errorf("local unlock enrollment user mismatch")
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("local unlock enrollment user mismatch"))
 	}
 
 	store := NewSecureStore()
@@ -49,7 +52,7 @@ func RecoverEnrolledSymmetricKey(paths config.Paths) ([]byte, error) {
 
 	deviceKey, err := store.LoadDeviceKey(ctx, installID)
 	if err != nil {
-		return nil, fmt.Errorf("loading secure-store device key: %w", err)
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("loading secure-store device key: %w", err))
 	}
 	defer zeroSensitiveBytes(deviceKey)
 
@@ -61,7 +64,7 @@ func RecoverEnrolledSymmetricKey(paths config.Paths) ([]byte, error) {
 
 	symmetricKey, err := vault.DecryptCombined(localKey, enrollment.WrappedVaultSymmetricKey)
 	if err != nil {
-		return nil, fmt.Errorf("unwrapping local vault key: %w", err)
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("unwrapping local vault key: %w", err))
 	}
 	return symmetricKey, nil
 }
@@ -137,7 +140,7 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 		InstallID:                installID,
 		LocalUser:                CurrentLocalUser(),
 		CreatedAt:                time.Now().UTC(),
-		ExpiresAt:                time.Now().UTC().Add(config.MasterPasswordIntervalDuration(loadConfig(paths))),
+		ExpiresAt:                time.Now().UTC().Add(config.MasterPasswordIntervalDuration(loadMasterPasswordInterval(paths))),
 		WrappedVaultSymmetricKey: wrappedVaultKey,
 	}
 
@@ -206,12 +209,26 @@ func capabilityFromSecureStoreError(err error) CapabilityState {
 	}
 }
 
-func loadConfig(paths config.Paths) config.Config {
+func loadMasterPasswordInterval(paths config.Paths) string {
 	cfg, err := config.Load(paths.ConfigFile())
 	if err != nil {
-		return config.Config{}
+		return config.MasterPasswordInterval7Days
 	}
-	return cfg
+	return config.NormalizeMasterPasswordInterval(cfg.Security.MasterPasswordInterval)
+}
+
+func enrollmentExpired(paths config.Paths, enrollment *LocalEnrollment) bool {
+	if enrollment == nil {
+		return true
+	}
+	if !enrollment.CreatedAt.IsZero() {
+		expiry := enrollment.CreatedAt.Add(config.MasterPasswordIntervalDuration(loadMasterPasswordInterval(paths)))
+		return time.Now().UTC().After(expiry)
+	}
+	if !enrollment.ExpiresAt.IsZero() {
+		return time.Now().UTC().After(enrollment.ExpiresAt)
+	}
+	return false
 }
 
 func osReadTrimmed(path string) (string, error) {

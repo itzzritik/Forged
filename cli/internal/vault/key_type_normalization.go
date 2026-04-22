@@ -1,6 +1,8 @@
 package vault
 
-import "github.com/itzzritik/forged/cli/internal/keytypes"
+import (
+	"github.com/itzzritik/forged/cli/internal/keytypes"
+)
 
 func normalizeVaultKeyTypes(data *VaultData) {
 	if data == nil {

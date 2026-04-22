@@ -75,6 +75,13 @@ func DockBottom(top string, bottom string) string {
 	return top + "\n" + bottomDockMarker + "\n" + bottom
 }
 
+func CenterInFixedBody(width int, block string) string {
+	if width <= 0 || strings.TrimSpace(block) == "" {
+		return block
+	}
+	return lipgloss.Place(width, fixedBodyHeight, lipgloss.Center, lipgloss.Center, block)
+}
+
 func Render(termWidth int, termHeight int, header string, body string, footer string, tightFooter bool, tightBody bool) string {
 	body, bodyPresent := fitBodyHeight(termWidth, termHeight, header, body, footer, tightFooter, tightBody)
 	chunks := make([]string, 0, 4)

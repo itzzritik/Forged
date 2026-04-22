@@ -80,10 +80,6 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 	if !state.Dirty {
 		original := e.vault.Data
 		e.vault.Data = MergeVaults(e.vault.Data, remote)
-		if err := e.vault.DecryptAllPrivateKeys(); err != nil {
-			e.vault.Data = original
-			return vault.VaultData{}, PullResult{}, fmt.Errorf("hydrating pulled private keys: %w", err)
-		}
 		if err := e.vault.Save(); err != nil {
 			e.vault.Data = original
 			return vault.VaultData{}, PullResult{}, err
@@ -122,10 +118,6 @@ func (e *Engine) MergeAndRetry(ctx context.Context, state *SyncState) error {
 
 	original := e.vault.Data
 	e.vault.Data = MergeThreeWay(base, local, remote, e.vault.DeviceID(), remote.Metadata.DeviceID)
-	if err := e.vault.DecryptAllPrivateKeys(); err != nil {
-		e.vault.Data = original
-		return fmt.Errorf("hydrating merged private keys: %w", err)
-	}
 	if err := e.vault.Save(); err != nil {
 		e.vault.Data = original
 		return err
@@ -160,10 +152,6 @@ func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, 
 	case FirstLinkAdoptRemote:
 		original := e.vault.Data
 		e.vault.Data = merged
-		if err := e.vault.DecryptAllPrivateKeys(); err != nil {
-			e.vault.Data = original
-			return fmt.Errorf("hydrating adopted private keys: %w", err)
-		}
 		if err := e.vault.Save(); err != nil {
 			e.vault.Data = original
 			return err
@@ -185,10 +173,6 @@ func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, 
 	case FirstLinkMergeAndPush:
 		original := e.vault.Data
 		e.vault.Data = merged
-		if err := e.vault.DecryptAllPrivateKeys(); err != nil {
-			e.vault.Data = original
-			return fmt.Errorf("hydrating merged private keys: %w", err)
-		}
 		if err := e.vault.Save(); err != nil {
 			e.vault.Data = original
 			return err

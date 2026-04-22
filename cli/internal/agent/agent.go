@@ -1,7 +1,6 @@
 package agent
 
 import (
-	"bytes"
 	"context"
 	"fmt"
 	"reflect"
@@ -147,12 +146,14 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 		return nil, fmt.Errorf("vault is locked")
 	}
 
-	signer, name, _, err := a.findSigner(key)
+	signer, name, _, err := a.keyStore.SignerByPublicKey(key)
 	if err != nil {
 		a.mu.RUnlock()
 		if refreshErr := a.refreshMissingKey("sign_missing_key"); refreshErr == nil {
 			a.mu.RLock()
-			signer, name, _, err = a.findSigner(key)
+			if a.keyStore != nil {
+				signer, name, _, err = a.keyStore.SignerByPublicKey(key)
+			}
 		} else {
 			a.mu.RLock()
 		}
@@ -244,41 +245,11 @@ func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
 		return nil, fmt.Errorf("vault is locked")
 	}
 
-	keys := a.keyStore.List()
-	var signers []ssh.Signer
-	for _, k := range keys {
-		signer, err := ssh.ParsePrivateKey(k.PrivateKey)
-		if err != nil {
-			continue
-		}
-		signers = append(signers, signer)
-	}
-	return signers, nil
+	return a.keyStore.Signers()
 }
 
 func (a *ForgedAgent) Extension(extensionType string, contents []byte) ([]byte, error) {
 	return nil, agent.ErrExtensionUnsupported
-}
-
-func (a *ForgedAgent) findSigner(pub ssh.PublicKey) (ssh.Signer, string, string, error) {
-	if a.keyStore == nil {
-		return nil, "", "", fmt.Errorf("vault is locked")
-	}
-	wanted := pub.Marshal()
-	for _, k := range a.keyStore.List() {
-		parsed, err := parsePublicKey(k.PublicKey)
-		if err != nil {
-			continue
-		}
-		if bytes.Equal(parsed.Marshal(), wanted) {
-			signer, err := ssh.ParsePrivateKey(k.PrivateKey)
-			if err != nil {
-				return nil, "", "", fmt.Errorf("parsing private key for %s: %w", k.Name, err)
-			}
-			return signer, k.Name, k.Fingerprint, nil
-		}
-	}
-	return nil, "", "", fmt.Errorf("key not found in vault")
 }
 
 func parsePublicKey(authorizedKey string) (ssh.PublicKey, error) {
@@ -322,12 +293,12 @@ func (a *ForgedAgent) ensurePrivateKeyAccess() error {
 		return nil
 	}
 
-	result, err := auth.Authorize(context.Background(), sensitiveauth.ActionView)
+	result, err := auth.Authorize(context.Background(), sensitiveauth.ActionExternal)
 	if err != nil {
 		return err
 	}
 	if result.PasswordRequired {
-		return fmt.Errorf("private-key access is locked; unlock Forged from Manage")
+		return fmt.Errorf("system authentication is required for external use")
 	}
 	return nil
 }

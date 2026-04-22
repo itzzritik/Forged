@@ -20,10 +20,11 @@ const (
 	RouteKeysImport   RouteID = "keys/import"
 	RouteKeysExport   RouteID = "keys/export"
 
-	RouteVaultHome           RouteID = "vault/home"
-	RouteVaultLock           RouteID = "vault/lock"
-	RouteVaultUnlock         RouteID = "vault/unlock"
-	RouteVaultChangePassword RouteID = "vault/change-password"
+	RouteVaultHome                   RouteID = "vault/home"
+	RouteVaultLock                   RouteID = "vault/lock"
+	RouteVaultUnlock                 RouteID = "vault/unlock"
+	RouteVaultMasterPasswordInterval RouteID = "vault/master-password-interval"
+	RouteVaultChangePassword         RouteID = "vault/change-password"
 
 	RouteAgentHome    RouteID = "agent/home"
 	RouteAgentSigning RouteID = "agent/signing"

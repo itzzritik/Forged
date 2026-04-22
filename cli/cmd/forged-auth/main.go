@@ -65,11 +65,18 @@ func main() {
 				Status:   authorize(context.Background(), action),
 				Provider: providerName(),
 			})
-		case "subscribe-locks", "status":
+		case "subscribe-locks":
 			emit(sensitiveauth.HelperResponse{
 				ID:       req.ID,
 				Type:     req.Type,
 				Status:   "ok",
+				Provider: providerName(),
+			})
+		case "status":
+			emit(sensitiveauth.HelperResponse{
+				ID:       req.ID,
+				Type:     req.Type,
+				Status:   status(),
 				Provider: providerName(),
 			})
 		default:

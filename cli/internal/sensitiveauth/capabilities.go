@@ -12,3 +12,7 @@ const (
 func (s CapabilityState) IsAvailable() bool {
 	return s == CapabilityAvailable
 }
+
+func (s CapabilityState) IsUnavailable() bool {
+	return s == CapabilityUnavailableByPlatform || s == CapabilityUnavailableByEnv
+}

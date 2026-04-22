@@ -5,6 +5,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"errors"
 	"io"
 	"os/exec"
 	"strings"
@@ -19,12 +20,26 @@ func authorize(ctx context.Context, action sensitiveauth.Action) string {
 	_ = action
 	path, err := exec.LookPath("pkexec")
 	if err != nil {
-		return "unavailable"
+		return "unavailable_by_environment"
 	}
 
 	cmd := exec.CommandContext(ctx, path, "--disable-internal-agent", "/bin/true")
 	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			switch exitErr.ExitCode() {
+			case 126, 127:
+				return "unavailable_by_environment"
+			}
+		}
 		return "failed"
+	}
+	return "ok"
+}
+
+func status() string {
+	if _, err := exec.LookPath("pkexec"); err != nil {
+		return "unavailable_by_environment"
 	}
 	return "ok"
 }

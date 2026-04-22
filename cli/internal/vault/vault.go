@@ -2,7 +2,6 @@ package vault
 
 import (
 	"crypto/rand"
-	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"os"
@@ -125,8 +124,10 @@ func Create(path string, password []byte) (*Vault, error) {
 		key:          symmetricKey,
 		protectedKey: protectedKey,
 		Data: VaultData{
-			Keys:          []Key{},
-			Metadata:      Metadata{CreatedAt: time.Now().UTC()},
+			Keys: []Key{},
+			Metadata: Metadata{
+				CreatedAt: time.Now().UTC(),
+			},
 			VersionVector: map[string]int64{},
 			Tombstones:    []Tombstone{},
 			KeyGeneration: 1,
@@ -400,47 +401,6 @@ func (v *Vault) ImportFromSync(data []byte) error {
 	normalizeVaultKeyTypes(&vd)
 	v.Data = vd
 	return v.Save()
-}
-
-func (v *Vault) DecryptAllPrivateKeys() error {
-	for i := range v.Data.Keys {
-		k := &v.Data.Keys[i]
-		if k.EncryptedCipherKey == "" || k.EncryptedPrivateKey == "" {
-			continue
-		}
-
-		cipherKeyData, err := base64.StdEncoding.DecodeString(k.EncryptedCipherKey)
-		if err != nil {
-			return fmt.Errorf("decoding cipher key for %s: %w", k.Name, err)
-		}
-
-		cipherKey, err := DecryptCombined(v.key, cipherKeyData)
-		if err != nil {
-			return fmt.Errorf("decrypting cipher key for %s: %w", k.Name, err)
-		}
-
-		privData, err := base64.StdEncoding.DecodeString(k.EncryptedPrivateKey)
-		if err != nil {
-			for j := range cipherKey {
-				cipherKey[j] = 0
-			}
-			return fmt.Errorf("decoding private key for %s: %w", k.Name, err)
-		}
-
-		privKey, err := DecryptCombined(cipherKey, privData)
-		if err != nil {
-			for j := range cipherKey {
-				cipherKey[j] = 0
-			}
-			return fmt.Errorf("decrypting private key for %s: %w", k.Name, err)
-		}
-
-		k.PrivateKey = privKey
-		for j := range cipherKey {
-			cipherKey[j] = 0
-		}
-	}
-	return nil
 }
 
 func atomicWrite(path string, data []byte) error {

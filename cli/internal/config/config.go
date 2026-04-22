@@ -93,8 +93,8 @@ func Save(path string, cfg Config) error {
 	return os.WriteFile(path, []byte(body.String()), 0o600)
 }
 
-func MasterPasswordIntervalDuration(cfg Config) time.Duration {
-	switch cfg.Security.MasterPasswordInterval {
+func MasterPasswordIntervalDuration(value string) time.Duration {
+	switch NormalizeMasterPasswordInterval(value) {
 	case MasterPasswordInterval15Days:
 		return 15 * 24 * time.Hour
 	case MasterPasswordInterval30Days:
@@ -105,18 +105,7 @@ func MasterPasswordIntervalDuration(cfg Config) time.Duration {
 }
 
 func normalizeConfig(cfg *Config) {
-	if strings.TrimSpace(cfg.Security.MasterPasswordInterval) == "" {
-		cfg.Security.MasterPasswordInterval = MasterPasswordInterval7Days
-	}
-	switch strings.TrimSpace(strings.ToLower(cfg.Security.MasterPasswordInterval)) {
-	case MasterPasswordInterval15Days:
-		cfg.Security.MasterPasswordInterval = MasterPasswordInterval15Days
-	case MasterPasswordInterval30Days:
-		cfg.Security.MasterPasswordInterval = MasterPasswordInterval30Days
-	default:
-		cfg.Security.MasterPasswordInterval = MasterPasswordInterval7Days
-	}
-
+	cfg.Security.MasterPasswordInterval = NormalizeMasterPasswordInterval(cfg.Security.MasterPasswordInterval)
 	if strings.TrimSpace(cfg.Security.ExternalUsePolicy) == "" {
 		cfg.Security.ExternalUsePolicy = ExternalUsePolicyDeny
 	}
@@ -125,6 +114,17 @@ func normalizeConfig(cfg *Config) {
 		cfg.Security.ExternalUsePolicy = ExternalUsePolicyAllow
 	default:
 		cfg.Security.ExternalUsePolicy = ExternalUsePolicyDeny
+	}
+}
+
+func NormalizeMasterPasswordInterval(value string) string {
+	switch strings.TrimSpace(strings.ToLower(value)) {
+	case MasterPasswordInterval15Days:
+		return MasterPasswordInterval15Days
+	case MasterPasswordInterval30Days:
+		return MasterPasswordInterval30Days
+	default:
+		return MasterPasswordInterval7Days
 	}
 }
 
@@ -145,5 +145,29 @@ func SetAgentDisabled(paths Paths, disabled bool) error {
 		cfg.Agent.Socket = paths.AgentSocket()
 	}
 	cfg.Agent.Disabled = disabled
+	return Save(paths.ConfigFile(), cfg)
+}
+
+func SetExternalUsePolicy(paths Paths, policy string) error {
+	cfg, err := Load(paths.ConfigFile())
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.Agent.Socket) == "" {
+		cfg.Agent.Socket = paths.AgentSocket()
+	}
+	cfg.Security.ExternalUsePolicy = policy
+	return Save(paths.ConfigFile(), cfg)
+}
+
+func SetMasterPasswordInterval(paths Paths, interval string) error {
+	cfg, err := Load(paths.ConfigFile())
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.Agent.Socket) == "" {
+		cfg.Agent.Socket = paths.AgentSocket()
+	}
+	cfg.Security.MasterPasswordInterval = NormalizeMasterPasswordInterval(interval)
 	return Save(paths.ConfigFile(), cfg)
 }

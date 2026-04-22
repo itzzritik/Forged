@@ -20,7 +20,7 @@ func providerName() string { return "windows-hello" }
 func authorize(ctx context.Context, action sensitiveauth.Action) string {
 	shell, err := windowsPowerShellPath()
 	if err != nil {
-		return "unavailable"
+		return "unavailable_by_environment"
 	}
 
 	cmd := exec.CommandContext(
@@ -40,19 +40,57 @@ func authorize(ctx context.Context, action sensitiveauth.Action) string {
 
 	var exitErr *exec.ExitError
 	if !errors.As(err, &exitErr) {
-		return "unavailable"
+		return "failed"
 	}
 
 	switch exitErr.ExitCode() {
 	case 2:
-		return "unavailable"
+		return "unavailable_by_environment"
 	case 3:
 		return "canceled"
 	default:
 		if strings.Contains(strings.ToLower(string(output)), "notsupportedexception") {
-			return "unavailable"
+			return "unavailable_by_platform"
 		}
 		return "failed"
+	}
+}
+
+func status() string {
+	shell, err := windowsPowerShellPath()
+	if err != nil {
+		return "unavailable_by_environment"
+	}
+
+	cmd := exec.Command(
+		shell,
+		"-NoProfile",
+		"-NonInteractive",
+		"-ExecutionPolicy",
+		"Bypass",
+		"-EncodedCommand",
+		encodePowerShellCommand(windowsHelloStatusScript()),
+	)
+	output, err := cmd.CombinedOutput()
+	if err == nil {
+		return "ok"
+	}
+
+	var exitErr *exec.ExitError
+	if !errors.As(err, &exitErr) {
+		return "broken"
+	}
+
+	switch exitErr.ExitCode() {
+	case 2:
+		return "unavailable_by_environment"
+	case 4:
+		return "unavailable_by_platform"
+	default:
+		if strings.Contains(strings.ToLower(string(output)), "notsupportedexception") {
+			return "unavailable_by_platform"
+		}
+		return "broken"
 	}
 }
 
@@ -126,6 +164,42 @@ public static class ForgedWindowsHello {
 }
 
 exit [ForgedWindowsHello]::Run('` + powershellQuote(reason) + `')
+`
+}
+
+func windowsHelloStatusScript() string {
+	return `
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -ReferencedAssemblies @('System.Runtime.WindowsRuntime', "$env:SystemRoot\System32\WinMetadata\Windows.winmd") -TypeDefinition @'
+using System;
+using Windows.Security.Credentials.UI;
+
+public static class ForgedWindowsHelloStatus {
+    public static int Run() {
+        try {
+            var availability = UserConsentVerifier.CheckAvailabilityAsync().AsTask().GetAwaiter().GetResult();
+            switch (availability) {
+                case UserConsentVerifierAvailability.Available:
+                    return 0;
+                case UserConsentVerifierAvailability.DeviceBusy:
+                case UserConsentVerifierAvailability.RetriesExhausted:
+                case UserConsentVerifierAvailability.Canceled:
+                    return 1;
+                default:
+                    return 4;
+            }
+        } catch {
+            return 1;
+        }
+    }
+}
+'@
+} catch {
+  exit 2
+}
+
+exit [ForgedWindowsHelloStatus]::Run()
 `
 }
 

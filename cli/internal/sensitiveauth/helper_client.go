@@ -86,22 +86,33 @@ func (c *HelperClient) Close() error {
 	return nil
 }
 
-func (c *HelperClient) Authorize(ctx context.Context, action Action) error {
+func (c *HelperClient) Authorize(ctx context.Context, action Action) (CapabilityState, error) {
 	resp, err := c.do(ctx, NewAuthorizeRequest(c.id(), action))
 	if err != nil {
-		return ErrNativeUnavailable
+		return CapabilityBroken, ErrNativeBroken
 	}
 
+	capability := capabilityFromHelperStatus(resp.Status)
 	switch resp.Status {
 	case helperStatusOK:
-		return nil
+		return capability, nil
 	case helperStatusCanceled:
-		return ErrAuthenticationCanceled
-	case helperStatusUnavailable:
-		return ErrNativeUnavailable
+		return capability, ErrAuthenticationCanceled
+	case helperStatusUnavailablePlatform, helperStatusUnavailableEnv, helperStatusUnavailable:
+		return capability, ErrNativeUnavailable
+	case helperStatusBroken:
+		return capability, ErrNativeBroken
 	default:
-		return ErrAuthenticationFailed
+		return capability, ErrAuthenticationFailed
 	}
+}
+
+func (c *HelperClient) Capability(ctx context.Context) (CapabilityState, error) {
+	resp, err := c.do(ctx, NewStatusRequest(c.id()))
+	if err != nil {
+		return CapabilityBroken, ErrNativeBroken
+	}
+	return capabilityFromHelperStatus(resp.Status), nil
 }
 
 func (c *HelperClient) do(ctx context.Context, req HelperRequest) (HelperResponse, error) {
@@ -172,4 +183,19 @@ func (c *HelperClient) readLoop(scanner *bufio.Scanner) {
 
 func (c *HelperClient) id() string {
 	return fmt.Sprintf("req-%d", c.nextID.Add(1))
+}
+
+func capabilityFromHelperStatus(status string) CapabilityState {
+	switch status {
+	case helperStatusOK:
+		return CapabilityAvailable
+	case helperStatusUnavailablePlatform:
+		return CapabilityUnavailableByPlatform
+	case helperStatusUnavailableEnv, helperStatusUnavailable:
+		return CapabilityUnavailableByEnv
+	case helperStatusBroken:
+		return CapabilityBroken
+	default:
+		return CapabilityBroken
+	}
 }

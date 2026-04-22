@@ -33,6 +33,12 @@ pointing the user at the TUI Key tab. Socket is `agent.sock` (Unix) or
 - **Agent access now reuses the same 4-hour shared session as the TUI.**
   If that session expires, the next list / sign / signers request has to
   re-auth through sensitiveauth before the daemon hydrates again.
+- **Agent access is now treated as external use, not view access.**
+  Agent requests call `ActionExternal`. That means:
+  - no master-password fallback
+  - cancel/fail is a hard failure
+  - true native-auth unavailability uses `security.external_use_policy`
+  - broken helper state is denied, not downgraded
 - **`Lock`/`Unlock` agent opcodes are not the real control plane.**
   Forged ignores the agent passphrase and relies on sensitiveauth plus
   daemon session clear instead.

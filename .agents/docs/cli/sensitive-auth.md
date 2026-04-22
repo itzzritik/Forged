@@ -36,6 +36,13 @@ Hardening plan (`.agents/plan/security-hardening/`) is reworking what
 - **Shared private-key session now has a 4-hour TTL.** Successful TUI
   auth or external-use auth refreshes the same shared window. Expiry
   clears both the broker session and the live daemon session.
+- **External use now has its own auth action.** SSH auth, `SIGN_REQUEST`,
+  and `SIGNERS` go through `ActionExternal`, not `ActionView`. That means
+  they never get a master-password fallback prompt from the broker.
+- **Foreground TUI idle can also clear the shared session.** After 4
+  minutes with no key input, the TUI calls `sensitive-lock`, which drops
+  the broker session and the live daemon session. This is a real relock,
+  not just a local screen change.
 - **Export token is separate from the view lease.** Random UUID, 1-minute
   TTL, single-use. `export-all` requires a fresh token even if the view
   session is active.
@@ -45,9 +52,27 @@ Hardening plan (`.agents/plan/security-hardening/`) is reworking what
   and darwin fallback set Touch ID reuse duration to `0`, so a fresh TUI
   launch asks again instead of silently reusing a recent biometric auth.
 - **IF the native helper is unavailable** (missing, crash, `unavailable`)
-  **THEN `Authorize` returns `PasswordRequired=true`** with a prompt
-  string — it does NOT implicitly grant. Caller falls back to master
-  password via `sensitive-password`.
+  **THEN behavior now depends on action class.** `view` / TUI launch may
+  fall back to master password. `external` either follows
+  `security.external_use_policy` on true unavailability or fails on a
+  broken helper. It does NOT get a password prompt.
+- **Broken is not unavailable anymore.** Transport/startup failures in
+  the auth helper now map to `CapabilityBroken`. True helper responses
+  map to `CapabilityUnavailableByPlatform` or
+  `CapabilityUnavailableByEnv`. Only true unavailability can use the
+  external-use policy.
+- **Helper `status` is now a real capability probe.** TUI diagnostics no
+  longer assume native auth is available. `forged-auth` answers a
+  non-interactive `status` request with:
+  - `ok`
+  - `unavailable_by_platform`
+  - `unavailable_by_environment`
+  - `broken`
+  and the TUI uses that for Manage/Doctor security state.
+- **External-use policy lives in `config.toml`.** `security.external_use_policy`
+  defaults to `deny`. When set to `allow`, and native auth is truly
+  unavailable, the broker may hydrate from local unlock trust without a
+  prompt. If local unlock trust cannot hydrate, external use still fails.
 - **`AuthorizeForced` exists for fresh TUI launch.** It bypasses the
   broker's "shared session already active" short-circuit and makes the
   helper prompt again. This is how `forged` asks for Touch ID on every
@@ -73,9 +98,9 @@ Hardening plan (`.agents/plan/security-hardening/`) is reworking what
   surfacing the raw hydration error. TUI/Manage can fall back to master
   password without incorrectly saying native auth was unavailable;
   external use still does not get a password prompt.
-- **TUI launch and Manage unlock now pre-check for obvious missing local
-  trust.** If `local-unlock.json` or `install.id` is absent, they skip
-  native auth and go straight to the master-password screen.
+- **TUI launch now pre-checks for obvious missing local trust.** If
+  `local-unlock.json` or `install.id` is absent, startup skips native
+  auth and goes straight to the master-password screen.
 - **`view` has only two actions: `view` and `export`.** No per-key
   scoping. Broker does NOT gate SSH agent `Sign`.
 - A legacy in-process fallback in `provider_darwin.go` writes a Swift
@@ -104,5 +129,7 @@ Hardening plan (`.agents/plan/security-hardening/`) is reworking what
 - The broker now owns both the shared-session timer and the daemon
   session-clear callback. If you add new unlock paths, wire both or the
   daemon will drift into stale "authorized but cold" state.
+- `security.external_use_policy=allow` is only a bypass for true native
+  unavailability. Do NOT apply it when the helper is broken.
 - The broker is a UX/policy gate, NOT a second auth layer on IPC. Owner-only
   `ctl.sock` perms are the access control. See `cli/ipc.md`.

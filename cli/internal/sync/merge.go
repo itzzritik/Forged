@@ -194,7 +194,7 @@ func mergeKey(base, local, remote *vault.Key, localDeviceID, remoteDeviceID stri
 	merged.Version = maxInt(keyVersion(base), local.Version, remote.Version)
 	merged.DeviceOrigin = firstNonEmpty(merged.DeviceOrigin, local.DeviceOrigin, remote.DeviceOrigin)
 	merged.Tags = mergeStringSet(keyTags(base), local.Tags, remote.Tags)
-	preservePrivateKey(&merged, base, local, remote, loser)
+	_ = loser
 	return merged
 }
 
@@ -254,29 +254,8 @@ func mergeStringSet(base, local, remote []string) []string {
 	return result
 }
 
-func preservePrivateKey(merged *vault.Key, candidates ...*vault.Key) {
-	for _, candidate := range candidates {
-		if candidate == nil || len(candidate.PrivateKey) == 0 {
-			continue
-		}
-		if sameKeyMaterial(*merged, *candidate) {
-			merged.PrivateKey = append([]byte(nil), candidate.PrivateKey...)
-			return
-		}
-	}
-	merged.PrivateKey = nil
-}
-
-func sameKeyMaterial(a, b vault.Key) bool {
-	return a.PublicKey == b.PublicKey &&
-		a.Fingerprint == b.Fingerprint &&
-		a.EncryptedPrivateKey == b.EncryptedPrivateKey &&
-		a.EncryptedCipherKey == b.EncryptedCipherKey
-}
-
 func cloneKey(key vault.Key) vault.Key {
 	cloned := key
-	cloned.PrivateKey = append([]byte(nil), key.PrivateKey...)
 	cloned.Tags = append([]string(nil), key.Tags...)
 	if key.LastUsedAt != nil {
 		lastUsedAt := *key.LastUsedAt
