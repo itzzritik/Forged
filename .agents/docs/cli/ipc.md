@@ -2,7 +2,7 @@
 title: Daemon IPC
 applies_to:
   - cli/internal/ipc/**
-last_verified: 2026-04-21
+last_verified: 2026-04-22
 stable: yes
 ---
 
@@ -31,13 +31,26 @@ streaming, no server push. Wire format in `proto/ipc.md`.
   fix is streaming, not raising the cap.
 - Request deadline is 60s default, 5 min for `sensitive-auth` /
   `sensitive-password` (biometric / password prompts).
+- `sensitive-auth` now accepts:
+  - `action`
+  - optional `force`
+  `force=true` bypasses the broker's active-session fast path and is used
+  by fresh TUI launch auth.
 - IF a handler's subsystem is not wired (sync bus, auth broker, SSH
   routing, link/unlink callbacks) THEN the handler returns "unavailable",
   not panic.
+- **Vault-backed handlers are now cold-safe.** If the daemon is running
+  without an active vault session, commands that need the vault or
+  keystore return `vault is locked; open Forged to unlock` instead of
+  panicking on nil state.
 - IF the daemon is not running THEN every call fails fast with "daemon is
   not running" — no autostart from the IPC layer.
 - Mutating key commands notify the sync bus and refresh SSH routing after
   the handler returns.
+- `status` now reports both:
+  - `sensitive.unlocked`
+  - `sensitive.active`
+  so callers can distinguish lease state from live vault-session state.
 
 ## Decisions
 

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"reflect"
 	"sync"
 	"time"
 
@@ -40,13 +41,19 @@ func New(ks *vault.KeyStore) *ForgedAgent {
 func (a *ForgedAgent) SetSyncCoordinator(syncBus SyncCoordinator) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	a.syncBus = syncBus
+	a.syncBus = normalizeSyncCoordinator(syncBus)
 }
 
 func (a *ForgedAgent) SetSensitiveAuthorizer(auth SensitiveAuthorizer) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	a.auth = auth
+}
+
+func (a *ForgedAgent) SetKeyStore(keyStore *vault.KeyStore) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.keyStore = keyStore
 }
 
 func (a *ForgedAgent) SetRouteSessions(routes RouteSessions) {
@@ -73,10 +80,20 @@ func (a *ForgedAgent) List() ([]*agent.Key, error) {
 	a.recordAgentAccess("ssh_agent_list")
 
 	a.mu.RLock()
-	defer a.mu.RUnlock()
-
 	if a.locked {
+		a.mu.RUnlock()
 		return nil, nil
+	}
+	a.mu.RUnlock()
+
+	if err := a.ensurePrivateKeyAccess(); err != nil {
+		return nil, err
+	}
+
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	if a.keyStore == nil {
+		return nil, fmt.Errorf("vault is locked")
 	}
 
 	keys := a.keyStore.List()
@@ -107,6 +124,13 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 		a.mu.RUnlock()
 		return nil, fmt.Errorf("agent is locked")
 	}
+	if a.keyStore == nil {
+		a.mu.RUnlock()
+		if err := a.ensurePrivateKeyAccess(); err != nil {
+			return nil, err
+		}
+		a.mu.RLock()
+	}
 	a.mu.RUnlock()
 
 	if err := a.ensurePrivateKeyAccess(); err != nil {
@@ -118,6 +142,9 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 
 	if a.locked {
 		return nil, fmt.Errorf("agent is locked")
+	}
+	if a.keyStore == nil {
+		return nil, fmt.Errorf("vault is locked")
 	}
 
 	signer, name, _, err := a.findSigner(key)
@@ -194,6 +221,13 @@ func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
 		a.mu.RUnlock()
 		return nil, nil
 	}
+	if a.keyStore == nil {
+		a.mu.RUnlock()
+		if err := a.ensurePrivateKeyAccess(); err != nil {
+			return nil, err
+		}
+		a.mu.RLock()
+	}
 	a.mu.RUnlock()
 
 	if err := a.ensurePrivateKeyAccess(); err != nil {
@@ -205,6 +239,9 @@ func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
 
 	if a.locked {
 		return nil, nil
+	}
+	if a.keyStore == nil {
+		return nil, fmt.Errorf("vault is locked")
 	}
 
 	keys := a.keyStore.List()
@@ -224,6 +261,9 @@ func (a *ForgedAgent) Extension(extensionType string, contents []byte) ([]byte, 
 }
 
 func (a *ForgedAgent) findSigner(pub ssh.PublicKey) (ssh.Signer, string, string, error) {
+	if a.keyStore == nil {
+		return nil, "", "", fmt.Errorf("vault is locked")
+	}
 	wanted := pub.Marshal()
 	for _, k := range a.keyStore.List() {
 		parsed, err := parsePublicKey(k.PublicKey)
@@ -290,6 +330,20 @@ func (a *ForgedAgent) ensurePrivateKeyAccess() error {
 		return fmt.Errorf("private-key access is locked; unlock Forged from Manage")
 	}
 	return nil
+}
+
+func normalizeSyncCoordinator(syncBus SyncCoordinator) SyncCoordinator {
+	if syncBus == nil {
+		return nil
+	}
+	value := reflect.ValueOf(syncBus)
+	switch value.Kind() {
+	case reflect.Chan, reflect.Func, reflect.Interface, reflect.Map, reflect.Pointer, reflect.Slice:
+		if value.IsNil() {
+			return nil
+		}
+	}
+	return syncBus
 }
 
 var _ agent.ExtendedAgent = (*ForgedAgent)(nil)

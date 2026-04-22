@@ -5,13 +5,15 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/BurntSushi/toml"
 )
 
 type Config struct {
-	Agent AgentConfig `toml:"agent"`
-	Sync  SyncConfig  `toml:"sync"`
+	Agent    AgentConfig    `toml:"agent"`
+	Sync     SyncConfig     `toml:"sync"`
+	Security SecurityConfig `toml:"security"`
 }
 
 type AgentConfig struct {
@@ -26,9 +28,25 @@ type SyncConfig struct {
 	Enabled  bool   `toml:"enabled"`
 }
 
+type SecurityConfig struct {
+	MasterPasswordInterval string `toml:"master_password_interval"`
+	ExternalUsePolicy      string `toml:"external_use_policy"`
+}
+
+const (
+	MasterPasswordInterval7Days  = "7d"
+	MasterPasswordInterval15Days = "15d"
+	MasterPasswordInterval30Days = "30d"
+
+	ExternalUsePolicyDeny  = "deny"
+	ExternalUsePolicyAllow = "allow"
+)
+
 func Load(path string) (Config, error) {
 	var cfg Config
 	cfg.Agent.LogLevel = "info"
+	cfg.Security.MasterPasswordInterval = MasterPasswordInterval7Days
+	cfg.Security.ExternalUsePolicy = ExternalUsePolicyDeny
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return cfg, nil
@@ -38,6 +56,7 @@ func Load(path string) (Config, error) {
 		return cfg, fmt.Errorf("parsing config %s: %w", path, err)
 	}
 
+	normalizeConfig(&cfg)
 	return cfg, nil
 }
 
@@ -52,6 +71,7 @@ func Save(path string, cfg Config) error {
 	if strings.TrimSpace(cfg.Agent.LogLevel) == "" {
 		cfg.Agent.LogLevel = "info"
 	}
+	normalizeConfig(&cfg)
 
 	var body strings.Builder
 	body.WriteString("[agent]\n")
@@ -66,8 +86,46 @@ func Save(path string, cfg Config) error {
 		body.WriteString(fmt.Sprintf("interval = %q\n", cfg.Sync.Interval))
 	}
 	body.WriteString(fmt.Sprintf("enabled = %t\n", cfg.Sync.Enabled))
+	body.WriteString("\n\n[security]\n")
+	body.WriteString(fmt.Sprintf("master_password_interval = %q\n", cfg.Security.MasterPasswordInterval))
+	body.WriteString(fmt.Sprintf("external_use_policy = %q\n", cfg.Security.ExternalUsePolicy))
 
 	return os.WriteFile(path, []byte(body.String()), 0o600)
+}
+
+func MasterPasswordIntervalDuration(cfg Config) time.Duration {
+	switch cfg.Security.MasterPasswordInterval {
+	case MasterPasswordInterval15Days:
+		return 15 * 24 * time.Hour
+	case MasterPasswordInterval30Days:
+		return 30 * 24 * time.Hour
+	default:
+		return 7 * 24 * time.Hour
+	}
+}
+
+func normalizeConfig(cfg *Config) {
+	if strings.TrimSpace(cfg.Security.MasterPasswordInterval) == "" {
+		cfg.Security.MasterPasswordInterval = MasterPasswordInterval7Days
+	}
+	switch strings.TrimSpace(strings.ToLower(cfg.Security.MasterPasswordInterval)) {
+	case MasterPasswordInterval15Days:
+		cfg.Security.MasterPasswordInterval = MasterPasswordInterval15Days
+	case MasterPasswordInterval30Days:
+		cfg.Security.MasterPasswordInterval = MasterPasswordInterval30Days
+	default:
+		cfg.Security.MasterPasswordInterval = MasterPasswordInterval7Days
+	}
+
+	if strings.TrimSpace(cfg.Security.ExternalUsePolicy) == "" {
+		cfg.Security.ExternalUsePolicy = ExternalUsePolicyDeny
+	}
+	switch strings.TrimSpace(strings.ToLower(cfg.Security.ExternalUsePolicy)) {
+	case ExternalUsePolicyAllow:
+		cfg.Security.ExternalUsePolicy = ExternalUsePolicyAllow
+	default:
+		cfg.Security.ExternalUsePolicy = ExternalUsePolicyDeny
+	}
 }
 
 func IsAgentDisabled(paths Paths) bool {

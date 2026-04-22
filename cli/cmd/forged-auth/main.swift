@@ -66,6 +66,9 @@ final class HelperRuntime {
 
     private func authorize(request: HelperRequest) {
         let context = LAContext()
+        if #available(macOS 10.12.2, *) {
+            context.touchIDAuthenticationAllowableReuseDuration = 0
+        }
         var policyError: NSError?
         let policy: LAPolicy = .deviceOwnerAuthentication
 

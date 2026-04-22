@@ -164,6 +164,22 @@ func OpenReadOnly(path string, password []byte) (*Vault, error) {
 	return openVault(path, password)
 }
 
+func OpenReadOnlyWithSymmetricKey(path string, symmetricKey []byte) (*Vault, error) {
+	return openVaultWithSymmetricKey(path, symmetricKey)
+}
+
+func OpenWithSymmetricKey(path string, symmetricKey []byte) (*Vault, error) {
+	v, err := openVaultWithSymmetricKey(path, symmetricKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := v.acquireLock(); err != nil {
+		v.Close()
+		return nil, err
+	}
+	return v, nil
+}
+
 func openVault(path string, password []byte) (*Vault, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
@@ -230,6 +246,44 @@ func openVault(path string, password []byte) (*Vault, error) {
 	}
 
 	return v, nil
+}
+
+func openVaultWithSymmetricKey(path string, symmetricKey []byte) (*Vault, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("reading vault: %w", err)
+	}
+
+	header, ciphertext, err := UnmarshalVault(data)
+	if err != nil {
+		return nil, err
+	}
+
+	workingKey := append([]byte(nil), symmetricKey...)
+	plaintext, err := Decrypt(workingKey, header.Nonce[:], ciphertext)
+	if err != nil {
+		for i := range workingKey {
+			workingKey[i] = 0
+		}
+		return nil, err
+	}
+
+	var vd VaultData
+	if err := json.Unmarshal(plaintext, &vd); err != nil {
+		for i := range workingKey {
+			workingKey[i] = 0
+		}
+		return nil, fmt.Errorf("parsing vault data: %w", err)
+	}
+	normalizeVaultKeyTypes(&vd)
+
+	return &Vault{
+		path:         path,
+		kdf:          header.KDF,
+		key:          workingKey,
+		protectedKey: header.ProtectedKey,
+		Data:         vd,
+	}, nil
 }
 
 func (v *Vault) Save() error {

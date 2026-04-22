@@ -7,10 +7,6 @@ type RuntimeSpec struct {
 	Args   []string
 }
 
-type ServiceCredentials struct {
-	MasterPassword string
-}
-
 func DefaultRuntimeSpec() (RuntimeSpec, error) {
 	binary, err := findBinary()
 	if err != nil {
@@ -22,12 +18,12 @@ func DefaultRuntimeSpec() (RuntimeSpec, error) {
 	})
 }
 
-func EnsureService(paths config.Paths, creds ServiceCredentials, runtime RuntimeSpec) error {
+func EnsureService(paths config.Paths, runtime RuntimeSpec) error {
 	runtime, err := normalizeRuntimeSpec(runtime)
 	if err != nil {
 		return err
 	}
-	if err := InstallService(paths, creds.MasterPassword, runtime); err != nil {
+	if err := InstallService(paths, runtime); err != nil {
 		return err
 	}
 	return RestartService()

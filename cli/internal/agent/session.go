@@ -27,12 +27,19 @@ func (s *sessionAgent) List() ([]*agent.Key, error) {
 		return s.base.List()
 	}
 
+	if err := s.base.ensurePrivateKeyAccess(); err != nil {
+		return nil, err
+	}
+
 	s.base.recordAgentAccess("ssh_agent_list")
 
 	s.base.mu.RLock()
 	defer s.base.mu.RUnlock()
 	if s.base.locked {
 		return nil, nil
+	}
+	if s.base.keyStore == nil {
+		return nil, fmt.Errorf("vault is locked")
 	}
 
 	keys := s.base.keyStore.List()

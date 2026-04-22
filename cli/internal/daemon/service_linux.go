@@ -25,7 +25,6 @@ Type=simple
 ExecStart={{ .ExecStart }}
 Restart=always
 RestartSec=5
-Environment=FORGED_MASTER_PASSWORD={{ .MasterPassword }}
 
 [Install]
 WantedBy=default.target
@@ -36,7 +35,7 @@ func unitPath() string {
 	return filepath.Join(home, ".config", "systemd", "user", serviceName+".service")
 }
 
-func InstallService(paths config.Paths, masterPassword string, runtime RuntimeSpec) error {
+func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	runtime, err := normalizeRuntimeSpec(runtime)
 	if err != nil {
 		return err
@@ -54,13 +53,11 @@ func InstallService(paths config.Paths, masterPassword string, runtime RuntimeSp
 	defer f.Close()
 
 	data := struct {
-		ExecStart      string
-		Binary         string
-		MasterPassword string
+		ExecStart string
+		Binary    string
 	}{
-		ExecStart:      formatSystemdExecStart(runtime),
-		Binary:         runtime.Binary,
-		MasterPassword: masterPassword,
+		ExecStart: formatSystemdExecStart(runtime),
+		Binary:    runtime.Binary,
 	}
 
 	if err := unitTemplate.Execute(f, data); err != nil {
@@ -71,22 +68,6 @@ func InstallService(paths config.Paths, masterPassword string, runtime RuntimeSp
 	exec.Command("systemctl", "--user", "enable", serviceName).Run()
 
 	return nil
-}
-
-func ReadInstalledServicePassword() (string, error) {
-	data, err := os.ReadFile(unitPath())
-	if err != nil {
-		return "", err
-	}
-
-	const prefix = "Environment=FORGED_MASTER_PASSWORD="
-	for _, line := range strings.Split(string(data), "\n") {
-		if strings.HasPrefix(strings.TrimSpace(line), prefix) {
-			return strings.TrimPrefix(strings.TrimSpace(line), prefix), nil
-		}
-	}
-
-	return "", fmt.Errorf("installed service password not found")
 }
 
 func StartService() error {

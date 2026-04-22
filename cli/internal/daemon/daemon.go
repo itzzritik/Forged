@@ -13,6 +13,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"syscall"
 
 	"github.com/google/uuid"
@@ -29,6 +30,7 @@ import (
 )
 
 type Daemon struct {
+	sessionMu    sync.Mutex
 	paths        config.Paths
 	vault        *vault.Vault
 	keyStore     *vault.KeyStore
@@ -62,14 +64,17 @@ func (d *Daemon) Run(password []byte) error {
 		return fmt.Errorf("cleaning stale state: %w", err)
 	}
 
-	if err := d.openVault(password); err != nil {
-		return err
-	}
 	defer d.shutdown()
 
-	d.authBroker = sensitiveauth.NewBroker(d.paths.VaultFile(), d.helperBinaryPath(), d.logger)
-	d.routeService = sshrouting.NewService(d.paths, d.keyStore)
+	d.routeService = sshrouting.NewService(d.paths, nil)
 	d.sshRouting = sshrouting.NewManager(d.paths, d.selfBinaryPath())
+	d.authBroker = sensitiveauth.NewBroker(d.paths, d.helperBinaryPath(), d.logger, d)
+
+	if len(password) > 0 {
+		if err := d.hydrateWithPassword(password); err != nil {
+			return err
+		}
+	}
 
 	if err := d.writePID(); err != nil {
 		return err
@@ -81,8 +86,6 @@ func (d *Daemon) Run(password []byte) error {
 		return err
 	}
 
-	d.initSync()
-
 	if err := d.refreshSSHRouting(); err != nil {
 		return err
 	}
@@ -92,7 +95,8 @@ func (d *Daemon) Run(password []byte) error {
 	}
 
 	d.logger.Info("daemon ready",
-		"keys", len(d.keyStore.List()),
+		"keys", d.activeKeyCount(),
+		"active_session", d.HasActiveSession(),
 		"agent_socket", d.paths.AgentSocket(),
 		"ctl_socket", d.paths.CtlSocket(),
 	)
@@ -192,39 +196,6 @@ func (d *Daemon) cleanStaleState() error {
 	return nil
 }
 
-func (d *Daemon) openVault(password []byte) error {
-	vaultPath := d.paths.VaultFile()
-
-	var v *vault.Vault
-	var err error
-
-	if _, statErr := os.Stat(vaultPath); os.IsNotExist(statErr) {
-		d.logger.Info("creating new vault", "path", vaultPath)
-		v, err = vault.Create(vaultPath, password)
-	} else {
-		d.logger.Info("opening vault", "path", vaultPath)
-		v, err = vault.Open(vaultPath, password)
-	}
-
-	if err != nil {
-		return fmt.Errorf("vault: %w", err)
-	}
-
-	if err := v.DecryptAllPrivateKeys(); err != nil {
-		v.Close()
-		return fmt.Errorf("hydrating private keys: %w", err)
-	}
-
-	d.vault = v
-	d.keyStore = vault.NewKeyStore(v)
-
-	for _, key := range v.Data.Keys {
-		platform.Mlock(key.PrivateKey)
-	}
-
-	return nil
-}
-
 func (d *Daemon) writePID() error {
 	pidPath := d.paths.PIDFile()
 	if err := os.MkdirAll(filepath.Dir(pidPath), 0700); err != nil {
@@ -243,6 +214,9 @@ func (d *Daemon) startIPC() error {
 	d.ipcServer.SetSyncLinkHandler(d.handleSyncLink)
 	d.ipcServer.SetSyncUnlinkHandler(d.handleSyncUnlink)
 	d.ipcServer.SetSensitiveAuthBroker(d.authBroker)
+	if d.syncBus != nil {
+		d.ipcServer.SetSyncBus(d.syncBus)
+	}
 	d.ipcServer.SetOnKeyChange(func() {
 		if err := d.refreshSSHRouting(); err != nil {
 			d.logger.Warn("refreshing ssh routing after key change failed", "error", err)
@@ -288,6 +262,13 @@ type syncCredentials struct {
 }
 
 func (d *Daemon) initSync() {
+	if d.vault == nil {
+		return
+	}
+	if d.syncBus != nil {
+		return
+	}
+
 	data, err := os.ReadFile(d.paths.CredentialsFile())
 	if err != nil {
 		return
@@ -316,6 +297,10 @@ func (d *Daemon) initSync() {
 }
 
 func (d *Daemon) configureSync(creds syncCredentials) (*forgedsync.SyncState, error) {
+	if d.vault == nil {
+		return nil, fmt.Errorf("vault is locked; open Forged to unlock")
+	}
+
 	stateStore := forgedsync.NewStateStore(d.paths.SyncStateFile())
 	state, err := stateStore.Load()
 	if err != nil {
@@ -350,6 +335,9 @@ func (d *Daemon) configureSync(creds syncCredentials) (*forgedsync.SyncState, er
 }
 
 func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
+	if !d.HasActiveSession() {
+		return fmt.Errorf("vault is locked; open Forged to unlock")
+	}
 	if _, err := d.configureSync(syncCredentials{
 		ServerURL: args.ServerURL,
 		Token:     args.Token,
@@ -396,6 +384,156 @@ func (d *Daemon) handleSyncUnlink() error {
 	return nil
 }
 
+func (d *Daemon) HasActiveSession() bool {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	return d.vault != nil && d.keyStore != nil
+}
+
+func (d *Daemon) HydrateFromEnrollment() error {
+	symmetricKey, err := sensitiveauth.RecoverEnrolledSymmetricKey(d.paths)
+	if err != nil {
+		return err
+	}
+	defer zeroSecret(symmetricKey)
+	return d.hydrateWithSymmetricKey(symmetricKey, "local_enrollment")
+}
+
+func (d *Daemon) HydrateFromPassword(password []byte) error {
+	return d.hydrateWithPassword(password)
+}
+
+func (d *Daemon) ClearActiveSession(reason string) {
+	d.clearActiveSession(reason)
+}
+
+func (d *Daemon) hydrateWithPassword(password []byte) error {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+
+	if d.vault != nil && d.keyStore != nil {
+		return nil
+	}
+
+	vaultPath := d.paths.VaultFile()
+
+	var (
+		v   *vault.Vault
+		err error
+	)
+	if _, statErr := os.Stat(vaultPath); os.IsNotExist(statErr) {
+		d.logger.Info("creating new vault", "path", vaultPath)
+		v, err = vault.Create(vaultPath, password)
+	} else {
+		d.logger.Info("opening vault", "path", vaultPath)
+		v, err = vault.Open(vaultPath, password)
+	}
+	if err != nil {
+		return fmt.Errorf("vault: %w", err)
+	}
+	return d.activateVaultLocked(v, "master_password")
+}
+
+func (d *Daemon) hydrateWithSymmetricKey(symmetricKey []byte, source string) error {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+
+	if d.vault != nil && d.keyStore != nil {
+		return nil
+	}
+
+	v, err := vault.OpenWithSymmetricKey(d.paths.VaultFile(), symmetricKey)
+	if err != nil {
+		return fmt.Errorf("vault: %w", err)
+	}
+	return d.activateVaultLocked(v, source)
+}
+
+func (d *Daemon) activateVaultLocked(v *vault.Vault, source string) error {
+	if err := v.DecryptAllPrivateKeys(); err != nil {
+		v.Close()
+		return fmt.Errorf("hydrating private keys: %w", err)
+	}
+
+	keyStore := vault.NewKeyStore(v)
+	for _, key := range v.Data.Keys {
+		platform.Mlock(key.PrivateKey)
+	}
+
+	d.vault = v
+	d.keyStore = keyStore
+
+	if d.routeService != nil {
+		d.routeService.SetKeyStore(keyStore)
+	}
+	if d.ipcServer != nil {
+		d.ipcServer.SetVaultState(v, keyStore)
+	}
+	if d.agent != nil {
+		d.agent.SetKeyStore(keyStore)
+	}
+
+	d.initSync()
+	if err := d.refreshSSHRouting(); err != nil && d.logger != nil {
+		d.logger.Warn("refreshing ssh routing after hydrate failed", "error", err, "source", source)
+	}
+	if d.logger != nil {
+		d.logger.Info("vault session hydrated", "source", source, "keys", len(keyStore.List()))
+	}
+	return nil
+}
+
+func (d *Daemon) clearActiveSession(reason string) {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+
+	if d.syncBus != nil {
+		d.syncBus.PersistDirtyFlag()
+		d.syncBus = nil
+		if d.ipcServer != nil {
+			d.ipcServer.SetSyncBus(nil)
+		}
+		if d.agent != nil {
+			d.agent.SetSyncCoordinator(nil)
+		}
+	}
+
+	if d.routeService != nil {
+		d.routeService.SetKeyStore(nil)
+	}
+	if d.ipcServer != nil {
+		d.ipcServer.SetVaultState(nil, nil)
+	}
+	if d.agent != nil {
+		d.agent.SetKeyStore(nil)
+	}
+
+	if d.vault != nil {
+		for _, key := range d.vault.Data.Keys {
+			for i := range key.PrivateKey {
+				key.PrivateKey[i] = 0
+			}
+			platform.Munlock(key.PrivateKey)
+		}
+		d.vault.Close()
+		d.vault = nil
+		d.keyStore = nil
+	}
+
+	if d.logger != nil && strings.TrimSpace(reason) != "" {
+		d.logger.Info("vault session cleared", "reason", reason)
+	}
+}
+
+func (d *Daemon) activeKeyCount() int {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	if d.keyStore == nil {
+		return 0
+	}
+	return len(d.keyStore.List())
+}
+
 func (d *Daemon) waitForSignal() {
 	sig := make(chan os.Signal, 1)
 	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
@@ -411,10 +549,6 @@ func (d *Daemon) waitForSignal() {
 func (d *Daemon) shutdown() {
 	d.logger.Info("shutting down")
 
-	if d.syncBus != nil {
-		d.syncBus.PersistDirtyFlag()
-	}
-
 	if d.agentServer != nil {
 		d.agentServer.Stop()
 	}
@@ -426,22 +560,19 @@ func (d *Daemon) shutdown() {
 	if d.authBroker != nil {
 		d.authBroker.Close()
 	}
-
-	if d.vault != nil {
-		for _, key := range d.vault.Data.Keys {
-			for i := range key.PrivateKey {
-				key.PrivateKey[i] = 0
-			}
-			platform.Munlock(key.PrivateKey)
-		}
-		d.vault.Close()
-	}
+	d.clearActiveSession("shutdown")
 
 	os.Remove(d.paths.AgentSocket())
 	os.Remove(d.paths.CtlSocket())
 	os.Remove(d.paths.PIDFile())
 
 	d.logger.Info("daemon stopped")
+}
+
+func zeroSecret(b []byte) {
+	for i := range b {
+		b[i] = 0
+	}
 }
 
 func IsRunning(paths config.Paths) (int, bool) {

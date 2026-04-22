@@ -2,6 +2,7 @@ package actions
 
 import (
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 type UnlockResult struct {
 	PasswordRequired bool
+	Prompt           string
 }
 
 type ChangePasswordResult struct {
@@ -32,26 +34,43 @@ func LockSensitive(paths config.Paths) error {
 }
 
 func UnlockSensitive(paths config.Paths, password []byte) (UnlockResult, error) {
+	return unlockSensitive(paths, password, false)
+}
+
+func UnlockSensitiveLaunch(paths config.Paths, password []byte) (UnlockResult, error) {
+	return unlockSensitive(paths, password, true)
+}
+
+func unlockSensitive(paths config.Paths, password []byte, force bool) (UnlockResult, error) {
 	if len(password) == 0 {
-		_, err := authorizeSensitiveResult(paths, sensitiveauth.ActionView, nil)
+		_, err := authorizeSensitiveResultWithOptions(paths, sensitiveauth.ActionView, nil, force)
 		switch {
 		case err == nil:
 			return UnlockResult{}, nil
 		case IsSensitiveAuthRequired(err):
-			return UnlockResult{PasswordRequired: true}, nil
+			return UnlockResult{PasswordRequired: true, Prompt: unlockPrompt(err, sensitiveauth.ActionView.PasswordPrompt())}, nil
 		case strings.Contains(err.Error(), "authentication canceled"):
-			return UnlockResult{PasswordRequired: true}, nil
+			return UnlockResult{PasswordRequired: true, Prompt: "Authentication was canceled. Enter your master password to continue."}, nil
 		case strings.Contains(err.Error(), "authentication failed"):
-			return UnlockResult{PasswordRequired: true}, nil
+			return UnlockResult{PasswordRequired: true, Prompt: "Authentication failed. Enter your master password to continue."}, nil
 		default:
 			return UnlockResult{}, err
 		}
 	}
 
-	if _, err := authorizeSensitiveResult(paths, sensitiveauth.ActionView, password); err != nil {
+	if _, err := authorizeSensitiveResultWithOptions(paths, sensitiveauth.ActionView, password, force); err != nil {
 		return UnlockResult{}, err
 	}
+	_, _ = sensitiveauth.VerifyAndRefreshLocalEnrollment(paths, password)
 	return UnlockResult{}, nil
+}
+
+func unlockPrompt(err error, fallback string) string {
+	var target *SensitiveAuthRequiredError
+	if errors.As(err, &target) && strings.TrimSpace(target.Prompt) != "" {
+		return strings.TrimSpace(target.Prompt)
+	}
+	return fallback
 }
 
 func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []byte) (ChangePasswordResult, error) {
@@ -91,44 +110,54 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		return ChangePasswordResult{}, fmt.Errorf("changing password: %w", err)
 	}
 	passwordChanged = true
+	_ = sensitiveauth.InvalidateLocalEnrollment(paths)
 
 	kdf := v.KDFParams()
 	protectedKey := base64.StdEncoding.EncodeToString(v.ProtectedKeyBytes())
+	enrollmentResult, enrollmentErr := sensitiveauth.RefreshLocalEnrollment(paths, v.Key())
 	v.Close()
 	closed = true
 
 	runtime, err := daemon.DefaultRuntimeSpec()
 	if err != nil {
-		return ChangePasswordResult{
+		result := ChangePasswordResult{
 			Detail: "Local vault updated. The local service could not be refreshed automatically. Run Forged Doctor to finish setup.",
-		}, nil
+		}
+		applyEnrollmentDetail(&result, enrollmentResult, enrollmentErr)
+		return result, nil
 	}
-	if err := daemon.EnsureService(paths, daemon.ServiceCredentials{
-		MasterPassword: string(newPassword),
-	}, runtime); err != nil {
-		return ChangePasswordResult{
+	if err := daemon.EnsureService(paths, runtime); err != nil {
+		result := ChangePasswordResult{
 			Detail: "Local vault updated. The local service needs repair with your new password. Run Forged Doctor to finish setup.",
-		}, nil
+		}
+		applyEnrollmentDetail(&result, enrollmentResult, enrollmentErr)
+		return result, nil
 	}
 
 	creds, err := LoadCredentials(paths)
 	if err != nil {
-		return ChangePasswordResult{
+		result := ChangePasswordResult{
 			Detail: "Local vault updated. Log in and sync later to update recovery.",
-		}, nil
+		}
+		applyEnrollmentDetail(&result, enrollmentResult, enrollmentErr)
+		return result, nil
 	}
 
 	client := forgedsync.NewClient(creds.ServerURL, creds.Token, "")
 	if err := client.Rekey(kdf, protectedKey); err != nil {
-		return ChangePasswordResult{
+		result := ChangePasswordResult{
 			Detail: "Local vault updated. Remote recovery was not updated. Run sync later to retry.",
-		}, nil
+		}
+		applyEnrollmentDetail(&result, enrollmentResult, enrollmentErr)
+		return result, nil
 	}
 
-	return ChangePasswordResult{
+	result := ChangePasswordResult{
 		Detail: "Local vault and remote recovery were updated.",
 		Synced: true,
-	}, nil
+	}
+	applyEnrollmentDetail(&result, enrollmentResult, enrollmentErr)
+	return result, nil
 }
 
 func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
@@ -153,4 +182,15 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 	}
 
 	return false, fmt.Errorf("waiting for local service to stop")
+}
+
+func applyEnrollmentDetail(result *ChangePasswordResult, enrollment sensitiveauth.EnrollmentResult, err error) {
+	switch {
+	case err != nil:
+		result.Detail += " Local unlock trust could not be refreshed."
+	case enrollment.Refreshed:
+		return
+	case enrollment.Reason != "":
+		result.Detail += " Local unlock trust needs re-enrollment."
+	}
 }

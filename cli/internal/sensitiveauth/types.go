@@ -13,7 +13,8 @@ const (
 )
 
 const (
-	ExportTokenTTL = time.Minute
+	ExportTokenTTL   = time.Minute
+	SharedSessionTTL = 4 * time.Hour
 )
 
 type AuthorizeResult struct {

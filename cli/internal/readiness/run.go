@@ -3,8 +3,7 @@ package readiness
 import "errors"
 
 type repairState struct {
-	result   RunResult
-	password []byte
+	result RunResult
 }
 
 func (e *Engine) Run(opts RunOptions) (RunResult, error) {
@@ -154,7 +153,6 @@ func (e *Engine) restoreLinkedVault(state *repairState, opts RunOptions) error {
 		return err
 	}
 
-	state.password = append([]byte(nil), password...)
 	e.markFixed(&state.result.Summary, "vault")
 	return e.refreshSnapshot(state)
 }
@@ -164,17 +162,7 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 		return nil
 	}
 
-	password, err := e.servicePasswordForRepair(state, opts)
-	if err != nil {
-		return err
-	}
-	if len(password) == 0 {
-		state.result.Next = NextActionNeedsPassword
-		e.markFailed(&state.result.Summary, "service")
-		return nil
-	}
-
-	if err := e.ensureServiceWithPassword(password); err != nil {
+	if err := e.ensureServiceInstalled(); err != nil {
 		if updated, waitErr := e.waitForServiceReady(); waitErr == nil {
 			state.result.Snapshot = updated
 			if serviceHealthy(updated) {
@@ -184,7 +172,7 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 		}
 
 		e.pauseForServiceRetry()
-		if retryErr := e.ensureServiceWithPassword(password); retryErr != nil {
+		if retryErr := e.ensureServiceInstalled(); retryErr != nil {
 			if updated, waitErr := e.waitForServiceReady(); waitErr == nil {
 				state.result.Snapshot = updated
 				if serviceHealthy(updated) {
@@ -227,42 +215,6 @@ func (e *Engine) ensureSocketStage(state *repairState) error {
 	}
 	e.markFailed(&state.result.Summary, "service")
 	return nil
-}
-
-func (e *Engine) servicePasswordForRepair(state *repairState, opts RunOptions) ([]byte, error) {
-	if ok, err := passwordUnlocksVault(e.Paths, state.password); err != nil {
-		return nil, err
-	} else if ok {
-		return append([]byte(nil), state.password...), nil
-	}
-
-	if installedPassword, err := e.installedServicePassword(); err == nil && installedPassword != "" {
-		candidate := []byte(installedPassword)
-		if ok, verifyErr := passwordUnlocksVault(e.Paths, candidate); verifyErr != nil {
-			return nil, verifyErr
-		} else if ok {
-			state.password = append([]byte(nil), candidate...)
-			return append([]byte(nil), candidate...), nil
-		}
-	}
-
-	if opts.PromptPassword == nil {
-		return nil, nil
-	}
-
-	password, err := opts.PromptPassword("Enter your Forged master password to repair the background service:")
-	if err != nil || len(password) == 0 {
-		return nil, nil
-	}
-	ok, err := passwordUnlocksVault(e.Paths, password)
-	if err != nil {
-		return nil, err
-	}
-	if !ok {
-		return nil, nil
-	}
-	state.password = append([]byte(nil), password...)
-	return append([]byte(nil), password...), nil
 }
 
 func (e *Engine) refreshSnapshot(state *repairState) error {

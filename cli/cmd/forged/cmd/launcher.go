@@ -13,6 +13,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/readiness"
+	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"github.com/itzzritik/forged/cli/internal/tui"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
@@ -132,8 +133,14 @@ func runInteractiveIntent(intent tui.Intent) error {
 				return tui.SensitiveState{}, err
 			}
 		},
+		HasLocalUnlockTrust: func() bool {
+			return sensitiveauth.HasLocalEnrollment(paths)
+		},
 		LockSensitive:   func() error { return actions.LockSensitive(paths) },
 		UnlockSensitive: func(password []byte) (actions.UnlockResult, error) { return actions.UnlockSensitive(paths, password) },
+		UnlockSensitiveLaunch: func(password []byte) (actions.UnlockResult, error) {
+			return actions.UnlockSensitiveLaunch(paths, password)
+		},
 		ChangePassword: func(currentPassword []byte, newPassword []byte) (actions.ChangePasswordResult, error) {
 			return actions.ChangePassword(paths, currentPassword, newPassword)
 		},

@@ -4,7 +4,7 @@ applies_to:
   - cli/internal/tui/**
 depends_on:
   - cli/ipc.md
-last_verified: 2026-04-21
+last_verified: 2026-04-22
 stable: yes
 ---
 
@@ -44,6 +44,21 @@ down `Session` stack.
 - **Password flows are a single `passwordInput` reused across 8 flows**
   (`passwordFlow` enum). Completion dispatches on the flow value — a new
   flow needs a switch arm in the finish handler, not a new screen.
+- **Vault-backed TUI launch now forces a startup unlock step.** After
+  `Assess`, the TUI either:
+  - asks for native auth immediately when IPC is already ready, then runs
+    startup repair
+  - or runs startup repair first and asks for native auth right after if
+    the daemon was cold
+  - or skips native auth entirely and goes straight to the master-
+    password screen when local unlock trust is clearly missing
+  Touch ID / Hello failure or cancel falls back to the master-password
+  screen for this launch only.
+- **Startup/manually-triggered unlock screens reuse the welcome product
+  rail.** While `passwordStartupUnlock` or `passwordManageUnlock` is on
+  screen, the header keeps the brand/version frame and shows the same
+  product rail used by the welcome state instead of live health,
+  signing, and sync status.
 - **Fixed body height of 19 rows** in `shell/layout.go`. Screens that
   overflow clip; add scrolling in the screen render, not the shell.
 - **Runtime status and sensitive state come from two separate IPC calls**

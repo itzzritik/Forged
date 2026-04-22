@@ -1,7 +1,6 @@
 package main
 
 import (
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -9,8 +8,6 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
-	"github.com/itzzritik/forged/cli/internal/vault"
-	"golang.org/x/term"
 )
 
 func main() {
@@ -61,24 +58,17 @@ func install(binary string) error {
 
 	paths := config.DefaultPaths()
 	if _, err := os.Stat(paths.VaultFile()); err != nil {
-		if errors.Is(err, os.ErrNotExist) {
+		if os.IsNotExist(err) {
 			return fmt.Errorf("vault not found at %s; run ./bin/forged first", paths.VaultFile())
 		}
 		return fmt.Errorf("checking vault: %w", err)
-	}
-
-	password, err := resolveMasterPassword(paths)
-	if err != nil {
-		return err
 	}
 
 	runtime := daemon.RuntimeSpec{
 		Binary: absBinary,
 		Args:   []string{"daemon"},
 	}
-	if err := daemon.EnsureService(paths, daemon.ServiceCredentials{
-		MasterPassword: string(password),
-	}, runtime); err != nil {
+	if err := daemon.EnsureService(paths, runtime); err != nil {
 		return err
 	}
 
@@ -96,37 +86,4 @@ func stop() error {
 	}
 	fmt.Println("Forged service stopped")
 	return nil
-}
-
-func resolveMasterPassword(paths config.Paths) ([]byte, error) {
-	if daemon.ServiceInstalled() {
-		if password, err := daemon.ReadInstalledServicePassword(); err == nil && password != "" {
-			if err := vault.VerifyPassword(paths.VaultFile(), []byte(password)); err == nil {
-				return []byte(password), nil
-			}
-		}
-	}
-
-	if env := os.Getenv("FORGED_MASTER_PASSWORD"); env != "" {
-		if err := vault.VerifyPassword(paths.VaultFile(), []byte(env)); err != nil {
-			return nil, fmt.Errorf("verifying FORGED_MASTER_PASSWORD: %w", err)
-		}
-		return []byte(env), nil
-	}
-
-	fd := int(os.Stdin.Fd())
-	if !term.IsTerminal(fd) {
-		return nil, fmt.Errorf("master password required; rerun interactively or set FORGED_MASTER_PASSWORD")
-	}
-
-	fmt.Fprint(os.Stderr, "Master password: ")
-	password, err := term.ReadPassword(fd)
-	fmt.Fprintln(os.Stderr)
-	if err != nil {
-		return nil, fmt.Errorf("reading master password: %w", err)
-	}
-	if err := vault.VerifyPassword(paths.VaultFile(), password); err != nil {
-		return nil, fmt.Errorf("verifying master password: %w", err)
-	}
-	return password, nil
 }

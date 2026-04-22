@@ -31,27 +31,29 @@ type Result struct {
 }
 
 type Dependencies struct {
-	Repair               func(readiness.RunOptions) (readiness.RunResult, error)
-	CreateVault          func([]byte) error
-	RestoreVault         func([]byte) error
-	StartLogin           func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
-	SaveCredentials      func(actions.AccountCredentials) error
-	TriggerSync          func() error
-	LoadSnapshot         func() (readiness.Snapshot, error)
-	LoadStatus           func() (RuntimeStatus, error)
-	ProbeSensitive       func() (SensitiveState, error)
-	LockSensitive        func() error
-	UnlockSensitive      func([]byte) (actions.UnlockResult, error)
-	ChangePassword       func([]byte, []byte) (actions.ChangePasswordResult, error)
-	LoadSigningStatus    func() (actions.CommitSigningStatus, error)
-	EnableSSHAgent       func() error
-	DisableSSHAgent      func() error
-	EnableCommitSigning  func(string) (actions.CommitSigningStatus, error)
-	DisableCommitSigning func() (actions.CommitSigningStatus, error)
-	CopyText             func(string) error
-	OpenLink             func(string) error
-	DefaultServer        string
-	AppVersion           string
+	Repair                func(readiness.RunOptions) (readiness.RunResult, error)
+	CreateVault           func([]byte) error
+	RestoreVault          func([]byte) error
+	StartLogin            func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
+	SaveCredentials       func(actions.AccountCredentials) error
+	TriggerSync           func() error
+	LoadSnapshot          func() (readiness.Snapshot, error)
+	LoadStatus            func() (RuntimeStatus, error)
+	ProbeSensitive        func() (SensitiveState, error)
+	HasLocalUnlockTrust   func() bool
+	LockSensitive         func() error
+	UnlockSensitive       func([]byte) (actions.UnlockResult, error)
+	UnlockSensitiveLaunch func([]byte) (actions.UnlockResult, error)
+	ChangePassword        func([]byte, []byte) (actions.ChangePasswordResult, error)
+	LoadSigningStatus     func() (actions.CommitSigningStatus, error)
+	EnableSSHAgent        func() error
+	DisableSSHAgent       func() error
+	EnableCommitSigning   func(string) (actions.CommitSigningStatus, error)
+	DisableCommitSigning  func() (actions.CommitSigningStatus, error)
+	CopyText              func(string) error
+	OpenLink              func(string) error
+	DefaultServer         string
+	AppVersion            string
 }
 
 type screenMode string
@@ -66,14 +68,15 @@ const (
 type passwordFlow string
 
 const (
-	passwordCreate       passwordFlow = "create"
-	passwordRestore      passwordFlow = "restore"
-	passwordRepair       passwordFlow = "repair"
-	passwordDoctorRepair passwordFlow = "doctor-repair"
-	passwordKeyView      passwordFlow = "key-view"
-	passwordKeyExport    passwordFlow = "key-export"
-	passwordManageUnlock passwordFlow = "manage-unlock"
-	passwordManageChange passwordFlow = "manage-change"
+	passwordCreate        passwordFlow = "create"
+	passwordRestore       passwordFlow = "restore"
+	passwordRepair        passwordFlow = "repair"
+	passwordDoctorRepair  passwordFlow = "doctor-repair"
+	passwordKeyView       passwordFlow = "key-view"
+	passwordKeyExport     passwordFlow = "key-export"
+	passwordStartupUnlock passwordFlow = "startup-unlock"
+	passwordManageUnlock  passwordFlow = "manage-unlock"
+	passwordManageChange  passwordFlow = "manage-change"
 )
 
 type repairPurpose string
@@ -163,6 +166,11 @@ type sensitiveStateMsg struct {
 	err   error
 }
 
+type startupUnlockFinishedMsg struct {
+	result actions.UnlockResult
+	err    error
+}
+
 type signingStatusMsg struct {
 	id     int
 	status actions.CommitSigningStatus
@@ -225,32 +233,34 @@ type openFinishedMsg struct {
 }
 
 type model struct {
-	intent               Intent
-	session              *Session
-	repair               func(readiness.RunOptions) (readiness.RunResult, error)
-	createVault          func([]byte) error
-	restoreVault         func([]byte) error
-	startLogin           func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
-	saveCredentials      func(actions.AccountCredentials) error
-	triggerSync          func() error
-	loadSnapshot         func() (readiness.Snapshot, error)
-	loadStatus           func() (RuntimeStatus, error)
-	probeSensitive       func() (SensitiveState, error)
-	lockSensitive        func() error
-	unlockSensitive      func([]byte) (actions.UnlockResult, error)
-	changePassword       func([]byte, []byte) (actions.ChangePasswordResult, error)
-	loadSigningStatus    func() (actions.CommitSigningStatus, error)
-	enableSSHAgent       func() error
-	disableSSHAgent      func() error
-	enableCommitSigning  func(string) (actions.CommitSigningStatus, error)
-	disableCommitSigning func() (actions.CommitSigningStatus, error)
-	copyText             func(string) error
-	openLink             func(string) error
-	defaultServer        string
-	appVersion           string
-	signingStatus        actions.CommitSigningStatus
-	signingLoaded        bool
-	signingLoadID        int
+	intent                Intent
+	session               *Session
+	repair                func(readiness.RunOptions) (readiness.RunResult, error)
+	createVault           func([]byte) error
+	restoreVault          func([]byte) error
+	startLogin            func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
+	saveCredentials       func(actions.AccountCredentials) error
+	triggerSync           func() error
+	loadSnapshot          func() (readiness.Snapshot, error)
+	loadStatus            func() (RuntimeStatus, error)
+	probeSensitive        func() (SensitiveState, error)
+	hasLocalUnlockTrust   func() bool
+	lockSensitive         func() error
+	unlockSensitive       func([]byte) (actions.UnlockResult, error)
+	unlockSensitiveLaunch func([]byte) (actions.UnlockResult, error)
+	changePassword        func([]byte, []byte) (actions.ChangePasswordResult, error)
+	loadSigningStatus     func() (actions.CommitSigningStatus, error)
+	enableSSHAgent        func() error
+	disableSSHAgent       func() error
+	enableCommitSigning   func(string) (actions.CommitSigningStatus, error)
+	disableCommitSigning  func() (actions.CommitSigningStatus, error)
+	copyText              func(string) error
+	openLink              func(string) error
+	defaultServer         string
+	appVersion            string
+	signingStatus         actions.CommitSigningStatus
+	signingLoaded         bool
+	signingLoadID         int
 
 	spinner spinner.Model
 	width   int
@@ -293,15 +303,17 @@ type model struct {
 	repairAuthEmail    string
 	setupVariant       setupVariant
 
-	bootAssessed    bool
-	systemHeader    systemHeaderState
-	runtimeStatus   RuntimeStatus
-	runtimeLoaded   bool
-	setupStageIndex int
-	setupSequenceID int
-	setupPending    *pendingSetupResult
-	setupFinalizing bool
-	random          *rand.Rand
+	bootAssessed             bool
+	startupUnlockPending     bool
+	startupUnlockNeedsRepair bool
+	systemHeader             systemHeaderState
+	runtimeStatus            RuntimeStatus
+	runtimeLoaded            bool
+	setupStageIndex          int
+	setupSequenceID          int
+	setupPending             *pendingSetupResult
+	setupFinalizing          bool
+	random                   *rand.Rand
 
 	keyListID            int
 	keyDetailID          int
@@ -346,10 +358,14 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("tui load-status dependency is required")
 	case deps.ProbeSensitive == nil:
 		return Result{}, fmt.Errorf("tui probe-sensitive dependency is required")
+	case deps.HasLocalUnlockTrust == nil:
+		return Result{}, fmt.Errorf("tui local-unlock-trust dependency is required")
 	case deps.LockSensitive == nil:
 		return Result{}, fmt.Errorf("tui lock-sensitive dependency is required")
 	case deps.UnlockSensitive == nil:
 		return Result{}, fmt.Errorf("tui unlock-sensitive dependency is required")
+	case deps.UnlockSensitiveLaunch == nil:
+		return Result{}, fmt.Errorf("tui launch-unlock dependency is required")
 	case deps.ChangePassword == nil:
 		return Result{}, fmt.Errorf("tui change-password dependency is required")
 	case deps.LoadSigningStatus == nil:
@@ -386,31 +402,33 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 
 func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 	model := &model{
-		intent:               intent,
-		session:              NewSession(intent),
-		repair:               deps.Repair,
-		createVault:          deps.CreateVault,
-		restoreVault:         deps.RestoreVault,
-		startLogin:           deps.StartLogin,
-		saveCredentials:      deps.SaveCredentials,
-		triggerSync:          deps.TriggerSync,
-		loadSnapshot:         deps.LoadSnapshot,
-		loadStatus:           deps.LoadStatus,
-		probeSensitive:       deps.ProbeSensitive,
-		lockSensitive:        deps.LockSensitive,
-		unlockSensitive:      deps.UnlockSensitive,
-		changePassword:       deps.ChangePassword,
-		loadSigningStatus:    deps.LoadSigningStatus,
-		enableSSHAgent:       deps.EnableSSHAgent,
-		disableSSHAgent:      deps.DisableSSHAgent,
-		enableCommitSigning:  deps.EnableCommitSigning,
-		disableCommitSigning: deps.DisableCommitSigning,
-		copyText:             deps.CopyText,
-		openLink:             deps.OpenLink,
-		defaultServer:        deps.DefaultServer,
-		appVersion:           deps.AppVersion,
-		spinner:              spin,
-		random:               rand.New(rand.NewSource(time.Now().UnixNano())),
+		intent:                intent,
+		session:               NewSession(intent),
+		repair:                deps.Repair,
+		createVault:           deps.CreateVault,
+		restoreVault:          deps.RestoreVault,
+		startLogin:            deps.StartLogin,
+		saveCredentials:       deps.SaveCredentials,
+		triggerSync:           deps.TriggerSync,
+		loadSnapshot:          deps.LoadSnapshot,
+		loadStatus:            deps.LoadStatus,
+		probeSensitive:        deps.ProbeSensitive,
+		hasLocalUnlockTrust:   deps.HasLocalUnlockTrust,
+		lockSensitive:         deps.LockSensitive,
+		unlockSensitive:       deps.UnlockSensitive,
+		unlockSensitiveLaunch: deps.UnlockSensitiveLaunch,
+		changePassword:        deps.ChangePassword,
+		loadSigningStatus:     deps.LoadSigningStatus,
+		enableSSHAgent:        deps.EnableSSHAgent,
+		disableSSHAgent:       deps.DisableSSHAgent,
+		enableCommitSigning:   deps.EnableCommitSigning,
+		disableCommitSigning:  deps.DisableCommitSigning,
+		copyText:              deps.CopyText,
+		openLink:              deps.OpenLink,
+		defaultServer:         deps.DefaultServer,
+		appVersion:            deps.AppVersion,
+		spinner:               spin,
+		random:                rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	model.initializePendingRouteState()
 	return model
@@ -457,7 +475,6 @@ func (m *model) Init() tea.Cmd {
 				m.keyBrowser.input.Focus()
 				cmds = append(cmds, textinput.Blink)
 			}
-			cmds = append(cmds, m.listLocalKeys(m.nextKeyListID(), false))
 		}
 		return tea.Batch(cmds...)
 	}
@@ -483,6 +500,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, cmd
 	case assessmentMsg:
 		m.bootAssessed = true
+		m.startupUnlockPending = false
+		m.startupUnlockNeedsRepair = false
 		if msg.err != nil {
 			if m.screen == screenLogin {
 				m.loginScreen.Waiting = false
@@ -511,10 +530,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.screen = screenDashboard
 		m.systemHeader = systemHeaderChecking
-		return m, tea.Batch(
-			m.startStartupRepair(),
-			m.preloadKeyBrowser(),
-		)
+		if msg.snapshot.IPCSocketReady {
+			if !m.hasLocalUnlockTrust() {
+				m.showPasswordScreen(passwordStartupUnlock, "", "", true)
+				m.passwordContext = "Enter your master password to open Forged."
+				return m, m.passwordInput.Init()
+			}
+			m.startupUnlockPending = true
+			m.startupUnlockNeedsRepair = true
+			return m, m.startStartupUnlockFlow()
+		}
+		m.startupUnlockPending = true
+		return m, m.startStartupRepair()
 	case loginStartedMsg:
 		if msg.id != m.loginID || m.screen != screenLogin {
 			return m, nil
@@ -541,6 +568,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		ctx, cancel := context.WithCancel(context.Background())
 		m.loginCancel = cancel
 		return m, m.waitForLogin(ctx, msg.id, msg.session)
+	case startupUnlockFinishedMsg:
+		return m, m.handleStartupUnlockFinishedMsg(msg)
 	case loginProgressMsg:
 		if msg.id != m.loginID || m.screen != screenLogin {
 			return m, nil
@@ -793,7 +822,25 @@ func (m *model) renderHeader(width int) string {
 	return shell.RenderHeader(width, data)
 }
 
+func (m *model) isLockedAuthScreen() bool {
+	if m.screen != screenPassword {
+		return false
+	}
+	return m.passwordFlow == passwordStartupUnlock || m.passwordFlow == passwordManageUnlock
+}
+
+func (m *model) productRailItems() []shell.StatusItem {
+	return []shell.StatusItem{
+		{Label: "Encrypted key vault", Icon: "✦"},
+		{Label: "Multi-device sync", Icon: "✦"},
+		{Label: "SSH + commit signing", Icon: "✦"},
+	}
+}
+
 func (m *model) headerStatusItems() []shell.StatusItem {
+	if m.isLockedAuthScreen() {
+		return m.productRailItems()
+	}
 	if !m.bootAssessed {
 		return []shell.StatusItem{
 			{Label: "Checking health", Icon: m.spinner.View()},
@@ -802,11 +849,7 @@ func (m *model) headerStatusItems() []shell.StatusItem {
 		}
 	}
 	if m.shouldShowProductRail() {
-		return []shell.StatusItem{
-			{Label: "Encrypted key vault", Icon: "✦"},
-			{Label: "Multi-device sync", Icon: "✦"},
-			{Label: "SSH + commit signing", Icon: "✦"},
-		}
+		return m.productRailItems()
 	}
 
 	items := []shell.StatusItem{
@@ -911,6 +954,8 @@ func (m *model) headerPageTitle() string {
 			return "Unlock private key"
 		case passwordKeyExport:
 			return "Export vault"
+		case passwordStartupUnlock:
+			return "Unlock Forged"
 		}
 		if strings.TrimSpace(m.passwordTitle) != "" {
 			return m.passwordTitle
@@ -1022,6 +1067,11 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 			return []shell.Breadcrumb{
 				{Label: "Home"},
 				{Label: "Manage"},
+				{Label: "Unlock", Current: true},
+			}
+		case passwordStartupUnlock:
+			return []shell.Breadcrumb{
+				{Label: "Home"},
 				{Label: "Unlock", Current: true},
 			}
 		case passwordManageChange:
@@ -1700,6 +1750,12 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.submitManageUnlock(password)
+		case passwordStartupUnlock:
+			if err != nil {
+				m.passwordInput.SetError(err.Error())
+				return m, nil
+			}
+			return m, m.submitStartupUnlock(password)
 		case passwordDoctorRepair:
 			if err != nil {
 				m.passwordInput.SetError(err.Error())
@@ -2234,25 +2290,17 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 			m.popWizardRoutes()
 			return m.restartAfterVaultReady()
 		}
-		m.popWizardRoutes()
-		m.notice = notice{}
-		m.setupVariant = setupVariantNone
-		m.screen = screenDashboard
-		if m.snapshot.VaultExists {
-			if route := m.session.Current().ID; route != "" && route != RouteDashboardHome {
-				return tea.Batch(
-					m.showCurrentRoute(),
-					m.pollRuntimeStatus(0),
-					m.loadSigningStatusCmd(),
-				)
+		if m.repairPurpose == repairPurposeStartup && result.Snapshot.VaultExists && m.startupUnlockPending && !m.startupUnlockNeedsRepair {
+			if !m.hasLocalUnlockTrust() {
+				m.showPasswordScreen(passwordStartupUnlock, "", "", true)
+				m.passwordContext = "Enter your master password to open Forged."
+				return m.passwordInput.Init()
 			}
-			return tea.Batch(
-				m.pollRuntimeStatus(0),
-				m.preloadKeyBrowser(),
-				m.loadSigningStatusCmd(),
-			)
+			return m.startStartupUnlockFlow()
 		}
-		return nil
+		m.popWizardRoutes()
+		m.setupVariant = setupVariantNone
+		return m.finishVaultBoot()
 	}
 }
 
@@ -2263,6 +2311,92 @@ func (m *model) systemHeaderForSnapshot(snapshot readiness.Snapshot) systemHeade
 	default:
 		return systemHeaderUnhealthy
 	}
+}
+
+func (m *model) unlockSensitiveLaunchCmd(password []byte) tea.Cmd {
+	unlock := m.unlockSensitiveLaunch
+	passwordCopy := append([]byte(nil), password...)
+	return func() tea.Msg {
+		result, err := unlock(passwordCopy)
+		return startupUnlockFinishedMsg{result: result, err: err}
+	}
+}
+
+func (m *model) startStartupUnlockFlow() tea.Cmd {
+	m.showPasswordScreen(passwordStartupUnlock, "", "", true)
+	m.passwordBusy = true
+	m.passwordHideInput = true
+	m.passwordBusyMessage = "Waiting for authentication"
+	return tea.Batch(m.spinner.Tick, m.unlockSensitiveLaunchCmd(nil))
+}
+
+func (m *model) submitStartupUnlock(password []byte) tea.Cmd {
+	m.passwordBusy = true
+	m.passwordHideInput = false
+	m.passwordBusyMessage = ""
+	m.passwordInput.SetInfo("Unlocking Forged")
+	return tea.Batch(m.spinner.Tick, m.unlockSensitiveLaunchCmd(password))
+}
+
+func (m *model) finishVaultBoot() tea.Cmd {
+	m.notice = notice{}
+	m.screen = screenDashboard
+	if !m.snapshot.VaultExists {
+		return nil
+	}
+	cmds := []tea.Cmd{
+		m.pollRuntimeStatus(0),
+		m.preloadKeyBrowser(),
+		m.loadSigningStatusCmd(),
+	}
+	if route := m.session.Current().ID; route != "" && route != RouteDashboardHome {
+		cmds = append([]tea.Cmd{m.showCurrentRoute()}, cmds...)
+	}
+	return tea.Batch(cmds...)
+}
+
+func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea.Cmd {
+	if m.passwordFlow != passwordStartupUnlock {
+		return nil
+	}
+
+	m.passwordBusy = false
+	m.passwordBusyMessage = ""
+	if msg.err != nil {
+		m.passwordHideInput = false
+		m.passwordInput.SetError(msg.err.Error())
+		return nil
+	}
+
+	if msg.result.PasswordRequired {
+		m.passwordHideInput = false
+		prompt := strings.TrimSpace(msg.result.Prompt)
+		if prompt == "" {
+			prompt = "Authentication unavailable. Enter your master password to open Forged."
+		}
+		m.passwordContext = prompt
+		m.passwordInput.ClearStatus()
+		return m.passwordInput.Init()
+	}
+
+	m.runtimeStatus.Unlocked = true
+	m.runtimeStatus.SensitiveKnown = true
+	m.passwordHideInput = false
+	m.screen = screenDashboard
+	m.notice = notice{}
+	pending := m.startupUnlockPending
+	needsRepair := m.startupUnlockNeedsRepair
+	m.startupUnlockPending = false
+	m.startupUnlockNeedsRepair = false
+
+	if pending && needsRepair {
+		return tea.Batch(
+			m.startStartupRepair(),
+			m.preloadKeyBrowser(),
+		)
+	}
+
+	return m.finishVaultBoot()
 }
 
 func (m *model) startStartupRepair() tea.Cmd {
@@ -2339,9 +2473,13 @@ func (m *model) showPasswordScreenOnRoute(route RouteID, flow passwordFlow, auth
 		m.passwordTitle = "Export vault"
 		m.passwordContext = "Master password is required to export this vault and its private keys"
 		m.passwordInput = components.NewUnlockPasswordInput()
+	case passwordStartupUnlock:
+		m.passwordTitle = "Unlock Forged"
+		m.passwordContext = "Please authenticate to open Forged."
+		m.passwordInput = components.NewUnlockPasswordInput()
 	case passwordManageUnlock:
 		m.passwordTitle = "Unlock Vault"
-		m.passwordContext = "Use Touch ID to unlock this vault. If Touch ID is unavailable, enter your master password."
+		m.passwordContext = "Please authenticate to unlock this vault."
 		m.passwordInput = components.NewUnlockPasswordInput()
 	case passwordManageChange:
 		m.passwordTitle = "Change Master Password"

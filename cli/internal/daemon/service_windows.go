@@ -14,7 +14,7 @@ import (
 
 const taskName = "ForgedSSHAgent"
 
-func InstallService(paths config.Paths, masterPassword string, runtime RuntimeSpec) error {
+func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	runtime, err := normalizeRuntimeSpec(runtime)
 	if err != nil {
 		return err
@@ -53,18 +53,12 @@ func InstallService(paths config.Paths, masterPassword string, runtime RuntimeSp
 	}
 	defer os.Remove(tmpFile)
 
-	os.Setenv("FORGED_MASTER_PASSWORD", masterPassword)
-
 	cmd := exec.Command("schtasks", "/Create", "/TN", taskName, "/XML", tmpFile, "/F")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("creating scheduled task: %s: %w", string(out), err)
 	}
 
 	return nil
-}
-
-func ReadInstalledServicePassword() (string, error) {
-	return "", fmt.Errorf("reading installed service password is not supported on windows")
 }
 
 func StartService() error {

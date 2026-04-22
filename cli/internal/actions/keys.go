@@ -9,7 +9,6 @@ import (
 	"unicode"
 
 	"github.com/itzzritik/forged/cli/internal/config"
-	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
@@ -92,12 +91,17 @@ func ListKeys(paths config.Paths) ([]KeySummary, error) {
 }
 
 func ListLocalKeys(paths config.Paths) ([]KeySummary, error) {
-	password, err := daemon.ReadInstalledServicePassword()
+	symmetricKey, err := sensitiveauth.RecoverEnrolledSymmetricKey(paths)
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		for i := range symmetricKey {
+			symmetricKey[i] = 0
+		}
+	}()
 
-	v, err := vault.OpenReadOnly(paths.VaultFile(), []byte(password))
+	v, err := vault.OpenReadOnlyWithSymmetricKey(paths.VaultFile(), symmetricKey)
 	if err != nil {
 		return nil, err
 	}
@@ -198,6 +202,10 @@ func authorizeSensitive(paths config.Paths, action sensitiveauth.Action, passwor
 }
 
 func authorizeSensitiveResult(paths config.Paths, action sensitiveauth.Action, password []byte) (sensitiveauth.AuthorizeResult, error) {
+	return authorizeSensitiveResultWithOptions(paths, action, password, false)
+}
+
+func authorizeSensitiveResultWithOptions(paths config.Paths, action sensitiveauth.Action, password []byte, force bool) (sensitiveauth.AuthorizeResult, error) {
 	client := ipc.NewClient(paths.CtlSocket())
 	parseResult := func(raw json.RawMessage) (sensitiveauth.AuthorizeResult, error) {
 		var result sensitiveauth.AuthorizeResult
@@ -208,8 +216,9 @@ func authorizeSensitiveResult(paths config.Paths, action sensitiveauth.Action, p
 	}
 
 	if len(password) == 0 {
-		resp, err := client.CallWithTimeout(ipc.CmdSensitiveAuth, map[string]string{
+		resp, err := client.CallWithTimeout(ipc.CmdSensitiveAuth, map[string]any{
 			"action": string(action),
+			"force":  force,
 		}, 5*60*1e9)
 		if err != nil {
 			return sensitiveauth.AuthorizeResult{}, err

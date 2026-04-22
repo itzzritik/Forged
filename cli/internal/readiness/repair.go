@@ -1,8 +1,6 @@
 package readiness
 
 import (
-	"fmt"
-	"strings"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -24,26 +22,15 @@ func (e *Engine) enableSSHConfig(paths config.Paths) error {
 	return config.EnableSSHAgent(paths)
 }
 
-func (e *Engine) ensureServiceWithPassword(password []byte) error {
+func (e *Engine) ensureServiceInstalled() error {
 	runtime, err := e.serviceRuntimeSpec()
 	if err != nil {
 		return err
 	}
 	if e != nil && e.ensureService != nil {
-		return e.ensureService(e.Paths, daemon.ServiceCredentials{
-			MasterPassword: string(password),
-		}, runtime)
+		return e.ensureService(e.Paths, runtime)
 	}
-	return daemon.EnsureService(e.Paths, daemon.ServiceCredentials{
-		MasterPassword: string(password),
-	}, runtime)
-}
-
-func (e *Engine) installedServicePassword() (string, error) {
-	if e != nil && e.readInstalledServicePassword != nil {
-		return e.readInstalledServicePassword()
-	}
-	return daemon.ReadInstalledServicePassword()
+	return daemon.EnsureService(e.Paths, runtime)
 }
 
 func (e *Engine) serviceRuntimeSpec() (daemon.RuntimeSpec, error) {
@@ -125,26 +112,4 @@ func createEmptyVaultForRestore(paths config.Paths, password []byte) error {
 	}
 	v.Close()
 	return nil
-}
-
-func passwordUnlocksVault(paths config.Paths, password []byte) (bool, error) {
-	if len(password) == 0 {
-		return false, nil
-	}
-
-	v, err := vault.Open(paths.VaultFile(), password)
-	if err == nil {
-		v.Close()
-		return true, nil
-	}
-
-	message := err.Error()
-	switch {
-	case strings.Contains(message, "message authentication failed"):
-		return false, nil
-	case strings.Contains(message, "vault is locked by another process"):
-		return true, nil
-	default:
-		return false, fmt.Errorf("verifying master password: %w", err)
-	}
 }

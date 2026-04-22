@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"io"
 	"os"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -16,7 +17,7 @@ var daemonCmd = &cobra.Command{
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
 
-		password, err := getPassword()
+		password, err := getStartupPassword()
 		if err != nil {
 			return err
 		}
@@ -26,29 +27,29 @@ var daemonCmd = &cobra.Command{
 	},
 }
 
-func getPassword() ([]byte, error) {
+func getStartupPassword() ([]byte, error) {
 	if env := os.Getenv("FORGED_MASTER_PASSWORD"); env != "" {
 		return []byte(env), nil
 	}
 
 	fd := int(os.Stdin.Fd())
 	if term.IsTerminal(fd) {
-		fmt.Fprint(os.Stderr, "Master password: ")
-		password, err := term.ReadPassword(fd)
-		fmt.Fprintln(os.Stderr)
-		if err != nil {
-			return nil, fmt.Errorf("reading password: %w", err)
-		}
-		return password, nil
+		return nil, nil
 	}
 
-	var buf [1024]byte
-	n, err := os.Stdin.Read(buf[:])
+	info, err := os.Stdin.Stat()
+	if err != nil {
+		return nil, fmt.Errorf("inspecting stdin: %w", err)
+	}
+	if info.Mode()&os.ModeNamedPipe == 0 && !info.Mode().IsRegular() {
+		return nil, nil
+	}
+
+	data, err := io.ReadAll(os.Stdin)
 	if err != nil {
 		return nil, fmt.Errorf("reading password from stdin: %w", err)
 	}
-
-	password := buf[:n]
+	password := data
 	if len(password) > 0 && password[len(password)-1] == '\n' {
 		password = password[:len(password)-1]
 	}

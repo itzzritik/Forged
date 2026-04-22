@@ -6,14 +6,23 @@ import (
 )
 
 func VerifyPassword(path string, password []byte) error {
+	symmetricKey, err := RecoverSymmetricKey(path, password)
+	if err != nil {
+		return err
+	}
+	zeroBytes(symmetricKey)
+	return nil
+}
+
+func RecoverSymmetricKey(path string, password []byte) ([]byte, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return fmt.Errorf("reading vault: %w", err)
+		return nil, fmt.Errorf("reading vault: %w", err)
 	}
 
 	header, _, err := UnmarshalVault(data)
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	masterKey := DeriveKey(password, header.KDF)
@@ -21,15 +30,16 @@ func VerifyPassword(path string, password []byte) error {
 
 	stretchedKey, err := DeriveStretchedKey(masterKey)
 	if err != nil {
-		return fmt.Errorf("deriving stretched key: %w", err)
+		return nil, fmt.Errorf("deriving stretched key: %w", err)
 	}
 	defer zeroBytes(stretchedKey)
 
-	if _, err := DecryptCombined(stretchedKey, header.ProtectedKey[:]); err != nil {
-		return fmt.Errorf("invalid master password")
+	symmetricKey, err := DecryptCombined(stretchedKey, header.ProtectedKey[:])
+	if err != nil {
+		return nil, fmt.Errorf("invalid master password")
 	}
 
-	return nil
+	return symmetricKey, nil
 }
 
 func zeroBytes(b []byte) {

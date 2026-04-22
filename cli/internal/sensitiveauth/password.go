@@ -2,24 +2,30 @@ package sensitiveauth
 
 import (
 	"fmt"
+	"log/slog"
 
-	"github.com/itzzritik/forged/cli/internal/vault"
+	"github.com/itzzritik/forged/cli/internal/config"
 )
 
 type PasswordVerifier struct {
-	vaultPath string
+	paths  config.Paths
+	logger *slog.Logger
 }
 
-func NewPasswordVerifier(vaultPath string) *PasswordVerifier {
-	return &PasswordVerifier{vaultPath: vaultPath}
+func NewPasswordVerifier(paths config.Paths, logger *slog.Logger) *PasswordVerifier {
+	return &PasswordVerifier{paths: paths, logger: logger}
 }
 
 func (v *PasswordVerifier) Verify(password []byte) error {
 	if len(password) == 0 {
 		return fmt.Errorf("master password required")
 	}
-	if err := vault.VerifyPassword(v.vaultPath, password); err != nil {
+	result, err := VerifyAndRefreshLocalEnrollment(v.paths, password)
+	if err != nil {
 		return fmt.Errorf("authentication failed")
+	}
+	if !result.Refreshed && v.logger != nil && result.Reason != "" {
+		v.logger.Warn("local unlock enrollment not refreshed", "capability", result.Capability, "reason", result.Reason)
 	}
 	return nil
 }

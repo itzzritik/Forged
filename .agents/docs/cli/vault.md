@@ -6,7 +6,7 @@ applies_to:
   - cli/internal/actions/keys.go
 depends_on:
   - architecture/security-model.md
-last_verified: 2026-04-21
+last_verified: 2026-04-22
 stable: partial
 ---
 
@@ -45,9 +45,24 @@ fsync → chmod 0600 → rename. KeyStore mutates under RWMutex: `Generate`
   and reads the raw file is not blocked.
 - **Sync uses the Symmetric Key directly.** The old HKDF-derived sync key
   was removed with the PSK rollout.
-- **`ChangePassword` at the actions layer reinstalls the service** to
-  refresh `FORGED_MASTER_PASSWORD`. IF reinstall fails THEN local vault
-  is still updated; user sees "run Doctor". Server `/rekey` is best-effort.
+- **`ChangePassword` at the actions layer restarts the service cold.** IF
+  service reinstall / restart fails THEN local vault is still updated;
+  user sees "run Doctor". Server `/rekey` is best-effort.
+- **`RecoverSymmetricKey` now exists for auth flows.** It unwraps the
+  Protected Symmetric Key without decrypting the full vault payload, and
+  sensitiveauth uses it to tie local-unlock enrollment refresh to real
+  master-password verification.
+- **`OpenWithSymmetricKey` now exists for daemon hydrate.** It decrypts
+  the vault payload from an already recovered Symmetric Key, so the daemon
+  can move between cold and active session states without reusing the
+  master-password path.
+- **`OpenReadOnlyWithSymmetricKey` now exists for cold metadata reads.**
+  It lets callers recover key summaries from local enrollment without
+  opening the master-password path or taking the vault write lock.
+- **`ChangePassword` now invalidates and rebuilds local unlock trust
+  best-effort.** The old local-unlock blob is removed first so stale
+  trust does not survive a password change. If refresh fails, the vault
+  password change still succeeds and the caller gets a warning.
 - Private-key bytes load into `Key.PrivateKey` only after
   `DecryptAllPrivateKeys`. Metadata ops don't need the password longer
   than necessary.

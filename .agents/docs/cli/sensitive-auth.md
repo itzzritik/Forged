@@ -7,7 +7,7 @@ depends_on:
   - architecture/security-model.md
   - cli/daemon.md
   - cli/ipc.md
-last_verified: 2026-04-21
+last_verified: 2026-04-22
 stable: partial
 ---
 
@@ -15,34 +15,67 @@ stable: partial
 
 Gate between IPC handlers and paths that expose private-key bytes.
 Viewing a private key in the clear and exporting the whole vault go
-through here. Public metadata, listings, and SSH agent signing do NOT.
+through here. Public IPC metadata/listings still do not, but SSH agent
+list/sign/signers can now trigger sensitiveauth when the daemon is cold
+and needs to hydrate a live session.
 
 Broker lives in the daemon. Native prompt delegated to the
 `forged-auth` helper binary over line-delimited JSON stdio (macOS:
 `LocalAuthentication`; Linux: `pkexec`; Windows: PowerShell + Hello).
 Helper also subscribes to platform session-lock events and clears the
-lease on workstation lock.
+shared session on workstation lock.
 
 Hardening plan (`.agents/plan/security-hardening/`) is reworking what
 "lock" means at the crypto layer.
 
 ## Must know
 
-- **"Lock" today does NOT re-encrypt decrypted private keys.** It flips
-  the broker lease. Daemon keeps decrypted keys in mlocked memory for its
-  whole lifetime; SSH agent signing continues regardless of lock state.
-- **View lease has no TTL.** Lives until explicit `sensitive-lock`,
-  workstation lock, broker close, or daemon shutdown. A long laptop
-  session stays "unlocked" indefinitely.
+- **Session clear today does NOT re-encrypt the vault on disk.** It drops
+  the shared session and clears the live daemon session. The daemon then
+  returns to cold state until the next successful auth.
+- **Shared private-key session now has a 4-hour TTL.** Successful TUI
+  auth or external-use auth refreshes the same shared window. Expiry
+  clears both the broker session and the live daemon session.
 - **Export token is separate from the view lease.** Random UUID, 1-minute
   TTL, single-use. `export-all` requires a fresh token even if the view
-  lease is active.
+  session is active.
 - **Linux "biometric" is actually `pkexec`** (user password). Windows is
   best-effort PowerShell + Hello.
+- **macOS native auth disables LocalAuthentication reuse.** The helper
+  and darwin fallback set Touch ID reuse duration to `0`, so a fresh TUI
+  launch asks again instead of silently reusing a recent biometric auth.
 - **IF the native helper is unavailable** (missing, crash, `unavailable`)
   **THEN `Authorize` returns `PasswordRequired=true`** with a prompt
   string — it does NOT implicitly grant. Caller falls back to master
   password via `sensitive-password`.
+- **`AuthorizeForced` exists for fresh TUI launch.** It bypasses the
+  broker's "shared session already active" short-circuit and makes the
+  helper prompt again. This is how `forged` asks for Touch ID on every
+  vault-backed launch without breaking the shared 4-hour session model
+  for external use.
+- **Successful master-password fallback now refreshes local unlock trust
+  best-effort.** That path verifies the password by recovering the vault
+  Symmetric Key, then tries to write:
+  - `config/local-unlock.json`
+  - `config/install.id`
+  - secure-storage device key entry
+  The daemon still attempts that refresh, and the foreground CLI now
+  retries it locally after successful password fallback so the next TUI
+  launch can use native auth. If refresh still fails, the current auth
+  succeeds and a warning is logged.
+- **Successful auth now hydrates a cold daemon session.** Native auth
+  tries local enrollment first; master-password fallback hydrates through
+  the password path. Broker invalidation now clears the live daemon
+  session, not just a local gate bit.
+- **If native auth succeeds but local enrollment cannot hydrate** (missing,
+  expired, corrupt, or mismatched local unlock state), the broker now
+  returns `PasswordRequired=true` with a distinct prompt instead of
+  surfacing the raw hydration error. TUI/Manage can fall back to master
+  password without incorrectly saying native auth was unavailable;
+  external use still does not get a password prompt.
+- **TUI launch and Manage unlock now pre-check for obvious missing local
+  trust.** If `local-unlock.json` or `install.id` is absent, they skip
+  native auth and go straight to the master-password screen.
 - **`view` has only two actions: `view` and `export`.** No per-key
   scoping. Broker does NOT gate SSH agent `Sign`.
 - A legacy in-process fallback in `provider_darwin.go` writes a Swift
@@ -60,10 +93,16 @@ Hardening plan (`.agents/plan/security-hardening/`) is reworking what
 - Native auth is a long-lived helper binary, not inline cgo.
   `LocalAuthentication` requires a signed bundle on macOS, and isolating
   prompts keeps the daemon free of UI frameworks. Do NOT inline.
-- View lease (not per-op prompts) because users view/copy keys in quick
-  succession from the TUI. Export token is the exception — single,
-  auditable dump.
+- Shared session (not per-op prompts) because users view/copy keys in
+  quick succession from the TUI and then often sign immediately after.
+  Export token is the exception — single, auditable dump.
 - Do NOT cache decrypted PEMs outside the vault store. The hardening plan
   will drop key material on lock; external stashes will break.
+- Enrollment refresh is attached to real master-password verification, not
+  a side-channel command. Do NOT add a second path that writes local
+  unlock state without first recovering the vault Symmetric Key.
+- The broker now owns both the shared-session timer and the daemon
+  session-clear callback. If you add new unlock paths, wire both or the
+  daemon will drift into stale "authorized but cold" state.
 - The broker is a UX/policy gate, NOT a second auth layer on IPC. Owner-only
   `ctl.sock` perms are the access control. See `cli/ipc.md`.

@@ -19,6 +19,10 @@ func (p Paths) VaultFile() string       { return filepath.Join(p.DataDir, "vault
 func (p Paths) CredentialsFile() string { return filepath.Join(p.ConfigDir, "credentials.json") }
 func (p Paths) SyncStateFile() string   { return filepath.Join(p.DataDir, "sync-state.json") }
 func (p Paths) SyncDirtyFile() string   { return filepath.Join(p.DataDir, "sync.dirty") }
+func (p Paths) LocalUnlockBlobFile() string {
+	return filepath.Join(p.ConfigDir, "local-unlock.json")
+}
+func (p Paths) InstallIDFile() string { return filepath.Join(p.ConfigDir, "install.id") }
 
 func (p Paths) SSHManagedDir() string {
 	return filepath.Join(p.ConfigDir, "ssh")

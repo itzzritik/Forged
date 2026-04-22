@@ -49,6 +49,12 @@ func NewService(paths config.Paths, keyStore *vault.KeyStore) *Service {
 	}
 }
 
+func (s *Service) SetKeyStore(keyStore *vault.KeyStore) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.keyStore = keyStore
+}
+
 func (s *Service) Prepare(req PrepareRequest) error {
 	target := req.Target
 	if target.Canonical == "" {
@@ -67,8 +73,13 @@ func (s *Service) Prepare(req PrepareRequest) error {
 		}
 	}
 
-	routes := s.keyStore.SSHRoutes()
-	plan := PlanCandidates(target, routes, s.keyStore.List(), 3)
+	var routes map[string]vault.SSHRoute
+	var keys []vault.Key
+	if s.keyStore != nil {
+		routes = s.keyStore.SSHRoutes()
+		keys = s.keyStore.List()
+	}
+	plan := PlanCandidates(target, routes, keys, 3)
 	s.mu.Lock()
 	s.attempts[req.Attempt] = Attempt{
 		Token:      req.Attempt,
@@ -94,6 +105,9 @@ func (s *Service) Success(attempt string) error {
 	s.mu.Unlock()
 
 	if current.LastKey == "" {
+		return nil
+	}
+	if s.keyStore == nil {
 		return nil
 	}
 	return s.keyStore.RecordSSHRoute(current.Target.Canonical, current.LastKey, s.now())
@@ -149,6 +163,9 @@ func (s *Service) ExpireBefore(cutoff time.Time) {
 	s.mu.Unlock()
 
 	for _, attempt := range expired {
+		if s.keyStore == nil {
+			return
+		}
 		if attempt.HadExact && attempt.LastKey != "" {
 			_ = s.keyStore.ClearSSHRoute(attempt.Target.Canonical, s.now())
 		}

@@ -131,7 +131,7 @@ func (m *model) manageItems() []manageItem {
 		items = append(items, manageItem{
 			ID:      manageItemVaultUnlock,
 			Label:   "Vault Unlock",
-			Summary: "Unlock this vault with Touch ID or your master password",
+			Summary: "Authenticate to unlock this vault",
 		})
 	}
 
@@ -380,9 +380,13 @@ func (m *model) changePasswordCmd(id int, currentPassword []byte, newPassword []
 
 func (m *model) startManageUnlockFlow() tea.Cmd {
 	m.showPasswordScreenOnRoute(RouteVaultUnlock, passwordManageUnlock, "", "", false)
+	if !m.hasLocalUnlockTrust() {
+		m.passwordContext = "Enter your master password to unlock this vault."
+		return m.passwordInput.Init()
+	}
 	m.passwordBusy = true
 	m.passwordHideInput = true
-	m.passwordBusyMessage = "Waiting for Touch ID"
+	m.passwordBusyMessage = "Waiting for authentication"
 	return tea.Batch(m.spinner.Tick, m.unlockSensitiveCmd(nil))
 }
 
@@ -550,7 +554,11 @@ func (m *model) handleManageUnlockFinishedMsg(msg manageUnlockFinishedMsg) (tea.
 
 	if msg.result.PasswordRequired {
 		m.passwordHideInput = false
-		m.passwordContext = "Touch ID unavailable. Enter your master password to unlock this vault."
+		prompt := strings.TrimSpace(msg.result.Prompt)
+		if prompt == "" {
+			prompt = "Authentication unavailable. Enter your master password to unlock this vault."
+		}
+		m.passwordContext = prompt
 		m.passwordInput.ClearStatus()
 		return m, m.passwordInput.Init()
 	}

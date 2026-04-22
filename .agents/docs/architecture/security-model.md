@@ -8,7 +8,7 @@ applies_to:
   - web/src/workers/**
   - server/internal/api/vault_handlers.go
   - server/migrations/**
-last_verified: 2026-04-21
+last_verified: 2026-04-22
 stable: partial
 ---
 
@@ -32,19 +32,29 @@ cipher keys that wrap private-key bytes.
 
 ## Must know
 
-- **`FORGED_MASTER_PASSWORD` is stored plaintext** in the launchd plist /
-  systemd unit. Top open security gap. `.agents/plan/security-hardening/`
-  is rewriting this bootstrap — do not build new features depending on
-  this env var.
-- **Daemon keeps decrypted private keys in memory for its whole lifetime**
-  once unlocked. "Lock" via `sensitiveauth` gates the IPC surface only;
-  it does NOT re-encrypt in-memory keys.
+- **Local unlock enrollment foundation now exists.** Successful
+  master-password verification can create / refresh:
+  - `config/local-unlock.json` with a sealed wrapped Symmetric Key
+  - `config/install.id` with the local install binding
+  - a secure-storage device key entry
+  The daemon can now hydrate from that enrollment on demand, and the
+  installed service now starts cold with no stored plaintext master
+  password.
+- **Private-key access now runs under one shared 4-hour session.**
+  Successful TUI auth or external-use auth refreshes that window.
+  Expiry clears the broker session and the live daemon session.
+- **Daemon still keeps decrypted private keys in memory for the whole
+  active session** once hydrated. The remaining hardening work is about
+  shortening that window further and tightening lock/sleep invalidation.
 - **`proto/vault-format.md` is stale.** It says XChaCha20-Poly1305 + 24-byte
   nonce; shipped code is AES-256-GCM + 12-byte nonce. Trust the vault
   package header constants until proto is updated.
 - **Password change rewraps the Symmetric Key only.** Per-item ciphertexts
   and the Symmetric Key itself are unchanged; no per-item re-encryption.
   True Symmetric Key rotation is a separate unimplemented operation.
+- **Password change now invalidates and rebuilds local unlock trust
+  best-effort.** If refresh fails, the password change still succeeds and
+  the caller gets a warning.
 - **Migration 005 dropped** `master_password_hash`, `vault_unlock_attempts`,
   `vault_locked_until`. Do not re-add them — reverses zero-knowledge.
 - Browser crypto runs in a Web Worker; main thread only ever holds a
@@ -66,5 +76,7 @@ cipher keys that wrap private-key bytes.
 - AES-GCM over XChaCha20-Poly1305 for stdlib + hardware acceleration.
   Random-nonce discipline is the safety invariant; do not switch to a
   counter-based nonce without re-audit.
-- Biometric unlock grants a session lease, not crypto. The Symmetric Key
-  still derives from the master password.
+- Biometric unlock can now hydrate a cold daemon session from local
+  enrollment. Shared-session expiry now exists. The remaining gaps are
+  platform-complete lock/sleep invalidation, external-use policy
+  hardening, and shortening the in-memory live-key window.

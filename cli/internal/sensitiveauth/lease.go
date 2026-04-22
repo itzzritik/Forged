@@ -9,7 +9,7 @@ import (
 
 type leaseState struct {
 	mu           sync.Mutex
-	unlocked     bool
+	activeUntil  time.Time
 	exportTokens map[string]time.Time
 }
 
@@ -23,27 +23,39 @@ func (s *leaseState) CanView(now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.unlocked
+	s.pruneLocked(now)
+	return !s.activeUntil.IsZero() && now.Before(s.activeUntil)
 }
 
 func (s *leaseState) GrantView(now time.Time) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.unlocked = true
+	s.activeUntil = now.Add(SharedSessionTTL)
+	s.pruneLocked(now)
 }
 
-func (s *leaseState) IsUnlocked() bool {
+func (s *leaseState) IsUnlocked(now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	return s.unlocked
+	s.pruneLocked(now)
+	return !s.activeUntil.IsZero() && now.Before(s.activeUntil)
+}
+
+func (s *leaseState) IsExpired(now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.pruneLocked(now)
+	return !s.activeUntil.IsZero() && !now.Before(s.activeUntil)
 }
 
 func (s *leaseState) IssueExportToken(now time.Time) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	s.pruneLocked(now)
 	token := uuid.NewString()
 	s.exportTokens[token] = now.Add(ExportTokenTTL)
 	return token
@@ -53,11 +65,7 @@ func (s *leaseState) ConsumeExportToken(token string, now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for issuedToken, expiresAt := range s.exportTokens {
-		if now.After(expiresAt) {
-			delete(s.exportTokens, issuedToken)
-		}
-	}
+	s.pruneLocked(now)
 
 	expiresAt, ok := s.exportTokens[token]
 	if !ok {
@@ -71,6 +79,17 @@ func (s *leaseState) Clear() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	s.unlocked = false
+	s.activeUntil = time.Time{}
 	s.exportTokens = make(map[string]time.Time)
+}
+
+func (s *leaseState) pruneLocked(now time.Time) {
+	if !s.activeUntil.IsZero() && !now.Before(s.activeUntil) {
+		s.activeUntil = time.Time{}
+	}
+	for issuedToken, expiresAt := range s.exportTokens {
+		if !now.Before(expiresAt) {
+			delete(s.exportTokens, issuedToken)
+		}
+	}
 }
