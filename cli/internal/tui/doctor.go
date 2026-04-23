@@ -78,7 +78,7 @@ func (m *model) doctorFooterActions(includeTabs bool) []shell.FooterAction {
 	if includeTabs {
 		actions = append(actions, shell.FooterAction{Key: "←/→", Label: "Tabs"})
 	}
-	if m.doctorCanFixIssues() {
+	if m.doctorCanFixIssues() && m.maintenanceProgress == nil {
 		actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Fix Issues"})
 	}
 	actions = append(actions,
@@ -98,7 +98,7 @@ func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, m.refreshSnapshotCmd()
 	case "enter":
-		if !m.doctorCanFixIssues() {
+		if !m.doctorCanFixIssues() || m.maintenanceProgress != nil {
 			return m, nil
 		}
 		return m, m.startDoctorRepair(nil)
@@ -124,7 +124,7 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "r":
 		return m, m.refreshSnapshotCmd()
 	case "enter":
-		if !m.doctorCanFixIssues() {
+		if !m.doctorCanFixIssues() || m.maintenanceProgress != nil {
 			return m, nil
 		}
 		return m, m.startDoctorRepair(nil)
@@ -134,8 +134,8 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) startDoctorRepair(password []byte) tea.Cmd {
-	return m.startRepair(
-		repairPurposeDoctor,
+	return m.startMaintenance(
+		maintenanceTriggerDoctor,
 		password,
 		false,
 		"Fixing Issues",

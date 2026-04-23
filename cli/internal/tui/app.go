@@ -67,7 +67,6 @@ const (
 	screenDashboard screenMode = "dashboard"
 	screenLogin     screenMode = "login"
 	screenPassword  screenMode = "password"
-	screenRepair    screenMode = "repair"
 )
 
 type passwordFlow string
@@ -83,14 +82,21 @@ const (
 	passwordManageChange  passwordFlow = "manage-change"
 )
 
-type repairPurpose string
+type maintenanceTrigger string
 
 const (
-	repairPurposeStartup   repairPurpose = "startup"
-	repairPurposeSetup     repairPurpose = "setup"
-	repairPurposeUnlock    repairPurpose = "unlock"
-	repairPurposePostLogin repairPurpose = "post-login"
-	repairPurposeDoctor    repairPurpose = "doctor"
+	maintenanceTriggerBoot      maintenanceTrigger = "boot"
+	maintenanceTriggerSetup     maintenanceTrigger = "setup"
+	maintenanceTriggerUnlock    maintenanceTrigger = "unlock"
+	maintenanceTriggerPostLogin maintenanceTrigger = "post-login"
+	maintenanceTriggerDoctor    maintenanceTrigger = "doctor"
+)
+
+type maintenancePolicy string
+
+const (
+	maintenancePolicyDefault maintenancePolicy = "default"
+	maintenancePolicyDoctor  maintenancePolicy = "doctor"
 )
 
 type setupVariant string
@@ -135,12 +141,12 @@ type restoreFinishedMsg struct {
 	err      error
 }
 
-type repairProgressMsg struct {
+type maintenanceProgressMsg struct {
 	id    int
 	stage readiness.ProgressStage
 }
 
-type repairFinishedMsg struct {
+type maintenanceFinishedMsg struct {
 	id     int
 	result readiness.RunResult
 	err    error
@@ -330,12 +336,12 @@ type model struct {
 	loginCancel   context.CancelFunc
 	restoreID     int
 
-	repairID           int
-	repairProgress     <-chan readiness.ProgressStage
-	repairPurpose      repairPurpose
-	repairUsedPassword bool
-	repairAuthEmail    string
-	setupVariant       setupVariant
+	maintenanceID           int
+	maintenanceProgress     <-chan readiness.ProgressStage
+	maintenanceTrigger      maintenanceTrigger
+	maintenanceUsedPassword bool
+	maintenanceAuthEmail    string
+	setupVariant            setupVariant
 
 	bootAssessed             bool
 	startupUnlockPending     bool
@@ -564,8 +570,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if !msg.snapshot.VaultExists {
 			m.notice = notice{}
 			m.summary = readiness.RepairSummary{}
-			m.repairAuthEmail = ""
-			m.repairUsedPassword = false
+			m.maintenanceAuthEmail = ""
+			m.maintenanceUsedPassword = false
 			m.setupVariant = setupVariantNone
 			m.screen = screenDashboard
 			m.systemHeader = systemHeaderHealthy
@@ -639,17 +645,28 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loginScreen.Status = ""
 			return m, nil
 		}
+		if m.session.Current().ID == RouteAccountLogin {
+			if m.session.CanGoBack() {
+				m.session.Back()
+			} else {
+				m.session.ReplaceCurrent(Route{ID: RouteDashboardHome})
+			}
+		}
 
 		m.snapshot.LoggedIn = true
 		m.accountEmail = msg.creds.Email
 		m.accountName = msg.creds.Name
 		m.passwordAuth = msg.creds.Email
+		m.screen = screenDashboard
+		m.loginScreen.Waiting = true
+		m.loginScreen.Status = "Finishing account setup"
+		m.loginScreen.Error = ""
 		if !m.snapshot.VaultExists {
 			m.showPasswordScreen(passwordRestore, msg.creds.Email, "", true)
 			return m, m.passwordInput.Init()
 		}
 
-		return m, m.startRepair(repairPurposePostLogin, nil, false, "Finishing account setup", "Linking the logged-in account to the local daemon and refreshing machine state.", msg.creds.Email)
+		return m, m.startMaintenance(maintenanceTriggerPostLogin, nil, false, "Finishing account setup", "Linking the logged-in account to the local daemon and refreshing machine state.", msg.creds.Email)
 	case restoreFinishedMsg:
 		if msg.id != m.restoreID {
 			return m, nil
@@ -666,35 +683,19 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		return m, m.startRepair(repairPurposeUnlock, msg.password, false, "Setting up Forged", "Restoring your vault and preparing secure access on this machine.", m.passwordAuth)
-	case repairProgressMsg:
-		if msg.id != m.repairID {
+		return m, m.startMaintenance(maintenanceTriggerUnlock, msg.password, false, "Setting up Forged", "Restoring your vault and preparing secure access on this machine.", m.passwordAuth)
+	case maintenanceProgressMsg:
+		if msg.id != m.maintenanceID {
 			return m, nil
 		}
-		if m.isSetupSequence() {
+		m.applyMaintenanceProgress(msg.stage)
+		return m, m.waitForMaintenanceProgress(msg.id, m.maintenanceProgress)
+	case maintenanceFinishedMsg:
+		if msg.id != m.maintenanceID {
 			return m, nil
 		}
-		m.applyRepairProgress(msg.stage)
-		return m, m.waitForRepairProgress(msg.id, m.repairProgress)
-	case repairFinishedMsg:
-		if msg.id != m.repairID {
-			return m, nil
-		}
-		if m.isSetupSequence() {
-			if msg.err != nil {
-				m.setupSequenceID++
-				return m, m.handleRepairFinished(msg.result, msg.err)
-			}
-			m.setupPending = &pendingSetupResult{result: msg.result, err: msg.err}
-			m.setupFinalizing = true
-			m.completeSetupTasks()
-			return m, m.finalizeSetupAfter(time.Second)
-		}
-		return m, m.handleRepairFinished(msg.result, msg.err)
+		return m, m.handleMaintenanceFinished(msg.result, msg.err)
 	case setupTaskDoneMsg:
-		if m.screen != screenRepair {
-			return m, nil
-		}
 		if m.setupFinalizing || !m.isSetupSequence() || msg.sequence != m.setupSequenceID {
 			return m, nil
 		}
@@ -710,9 +711,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case setupFinalizeMsg:
-		if m.screen != screenRepair {
-			return m, nil
-		}
 		if msg.sequence != m.setupSequenceID {
 			return m, nil
 		}
@@ -722,7 +720,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		pending := m.setupPending
 		m.setupPending = nil
 		m.setupFinalizing = false
-		return m, m.handleRepairFinished(pending.result, pending.err)
+		return m, m.handleMaintenanceFinished(pending.result, pending.err)
 	case snapshotRefreshMsg:
 		return m.handleSnapshotRefreshMsg(msg)
 	case securityStateMsg:
@@ -1063,11 +1061,6 @@ func (m *model) headerPageTitle() string {
 			return m.passwordTitle
 		}
 		return "Vault"
-	case screenRepair:
-		if strings.TrimSpace(m.repairScreen.Title) != "" {
-			return m.repairScreen.Title
-		}
-		return "Repair"
 	default:
 		return m.dashboardTitle()
 	}
@@ -1199,15 +1192,6 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Vault"},
 			{Label: label, Current: true},
 		}
-	case screenRepair:
-		label := "Health"
-		if m.isSetupSequence() {
-			label = "Setup"
-		}
-		return []shell.Breadcrumb{
-			{Label: "Home"},
-			{Label: label, Current: true},
-		}
 	default:
 		return nil
 	}
@@ -1237,8 +1221,6 @@ func (m *model) renderBody(contentWidth int) string {
 		return accountscreen.Render(m.loginScreen, m.spinner.View(), contentWidth)
 	case screenPassword:
 		return m.renderPasswordBody(contentWidth)
-	case screenRepair:
-		return repairscreen.Render(m.repairScreen, m.spinner.View(), contentWidth)
 	default:
 		if !m.bootAssessed {
 			return m.renderPendingBody(contentWidth)
@@ -1415,14 +1397,6 @@ func (m *model) footerActions() []shell.FooterAction {
 		actions := []shell.FooterAction{{Key: "Enter", Label: enterLabel}}
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 		return actions
-	case screenRepair:
-		if m.repairScreen.Error != "" {
-			return []shell.FooterAction{
-				{Key: "Enter", Label: "Retry"},
-				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
-			}
-		}
-		return nil
 	default:
 		if !m.bootAssessed {
 			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
@@ -1431,6 +1405,9 @@ func (m *model) footerActions() []shell.FooterAction {
 			return m.keyFooterActions()
 		}
 		if m.isManageHomeRoute() {
+			if m.manage.logoutBusy {
+				return nil
+			}
 			return []shell.FooterAction{
 				{Key: "↑/↓", Label: "Move"},
 				{Key: "Enter", Label: "Open"},
@@ -1545,23 +1522,6 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.updateLoginKeys(msg)
 	case screenPassword:
 		return m.updatePasswordKeys(msg)
-	case screenRepair:
-		if m.repairScreen.Error == "" {
-			return m, nil
-		}
-		switch msg.String() {
-		case "esc":
-			if m.session.Back() {
-				return m, m.showCurrentRoute()
-			}
-			return m, tea.Quit
-		case "enter":
-			if m.isSetupSequence() && m.snapshot.VaultExists {
-				return m, m.restartAfterVaultReady()
-			}
-			return m, m.startStartupRepair()
-		}
-		return m, nil
 	default:
 		return m.updateDashboardKeys(msg)
 	}
@@ -1852,7 +1812,7 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.passwordInput.SetError(err.Error())
 				return m, nil
 			}
-			return m, m.startRepair(repairPurposeSetup, password, true, "Setting up Forged", "Creating the local vault and preparing background services for this machine.", "")
+			return m, m.startMaintenance(maintenanceTriggerSetup, password, true, "Setting up Forged", "Creating the local vault and preparing background services for this machine.", "")
 		case passwordRestore:
 			if err != nil {
 				m.passwordInput.SetError(err.Error())
@@ -1897,7 +1857,7 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.passwordInput.SetError(err.Error())
 				return m, nil
 			}
-			return m, m.startRepair(repairPurposeUnlock, password, false, "Unlocking Forged", "Verifying the vault and repairing the background service.", "")
+			return m, m.startMaintenance(maintenanceTriggerUnlock, password, false, "Unlocking Forged", "Verifying the vault and repairing the background service.", "")
 		}
 	default:
 		return m, m.passwordInput.Update(msg)
@@ -2164,14 +2124,12 @@ func (m *model) selectedDashboardArea() *dashboardscreen.Area {
 
 func (m *model) usesSpinner() bool {
 	switch m.screen {
-	case screenRepair:
-		return m.repairScreen.Error == ""
 	case screenLogin:
 		return m.loginScreen.Waiting
 	case screenPassword:
 		return m.passwordBusy
 	case screenDashboard:
-		return m.keyUsesSpinner() || m.agentUsesSpinner() || m.manage.syncBusy || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
+		return m.keyUsesSpinner() || m.agentUsesSpinner() || m.manage.syncBusy || m.manage.logoutBusy || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
 	default:
 		return false
 	}
@@ -2191,7 +2149,7 @@ func (m *model) shouldTrackIdleLock() bool {
 	if !m.runtimeStatus.SensitiveKnown || !m.runtimeStatus.Unlocked {
 		return false
 	}
-	if m.screen == screenLogin || m.screen == screenRepair {
+	if m.screen == screenLogin {
 		return false
 	}
 	return !m.isLockedAuthScreen()
@@ -2283,43 +2241,36 @@ func (m *model) restoreLinkedVault(id int, password []byte) tea.Cmd {
 	}
 }
 
-func (m *model) startRepair(purpose repairPurpose, password []byte, createVaultFirst bool, title string, contextLine string, authEmail string) tea.Cmd {
-	backgroundStartup := purpose == repairPurposeStartup && !m.isSetupSequence()
-
-	if !backgroundStartup && m.session.Current().ID != RouteRepairTask {
-		m.session.Push(Route{ID: RouteRepairTask})
-	}
-	if backgroundStartup {
-		m.screen = screenDashboard
-		m.notice = notice{}
-		m.systemHeader = systemHeaderFixing
-	} else {
-		m.screen = screenRepair
-	}
+func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, createVaultFirst bool, title string, contextLine string, authEmail string) tea.Cmd {
+	m.notice = notice{}
+	m.systemHeader = systemHeaderFixing
 	m.passwordAuth = authEmail
-	m.repairPurpose = purpose
-	m.repairUsedPassword = len(password) > 0
-	m.repairAuthEmail = authEmail
-	m.setupVariant = m.setupVariantForRepair(purpose, createVaultFirst, authEmail)
+	m.maintenanceTrigger = trigger
+	m.maintenanceUsedPassword = len(password) > 0
+	m.maintenanceAuthEmail = authEmail
+	m.setupVariant = m.setupVariantForMaintenance(trigger, createVaultFirst, authEmail)
 	m.setupPending = nil
 	m.setupStageIndex = 0
-	if !backgroundStartup {
-		m.repairScreen = repairscreen.TaskScreen{
-			Kind:       m.repairScreenKind(),
-			Title:      title,
-			Context:    contextLine,
-			Tasks:      m.newRepairTasks(authEmail),
-			StatusRows: m.repairStatusRows(),
-		}
-		if m.isSetupSequence() {
-			m.initializeSetupSequence()
+	m.repairScreen = repairscreen.TaskScreen{
+		Kind:       m.repairScreenKind(),
+		Title:      title,
+		Context:    contextLine,
+		Tasks:      m.newRepairTasks(authEmail),
+		StatusRows: m.repairStatusRows(),
+	}
+	if m.screen == screenPassword {
+		m.passwordBusy = true
+		m.passwordHideInput = false
+		m.passwordBusyMessage = ""
+		if m.passwordInput != nil {
+			m.passwordInput.SetInfo(title)
 		}
 	}
 
 	progressCh := make(chan readiness.ProgressStage, 16)
-	m.repairProgress = progressCh
-	m.repairID++
-	id := m.repairID
+	m.maintenanceProgress = progressCh
+	m.maintenanceID++
+	id := m.maintenanceID
 	repairFn := m.repair
 	createVault := m.createVault
 	passwordCopy := append([]byte(nil), password...)
@@ -2332,19 +2283,18 @@ func (m *model) startRepair(purpose repairPurpose, password []byte, createVaultF
 
 	return tea.Batch(
 		m.spinner.Tick,
-		m.waitForRepairProgress(id, progressCh),
-		m.startSetupSequence(),
+		m.waitForMaintenanceProgress(id, progressCh),
 		func() tea.Msg {
 			if createVaultFirst {
 				progress(readiness.ProgressVault)
 				if err := createVault(passwordCopy); err != nil {
 					close(progressCh)
-					return repairFinishedMsg{id: id, err: err}
+					return maintenanceFinishedMsg{id: id, err: err}
 				}
 			}
 
 			opts := readiness.RunOptions{
-				Mode: m.repairModeForPurpose(purpose),
+				Mode: m.maintenanceModeForTrigger(trigger),
 				Progress: func(stage readiness.ProgressStage) {
 					if !(createVaultFirst && stage == readiness.ProgressVault) {
 						progress(stage)
@@ -2359,12 +2309,12 @@ func (m *model) startRepair(purpose repairPurpose, password []byte, createVaultF
 
 			result, err := repairFn(opts)
 			close(progressCh)
-			return repairFinishedMsg{id: id, result: result, err: err}
+			return maintenanceFinishedMsg{id: id, result: result, err: err}
 		},
 	)
 }
 
-func (m *model) waitForRepairProgress(id int, ch <-chan readiness.ProgressStage) tea.Cmd {
+func (m *model) waitForMaintenanceProgress(id int, ch <-chan readiness.ProgressStage) tea.Cmd {
 	if ch == nil {
 		return nil
 	}
@@ -2373,16 +2323,21 @@ func (m *model) waitForRepairProgress(id int, ch <-chan readiness.ProgressStage)
 		if !ok {
 			return nil
 		}
-		return repairProgressMsg{id: id, stage: stage}
+		return maintenanceProgressMsg{id: id, stage: stage}
 	}
 }
 
-func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.Cmd {
+func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error) tea.Cmd {
 	m.snapshot = result.Snapshot
 	m.summary = result.Summary
 	m.systemHeader = m.systemHeaderForSnapshot(result.Snapshot)
-	if m.repairAuthEmail != "" {
-		m.accountEmail = m.repairAuthEmail
+	m.maintenanceProgress = nil
+	if m.screen == screenPassword {
+		m.passwordBusy = false
+		m.passwordBusyMessage = ""
+	}
+	if m.maintenanceAuthEmail != "" {
+		m.accountEmail = m.maintenanceAuthEmail
 	}
 	if result.Snapshot.LoggedIn {
 		m.loadStoredAccountIdentity()
@@ -2390,22 +2345,16 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 		m.accountName = ""
 		m.accountEmail = ""
 	}
-	m.finishRepairTasks(result)
+	m.finishMaintenanceTasks(result)
 
 	if err != nil {
 		m.systemHeader = systemHeaderUnhealthy
 		switch {
-		case m.repairPurpose == repairPurposeSetup:
-			if result.Snapshot.VaultExists {
-				m.markActiveRepairTaskFailed()
-				m.repairScreen.Error = err.Error()
-				return nil
-			}
-			m.showPasswordScreen(passwordCreate, "", err.Error(), false)
+		case m.screen == screenPassword && m.maintenanceTrigger == maintenanceTriggerSetup:
+			m.passwordInput.SetError(err.Error())
 			return m.passwordInput.Init()
-		case m.repairUsedPassword:
-			m.markActiveRepairTaskFailed()
-			m.repairScreen.Error = err.Error()
+		case m.screen == screenPassword && m.maintenanceUsedPassword:
+			m.passwordInput.SetError(err.Error())
 			return nil
 		default:
 			m.showDashboardNotice(err.Error(), dashboardscreen.ToneDanger)
@@ -2419,14 +2368,14 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 	switch result.Next {
 	case readiness.NextActionNeedsPassword:
 		errorText := ""
-		if m.repairUsedPassword {
+		if m.maintenanceUsedPassword {
 			errorText = "That password did not unlock this device."
 		}
-		if m.repairPurpose == repairPurposeDoctor {
-			m.showPasswordScreenOnRoute(RouteVaultUnlock, passwordDoctorRepair, m.repairAuthEmail, errorText, false)
+		if m.maintenanceTrigger == maintenanceTriggerDoctor {
+			m.showPasswordScreenOnRoute(RouteVaultUnlock, passwordDoctorRepair, m.maintenanceAuthEmail, errorText, false)
 			return m.passwordInput.Init()
 		}
-		m.showPasswordScreen(m.passwordFlowForSnapshot(result.Snapshot), m.repairAuthEmail, errorText, m.repairAuthEmail != "")
+		m.showPasswordScreen(m.passwordFlowForSnapshot(result.Snapshot), m.maintenanceAuthEmail, errorText, m.maintenanceAuthEmail != "")
 		return m.passwordInput.Init()
 	case readiness.NextActionNeedsInteractiveSetup:
 		if result.Snapshot.LoggedIn {
@@ -2438,11 +2387,11 @@ func (m *model) handleRepairFinished(result readiness.RunResult, err error) tea.
 		m.screen = screenDashboard
 		return nil
 	default:
-		if (m.repairPurpose == repairPurposeSetup || m.repairPurpose == repairPurposeUnlock) && result.Snapshot.VaultExists {
+		if (m.maintenanceTrigger == maintenanceTriggerSetup || m.maintenanceTrigger == maintenanceTriggerUnlock) && result.Snapshot.VaultExists {
 			m.popWizardRoutes()
 			return m.restartAfterVaultReady()
 		}
-		if m.repairPurpose == repairPurposeStartup && result.Snapshot.VaultExists && m.startupUnlockPending && !m.startupUnlockNeedsRepair {
+		if m.maintenanceTrigger == maintenanceTriggerBoot && result.Snapshot.VaultExists && m.startupUnlockPending && !m.startupUnlockNeedsRepair {
 			if !m.hasLocalUnlockTrust() {
 				m.showPasswordScreen(passwordStartupUnlock, "", "", true)
 				m.passwordContext = "Enter your master password to open Forged."
@@ -2586,8 +2535,8 @@ func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea
 
 func (m *model) startStartupRepair() tea.Cmd {
 	m.systemHeader = systemHeaderFixing
-	return m.startRepair(
-		repairPurposeStartup,
+	return m.startMaintenance(
+		maintenanceTriggerBoot,
 		nil,
 		false,
 		"Checking local health",
@@ -2596,8 +2545,15 @@ func (m *model) startStartupRepair() tea.Cmd {
 	)
 }
 
-func (m *model) repairModeForPurpose(purpose repairPurpose) readiness.Mode {
-	if purpose == repairPurposeDoctor {
+func (m *model) maintenancePolicyForTrigger(trigger maintenanceTrigger) maintenancePolicy {
+	if trigger == maintenanceTriggerDoctor {
+		return maintenancePolicyDoctor
+	}
+	return maintenancePolicyDefault
+}
+
+func (m *model) maintenanceModeForTrigger(trigger maintenanceTrigger) readiness.Mode {
+	if m.maintenancePolicyForTrigger(trigger) == maintenancePolicyDoctor {
 		return readiness.ModeInteractiveDoctor
 	}
 	return readiness.ModeInteractiveLauncher
@@ -2613,9 +2569,9 @@ func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.bootAssessed = false
 	m.systemHeader = systemHeaderChecking
 	m.setupVariant = setupVariantNone
-	m.repairPurpose = repairPurposeStartup
-	m.repairUsedPassword = false
-	m.repairAuthEmail = ""
+	m.maintenanceTrigger = maintenanceTriggerBoot
+	m.maintenanceUsedPassword = false
+	m.maintenanceAuthEmail = ""
 	m.setupPending = nil
 	m.runtimeLoaded = false
 	m.signingLoaded = false
@@ -2886,17 +2842,17 @@ func (m *model) repairScreenKind() repairscreen.ScreenKind {
 	return repairscreen.ScreenKindRepair
 }
 
-func (m *model) setupVariantForRepair(purpose repairPurpose, createVaultFirst bool, authEmail string) setupVariant {
-	switch purpose {
-	case repairPurposeSetup:
+func (m *model) setupVariantForMaintenance(trigger maintenanceTrigger, createVaultFirst bool, authEmail string) setupVariant {
+	switch trigger {
+	case maintenanceTriggerSetup:
 		if createVaultFirst {
 			return setupVariantLocal
 		}
-	case repairPurposeUnlock:
+	case maintenanceTriggerUnlock:
 		if authEmail != "" || m.passwordFlow == passwordRestore || (!m.snapshot.VaultExists && m.snapshot.LoggedIn) {
 			return setupVariantRestore
 		}
-	case repairPurposeStartup:
+	case maintenanceTriggerBoot:
 		return m.setupVariant
 	}
 	return setupVariantNone
@@ -3014,7 +2970,7 @@ func (m *model) newRepairTasks(authEmail string) []repairscreen.Task {
 	}
 }
 
-func (m *model) applyRepairProgress(stage readiness.ProgressStage) {
+func (m *model) applyMaintenanceProgress(stage readiness.ProgressStage) {
 	target := ""
 	switch stage {
 	case readiness.ProgressVault:
@@ -3129,7 +3085,7 @@ func (m *model) setSetupStatusForStage() {
 	m.repairScreen.SetupStatus = status
 }
 
-func (m *model) finishRepairTasks(result readiness.RunResult) {
+func (m *model) finishMaintenanceTasks(result readiness.RunResult) {
 	if m.isSetupSequence() {
 		for index := range m.repairScreen.Tasks {
 			task := &m.repairScreen.Tasks[index]
@@ -3151,7 +3107,7 @@ func (m *model) finishRepairTasks(result readiness.RunResult) {
 		case "Password":
 			task.State = repairscreen.TaskDone
 		case "Account":
-			if result.Snapshot.LoggedIn || m.repairAuthEmail != "" {
+			if result.Snapshot.LoggedIn || m.maintenanceAuthEmail != "" {
 				task.State = repairscreen.TaskDone
 			}
 		case "Vault":
@@ -3174,14 +3130,6 @@ func (m *model) finishRepairTasks(result readiness.RunResult) {
 	}
 }
 
-func (m *model) markActiveRepairTaskFailed() {
-	for index := range m.repairScreen.Tasks {
-		if m.repairScreen.Tasks[index].State == repairscreen.TaskActive {
-			m.repairScreen.Tasks[index].State = repairscreen.TaskFailed
-		}
-	}
-}
-
 func (m *model) repairStatusRows() []repairscreen.StatusRow {
 	rows := NewState(m.snapshot).SummaryRows()
 	out := make([]repairscreen.StatusRow, 0, len(rows))
@@ -3192,14 +3140,14 @@ func (m *model) repairStatusRows() []repairscreen.StatusRow {
 }
 
 func (m *model) passwordFlowForSnapshot(snapshot readiness.Snapshot) passwordFlow {
-	if !snapshot.VaultExists && (snapshot.LoggedIn || m.repairAuthEmail != "") {
+	if !snapshot.VaultExists && (snapshot.LoggedIn || m.maintenanceAuthEmail != "") {
 		return passwordRestore
 	}
 	return passwordRepair
 }
 
 func (m *model) popWizardRoutes() {
-	for m.session.Current().ID == RouteRepairTask || m.session.Current().ID == RouteVaultUnlock {
+	for m.session.Current().ID == RouteVaultUnlock {
 		if !m.session.Back() {
 			break
 		}

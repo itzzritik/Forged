@@ -4,8 +4,6 @@ type RouteID string
 
 const (
 	RouteDashboardHome RouteID = "dashboard/home"
-	RouteRepairTask    RouteID = "repair/task"
-	RouteRepairResult  RouteID = "repair/result"
 
 	RouteAccountLogin  RouteID = "account/login"
 	RouteAccountStatus RouteID = "account/status"

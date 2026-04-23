@@ -41,6 +41,7 @@ type manageState struct {
 	changePasswordID       int
 	autoReturnID           int
 	syncBusy               bool
+	logoutBusy             bool
 	logoutArmed            bool
 	settingItem            manageItemID
 	settingErr             string
@@ -285,6 +286,9 @@ func (m *model) renderManageSuccessBody(contentWidth int) string {
 }
 
 func (m *model) updateManageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.manage.logoutBusy {
+		return m, nil
+	}
 	items := m.manageItems()
 	m.normalizeManageSelection(items)
 
@@ -370,7 +374,7 @@ func (m *model) updateManageMasterIntervalKeys(msg tea.KeyMsg) (tea.Model, tea.C
 }
 
 func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
-	if m.manage.syncBusy {
+	if m.manage.syncBusy || m.manage.logoutBusy {
 		return m, nil
 	}
 
@@ -427,7 +431,13 @@ func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.manage.logoutArmed = false
-		return m, m.runManageLogout()
+		m.manage.logoutBusy = true
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
+		return m, tea.Batch(
+			m.spinner.Tick,
+			m.runManageLogout(),
+		)
 	default:
 		return m, nil
 	}
@@ -530,6 +540,9 @@ func (m *model) accountDisplayName() string {
 }
 
 func (m *model) manageSummaryText(item manageItem) string {
+	if item.ID == manageItemLogout && m.manage.logoutBusy {
+		return "Logging out of your Forged account on this machine"
+	}
 	if item.ID == manageItemLogout && m.manage.logoutArmed {
 		return "Are you sure you want to log out? Press Enter again to continue"
 	}
@@ -540,6 +553,9 @@ func (m *model) manageSummaryText(item manageItem) string {
 }
 
 func (m *model) manageLabel(item manageItem) string {
+	if item.ID == manageItemLogout && m.manage.logoutBusy {
+		return m.spinner.View() + " Logging out"
+	}
 	if item.ID == manageItemLogout && m.manage.logoutArmed {
 		return "Are you sure?"
 	}
@@ -578,7 +594,10 @@ func (m *model) handleManageSyncFinishedMsg(msg manageSyncFinishedMsg) (tea.Mode
 }
 
 func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.Model, tea.Cmd) {
+	m.manage.logoutBusy = false
 	if msg.err != nil {
+		m.manage.settingItem = manageItemLogout
+		m.manage.settingErr = msg.err.Error()
 		return m, nil
 	}
 
@@ -587,6 +606,8 @@ func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.
 	m.accountEmail = ""
 	m.manage.syncBusy = false
 	m.manage.logoutArmed = false
+	m.manage.settingItem = ""
+	m.manage.settingErr = ""
 	m.runtimeStatus.Linked = false
 	m.runtimeStatus.Syncing = false
 	m.runtimeStatus.Error = ""
