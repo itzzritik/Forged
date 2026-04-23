@@ -10,6 +10,7 @@ import (
 	serverauth "github.com/itzzritik/forged/server/internal/auth"
 	"github.com/itzzritik/forged/server/internal/db"
 	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
@@ -34,7 +35,12 @@ func (s *Server) handleCreateSession(w http.ResponseWriter, r *http.Request) {
 
 	err := s.DB.CreateAuthSession(r.Context(), req.Code, req.Verification, req.CodeChallenge, strings.ToUpper(strings.TrimSpace(req.ChallengeMethod)))
 	if err != nil {
-		writeError(w, http.StatusConflict, "Session already exists")
+		var pgErr *pgconn.PgError
+		if errors.As(err, &pgErr) && pgErr.Code == "23505" {
+			writeError(w, http.StatusConflict, "Session already exists")
+			return
+		}
+		writeError(w, http.StatusInternalServerError, "Could not create auth session")
 		return
 	}
 

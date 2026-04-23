@@ -17,6 +17,7 @@ import (
 	"runtime"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -317,10 +318,14 @@ func OpenBrowser(url string) {
 }
 
 func createAuthSessionWithRetry(server string, payload []byte, progress func(LoginProgress)) (*http.Response, error) {
-	const maxAttempts = 3
+	backoffSchedule := []time.Duration{
+		1 * time.Second,
+		3 * time.Second,
+		7 * time.Second,
+	}
+	maxAttempts := len(backoffSchedule) + 1
 
 	client := &http.Client{Timeout: 15 * time.Second}
-	backoff := time.Second
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
@@ -346,29 +351,46 @@ func createAuthSessionWithRetry(server string, payload []byte, progress func(Log
 			resp.Body.Close()
 		}
 
-		lastErr = loginAttemptError(err, statusCode, attempt)
+		lastErr = loginAttemptError(err, statusCode, responseBody, attempt)
 		logLoginAttempt("auth session create failed", attempt, server, statusCode, responseBody, err)
 
-		if attempt == maxAttempts {
+		if attempt == maxAttempts || !shouldRetryLoginAttempt(err, statusCode) {
 			break
 		}
 
+		delay := backoffSchedule[attempt-1]
 		if progress != nil {
 			progress(LoginProgress{
-				Status: fmt.Sprintf("Attempt %d failed. Retrying (%d/%d)", attempt, attempt+1, maxAttempts),
+				Status: fmt.Sprintf("Attempt %d failed. Retrying in %s (%d/%d)", attempt, humanizeDuration(delay), attempt+1, maxAttempts),
 			})
 		}
-		time.Sleep(backoff)
-		backoff *= 2
+		time.Sleep(delay)
 	}
 
 	return nil, lastErr
 }
 
-func loginAttemptError(err error, statusCode int, attempt int) error {
+func shouldRetryLoginAttempt(err error, statusCode int) bool {
+	if err != nil {
+		return true
+	}
+	switch statusCode {
+	case http.StatusTooManyRequests:
+		return true
+	case http.StatusBadGateway, http.StatusServiceUnavailable, http.StatusGatewayTimeout:
+		return true
+	default:
+		return statusCode >= 500
+	}
+}
+
+func loginAttemptError(err error, statusCode int, responseBody string, attempt int) error {
 	suffix := fmt.Sprintf(" after %d attempts", attempt)
 	if err != nil {
 		return fmt.Errorf("Could not reach server: %v%s", err, suffix)
+	}
+	if trimmed := strings.TrimSpace(responseBody); trimmed != "" {
+		return fmt.Errorf("%s%s", sentenceCase(trimmed), suffix)
 	}
 	return fmt.Errorf("Could not create auth session (status %d)%s", statusCode, suffix)
 }
@@ -411,6 +433,34 @@ func logLoginAttempt(event string, attempt int, server string, statusCode int, r
 		line += fmt.Sprintf(" body=%q", trimmed)
 	}
 	_, _ = fmt.Fprintln(file, line)
+}
+
+func humanizeDuration(delay time.Duration) string {
+	seconds := int(delay.Seconds())
+	if seconds < 60 {
+		if seconds == 1 {
+			return "1 second"
+		}
+		return fmt.Sprintf("%d seconds", seconds)
+	}
+	minutes := seconds / 60
+	if minutes == 1 {
+		return "1 minute"
+	}
+	return fmt.Sprintf("%d minutes", minutes)
+}
+
+func sentenceCase(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	runes := []rune(trimmed)
+	if len(runes) == 0 || !unicode.IsLower(runes[0]) {
+		return trimmed
+	}
+	runes[0] = unicode.ToUpper(runes[0])
+	return string(runes)
 }
 
 func randomHex(n int) (string, error) {
