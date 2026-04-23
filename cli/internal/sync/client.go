@@ -14,10 +14,11 @@ import (
 )
 
 type Client struct {
-	ServerURL  string
-	Token      string
-	DeviceID   string
-	HTTPClient *http.Client
+	ServerURL   string
+	Token       string
+	TokenSource func() (string, error)
+	DeviceID    string
+	HTTPClient  *http.Client
 }
 
 var _ API = (*Client)(nil)
@@ -32,6 +33,22 @@ func NewClient(serverURL, token, deviceID string) *Client {
 		ServerURL: serverURL,
 		Token:     token,
 		DeviceID:  deviceID,
+		HTTPClient: &http.Client{
+			Timeout: 30 * time.Second,
+			Transport: &http.Transport{
+				MaxIdleConns:        5,
+				MaxIdleConnsPerHost: 2,
+				IdleConnTimeout:     90 * time.Second,
+			},
+		},
+	}
+}
+
+func NewClientWithTokenSource(serverURL, deviceID string, tokenSource func() (string, error)) *Client {
+	return &Client{
+		ServerURL:   serverURL,
+		TokenSource: tokenSource,
+		DeviceID:    deviceID,
 		HTTPClient: &http.Client{
 			Timeout: 30 * time.Second,
 			Transport: &http.Transport{
@@ -77,7 +94,11 @@ func (c *Client) Push(blob []byte, kdf vault.KDFParams, protectedKey string, exp
 		return PushResult{}, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	token, err := c.authToken()
+	if err != nil {
+		return PushResult{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
@@ -110,7 +131,11 @@ func (c *Client) Rekey(kdf vault.KDFParams, protectedKey string) error {
 	if err != nil {
 		return err
 	}
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	token, err := c.authToken()
+	if err != nil {
+		return err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
 	resp, err := c.HTTPClient.Do(req)
@@ -139,7 +164,11 @@ func (c *Client) Pull() (PullResult, error) {
 		return PullResult{}, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	token, err := c.authToken()
+	if err != nil {
+		return PullResult{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("X-Device-ID", c.DeviceID)
 
 	resp, err := c.HTTPClient.Do(req)
@@ -193,7 +222,11 @@ func (c *Client) Status() (StatusResult, error) {
 		return StatusResult{}, err
 	}
 
-	req.Header.Set("Authorization", "Bearer "+c.Token)
+	token, err := c.authToken()
+	if err != nil {
+		return StatusResult{}, err
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -204,4 +237,21 @@ func (c *Client) Status() (StatusResult, error) {
 	var result StatusResult
 	json.NewDecoder(resp.Body).Decode(&result)
 	return result, nil
+}
+
+func (c *Client) authToken() (string, error) {
+	if c.TokenSource != nil {
+		token, err := c.TokenSource()
+		if err != nil {
+			return "", err
+		}
+		if token == "" {
+			return "", fmt.Errorf("Missing account access token")
+		}
+		return token, nil
+	}
+	if c.Token == "" {
+		return "", fmt.Errorf("Missing account access token")
+	}
+	return c.Token, nil
 }

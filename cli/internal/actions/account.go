@@ -7,6 +7,7 @@ import (
 	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -17,18 +18,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 )
 
-type AccountCredentials struct {
-	ServerURL string `json:"server_url"`
-	Token     string `json:"token"`
-	UserID    string `json:"user_id"`
-	Email     string `json:"email"`
-	Name      string `json:"name,omitempty"`
-}
+type AccountCredentials = accountauth.Credentials
 
 type LoginSession struct {
 	VerificationCode string
@@ -48,32 +44,33 @@ func (s LoginSession) Wait(ctx context.Context) (AccountCredentials, error) {
 }
 
 func CredentialsPath(paths config.Paths) string {
-	return paths.CredentialsFile()
+	return accountauth.CredentialsPath(paths)
 }
 
 func LoadCredentials(paths config.Paths) (AccountCredentials, error) {
-	data, err := os.ReadFile(CredentialsPath(paths))
-	if err != nil {
+	creds, err := accountauth.Load(paths)
+	if errors.Is(err, os.ErrNotExist) {
 		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Manage > Log In")
 	}
-
-	var creds AccountCredentials
-	if err := json.Unmarshal(data, &creds); err != nil {
+	if err != nil {
 		return AccountCredentials{}, fmt.Errorf("Corrupted credentials file")
 	}
-	populateAccountDisplayName(&creds)
+	return creds, nil
+}
+
+func LoadFreshCredentials(ctx context.Context, paths config.Paths) (AccountCredentials, error) {
+	creds, err := accountauth.EnsureFresh(ctx, paths)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, accountauth.ErrLoginRequired) {
+		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Manage > Log In")
+	}
+	if err != nil {
+		return AccountCredentials{}, err
+	}
 	return creds, nil
 }
 
 func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
-	path := CredentialsPath(paths)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-
-	populateAccountDisplayName(&creds)
-	data, _ := json.MarshalIndent(creds, "", "  ")
-	if err := os.WriteFile(path, data, 0o600); err != nil {
+	if err := accountauth.Save(paths, creds); err != nil {
 		return err
 	}
 
@@ -83,7 +80,7 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 
 	_, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSyncLink, ipc.SyncLinkArgs{
 		ServerURL: creds.ServerURL,
-		Token:     creds.Token,
+		Token:     accountauth.CurrentToken(creds),
 		UserID:    creds.UserID,
 	})
 	if err != nil {
@@ -93,6 +90,10 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 }
 
 func ClearCredentials(paths config.Paths) error {
+	if creds, err := accountauth.Load(paths); err == nil {
+		revokeRemoteSession(creds)
+	}
+
 	if _, running := daemon.IsRunning(paths); running {
 		if _, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSyncUnlink, nil); err != nil {
 			return fmt.Errorf("Unlinking running daemon: %w", err)
@@ -110,6 +111,30 @@ func ClearCredentials(paths config.Paths) error {
 	return nil
 }
 
+func revokeRemoteSession(creds AccountCredentials) {
+	if strings.TrimSpace(creds.ServerURL) == "" || strings.TrimSpace(creds.RefreshToken) == "" {
+		return
+	}
+
+	body, _ := json.Marshal(map[string]string{
+		"refresh_token": creds.RefreshToken,
+	})
+
+	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(creds.ServerURL, "/")+"/api/v1/auth/logout", bytes.NewReader(body))
+	if err != nil {
+		return
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+}
+
 func BeginLogin(server string, openBrowser func(string)) (LoginSession, error) {
 	return BeginLoginWithProgress(server, openBrowser, nil)
 }
@@ -124,10 +149,16 @@ func BeginLoginWithProgress(server string, openBrowser func(string), progress fu
 	if err != nil {
 		return LoginSession{}, fmt.Errorf("Generating verification: %w", err)
 	}
+	codeVerifier, err := randomVerifier(32)
+	if err != nil {
+		return LoginSession{}, fmt.Errorf("Generating code verifier: %w", err)
+	}
 
 	payload, _ := json.Marshal(map[string]string{
-		"code":         code,
-		"verification": verification,
+		"code":             code,
+		"verification":     verification,
+		"code_challenge":   accountauth.CodeChallengeS256(codeVerifier),
+		"challenge_method": "S256",
 	})
 
 	resp, err := createAuthSessionWithRetry(server, payload, progress)
@@ -148,12 +179,12 @@ func BeginLoginWithProgress(server string, openBrowser func(string), progress fu
 		VerificationCode: displayCode,
 		URL:              authURL,
 		wait: func(ctx context.Context) (AccountCredentials, error) {
-			return pollLogin(ctx, server, pollURL)
+			return pollLogin(ctx, server, code, pollURL, codeVerifier)
 		},
 	}, nil
 }
 
-func pollLogin(ctx context.Context, server string, pollURL string) (AccountCredentials, error) {
+func pollLogin(ctx context.Context, server, code, pollURL, codeVerifier string) (AccountCredentials, error) {
 	deadline := time.Now().Add(5 * time.Minute)
 	interval := 2 * time.Second
 
@@ -187,17 +218,15 @@ func pollLogin(ctx context.Context, server string, pollURL string) (AccountCrede
 
 		switch result.Status {
 		case "complete":
-			name := strings.TrimSpace(result.Name)
-			if name == "" {
-				name = decodeAccountName(result.Token)
-			}
 			return AccountCredentials{
 				ServerURL: server,
 				Token:     result.Token,
 				UserID:    result.UserID,
 				Email:     result.Email,
-				Name:      name,
+				Name:      strings.TrimSpace(result.Name),
 			}, nil
+		case "approved":
+			return exchangeLogin(ctx, server, code, codeVerifier)
 		case "error":
 			return AccountCredentials{}, fmt.Errorf("Authentication failed: %s", result.Error)
 		case "pending":
@@ -206,6 +235,67 @@ func pollLogin(ctx context.Context, server string, pollURL string) (AccountCrede
 	}
 
 	return AccountCredentials{}, fmt.Errorf("Timed out while waiting to log in")
+}
+
+func exchangeLogin(ctx context.Context, server, code, codeVerifier string) (AccountCredentials, error) {
+	payload, _ := json.Marshal(map[string]string{
+		"code_verifier": codeVerifier,
+	})
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, server+"/api/v1/auth/sessions/"+code+"/exchange", bytes.NewReader(payload))
+	if err != nil {
+		return AccountCredentials{}, fmt.Errorf("Creating auth exchange request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		return AccountCredentials{}, fmt.Errorf("Exchanging approved session: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		body := readLoginErrorBody(resp.Body)
+		if body == "" {
+			body = resp.Status
+		}
+		return AccountCredentials{}, fmt.Errorf("Authentication failed: %s", body)
+	}
+
+	var result struct {
+		AccessToken      string `json:"access_token"`
+		AccessExpiresAt  string `json:"access_expires_at"`
+		RefreshToken     string `json:"refresh_token"`
+		RefreshExpiresAt string `json:"refresh_expires_at"`
+		UserID           string `json:"user_id"`
+		Email            string `json:"email"`
+		Name             string `json:"name"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return AccountCredentials{}, fmt.Errorf("Decoding auth exchange response: %w", err)
+	}
+
+	accessExpiry, err := time.Parse(time.RFC3339, strings.TrimSpace(result.AccessExpiresAt))
+	if err != nil {
+		return AccountCredentials{}, fmt.Errorf("Parsing access expiry: %w", err)
+	}
+	refreshExpiry, err := time.Parse(time.RFC3339, strings.TrimSpace(result.RefreshExpiresAt))
+	if err != nil {
+		return AccountCredentials{}, fmt.Errorf("Parsing refresh expiry: %w", err)
+	}
+
+	return AccountCredentials{
+		ServerURL:        server,
+		Token:            result.AccessToken,
+		AccessToken:      result.AccessToken,
+		AccessExpiresAt:  accessExpiry,
+		RefreshToken:     result.RefreshToken,
+		RefreshExpiresAt: refreshExpiry,
+		UserID:           result.UserID,
+		Email:            result.Email,
+		Name:             strings.TrimSpace(result.Name),
+	}, nil
 }
 
 func OpenBrowser(url string) {
@@ -275,66 +365,6 @@ func createAuthSessionWithRetry(server string, payload []byte, progress func(Log
 	return nil, lastErr
 }
 
-func populateAccountDisplayName(creds *AccountCredentials) {
-	if creds == nil {
-		return
-	}
-	if strings.TrimSpace(creds.Name) != "" {
-		return
-	}
-	if name := decodeAccountName(creds.Token); name != "" {
-		creds.Name = name
-		return
-	}
-	creds.Name = fallbackAccountName(creds.Email)
-}
-
-func decodeAccountName(token string) string {
-	parts := strings.Split(strings.TrimSpace(token), ".")
-	if len(parts) < 2 {
-		return ""
-	}
-
-	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
-	if err != nil {
-		return ""
-	}
-
-	var claims struct {
-		Name string `json:"name"`
-	}
-	if err := json.Unmarshal(payload, &claims); err != nil {
-		return ""
-	}
-	return strings.TrimSpace(claims.Name)
-}
-
-func fallbackAccountName(email string) string {
-	local := strings.TrimSpace(email)
-	if local == "" {
-		return ""
-	}
-	if at := strings.Index(local, "@"); at > 0 {
-		local = local[:at]
-	}
-	local = strings.ReplaceAll(local, ".", " ")
-	local = strings.ReplaceAll(local, "_", " ")
-	local = strings.ReplaceAll(local, "-", " ")
-	words := strings.Fields(local)
-	if len(words) == 0 {
-		return ""
-	}
-	for index, word := range words {
-		runes := []rune(strings.ToLower(word))
-		if len(runes) == 0 {
-			continue
-		}
-		runes[0] = []rune(strings.ToUpper(string(runes[0])))[0]
-		words[index] = string(runes)
-	}
-	return strings.Join(words, " ")
-}
-
 func loginAttemptError(err error, statusCode int, attempt int) error {
 	suffix := fmt.Sprintf(" after %d attempts", attempt)
 	if err != nil {
@@ -389,4 +419,12 @@ func randomHex(n int) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(b), nil
+}
+
+func randomVerifier(n int) (string, error) {
+	b := make([]byte, n)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return base64.RawURLEncoding.EncodeToString(b), nil
 }

@@ -2,61 +2,23 @@
 title: Daemon IPC
 applies_to:
   - cli/internal/ipc/**
-last_verified: 2026-04-22
+last_verified: 2026-04-23
 stable: yes
 ---
 
 # Daemon IPC
 
-Control channel between `forged` CLI/TUI and the daemon. One request per
-connection, flat command-string dispatch, one response, close. No
-streaming, no server push. Wire format in `proto/ipc.md`.
+`ctl.sock` is a one-request control channel between `forged` and the daemon. One connection carries one request and one response.
 
 ## Must know
 
-- **`proto/ipc.md` is out of date.** It lists commands that no longer
-  exist (`host`, `unhost`, `hosts`, `lock`, `unlock`, `sync-status`,
-  `config-get`, `config-set`) and omits ones that do (`rename`, `view`,
-  `generate`, `export-all`, `sensitive-*`, `ssh-route-*`, `sync-link`,
-  `sync-unlink`). Code is the source of truth.
-- **Windows IPC is not actually hosted.** Path helper returns a named-pipe
-  string, but the server uses Go `unix` network + `chmod`. Treat Windows
-  as unsupported until a platform shim lands.
-- **Authentication is ambient** — owner-only `0600` perms on `ctl.sock`
-  are the whole access control. No token. Sensitive ops still go through
-  the sensitive-auth broker on top.
-- **No client-side retry.** Transient daemon restart surfaces as an
-  immediate error; TUI re-dials on the next tick.
-- **10 MB response cap.** Bulk exports of large vaults can approach it;
-  fix is streaming, not raising the cap.
-- Request deadline is 60s default, 5 min for `sensitive-auth` /
-  `sensitive-password` (biometric / password prompts).
-- `sensitive-auth` now accepts:
-  - `action`
-  - optional `force`
-  `force=true` bypasses the broker's active-session fast path and is used
-  by fresh TUI launch auth.
-- IF a handler's subsystem is not wired (sync bus, auth broker, SSH
-  routing, link/unlink callbacks) THEN the handler returns "unavailable",
-  not panic.
-- **Vault-backed handlers are now cold-safe.** If the daemon is running
-  without an active vault session, commands that need the vault or
-  keystore return `vault is locked; open Forged to unlock` instead of
-  panicking on nil state.
-- IF the daemon is not running THEN every call fails fast with "daemon is
-  not running" — no autostart from the IPC layer.
-- Mutating key commands notify the sync bus and refresh SSH routing after
-  the handler returns.
-- `status` now reports both:
-  - `sensitive.unlocked`
-  - `sensitive.active`
-  so callers can distinguish lease state from live vault-session state.
+- Socket ownership and `0600` perms are the main access control. Sensitive operations still add broker checks on top.
+- Vault-backed handlers can be called while the daemon is cold; they should return a locked error, not panic.
+- `proto/ipc.md` is not current. Code is the source of truth for the command set.
+- `sensitive-auth` takes an `action` and optional `force`. `force=true` is used for launch auth.
+- `status` exposes enough sensitive state for the TUI to detect cold vs active session.
+- Windows IPC support is still incomplete.
 
 ## Decisions
 
-- Unix socket + length-prefixed JSON over gRPC/HTTP/protobuf. Surface is
-  tiny, single-host, single-process-per-user. Do NOT add a codegen
-  pipeline until the surface outgrows a flat command switch.
-- Agent and control sockets stay split. See `architecture/overview.md`.
-- No bearer token on top of owner-only perms — pure complexity, no
-  threat-model gain (attacker with socket read has token read too).
+- Keep the flat JSON-over-socket model. The surface is small enough that gRPC/codegen is not worth it.

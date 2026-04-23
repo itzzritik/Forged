@@ -47,6 +47,9 @@ func (s *Server) Routes() http.Handler {
 	mux.HandleFunc("POST /api/v1/auth/sessions", middleware.RateLimit(10, s.handleCreateSession))
 	mux.HandleFunc("GET /api/v1/auth/sessions/{code}", middleware.RateLimit(30, s.handlePollSession))
 	mux.HandleFunc("GET /api/v1/auth/sessions/{code}/verification", middleware.RateLimit(30, s.handleGetVerification))
+	mux.HandleFunc("POST /api/v1/auth/sessions/{code}/exchange", middleware.RateLimit(10, s.handleExchangeSession))
+	mux.HandleFunc("POST /api/v1/auth/refresh", middleware.RateLimit(20, s.handleRefresh))
+	mux.HandleFunc("POST /api/v1/auth/logout", middleware.RateLimit(20, s.handleLogout))
 
 	mux.Handle("/api/v1/", middleware.Auth(s.Secret, authed))
 
@@ -66,6 +69,12 @@ func (s *Server) StartSessionCleanup() {
 				s.Logger.Error("auth session cleanup failed", "error", err)
 			} else if count > 0 && s.Logger != nil {
 				s.Logger.Debug("cleaned auth sessions", "count", count)
+			}
+			refreshCount, refreshErr := s.DB.CleanupRefreshSessions(context.Background())
+			if refreshErr != nil && s.Logger != nil {
+				s.Logger.Error("refresh session cleanup failed", "error", refreshErr)
+			} else if refreshCount > 0 && s.Logger != nil {
+				s.Logger.Debug("cleaned refresh sessions", "count", refreshCount)
 			}
 			auditCount, auditErr := s.DB.CleanupAuditLog(context.Background())
 			if auditErr != nil && s.Logger != nil {

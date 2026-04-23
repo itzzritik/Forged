@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -214,14 +215,19 @@ func defaultCredentialsValid(path string) (bool, error) {
 	}
 
 	var creds struct {
-		Token     string `json:"token"`
-		ServerURL string `json:"server_url"`
+		Token       string `json:"token"`
+		AccessToken string `json:"access_token"`
+		ServerURL   string `json:"server_url"`
 	}
 	if err := json.Unmarshal(raw, &creds); err != nil {
 		return false, err
 	}
 
-	return creds.Token != "" && creds.ServerURL != "", nil
+	token := strings.TrimSpace(creds.AccessToken)
+	if token == "" {
+		token = strings.TrimSpace(creds.Token)
+	}
+	return token != "" && strings.TrimSpace(creds.ServerURL) != "", nil
 }
 
 func defaultLoadKeyCount(socketPath string) (int, error) {

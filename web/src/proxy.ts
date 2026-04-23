@@ -1,17 +1,14 @@
 import { type NextRequest, NextResponse } from "next/server";
-import { COOKIE_NAME, decrypt, parseJWTPayload } from "@/lib/auth";
+import { COOKIE_NAME, decodeSessionCookie, refreshExpired } from "@/lib/auth";
 
-function hasValidSession(token: string | null): boolean {
-	if (!token) return false;
-	const payload = parseJWTPayload(token);
-	const exp = payload?.exp;
-	return !(typeof exp === "number" && exp * 1000 < Date.now());
+function hasValidSessionCookie(value: string | undefined): Promise<boolean> {
+	if (!value) return Promise.resolve(false);
+	return decodeSessionCookie(value).then((session) => !!session && !refreshExpired(session));
 }
 
 export async function proxy(request: NextRequest) {
 	const cookie = request.cookies.get(COOKIE_NAME);
-	const token = cookie?.value ? await decrypt(cookie.value) : null;
-	const isAuthenticated = hasValidSession(token);
+	const isAuthenticated = await hasValidSessionCookie(cookie?.value);
 	const path = request.nextUrl.pathname;
 
 	// Redirect authenticated users away from /login (unless CLI flow with callback)

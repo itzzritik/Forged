@@ -1,32 +1,30 @@
 # Knowledge Base Index
 
-Human browse aid. The authoritative path-to-shard mapping lives in root `AGENTS.md` under `## Docs Routing`.
-
-See `.agents/docs/meta.md` for format and update rules.
+Authoritative routing lives in root `AGENTS.md`. This file is only a browse aid.
 
 ## Architecture
-- `architecture/overview.md` — system-level view, components, data flow
-- `architecture/security-model.md` — crypto primitives, key hierarchy, threat model
-- `architecture/mono-repo.md` — repo structure rationale, CI, `just`
+- `architecture/overview.md` — top-level system shape and subsystem boundaries
+- `architecture/security-model.md` — vault, session, and local trust security model
+- `architecture/mono-repo.md` — repo layout, modules, and build/tooling boundaries
 
-## CLI (`cli/`)
-- `cli/daemon.md` — daemon lifecycle, PID/socket, session state
-- `cli/vault.md` — vault format, crypto operations, password change
-- `cli/ipc.md` — IPC protocol, command registry
-- `cli/ssh-agent.md` — SSH agent protocol, signing, host matching
-- `cli/tui.md` — TUI architecture, screens, patterns
-- `cli/sensitive-auth.md` — lease/broker model, lock/unlock semantics
+## CLI
+- `cli/daemon.md` — daemon lifecycle, cold start, and live-session behavior
+- `cli/ipc.md` — control socket model and IPC invariants
+- `cli/sensitive-auth.md` — native auth, local unlock trust, and session policy
+- `cli/ssh-agent.md` — SSH agent behavior and external-use rules
+- `cli/tui.md` — TUI state model, auth wall, and shell rules
+- `cli/vault.md` — local vault behavior and password/encryption boundaries
 
-## Server (`server/`)
-- `server/api.md` — HTTP routes, auth middleware, rate limiting
-- `server/db-schema.md` — tables, migrations, indexes
-- `server/sync-protocol.md` — push/pull, conflict resolution
+## Server
+- `server/api.md` — HTTP API, auth endpoints, and protected/public boundaries
+- `server/db-schema.md` — important tables and persistence assumptions
+- `server/sync-protocol.md` — encrypted sync model and conflict rules
 
-## Web (`web/`)
-- `web/auth-flow.md` — login, OAuth, sessions
-- `web/dashboard.md` — dashboard crypto, VaultContext, worker
-- `web/app-shell.md` — Next.js routing, proxy, public pages
+## Web
+- `web/app-shell.md` — route protection and app-shell behavior
+- `web/auth-flow.md` — browser auth, session cookie, and CLI handoff
+- `web/dashboard.md` — worker-based crypto and dashboard vault state
 
-## Ops (`ops/`)
-- `ops/release.md` — GoReleaser, CI, signing
-- `ops/platform-packaging.md` — Homebrew, Scoop, APT, installers
+## Ops
+- `ops/release.md` — release flow, channels, and current signing gaps
+- `ops/platform-packaging.md` — package formats and platform-specific caveats

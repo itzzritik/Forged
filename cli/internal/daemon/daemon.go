@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -17,6 +16,7 @@ import (
 	"syscall"
 
 	"github.com/google/uuid"
+	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/activity"
 	forgedagent "github.com/itzzritik/forged/cli/internal/agent"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -257,7 +257,6 @@ func (d *Daemon) startAgent() error {
 
 type syncCredentials struct {
 	ServerURL string `json:"server_url"`
-	Token     string `json:"token"`
 	UserID    string `json:"user_id"`
 }
 
@@ -269,16 +268,15 @@ func (d *Daemon) initSync() {
 		return
 	}
 
-	data, err := os.ReadFile(d.paths.CredentialsFile())
-	if err != nil {
-		return
-	}
-	var creds syncCredentials
-	if err := json.Unmarshal(data, &creds); err != nil || creds.ServerURL == "" || creds.Token == "" {
+	creds, err := accountauth.Load(d.paths)
+	if err != nil || creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
 		return
 	}
 
-	state, err := d.configureSync(creds)
+	state, err := d.configureSync(syncCredentials{
+		ServerURL: creds.ServerURL,
+		UserID:    creds.UserID,
+	})
 	if err != nil {
 		d.logger.Warn("initializing sync failed", "error", err)
 		return
@@ -315,7 +313,13 @@ func (d *Daemon) configureSync(creds syncCredentials) (*forgedsync.SyncState, er
 	}
 	state.ServerURL = creds.ServerURL
 
-	client := forgedsync.NewClient(creds.ServerURL, creds.Token, state.DeviceID)
+	client := forgedsync.NewClientWithTokenSource(creds.ServerURL, state.DeviceID, func() (string, error) {
+		creds, err := accountauth.EnsureFresh(context.Background(), d.paths)
+		if err != nil {
+			return "", fmt.Errorf("Refreshing account credentials: %w", err)
+		}
+		return accountauth.CurrentToken(creds), nil
+	})
 	engine := forgedsync.NewEngine(d.vault, client, d.logger)
 	bus := forgedsync.NewBus(engine, state, d.logger, forgedsync.BusConfig{
 		DirtyFlagPath: d.paths.SyncDirtyFile(),
@@ -340,7 +344,6 @@ func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
 	}
 	if _, err := d.configureSync(syncCredentials{
 		ServerURL: args.ServerURL,
-		Token:     args.Token,
 		UserID:    args.UserID,
 	}); err != nil {
 		return err

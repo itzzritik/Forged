@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { getSession, parseJWTPayload } from "@/lib/auth";
+import { getSession, refreshExpired } from "@/lib/auth";
 
 export default async function AuthSuccessPage({ searchParams }: { searchParams: Promise<{ error?: string }> }) {
 	const { error } = await searchParams;
@@ -40,12 +40,11 @@ export default async function AuthSuccessPage({ searchParams }: { searchParams: 
 		);
 	}
 
-	const token = await getSession();
-	if (!token) redirect("/login");
+	const session = await getSession();
+	if (!session || refreshExpired(session)) redirect("/login");
 
-	const payload = parseJWTPayload(token);
-	const name = (payload?.name || "") as string;
-	const email = (payload?.email || payload?.sub || "") as string;
+	const name = session.user.name;
+	const email = session.user.email;
 
 	return (
 		<div className="flex min-h-screen flex-col items-center justify-center bg-black px-6">

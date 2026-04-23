@@ -8,46 +8,23 @@ applies_to:
   - npm/**
 depends_on:
   - ops/release.md
-last_verified: 2026-04-21
+last_verified: 2026-04-23
 stable: yes
 ---
 
 # Mono-repo Layout
 
-Single repo for CLI (`cli/`), server (`server/`), web (`web/`), shared
-proto (`proto/`), npm wrapper (`npm/`), and agent KB (`.agents/`). The
-CLI is the product; server + web support it.
+The repo holds separate CLI, server, web, npm-wrapper, proto, and agent-doc trees.
 
 ## Must know
 
-- **Two independent Go modules, no `go.work`.** `cli/go.mod` and
-  `server/go.mod` are separate module roots. Commands run from inside
-  each subtree (`cd cli && go build ...`). Cross-module imports are not
-  intended — shared wire format lives in `proto/` as hand-written specs,
-  not shared Go code.
-- **`just` is the only orchestrator.** No Turborepo, Nx, or
-  pnpm-workspaces. The justfile is thin — a dozen recipes that `cd` into
-  the right subtree and invoke native tooling (`go build`, `pnpm`,
-  `doppler`). If a recipe grows beyond that, it belongs in `scripts/`,
-  not the justfile.
-- **`just dev` installs a dev service, it does not run the binary in the
-  foreground.** See `cli/daemon.md`.
-- **No path-filtered CI today.** `.github/workflows/publish.yml` is the
-  only workflow and runs on manual `workflow_dispatch` only. The `push`
-  trigger block is commented out. There is no lint/test CI.
-- **`npm/` is a release artifact, not dev tooling.** The wrapper ships
-  the CLI as `@getforged/cli` with per-platform optional deps built at
-  release time. See `ops/release.md` and `ops/platform-packaging.md`.
-- **`proto/*.md` are the source of truth for wire formats**, not
-  generated Go/TS code. Each side hand-implements from the spec.
+- `cli/` and `server/` are separate Go modules. There is no `go.work`.
+- `web/` is the only pnpm app. `npm/` is a release wrapper, not dev tooling.
+- `just` is the top-level task runner. It mainly `cd`s into the right subtree and runs native tools.
+- `proto/*.md` is the shared wire-format source of truth. There is no generated shared client package.
+- Release workflow is manual; there is no broad push-trigger CI.
 
 ## Decisions
 
-- One repo, not split — CLI, server, and web share a single release
-  cadence and the proto specs. Splitting would fork versioning for one
-  developer.
-- No Go workspace — keeps each module's `go.sum` independent and makes
-  `cd cli && go build` behave the same locally and in CI. Adding
-  `go.work` later is non-breaking but unnecessary today.
-- No JS monorepo tooling — `web/` is the only pnpm project; `npm/` is
-  published, not built. A workspace manager would only add config.
+- One repo keeps CLI, server, web, and specs on one release cadence.
+- No workspace tooling beyond `just`; extra orchestration is not worth it here.

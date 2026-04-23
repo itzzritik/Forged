@@ -22,17 +22,21 @@ func (s *Server) handleDevAuth(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	token, err := serverauth.GenerateToken(user.ID, user.Email, user.Name, s.Secret)
+	pair, err := issueTokenPairResponse(r.Context(), s, user)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not generate token")
+		writeError(w, http.StatusInternalServerError, "could not generate token pair")
 		return
 	}
 
-	writeJSON(w, http.StatusOK, map[string]string{
-		"token":   token,
+	response := map[string]any{
 		"user_id": user.ID,
 		"email":   user.Email,
-	})
+		"name":    user.Name,
+	}
+	for key, value := range pair {
+		response[key] = value
+	}
+	writeJSON(w, http.StatusOK, response)
 }
 
 func (s *Server) handleGoogleRedirect(w http.ResponseWriter, r *http.Request) {
@@ -102,23 +106,32 @@ func (s *Server) completeOAuth(w http.ResponseWriter, r *http.Request, oauthUser
 		return
 	}
 
-	token, err := serverauth.GenerateToken(user.ID, user.Email, user.Name, s.Secret)
+	pair, err := issueTokenPairResponse(r.Context(), s, user)
 	if err != nil {
-		s.redirectError(w, r, sessionCode, "could not generate token")
+		s.redirectError(w, r, sessionCode, "could not generate token pair")
 		return
 	}
 
 	q := url.Values{
-		"token":   {token},
-		"user_id": {user.ID},
-		"email":   {user.Email},
+		"access_token":       {pair["access_token"].(string)},
+		"access_expires_at":  {pair["access_expires_at"].(string)},
+		"refresh_token":      {pair["refresh_token"].(string)},
+		"refresh_expires_at": {pair["refresh_expires_at"].(string)},
+		"user_id":            {user.ID},
+		"email":              {user.Email},
+		"name":               {user.Name},
 	}
 
 	if sessionCode != "" {
-		if err := s.DB.CompleteAuthSession(r.Context(), sessionCode, token, user.ID, user.Email); err != nil {
-			// Session expired or not found - fall through to direct browser flow
+		session, err := s.DB.GetAuthSession(r.Context(), sessionCode)
+		if err == nil && session != nil && session.CodeChallenge != nil && session.ChallengeMethod != nil {
+			if err := s.DB.ApproveAuthSession(r.Context(), sessionCode, user.ID); err == nil {
+				q.Set("code", sessionCode)
+			}
 		} else {
-			q.Set("code", sessionCode)
+			if err := s.DB.CompleteAuthSession(r.Context(), sessionCode, pair["access_token"].(string), user.ID, user.Email); err == nil {
+				q.Set("code", sessionCode)
+			}
 		}
 	}
 

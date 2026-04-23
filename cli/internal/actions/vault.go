@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"context"
 	"encoding/base64"
 	"errors"
 	"fmt"
@@ -134,7 +135,7 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		return result, nil
 	}
 
-	creds, err := LoadCredentials(paths)
+	creds, err := LoadFreshCredentials(context.Background(), paths)
 	if err != nil {
 		result := ChangePasswordResult{
 			Detail: "Local vault updated. Log in and sync later to update recovery.",

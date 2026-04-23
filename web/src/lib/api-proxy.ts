@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
-import { getSession } from "@/lib/auth";
+import { getAccessTokenForRequest, setSessionCookieOnResponse } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
 export async function proxyToAPI(method: string, path: string, body?: string, extraHeaders: Record<string, string> = {}): Promise<NextResponse> {
-	const token = await getSession();
+	const { token, refreshed } = await getAccessTokenForRequest();
 	if (!token) {
 		return NextResponse.json({ error: "unauthorized" }, { status: 401 });
 	}
@@ -22,11 +22,15 @@ export async function proxyToAPI(method: string, path: string, body?: string, ex
 	});
 
 	const data = await resp.text();
-	return new NextResponse(data, {
+	const next = new NextResponse(data, {
 		status: resp.status,
 		headers: {
 			"Content-Type": "application/json",
 			"Cache-Control": "no-store",
 		},
 	});
+	if (refreshed) {
+		await setSessionCookieOnResponse(next, refreshed);
+	}
+	return next;
 }

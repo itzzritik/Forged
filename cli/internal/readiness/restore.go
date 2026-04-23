@@ -1,10 +1,10 @@
 package readiness
 
 import (
+	"context"
 	"crypto/sha256"
 	"encoding/base64"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/config"
 	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
 	"github.com/itzzritik/forged/cli/internal/vault"
@@ -49,7 +50,7 @@ func RestoreLinkedVault(paths config.Paths, password []byte) error {
 }
 
 func prepareLinkedRestore(paths config.Paths) (linkedRestorePlan, error) {
-	creds, err := loadLinkedCredentials(paths.CredentialsFile())
+	creds, err := loadLinkedCredentials(paths)
 	if err != nil {
 		return linkedRestorePlan{}, err
 	}
@@ -84,21 +85,20 @@ func prepareLinkedRestore(paths config.Paths) (linkedRestorePlan, error) {
 	}, nil
 }
 
-func loadLinkedCredentials(path string) (linkedCredentials, error) {
-	raw, err := os.ReadFile(path)
+func loadLinkedCredentials(paths config.Paths) (linkedCredentials, error) {
+	creds, err := accountauth.EnsureFresh(context.Background(), paths)
 	if err != nil {
-		return linkedCredentials{}, fmt.Errorf("Reading linked account credentials: %w", err)
+		return linkedCredentials{}, fmt.Errorf("Loading linked account credentials: %w", err)
 	}
-
-	var creds linkedCredentials
-	if err := json.Unmarshal(raw, &creds); err != nil {
-		return linkedCredentials{}, fmt.Errorf("Parsing linked account credentials: %w", err)
-	}
-	if creds.ServerURL == "" || creds.Token == "" {
+	if creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
 		return linkedCredentials{}, fmt.Errorf("Linked account credentials are incomplete")
 	}
 
-	return creds, nil
+	return linkedCredentials{
+		ServerURL: creds.ServerURL,
+		Token:     accountauth.CurrentToken(creds),
+		UserID:    creds.UserID,
+	}, nil
 }
 
 func applyLinkedRestore(paths config.Paths, plan linkedRestorePlan, password []byte) error {

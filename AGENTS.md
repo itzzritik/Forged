@@ -2,7 +2,9 @@
 
 ## Planning
 
-- All plans live in `.agents/plan/`. Do not place planning Markdown elsewhere in the repo unless the user asks.
+- Put all new repo plans in `.agents/plan/`.
+- Do not create repo-root planning Markdown files unless the user asks.
+- Do not recreate `TUI-*.md` files.
 - Use one folder per feature or workstream.
 - Reuse an existing feature folder when it already exists.
 - Use date-stamped filenames: `YYYY-MM-DD-<topic>.md`.
@@ -33,8 +35,7 @@
 
 ## Plan Lifecycle
 
-- Update `Status` and `Last updated` on every meaningful edit.
-- Move items between `Pending` / `In Progress` / `Done` as state changes.
+- Keep status current.
 - Do not delete completed plan files automatically.
 - When a plan is completed, tell the user which files were completed and on what date, then ask whether they should be deleted.
 
@@ -44,6 +45,14 @@
 - Prefer stdlib over third-party code when it is adequate.
 - Add comments only when they explain why, not what.
 - Wrap errors with context, for example: `fmt.Errorf("doing x: %w", err)`.
+
+## Docs Rules
+
+- Keep `.agents/docs/` minimal.
+- Only document non-obvious invariants, decisions, risks, and traps.
+- If code makes something obvious, do not document it.
+- Cut stale or obvious text instead of appending new prose.
+- Avoid history, changelog text, exhaustive route lists, field lists, and code-location notes.
 
 ## Docs Routing
 
@@ -69,12 +78,12 @@ If no row matches: do not preload. Read the specific file you are modifying.
 
 ## Keeping Docs Accurate
 
-If your change modifies files under a shard's `applies_to` glob AND alters behavior the shard describes:
+- If a matched shard changes, update only the minimal prose still needed and bump `last_verified`.
+- Remove stale or obvious text while touching a shard.
+- A plan cannot be marked `done` until the relevant docs match shipped behavior.
+- If a matched shard is missing or too stale to trust and you cannot fix it in scope, flag it before you commit.
 
-1. Update the affected prose so it matches current product behavior.
-2. Bump `last_verified` in the shard frontmatter to today's date.
-3. Write the doc update alongside the code change so they land in the same commit when the user stages.
+## Notes
 
-A plan cannot be marked `done` until its docs reflect the shipped behavior.
-
-If a matched shard is missing or inaccurate and fixing it is out of scope, flag it to the user before committing the code change.
+- Keep root `CLAUDE.md` pointing to this file.
+- `web/` keeps its own `web/AGENTS.md`.
