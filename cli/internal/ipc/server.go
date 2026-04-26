@@ -249,6 +249,8 @@ func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
 }
 
 func (s *Server) handleList() Response {
+	s.refreshForRead("list_keys")
+
 	keyStore, err := s.requireKeyStore()
 	if err != nil {
 		return ErrorResponse(err)
@@ -386,6 +388,8 @@ func (s *Server) handleExport(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
+	s.refreshForRead("export_key")
+
 	resolvedName, err := s.resolveKeyName(a.Name)
 	if err != nil {
 		return ErrorResponse(err)
@@ -414,6 +418,8 @@ func (s *Server) handleView(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
+
+	s.refreshForRead("view_key")
 
 	resolvedName, err := s.resolveKeyName(a.Name)
 	if err != nil {
@@ -716,6 +722,7 @@ func (s *Server) handleStatus() Response {
 			"dirty":                     syncState.Dirty,
 			"last_error":                syncState.LastError,
 			"last_known_server_version": syncState.LastKnownServerVersion,
+			"last_remote_check_at":      syncState.LastRemoteCheckAt,
 			"last_successful_pull_at":   syncState.LastSuccessfulPullAt,
 			"last_successful_push_at":   syncState.LastSuccessfulPushAt,
 			"linked":                    syncState.LinkedUserID != "" && syncState.ServerURL != "",

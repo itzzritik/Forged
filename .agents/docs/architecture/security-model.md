@@ -8,7 +8,7 @@ applies_to:
   - web/src/workers/**
   - server/internal/api/vault_handlers.go
   - server/migrations/**
-last_verified: 2026-04-26
+last_verified: 2026-04-27
 stable: partial
 ---
 
@@ -27,7 +27,7 @@ Forged is zero-knowledge. The server stores the encrypted vault blob, KDF params
 - The daemon now starts cold. It does not need a stored plaintext master password to boot.
 - Active auth creates a shared session. The session can be cleared by expiry, system lock/sleep, or TUI idle lock.
 - Private keys are now decrypted on demand. They are not kept plaintext for the whole session anymore.
-- SSH auto-routing writes public hint files and short-lived route snippets only. Provider probes use strict host-key checking and never treat `ssh -T` account auth as repo proof.
+- SSH auto-routing writes public hint files and short-lived route snippets only. Learned route proofs and route tombstones stay inside the encrypted vault. Provider probes use strict host-key checking and never treat `ssh -T` account auth as repo proof.
 - Export and change-password stay master-password-only.
 - `proto/vault-format.md` still lags the shipped AEAD details. Trust the vault code, not the proto doc, for current crypto constants.
 

@@ -21,6 +21,10 @@ type mergeRetryRuntime interface {
 	MergeAndRetry(ctx context.Context, state *SyncState) error
 }
 
+type remoteStatusRuntime interface {
+	RemoteStatus(ctx context.Context, state *SyncState) (StatusResult, error)
+}
+
 type linkRuntime interface {
 	ReconcileOnLink(ctx context.Context, state *SyncState, userID, serverURL string) error
 }
@@ -29,6 +33,8 @@ type BusConfig struct {
 	MutationDebounce     time.Duration
 	ForegroundFreshness  time.Duration
 	AgentFreshnessWindow time.Duration
+	RemoteCheckInterval  time.Duration
+	RemoteCheckTimeout   time.Duration
 	RetryBackoff         []time.Duration
 	DirtyFlagPath        string
 	StateStore           *StateStore
@@ -49,6 +55,9 @@ type Bus struct {
 	queuedRefresh    bool
 	lastAgentRefresh time.Time
 	retryIndex       int
+	stopped          bool
+	stopOnce         sync.Once
+	stopCh           chan struct{}
 }
 
 func DefaultBusConfig() BusConfig {
@@ -56,6 +65,8 @@ func DefaultBusConfig() BusConfig {
 		MutationDebounce:     500 * time.Millisecond,
 		ForegroundFreshness:  5 * time.Second,
 		AgentFreshnessWindow: 30 * time.Second,
+		RemoteCheckInterval:  2 * time.Minute,
+		RemoteCheckTimeout:   3 * time.Second,
 		RetryBackoff: []time.Duration{
 			1 * time.Second,
 			2 * time.Second,
@@ -80,6 +91,12 @@ func NewBus(engine EngineRuntime, state *SyncState, logger *slog.Logger, cfg Bus
 	if cfg.AgentFreshnessWindow <= 0 {
 		cfg.AgentFreshnessWindow = defaults.AgentFreshnessWindow
 	}
+	if cfg.RemoteCheckInterval <= 0 {
+		cfg.RemoteCheckInterval = defaults.RemoteCheckInterval
+	}
+	if cfg.RemoteCheckTimeout <= 0 {
+		cfg.RemoteCheckTimeout = defaults.RemoteCheckTimeout
+	}
 	if len(cfg.RetryBackoff) == 0 {
 		cfg.RetryBackoff = defaults.RetryBackoff
 	}
@@ -91,16 +108,23 @@ func NewBus(engine EngineRuntime, state *SyncState, logger *slog.Logger, cfg Bus
 		state = &defaultState
 	}
 
-	return &Bus{
+	bus := &Bus{
 		engine: engine,
 		state:  state,
 		logger: logger,
 		cfg:    cfg,
+		stopCh: make(chan struct{}),
 	}
+	bus.startBackgroundRefresh()
+	return bus
 }
 
 func (b *Bus) LocalMutation(reason string) {
 	b.mu.Lock()
+	if b.stopped {
+		b.mu.Unlock()
+		return
+	}
 	b.state.MarkDirty("", time.Time{})
 	b.persistLocked()
 
@@ -120,6 +144,10 @@ func (b *Bus) LocalMutation(reason string) {
 func (b *Bus) ForegroundRead(ctx context.Context, reason string) error {
 	for {
 		b.mu.Lock()
+		if b.stopped {
+			b.mu.Unlock()
+			return nil
+		}
 		if b.state.Dirty {
 			b.mu.Unlock()
 			return nil
@@ -139,7 +167,7 @@ func (b *Bus) ForegroundRead(ctx context.Context, reason string) error {
 		b.beginSyncLocked()
 		b.mu.Unlock()
 
-		err := b.executePull(ctx, reason)
+		err := b.executeRefresh(ctx, reason)
 		b.finishPull(err)
 		return err
 	}
@@ -147,6 +175,10 @@ func (b *Bus) ForegroundRead(ctx context.Context, reason string) error {
 
 func (b *Bus) AgentAccess(reason string) {
 	b.mu.Lock()
+	if b.stopped {
+		b.mu.Unlock()
+		return
+	}
 	if b.state.Dirty {
 		b.mu.Unlock()
 		return
@@ -168,6 +200,10 @@ func (b *Bus) AgentAccess(reason string) {
 func (b *Bus) RefreshMissingKey(ctx context.Context, reason string) error {
 	for {
 		b.mu.Lock()
+		if b.stopped {
+			b.mu.Unlock()
+			return nil
+		}
 		if b.syncing {
 			done := b.syncDone
 			b.mu.Unlock()
@@ -187,6 +223,10 @@ func (b *Bus) RefreshMissingKey(ctx context.Context, reason string) error {
 
 func (b *Bus) LifecycleRefresh(reason string) {
 	b.mu.Lock()
+	if b.stopped {
+		b.mu.Unlock()
+		return
+	}
 	dirty := b.state.Dirty
 	b.mu.Unlock()
 
@@ -198,6 +238,13 @@ func (b *Bus) LifecycleRefresh(reason string) {
 }
 
 func (b *Bus) AuthLinked(ctx context.Context, userID, serverURL string) error {
+	b.mu.Lock()
+	if b.stopped {
+		b.mu.Unlock()
+		return nil
+	}
+	b.mu.Unlock()
+
 	linker, ok := b.engine.(linkRuntime)
 	if !ok {
 		b.mu.Lock()
@@ -217,6 +264,10 @@ func (b *Bus) AuthLinked(ctx context.Context, userID, serverURL string) error {
 func (b *Bus) AuthUnlinked(ctx context.Context) error {
 	for {
 		b.mu.Lock()
+		if b.stopped {
+			b.mu.Unlock()
+			return nil
+		}
 		if b.syncing {
 			done := b.syncDone
 			b.queuedPush = false
@@ -251,6 +302,10 @@ func (b *Bus) AuthUnlinked(ctx context.Context) error {
 func (b *Bus) ForceSync(ctx context.Context, reason string) error {
 	for {
 		b.mu.Lock()
+		if b.stopped {
+			b.mu.Unlock()
+			return nil
+		}
 		if b.syncing {
 			done := b.syncDone
 			if b.state.Dirty {
@@ -322,6 +377,9 @@ func (b *Bus) enqueuePush(reason string) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
+	if b.stopped {
+		return
+	}
 	if b.syncing {
 		b.queuedPush = true
 		return
@@ -335,6 +393,10 @@ func (b *Bus) enqueuePush(reason string) {
 
 func (b *Bus) enqueueRefresh(reason string, timeout time.Duration) {
 	b.mu.Lock()
+	if b.stopped {
+		b.mu.Unlock()
+		return
+	}
 	if b.state.Dirty {
 		b.mu.Unlock()
 		return
@@ -354,7 +416,7 @@ func (b *Bus) enqueueRefresh(reason string, timeout time.Duration) {
 			ctx, cancel = context.WithTimeout(ctx, timeout)
 			defer cancel()
 		}
-		err := b.executePull(ctx, reason)
+		err := b.executeRefresh(ctx, reason)
 		b.finishPull(err)
 	}()
 }
@@ -388,6 +450,49 @@ func (b *Bus) executePull(ctx context.Context, reason string) error {
 	return err
 }
 
+func (b *Bus) executeRefresh(ctx context.Context, reason string) error {
+	checker, ok := b.engine.(remoteStatusRuntime)
+	if !ok {
+		return b.executePull(ctx, reason)
+	}
+
+	shouldPull, err := b.remoteNeedsPull(ctx, checker, reason)
+	if err != nil {
+		return err
+	}
+	if !shouldPull {
+		return nil
+	}
+	return b.executePull(ctx, reason)
+}
+
+func (b *Bus) remoteNeedsPull(ctx context.Context, checker remoteStatusRuntime, reason string) (bool, error) {
+	status, err := checker.RemoteStatus(ctx, b.state)
+	if errors.Is(err, ErrStatusUnsupported) {
+		return true, nil
+	}
+	if err != nil {
+		if b.logger != nil {
+			b.logger.Debug("status check failed", "reason", reason, "error", err)
+		}
+		return false, err
+	}
+
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	if b.state.Dirty || b.stopped {
+		return false, nil
+	}
+
+	b.state.LastRemoteCheckAt = time.Now().UTC()
+	b.state.LastError = ""
+	b.state.NextRetryAt = time.Time{}
+	shouldPull := status.HasVault && status.Version != b.state.LastKnownServerVersion
+	b.persistLocked()
+	return shouldPull, nil
+}
+
 func (b *Bus) finishPush(err error) {
 	b.mu.Lock()
 	if err != nil {
@@ -408,8 +513,12 @@ func (b *Bus) finishPush(err error) {
 	b.syncDone = nil
 	b.syncing = false
 	queuedPush := b.queuedPush
-	b.queuedPush = false
 	queuedRefresh := b.queuedRefresh
+	if b.stopped {
+		queuedPush = false
+		queuedRefresh = false
+	}
+	b.queuedPush = false
 	b.queuedRefresh = false
 	b.mu.Unlock()
 
@@ -437,8 +546,12 @@ func (b *Bus) finishPull(err error) {
 	b.syncDone = nil
 	b.syncing = false
 	queuedPush := b.queuedPush
-	b.queuedPush = false
 	queuedRefresh := b.queuedRefresh
+	if b.stopped {
+		queuedPush = false
+		queuedRefresh = false
+	}
+	b.queuedPush = false
 	b.queuedRefresh = false
 	b.mu.Unlock()
 
@@ -454,6 +567,26 @@ func (b *Bus) finishPull(err error) {
 func (b *Bus) beginSyncLocked() {
 	b.syncing = true
 	b.syncDone = make(chan struct{})
+}
+
+func (b *Bus) Stop() {
+	b.stopOnce.Do(func() {
+		b.mu.Lock()
+		b.stopped = true
+		if b.timer != nil {
+			b.timer.Stop()
+			b.timer = nil
+		}
+		if b.retryTimer != nil {
+			b.retryTimer.Stop()
+			b.retryTimer = nil
+		}
+		b.queuedPush = false
+		b.queuedRefresh = false
+		b.persistLocked()
+		b.mu.Unlock()
+		close(b.stopCh)
+	})
 }
 
 func (b *Bus) nextRetryDelayLocked() time.Duration {
@@ -481,10 +614,38 @@ func (b *Bus) scheduleRetryLocked(delay time.Duration) {
 }
 
 func (b *Bus) isStaleLocked(window time.Duration) bool {
-	if b.state.LastSuccessfulPullAt.IsZero() {
+	lastFresh := b.state.LastSuccessfulPullAt
+	if b.state.LastRemoteCheckAt.After(lastFresh) {
+		lastFresh = b.state.LastRemoteCheckAt
+	}
+	if lastFresh.IsZero() {
 		return true
 	}
-	return time.Since(b.state.LastSuccessfulPullAt) > window
+	return time.Since(lastFresh) > window
+}
+
+func (b *Bus) startBackgroundRefresh() {
+	if b.cfg.RemoteCheckInterval <= 0 {
+		return
+	}
+	go func() {
+		timer := time.NewTimer(b.cfg.RemoteCheckInterval)
+		defer timer.Stop()
+		for {
+			select {
+			case <-timer.C:
+				b.mu.Lock()
+				stale := !b.stopped && !b.state.Dirty && b.isStaleLocked(b.cfg.RemoteCheckInterval)
+				b.mu.Unlock()
+				if stale {
+					b.enqueueRefresh("background_status", b.cfg.RemoteCheckTimeout)
+				}
+				timer.Reset(b.cfg.RemoteCheckInterval)
+			case <-b.stopCh:
+				return
+			}
+		}
+	}()
 }
 
 func (b *Bus) persistLocked() {

@@ -18,9 +18,7 @@ func MergeThreeWay(base, local, remote vault.VaultData, localDeviceID, remoteDev
 	merged := vault.VaultData{
 		Metadata:      mergeMetadata(base.Metadata, local.Metadata, remote.Metadata),
 		KeyGeneration: maxInt(base.KeyGeneration, local.KeyGeneration, remote.KeyGeneration),
-		SSH: vault.SSHData{
-			Routes: mergeSSHRoutes(base.SSH.Routes, local.SSH.Routes, remote.SSH.Routes),
-		},
+		SSH:           mergeSSHData(base.SSH, local.SSH, remote.SSH),
 	}
 
 	merged.VersionVector = mergeVersionVectors(base.VersionVector, local.VersionVector, remote.VersionVector)
@@ -81,9 +79,7 @@ func BootstrapMerge(local, remote vault.VaultData, localDeviceID, remoteDeviceID
 		KeyGeneration: maxInt(local.KeyGeneration, remote.KeyGeneration),
 		VersionVector: mergeVersionVectors(local.VersionVector, remote.VersionVector),
 		Tombstones:    mergeTombstones(local.Tombstones, remote.Tombstones),
-		SSH: vault.SSHData{
-			Routes: mergeSSHRoutes(nil, local.SSH.Routes, remote.SSH.Routes),
-		},
+		SSH:           mergeSSHData(vault.SSHData{}, local.SSH, remote.SSH),
 	}
 
 	tombstoneSet := make(map[string]struct{}, len(merged.Tombstones))
@@ -170,6 +166,34 @@ func mergeTombstones(sets ...[]vault.Tombstone) []vault.Tombstone {
 	sort.Slice(result, func(i, j int) bool {
 		if result[i].DeletedAt.Equal(result[j].DeletedAt) {
 			return result[i].KeyID < result[j].KeyID
+		}
+		return result[i].DeletedAt.Before(result[j].DeletedAt)
+	})
+	return result
+}
+
+func mergeSSHRouteTombstones(sets ...[]vault.SSHRouteTombstone) []vault.SSHRouteTombstone {
+	seen := make(map[string]vault.SSHRouteTombstone)
+	cutoff := time.Now().UTC().Add(-tombstoneTTL)
+
+	for _, tombstones := range sets {
+		for _, tombstone := range tombstones {
+			if tombstone.Target == "" || !tombstone.DeletedAt.After(cutoff) {
+				continue
+			}
+			if existing, ok := seen[tombstone.Target]; !ok || tombstone.DeletedAt.After(existing.DeletedAt) {
+				seen[tombstone.Target] = tombstone
+			}
+		}
+	}
+
+	result := make([]vault.SSHRouteTombstone, 0, len(seen))
+	for _, t := range seen {
+		result = append(result, t)
+	}
+	sort.Slice(result, func(i, j int) bool {
+		if result[i].DeletedAt.Equal(result[j].DeletedAt) {
+			return result[i].Target < result[j].Target
 		}
 		return result[i].DeletedAt.Before(result[j].DeletedAt)
 	})
@@ -389,7 +413,24 @@ func tieBreakID(key vault.Key, fallback string) string {
 	return value
 }
 
-func mergeSSHRoutes(base, local, remote map[string]vault.SSHRoute) map[string]vault.SSHRoute {
+func mergeSSHData(base, local, remote vault.SSHData) vault.SSHData {
+	tombstones := mergeSSHRouteTombstones(
+		base.Tombstones,
+		local.Tombstones,
+		remote.Tombstones,
+		routeDeleteMarkers(base.Routes),
+		routeDeleteMarkers(local.Routes),
+		routeDeleteMarkers(remote.Routes),
+	)
+	routes := mergeSSHRoutes(base.Routes, local.Routes, remote.Routes, tombstones)
+	tombstones = pruneSSHRouteTombstones(tombstones, routes)
+	return vault.SSHData{
+		Routes:     routes,
+		Tombstones: tombstones,
+	}
+}
+
+func mergeSSHRoutes(base, local, remote map[string]vault.SSHRoute, tombstones []vault.SSHRouteTombstone) map[string]vault.SSHRoute {
 	ids := make(map[string]struct{}, len(base)+len(local)+len(remote))
 	for target := range base {
 		ids[target] = struct{}{}
@@ -402,6 +443,7 @@ func mergeSSHRoutes(base, local, remote map[string]vault.SSHRoute) map[string]va
 	}
 
 	out := make(map[string]vault.SSHRoute, len(ids))
+	tombstoneByTarget := sshRouteTombstonesByTarget(tombstones)
 	for target := range ids {
 		route, ok := newestRoute(
 			local[target],
@@ -411,11 +453,70 @@ func mergeSSHRoutes(base, local, remote map[string]vault.SSHRoute) map[string]va
 			remote == nil || !routeExists(remote, target),
 			base == nil || !routeExists(base, target),
 		)
-		if ok {
-			out[target] = route
+		if !ok {
+			continue
 		}
+		if tombstone, deleted := tombstoneByTarget[target]; deleted && !routeOverridesTombstone(route, tombstone) {
+			continue
+		}
+		if routeIsDeleteMarker(route) {
+			continue
+		}
+		out[target] = route
 	}
 	return out
+}
+
+func routeDeleteMarkers(routes map[string]vault.SSHRoute) []vault.SSHRouteTombstone {
+	if len(routes) == 0 {
+		return nil
+	}
+	tombstones := make([]vault.SSHRouteTombstone, 0)
+	for target, route := range routes {
+		if routeIsDeleteMarker(route) {
+			tombstones = append(tombstones, vault.SSHRouteTombstone{
+				Target:    target,
+				DeletedAt: route.Updated,
+			})
+		}
+	}
+	return tombstones
+}
+
+func routeIsDeleteMarker(route vault.SSHRoute) bool {
+	return route.Key == "" && len(route.Attempts) == 0 && !route.Updated.IsZero()
+}
+
+func sshRouteTombstonesByTarget(tombstones []vault.SSHRouteTombstone) map[string]vault.SSHRouteTombstone {
+	byTarget := make(map[string]vault.SSHRouteTombstone, len(tombstones))
+	for _, tombstone := range tombstones {
+		if tombstone.Target == "" {
+			continue
+		}
+		if current, ok := byTarget[tombstone.Target]; !ok || tombstone.DeletedAt.After(current.DeletedAt) {
+			byTarget[tombstone.Target] = tombstone
+		}
+	}
+	return byTarget
+}
+
+func routeOverridesTombstone(route vault.SSHRoute, tombstone vault.SSHRouteTombstone) bool {
+	return route.Key != "" && route.Updated.After(tombstone.DeletedAt)
+}
+
+func pruneSSHRouteTombstones(tombstones []vault.SSHRouteTombstone, routes map[string]vault.SSHRoute) []vault.SSHRouteTombstone {
+	if len(tombstones) == 0 {
+		return nil
+	}
+	pruned := make([]vault.SSHRouteTombstone, 0, len(tombstones))
+	for _, tombstone := range tombstones {
+		route, ok := routes[tombstone.Target]
+		if ok && routeOverridesTombstone(route, tombstone) {
+			continue
+		}
+		pruned = append(pruned, tombstone)
+	}
+	return pruned
 }
 
 func newestRoute(local, remote, base vault.SSHRoute, localMissing, remoteMissing, baseMissing bool) (vault.SSHRoute, bool) {

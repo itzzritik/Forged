@@ -42,6 +42,7 @@ type Service struct {
 	attempts      map[string]Attempt
 	clientAttempt map[int]string
 	prober        ProviderProber
+	onMutation    func(reason string)
 }
 
 func NewService(paths config.Paths, keyStore *vault.KeyStore) *Service {
@@ -59,6 +60,12 @@ func (s *Service) SetKeyStore(keyStore *vault.KeyStore) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.keyStore = keyStore
+}
+
+func (s *Service) SetOnMutation(fn func(reason string)) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.onMutation = fn
 }
 
 func (s *Service) Prepare(req PrepareRequest) error {
@@ -179,13 +186,17 @@ func (s *Service) Success(attempt string, clientPID int) error {
 	if current.Target.Kind == TargetGit {
 		return nil
 	}
-	return s.keyStore.RecordSSHRouteProof(
+	if err := s.keyStore.RecordSSHRouteProof(
 		current.Target.Canonical,
 		current.LastKey,
 		vault.SSHRouteProofSSHAuth,
 		current.Operation.String(),
 		s.now(),
-	)
+	); err != nil {
+		return err
+	}
+	s.notifyMutation("ssh_route_learned")
+	return nil
 }
 
 func (s *Service) RecordSignature(clientPID int, fingerprint string) {
@@ -360,6 +371,7 @@ func (s *Service) probeGitProvider(target Target, operation OperationClass, plan
 				); err != nil {
 					return nil, false, err
 				}
+				s.notifyMutation("ssh_route_learned")
 			}
 			return []string{candidate.Fingerprint}, true, nil
 		case ProbeDenied:
@@ -405,6 +417,7 @@ func (s *Service) probeSSHServer(target Target, operation OperationClass, plan C
 			); err != nil {
 				return nil, false, err
 			}
+			s.notifyMutation("ssh_route_learned")
 			return []string{candidate.Fingerprint}, true, nil
 		case ProbeDenied:
 			continue
@@ -425,6 +438,15 @@ func (s *Service) probeSSHServer(target Target, operation OperationClass, plan C
 		return []string{}, false, nil
 	}
 	return nil, false, nil
+}
+
+func (s *Service) notifyMutation(reason string) {
+	s.mu.RLock()
+	fn := s.onMutation
+	s.mu.RUnlock()
+	if fn != nil {
+		fn(reason)
+	}
 }
 
 func refsForFingerprints(fingerprints []string, refs map[string]KeyRef) []KeyRef {

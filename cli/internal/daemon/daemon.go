@@ -67,6 +67,7 @@ func (d *Daemon) Run(password []byte) error {
 	defer d.shutdown()
 
 	d.routeService = sshrouting.NewService(d.paths, nil)
+	d.routeService.SetOnMutation(d.handleRouteMutation)
 	d.sshRouting = sshrouting.NewManager(d.paths, d.selfBinaryPath())
 	d.authBroker = sensitiveauth.NewBroker(d.paths, d.helperBinaryPath(), d.logger, d)
 
@@ -330,8 +331,13 @@ func (d *Daemon) configureSync(creds syncCredentials) (*forgedsync.SyncState, er
 		StateStore:    stateStore,
 	})
 
+	if d.syncBus != nil {
+		d.syncBus.Stop()
+	}
 	d.syncBus = bus
-	d.ipcServer.SetSyncBus(bus)
+	if d.ipcServer != nil {
+		d.ipcServer.SetSyncBus(bus)
+	}
 	if d.agent != nil {
 		d.agent.SetSyncCoordinator(bus)
 	}
@@ -370,6 +376,7 @@ func (d *Daemon) handleSyncUnlink() error {
 		if err := d.syncBus.AuthUnlinked(context.Background()); err != nil {
 			return err
 		}
+		d.syncBus.Stop()
 	}
 
 	d.syncBus = nil
@@ -488,6 +495,7 @@ func (d *Daemon) clearActiveSession(reason string) {
 
 	if d.syncBus != nil {
 		d.syncBus.PersistDirtyFlag()
+		d.syncBus.Stop()
 		d.syncBus = nil
 		if d.ipcServer != nil {
 			d.ipcServer.SetSyncBus(nil)
@@ -515,6 +523,16 @@ func (d *Daemon) clearActiveSession(reason string) {
 
 	if d.logger != nil && strings.TrimSpace(reason) != "" {
 		d.logger.Info("vault session cleared", "reason", reason)
+	}
+}
+
+func (d *Daemon) handleRouteMutation(reason string) {
+	d.sessionMu.Lock()
+	bus := d.syncBus
+	d.sessionMu.Unlock()
+
+	if bus != nil {
+		bus.LocalMutation(reason)
 	}
 }
 

@@ -30,7 +30,8 @@ type VaultData struct {
 }
 
 type SSHData struct {
-	Routes map[string]SSHRoute `json:"routes,omitempty"`
+	Routes     map[string]SSHRoute `json:"routes,omitempty"`
+	Tombstones []SSHRouteTombstone `json:"tombstones,omitempty"`
 }
 
 type SSHRoute struct {
@@ -41,6 +42,12 @@ type SSHRoute struct {
 	SuccessCount  int                  `json:"success_count,omitempty"`
 	LastSuccessAt *time.Time           `json:"last_success_at,omitempty"`
 	Attempts      map[string]time.Time `json:"attempts,omitempty"`
+}
+
+type SSHRouteTombstone struct {
+	Target          string    `json:"target"`
+	DeletedAt       time.Time `json:"deleted_at"`
+	DeletedByDevice string    `json:"deleted_by_device,omitempty"`
 }
 
 type Key struct {

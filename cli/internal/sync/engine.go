@@ -19,6 +19,14 @@ type API interface {
 	Pull() (PullResult, error)
 }
 
+type statusAPI interface {
+	Status() (StatusResult, error)
+}
+
+type statusContextAPI interface {
+	StatusContext(ctx context.Context) (StatusResult, error)
+}
+
 type Engine struct {
 	vault  *vault.Vault
 	client API
@@ -77,6 +85,7 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 		return vault.VaultData{}, PullResult{}, err
 	}
 
+	now := time.Now().UTC()
 	if !state.Dirty {
 		original := e.vault.Data
 		e.vault.Data = MergeVaults(e.vault.Data, remote)
@@ -88,10 +97,11 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 		state.LastSyncedHash = hashBlob(result.Blob)
 		state.LastError = ""
 		state.NextRetryAt = time.Time{}
+		state.LastKnownServerVersion = result.Version
 	}
 
-	state.LastKnownServerVersion = result.Version
-	state.LastSuccessfulPullAt = time.Now().UTC()
+	state.LastRemoteCheckAt = now
+	state.LastSuccessfulPullAt = now
 	if !state.Dirty && remoteMetadataMissing(result) {
 		if err := e.repairRemoteMetadata(ctx, state, result.Version); err != nil && e.logger != nil {
 			e.logger.Warn("repairing missing remote vault metadata failed", "error", err)
@@ -157,8 +167,10 @@ func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, 
 			return err
 		}
 		if remoteExists {
+			now := time.Now().UTC()
 			state.LastKnownServerVersion = result.Version
-			state.LastSuccessfulPullAt = time.Now().UTC()
+			state.LastRemoteCheckAt = now
+			state.LastSuccessfulPullAt = now
 			state.LastSyncedBaseBlob = append([]byte(nil), result.Blob...)
 			state.LastSyncedHash = hashBlob(result.Blob)
 			state.Dirty = false
@@ -178,8 +190,10 @@ func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, 
 			return err
 		}
 		if remoteExists {
+			now := time.Now().UTC()
 			state.LastKnownServerVersion = result.Version
-			state.LastSuccessfulPullAt = time.Now().UTC()
+			state.LastRemoteCheckAt = now
+			state.LastSuccessfulPullAt = now
 			state.LastSyncedBaseBlob = append([]byte(nil), result.Blob...)
 			state.LastSyncedHash = hashBlob(result.Blob)
 		}
@@ -194,6 +208,20 @@ func (e *Engine) Pull() error {
 	state := DefaultSyncState("")
 	_, _, err := e.PullLatest(context.Background(), &state)
 	return err
+}
+
+func (e *Engine) RemoteStatus(ctx context.Context, state *SyncState) (StatusResult, error) {
+	if state == nil {
+		return StatusResult{}, fmt.Errorf("Sync state required")
+	}
+	if checker, ok := e.client.(statusContextAPI); ok {
+		return checker.StatusContext(ctx)
+	}
+	if checker, ok := e.client.(statusAPI); ok {
+		_ = ctx
+		return checker.Status()
+	}
+	return StatusResult{}, ErrStatusUnsupported
 }
 
 func (e *Engine) push() error {

@@ -2,6 +2,7 @@ package sync
 
 import (
 	"bytes"
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -24,8 +25,9 @@ type Client struct {
 var _ API = (*Client)(nil)
 
 var (
-	ErrNoRemoteVault   = errors.New("No vault on server")
-	ErrVersionConflict = errors.New("Version conflict")
+	ErrNoRemoteVault     = errors.New("No vault on server")
+	ErrVersionConflict   = errors.New("Version conflict")
+	ErrStatusUnsupported = errors.New("Status unsupported")
 )
 
 func NewClient(serverURL, token, deviceID string) *Client {
@@ -217,7 +219,11 @@ type StatusResult struct {
 }
 
 func (c *Client) Status() (StatusResult, error) {
-	req, err := http.NewRequest("GET", c.ServerURL+"/api/v1/sync/status", nil)
+	return c.StatusContext(context.Background())
+}
+
+func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.ServerURL+"/api/v1/sync/status", nil)
 	if err != nil {
 		return StatusResult{}, err
 	}
@@ -234,8 +240,15 @@ func (c *Client) Status() (StatusResult, error) {
 	}
 	defer resp.Body.Close()
 
+	if resp.StatusCode != http.StatusOK {
+		respBody, _ := io.ReadAll(resp.Body)
+		return StatusResult{}, fmt.Errorf("Status failed (%d): %s", resp.StatusCode, string(respBody))
+	}
+
 	var result StatusResult
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return StatusResult{}, fmt.Errorf("Parsing status response: %w", err)
+	}
 	return result, nil
 }
 

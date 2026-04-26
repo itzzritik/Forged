@@ -5,7 +5,7 @@ applies_to:
   - cli/internal/crypto/**
 depends_on:
   - architecture/security-model.md
-last_verified: 2026-04-26
+last_verified: 2026-04-27
 stable: partial
 ---
 
@@ -20,7 +20,7 @@ The local vault is the encrypted source of truth for keys, metadata, and synced 
 - Password change rewraps the vault symmetric key. It does not rotate that key today.
 - Local unlock trust is device-local even though the vault itself is shared.
 - Private keys are now decrypted on demand instead of being kept plaintext in session memory.
-- SSH route entries include proof metadata, operation class, success timestamps, and bounded attempt history; the vault remains the synced source of truth for learned routes.
+- SSH route entries include proof metadata, operation class, success timestamps, bounded attempt history, and route tombstones; the vault remains the synced source of truth for learned routes.
 - Export and change-password are intentionally stricter than normal unlock flows.
 
 ## Decisions

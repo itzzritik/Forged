@@ -18,6 +18,7 @@ type SyncState struct {
 	LastSyncedBaseBlobB64  string    `json:"last_synced_base_blob"`
 	LastSyncedHash         string    `json:"last_synced_hash"`
 	Dirty                  bool      `json:"dirty"`
+	LastRemoteCheckAt      time.Time `json:"last_remote_check_at"`
 	LastSuccessfulPullAt   time.Time `json:"last_successful_pull_at"`
 	LastSuccessfulPushAt   time.Time `json:"last_successful_push_at"`
 	LastError              string    `json:"last_error"`
@@ -44,11 +45,13 @@ func (s *SyncState) MarkDirty(err string, nextRetry time.Time) {
 }
 
 func (s *SyncState) MarkClean(version int64, baseBlob []byte, hash string) {
+	now := time.Now().UTC()
 	s.Dirty = false
 	s.LastKnownServerVersion = version
 	s.LastSyncedBaseBlob = append([]byte(nil), baseBlob...)
 	s.LastSyncedHash = hash
-	s.LastSuccessfulPushAt = time.Now().UTC()
+	s.LastRemoteCheckAt = now
+	s.LastSuccessfulPushAt = now
 	s.LastError = ""
 	s.NextRetryAt = time.Time{}
 }

@@ -15,6 +15,9 @@ func (ks *KeyStore) SSHRoute(target string) (SSHRoute, bool) {
 	defer ks.mu.RUnlock()
 
 	route, ok := ks.vault.Data.SSH.Routes[target]
+	if !ok || routeDeletedByTombstone(route, ks.vault.Data.SSH.Tombstones, target) {
+		return SSHRoute{}, false
+	}
 	return route, ok
 }
 
@@ -22,7 +25,7 @@ func (ks *KeyStore) SSHRoutes() map[string]SSHRoute {
 	ks.mu.RLock()
 	defer ks.mu.RUnlock()
 
-	return cloneSSHRoutes(ks.vault.Data.SSH.Routes)
+	return effectiveSSHRoutes(ks.vault.Data.SSH.Routes, ks.vault.Data.SSH.Tombstones)
 }
 
 func (ks *KeyStore) RecordSSHRoute(target, fingerprint string, updated time.Time) error {
@@ -41,9 +44,13 @@ func (ks *KeyStore) RecordSSHRouteProof(target, fingerprint, provenBy, operation
 	defer ks.mu.Unlock()
 
 	originalRoutes := cloneSSHRoutes(ks.vault.Data.SSH.Routes)
+	originalTombstones := cloneSSHRouteTombstones(ks.vault.Data.SSH.Tombstones)
 	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
 
-	ensureSSHRoutes(&ks.vault.Data)
+	ensureSSHData(&ks.vault.Data)
+	if routeDeletedAtOrAfter(ks.vault.Data.SSH.Tombstones, target, updated.UTC()) {
+		return nil
+	}
 	previous := ks.vault.Data.SSH.Routes[target]
 	successCount := previous.SuccessCount
 	if previous.Key == fingerprint {
@@ -61,10 +68,12 @@ func (ks *KeyStore) RecordSSHRouteProof(target, fingerprint, provenBy, operation
 		LastSuccessAt: &successAt,
 		Attempts:      cloneRouteAttempts(previous.Attempts),
 	}
+	ks.removeSSHRouteTombstone(target, updated.UTC())
 	ks.bumpVersionVector()
 
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.SSH.Routes = originalRoutes
+		ks.vault.Data.SSH.Tombstones = originalTombstones
 		ks.vault.Data.VersionVector = originalVersionVector
 		return fmt.Errorf("Saving vault: %w", err)
 	}
@@ -86,7 +95,7 @@ func (ks *KeyStore) RecordSSHRouteAttempt(target, fingerprint, operation string,
 	originalRoutes := cloneSSHRoutes(ks.vault.Data.SSH.Routes)
 	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
 
-	ensureSSHRoutes(&ks.vault.Data)
+	ensureSSHData(&ks.vault.Data)
 	route := cloneSSHRoute(ks.vault.Data.SSH.Routes[target])
 	if route.Attempts == nil {
 		route.Attempts = map[string]time.Time{}
@@ -115,16 +124,17 @@ func (ks *KeyStore) ClearSSHRoute(target string, updated time.Time) error {
 	defer ks.mu.Unlock()
 
 	originalRoutes := cloneSSHRoutes(ks.vault.Data.SSH.Routes)
+	originalTombstones := cloneSSHRouteTombstones(ks.vault.Data.SSH.Tombstones)
 	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
 
-	ensureSSHRoutes(&ks.vault.Data)
-	ks.vault.Data.SSH.Routes[target] = SSHRoute{
-		Updated: updated.UTC(),
-	}
+	ensureSSHData(&ks.vault.Data)
+	delete(ks.vault.Data.SSH.Routes, target)
+	ks.upsertSSHRouteTombstone(target, updated.UTC())
 	ks.bumpVersionVector()
 
 	if err := ks.vault.Save(); err != nil {
 		ks.vault.Data.SSH.Routes = originalRoutes
+		ks.vault.Data.SSH.Tombstones = originalTombstones
 		ks.vault.Data.VersionVector = originalVersionVector
 		return fmt.Errorf("Saving vault: %w", err)
 	}
@@ -133,9 +143,24 @@ func (ks *KeyStore) ClearSSHRoute(target string, updated time.Time) error {
 }
 
 func ensureSSHRoutes(data *VaultData) {
+	ensureSSHData(data)
+}
+
+func ensureSSHData(data *VaultData) {
 	if data.SSH.Routes == nil {
 		data.SSH.Routes = map[string]SSHRoute{}
 	}
+}
+
+func effectiveSSHRoutes(routes map[string]SSHRoute, tombstones []SSHRouteTombstone) map[string]SSHRoute {
+	cloned := make(map[string]SSHRoute, len(routes))
+	for target, route := range routes {
+		if routeDeletedByTombstone(route, tombstones, target) {
+			continue
+		}
+		cloned[target] = cloneSSHRoute(route)
+	}
+	return cloned
 }
 
 func cloneSSHRoutes(routes map[string]SSHRoute) map[string]SSHRoute {
@@ -154,6 +179,71 @@ func cloneSSHRoute(route SSHRoute) SSHRoute {
 	}
 	cloned.Attempts = cloneRouteAttempts(route.Attempts)
 	return cloned
+}
+
+func cloneSSHRouteTombstones(tombstones []SSHRouteTombstone) []SSHRouteTombstone {
+	cloned := make([]SSHRouteTombstone, len(tombstones))
+	copy(cloned, tombstones)
+	return cloned
+}
+
+func routeDeletedByTombstone(route SSHRoute, tombstones []SSHRouteTombstone, target string) bool {
+	if route.Key == "" && len(route.Attempts) == 0 {
+		return true
+	}
+	for _, tombstone := range tombstones {
+		if tombstone.Target != target {
+			continue
+		}
+		if route.Key == "" {
+			return true
+		}
+		if tombstone.DeletedAt.After(route.Updated) || tombstone.DeletedAt.Equal(route.Updated) {
+			return true
+		}
+	}
+	return false
+}
+
+func routeDeletedAtOrAfter(tombstones []SSHRouteTombstone, target string, at time.Time) bool {
+	for _, tombstone := range tombstones {
+		if tombstone.Target == target && (tombstone.DeletedAt.After(at) || tombstone.DeletedAt.Equal(at)) {
+			return true
+		}
+	}
+	return false
+}
+
+func (ks *KeyStore) upsertSSHRouteTombstone(target string, deletedAt time.Time) {
+	tombstone := SSHRouteTombstone{
+		Target:          target,
+		DeletedAt:       deletedAt.UTC(),
+		DeletedByDevice: ks.vault.DeviceID(),
+	}
+
+	for i := range ks.vault.Data.SSH.Tombstones {
+		if ks.vault.Data.SSH.Tombstones[i].Target != target {
+			continue
+		}
+		if deletedAt.After(ks.vault.Data.SSH.Tombstones[i].DeletedAt) {
+			ks.vault.Data.SSH.Tombstones[i] = tombstone
+		}
+		return
+	}
+
+	ks.vault.Data.SSH.Tombstones = append(ks.vault.Data.SSH.Tombstones, tombstone)
+}
+
+func (ks *KeyStore) removeSSHRouteTombstone(target string, routeUpdated time.Time) {
+	tombstones := ks.vault.Data.SSH.Tombstones
+	kept := tombstones[:0]
+	for _, tombstone := range tombstones {
+		if tombstone.Target == target && routeUpdated.After(tombstone.DeletedAt) {
+			continue
+		}
+		kept = append(kept, tombstone)
+	}
+	ks.vault.Data.SSH.Tombstones = kept
 }
 
 func cloneRouteAttempts(attempts map[string]time.Time) map[string]time.Time {

@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-04-23
+last_verified: 2026-04-27
 stable: partial
 ---
 
@@ -26,6 +26,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - A live vault session exists only after sensitive auth or password fallback hydrates it.
 - When the shared session is cleared, the daemon drops back to cold state.
 - Sync only exists while account credentials are present and a live vault session is available.
+- While sync is active, learned SSH route proofs mark the vault dirty and the sync bus also runs low-frequency status checks.
 - Windows support is still partial around socket transport and platform helpers.
 
 ## Decisions
