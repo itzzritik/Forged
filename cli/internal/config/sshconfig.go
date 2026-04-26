@@ -257,7 +257,6 @@ func cleanupLegacySSHArtifacts(paths Paths) error {
 	_ = os.Remove(filepath.Join(paths.StateDir, "ssh-routing.json"))
 	_ = os.Remove(paths.SSHLegacyAdvancedConfig())
 	_ = os.Remove(filepath.Join(paths.SSHManagedDir(), "routing.json"))
-	_ = os.RemoveAll(filepath.Join(paths.SSHManagedDir(), "keys"))
 	return nil
 }
 

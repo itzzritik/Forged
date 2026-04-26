@@ -439,7 +439,25 @@ func newestRoute(local, remote, base vault.SSHRoute, localMissing, remoteMissing
 			newest = candidate
 		}
 	}
+	if attempts := mergeRouteAttempts(base.Attempts, local.Attempts, remote.Attempts); attempts != nil {
+		newest.Attempts = attempts
+	}
 	return newest, true
+}
+
+func mergeRouteAttempts(attemptMaps ...map[string]time.Time) map[string]time.Time {
+	merged := map[string]time.Time{}
+	for _, attempts := range attemptMaps {
+		for fingerprint, attemptedAt := range attempts {
+			if existing, ok := merged[fingerprint]; !ok || attemptedAt.After(existing) {
+				merged[fingerprint] = attemptedAt
+			}
+		}
+	}
+	if len(merged) == 0 {
+		return nil
+	}
+	return merged
 }
 
 func routeExists(routes map[string]vault.SSHRoute, target string) bool {

@@ -2,7 +2,7 @@
 title: Daemon IPC
 applies_to:
   - cli/internal/ipc/**
-last_verified: 2026-04-23
+last_verified: 2026-04-26
 stable: yes
 ---
 
@@ -17,6 +17,7 @@ stable: yes
 - `proto/ipc.md` is not current. Code is the source of truth for the command set.
 - `sensitive-auth` takes an `action` and optional `force`. `force=true` is used for launch auth.
 - `status` exposes enough sensitive state for the TUI to detect cold vs active session.
+- Hidden SSH route IPC prepares per-attempt snippets from `%C`, `%h`, `%p`, `%r`, and `%n`; prepare failures are quiet so the managed SSH config fails closed with no default identities.
 - Windows IPC support is still incomplete.
 
 ## Decisions

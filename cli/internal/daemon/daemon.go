@@ -137,7 +137,11 @@ func (d *Daemon) refreshSSHRouting() error {
 	if d.sshRouting == nil {
 		return nil
 	}
-	if err := d.sshRouting.Refresh(); err != nil {
+	var keys []vault.Key
+	if d.keyStore != nil {
+		keys = d.keyStore.List()
+	}
+	if err := d.sshRouting.Refresh(keys); err != nil {
 		d.logger.Warn("refreshing ssh routing failed", "error", err)
 		return fmt.Errorf("Refreshing SSH routing: %w", err)
 	}

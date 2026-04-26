@@ -20,7 +20,7 @@ import (
 
 type SSHRouteHandler interface {
 	Prepare(sshrouting.PrepareRequest) error
-	Success(attempt string) error
+	Success(attempt string, clientPID int) error
 }
 
 type Server struct {
@@ -204,18 +204,31 @@ func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
+	s.ensureExternalSession()
+
 	if err := s.sshRoutes.Prepare(sshrouting.PrepareRequest{
-		Attempt:   args.Attempt,
-		ClientPID: args.ClientPID,
-		CWD:       args.CWD,
-		Host:      args.Host,
-		User:      args.User,
-		Port:      args.Port,
+		Attempt:      args.Attempt,
+		ClientPID:    args.ClientPID,
+		CWD:          args.CWD,
+		Host:         args.Host,
+		OriginalHost: args.OriginalHost,
+		User:         args.User,
+		Port:         args.Port,
 	}); err != nil {
 		return ErrorResponse(err)
 	}
 
 	return OkResponse(nil)
+}
+
+func (s *Server) ensureExternalSession() {
+	s.stateMu.RLock()
+	locked := s.keyStore == nil
+	s.stateMu.RUnlock()
+	if !locked || s.authBroker == nil {
+		return
+	}
+	_, _ = s.authBroker.Authorize(context.Background(), sensitiveauth.ActionExternal)
 }
 
 func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
@@ -228,7 +241,7 @@ func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
-	if err := s.sshRoutes.Success(args.Attempt); err != nil {
+	if err := s.sshRoutes.Success(args.Attempt, args.ClientPID); err != nil {
 		return ErrorResponse(err)
 	}
 

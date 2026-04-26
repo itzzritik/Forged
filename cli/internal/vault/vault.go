@@ -34,8 +34,13 @@ type SSHData struct {
 }
 
 type SSHRoute struct {
-	Key     string    `json:"key,omitempty"`
-	Updated time.Time `json:"updated"`
+	Key           string               `json:"key,omitempty"`
+	Updated       time.Time            `json:"updated"`
+	ProvenBy      string               `json:"proven_by,omitempty"`
+	Operation     string               `json:"operation,omitempty"`
+	SuccessCount  int                  `json:"success_count,omitempty"`
+	LastSuccessAt *time.Time           `json:"last_success_at,omitempty"`
+	Attempts      map[string]time.Time `json:"attempts,omitempty"`
 }
 
 type Key struct {

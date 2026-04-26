@@ -10,6 +10,10 @@ import (
 )
 
 func ResolveGitTarget(cwd, branch string) (Target, error) {
+	return ResolveGitTargetForOperation(cwd, branch, OperationUnknown)
+}
+
+func ResolveGitTargetForOperation(cwd, branch string, operation OperationClass) (Target, error) {
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
 		out, err := gitOutput(cwd, "branch", "--show-current")
@@ -25,10 +29,18 @@ func ResolveGitTarget(cwd, branch string) (Target, error) {
 		mustGitConfig(cwd, "branch."+branch+".remote"),
 		"origin",
 	)
-	remoteURL := firstNonEmpty(
-		mustGitConfig(cwd, "remote."+remoteName+".pushurl"),
-		mustGitConfig(cwd, "remote."+remoteName+".url"),
-	)
+	var remoteURL string
+	if operation == OperationWrite {
+		remoteURL = firstNonEmpty(
+			mustGitConfig(cwd, "remote."+remoteName+".pushurl"),
+			mustGitConfig(cwd, "remote."+remoteName+".url"),
+		)
+	} else {
+		remoteURL = firstNonEmpty(
+			mustGitConfig(cwd, "remote."+remoteName+".url"),
+			mustGitConfig(cwd, "remote."+remoteName+".pushurl"),
+		)
+	}
 	if remoteURL == "" {
 		return Target{}, fmt.Errorf("No push destination configured")
 	}
@@ -69,7 +81,7 @@ func normalizeGitRemote(raw string) (Target, error) {
 			return Target{}, fmt.Errorf("Parsing port: %w", err)
 		}
 
-		path := strings.TrimPrefix(u.Path, "/")
+		path := normalizeRepoPath(u.Path)
 		parts := strings.Split(path, "/")
 		if len(parts) < 2 {
 			return Target{}, fmt.Errorf("Git remote is missing owner/repo %q", raw)
@@ -77,14 +89,15 @@ func normalizeGitRemote(raw string) (Target, error) {
 
 		user := strings.ToLower(u.User.Username())
 		host := strings.ToLower(u.Hostname())
+		repo := strings.Join(parts[1:], "/")
 		return Target{
 			Kind:      TargetGit,
-			Canonical: fmt.Sprintf("git+ssh://%s@%s:%d/%s/%s", user, host, port, parts[0], parts[1]),
+			Canonical: fmt.Sprintf("git+ssh://%s@%s:%d/%s/%s", user, host, port, parts[0], repo),
 			Host:      host,
 			User:      user,
 			Port:      port,
 			Owner:     parts[0],
-			Repo:      parts[1],
+			Repo:      repo,
 		}, nil
 	}
 
@@ -96,21 +109,61 @@ func normalizeGitRemote(raw string) (Target, error) {
 
 	user := strings.ToLower(trimmed[:at])
 	host := strings.ToLower(trimmed[at+1 : colon])
-	path := strings.TrimPrefix(trimmed[colon+1:], "/")
+	path := normalizeRepoPath(trimmed[colon+1:])
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 {
 		return Target{}, fmt.Errorf("Git remote is missing owner/repo %q", raw)
 	}
+	repo := strings.Join(parts[1:], "/")
 
 	return Target{
 		Kind:      TargetGit,
-		Canonical: fmt.Sprintf("git+ssh://%s@%s:22/%s/%s", user, host, parts[0], parts[1]),
+		Canonical: fmt.Sprintf("git+ssh://%s@%s:22/%s/%s", user, host, parts[0], repo),
 		Host:      host,
 		User:      user,
 		Port:      22,
 		Owner:     parts[0],
-		Repo:      parts[1],
+		Repo:      repo,
 	}, nil
+}
+
+func targetFromRepoPath(input PrepareInput, path string) (Target, error) {
+	host := strings.TrimSpace(input.Host)
+	user := strings.TrimSpace(input.User)
+	if host == "" || user == "" {
+		return Target{}, fmt.Errorf("Git target requires host and user")
+	}
+	port, err := parsePort(input.Port, 22)
+	if err != nil {
+		return Target{}, fmt.Errorf("Parsing SSH port: %w", err)
+	}
+
+	normalized := normalizeRepoPath(path)
+	parts := strings.Split(normalized, "/")
+	if len(parts) < 2 {
+		return Target{}, fmt.Errorf("Git command is missing owner/repo: %q", path)
+	}
+	repo := strings.Join(parts[1:], "/")
+	host = strings.ToLower(host)
+	user = strings.ToLower(user)
+	return Target{
+		Kind:         TargetGit,
+		Canonical:    fmt.Sprintf("git+ssh://%s@%s:%d/%s/%s", user, host, port, parts[0], repo),
+		Host:         host,
+		OriginalHost: strings.ToLower(strings.TrimSpace(input.OriginalHost)),
+		User:         user,
+		Port:         port,
+		Owner:        parts[0],
+		Repo:         repo,
+	}, nil
+}
+
+func normalizeRepoPath(path string) string {
+	trimmed := strings.TrimSpace(path)
+	trimmed = strings.Trim(trimmed, `"'`)
+	trimmed = strings.TrimPrefix(trimmed, "/")
+	trimmed = strings.TrimSuffix(trimmed, ".git")
+	return strings.Trim(trimmed, "/")
 }
 
 func gitOutput(cwd string, args ...string) (string, error) {

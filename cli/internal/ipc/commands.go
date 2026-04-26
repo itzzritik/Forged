@@ -31,14 +31,16 @@ type SyncLinkArgs struct {
 }
 
 type SSHRoutePrepareArgs struct {
-	Attempt   string `json:"attempt"`
-	ClientPID int    `json:"client_pid"`
-	CWD       string `json:"cwd"`
-	Host      string `json:"host"`
-	User      string `json:"user"`
-	Port      string `json:"port"`
+	Attempt      string `json:"attempt"`
+	ClientPID    int    `json:"client_pid"`
+	CWD          string `json:"cwd"`
+	Host         string `json:"host"`
+	OriginalHost string `json:"original_host"`
+	User         string `json:"user"`
+	Port         string `json:"port"`
 }
 
 type SSHRouteSuccessArgs struct {
-	Attempt string `json:"attempt"`
+	Attempt   string `json:"attempt"`
+	ClientPID int    `json:"client_pid"`
 }

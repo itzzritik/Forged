@@ -14,14 +14,24 @@ const (
 	TargetSSH TargetKind = "ssh"
 )
 
+type OperationClass string
+
+const (
+	OperationUnknown OperationClass = "unknown"
+	OperationRead    OperationClass = "read"
+	OperationWrite   OperationClass = "write"
+	OperationSSHAuth OperationClass = "ssh_auth"
+)
+
 type Target struct {
-	Kind      TargetKind
-	Canonical string
-	Host      string
-	User      string
-	Port      int
-	Owner     string
-	Repo      string
+	Kind         TargetKind
+	Canonical    string
+	Host         string
+	OriginalHost string
+	User         string
+	Port         int
+	Owner        string
+	Repo         string
 }
 
 type PrepareInput struct {
@@ -61,7 +71,7 @@ func ParseCanonicalTarget(raw string) (Target, error) {
 			return Target{}, fmt.Errorf("Canonical git target is missing owner/repo: %q", raw)
 		}
 		target.Owner = parts[0]
-		target.Repo = parts[1]
+		target.Repo = strings.Join(parts[1:], "/")
 		return target, nil
 	default:
 		return Target{}, fmt.Errorf("Unsupported canonical target scheme %q", u.Scheme)
@@ -81,11 +91,12 @@ func ResolveSSHTarget(input PrepareInput) (Target, error) {
 	}
 
 	return Target{
-		Kind:      TargetSSH,
-		Canonical: fmt.Sprintf("ssh://%s@%s:%d", strings.ToLower(user), strings.ToLower(host), port),
-		Host:      strings.ToLower(host),
-		User:      strings.ToLower(user),
-		Port:      port,
+		Kind:         TargetSSH,
+		Canonical:    fmt.Sprintf("ssh://%s@%s:%d", strings.ToLower(user), strings.ToLower(host), port),
+		Host:         strings.ToLower(host),
+		OriginalHost: strings.ToLower(strings.TrimSpace(input.OriginalHost)),
+		User:         strings.ToLower(user),
+		Port:         port,
 	}, nil
 }
 

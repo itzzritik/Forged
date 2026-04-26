@@ -37,6 +37,14 @@ func (p Paths) SSHManagedConfig() string {
 	return filepath.Join(p.SSHManagedDir(), "forged.conf")
 }
 
+func (p Paths) SSHManagedKeysDir() string {
+	return filepath.Join(p.SSHManagedDir(), "keys")
+}
+
+func (p Paths) SSHRouteRuntimeDir() string {
+	return filepath.Join(p.RuntimeDir, "ssh-routes")
+}
+
 func (p Paths) SSHLegacyAdvancedConfig() string {
 	return filepath.Join(p.SSHManagedDir(), "config")
 }

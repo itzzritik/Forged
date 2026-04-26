@@ -8,7 +8,7 @@ import (
 )
 
 type RouteSessions interface {
-	AllowedFingerprints(clientPID int) []string
+	AllowedFingerprints(clientPID int) ([]string, bool)
 	RecordSignature(clientPID int, fingerprint string)
 }
 
@@ -20,11 +20,15 @@ type sessionAgent struct {
 
 func (s *sessionAgent) List() ([]*agent.Key, error) {
 	allowed := map[string]struct{}{}
-	for _, fingerprint := range s.routes.AllowedFingerprints(s.clientPID) {
+	fingerprints, routed := s.routes.AllowedFingerprints(s.clientPID)
+	if !routed {
+		return s.base.List()
+	}
+	for _, fingerprint := range fingerprints {
 		allowed[fingerprint] = struct{}{}
 	}
 	if len(allowed) == 0 {
-		return s.base.List()
+		return nil, nil
 	}
 
 	if err := s.base.ensurePrivateKeyAccess(); err != nil {
@@ -69,11 +73,15 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	s.base.recordAgentAccess("ssh_agent_sign")
 
 	allowed := map[string]struct{}{}
-	for _, fingerprint := range s.routes.AllowedFingerprints(s.clientPID) {
+	fingerprints, routed := s.routes.AllowedFingerprints(s.clientPID)
+	if !routed {
+		return s.base.SignWithFlags(key, data, flags)
+	}
+	for _, fingerprint := range fingerprints {
 		allowed[fingerprint] = struct{}{}
 	}
 	if len(allowed) == 0 {
-		return s.base.SignWithFlags(key, data, flags)
+		return nil, fmt.Errorf("No key is allowed for this SSH route")
 	}
 
 	s.base.mu.RLock()
@@ -132,7 +140,12 @@ func (s *sessionAgent) Remove(key ssh.PublicKey) error { return s.base.Remove(ke
 func (s *sessionAgent) RemoveAll() error               { return s.base.RemoveAll() }
 func (s *sessionAgent) Lock(passphrase []byte) error   { return s.base.Lock(passphrase) }
 func (s *sessionAgent) Unlock(passphrase []byte) error { return s.base.Unlock(passphrase) }
-func (s *sessionAgent) Signers() ([]ssh.Signer, error) { return s.base.Signers() }
+func (s *sessionAgent) Signers() ([]ssh.Signer, error) {
+	if _, routed := s.routes.AllowedFingerprints(s.clientPID); !routed {
+		return s.base.Signers()
+	}
+	return nil, fmt.Errorf("Signers are not exposed for routed SSH clients")
+}
 func (s *sessionAgent) Extension(name string, payload []byte) ([]byte, error) {
 	return s.base.Extension(name, payload)
 }

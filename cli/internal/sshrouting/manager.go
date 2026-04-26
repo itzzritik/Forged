@@ -5,8 +5,10 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
 type Manager struct {
@@ -21,25 +23,83 @@ func NewManager(paths config.Paths, selfPath string) *Manager {
 	}
 }
 
-func (m *Manager) Refresh() error {
+func (m *Manager) Refresh(keys []vault.Key) error {
 	if err := os.MkdirAll(m.paths.SSHManagedDir(), 0o700); err != nil {
+		return err
+	}
+	if err := os.MkdirAll(m.paths.SSHRouteRuntimeDir(), 0o700); err != nil {
 		return err
 	}
 
 	_ = os.Remove(m.paths.SSHLegacyAdvancedConfig())
 	_ = os.Remove(filepath.Join(m.paths.SSHManagedDir(), "routing.json"))
-	_ = os.RemoveAll(filepath.Join(m.paths.SSHManagedDir(), "keys"))
 
-	routes := renderRouteHooks(m.selfPath)
+	refs, err := BuildKeyRefs(keys, m.paths.SSHManagedKeysDir())
+	if err != nil {
+		return fmt.Errorf("Building SSH key refs: %w", err)
+	}
+	if err := SyncPublicHintFiles(m.paths.SSHManagedKeysDir(), refs, time.Now().UTC()); err != nil {
+		return fmt.Errorf("Syncing SSH public key hints: %w", err)
+	}
+	if err := CleanupRouteRuntime(m.paths.SSHRouteRuntimeDir(), time.Now().UTC().Add(-routeSnippetTTL)); err != nil {
+		return fmt.Errorf("Cleaning SSH route snippets: %w", err)
+	}
+
+	routes := renderRouteHooks(m.paths, m.selfPath)
 	content := config.RenderManagedSSHConfig(m.paths, routes)
 	return os.WriteFile(m.paths.SSHManagedConfig(), []byte(content), 0o600)
 }
 
-func renderRouteHooks(selfPath string) string {
-	prepare := fmt.Sprintf("\"%s\" __ssh-route-prepare --attempt %%C --host %%h --port %%p --user %%r", selfPath)
-	success := fmt.Sprintf("\"%s\" __ssh-route-success --attempt %%C --host %%h --port %%p --user %%r", selfPath)
+func renderRouteHooks(paths config.Paths, selfPath string) string {
+	prepare := strings.Join([]string{
+		shellQuote(selfPath),
+		"__ssh-route-prepare",
+		"--attempt", "%C",
+		"--host", "%h",
+		"--port", "%p",
+		"--user", "%r",
+		"--original-host", "%n",
+	}, " ")
+	success := strings.Join([]string{
+		shellQuote(selfPath),
+		"__ssh-route-success",
+		"--attempt", "%C",
+		"--host", "%h",
+		"--port", "%p",
+		"--user", "%r",
+	}, " ")
 	return strings.Join([]string{
-		fmt.Sprintf("Match exec %q", prepare),
-		fmt.Sprintf("    LocalCommand %q", success),
+		fmt.Sprintf("Match exec %s", sshConfigQuote(prepare)),
+		"    IdentitiesOnly yes",
+		"    IdentityFile none",
+		fmt.Sprintf("    Include %q", filepath.Join(paths.SSHRouteRuntimeDir(), "%C.conf")),
+		fmt.Sprintf("    LocalCommand %s", success),
 	}, "\n")
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	safe := true
+	for _, r := range value {
+		switch {
+		case r >= 'a' && r <= 'z':
+		case r >= 'A' && r <= 'Z':
+		case r >= '0' && r <= '9':
+		case r == '/' || r == '.' || r == '_' || r == '-':
+		default:
+			safe = false
+		}
+	}
+	if safe {
+		return value
+	}
+	return "'" + strings.ReplaceAll(value, "'", "'\\''") + "'"
+}
+
+func sshConfigQuote(value string) string {
+	value = strings.ReplaceAll(value, `\`, `\\`)
+	value = strings.ReplaceAll(value, `"`, `\"`)
+	return `"` + value + `"`
 }
