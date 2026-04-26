@@ -21,6 +21,7 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 - `%C` is connection-scope, so concurrent same-host routes share the snippet name. The service tracks attempts by client PID and writes the union of active candidates for that `%C`; agent signing still filters by PID.
 - Routed OpenSSH clients are scoped by peer PID as a fallback. If a route exists with zero candidates, the agent exposes zero keys instead of falling back to the full vault.
 - GitHub/GitLab repo routes are considered proven only after a provider repo probe. Exact proven repo routes emit only the proven key; same-owner and same-host history only rank candidates.
+- Explicit `ssh` client commands resolve as plain SSH targets even when launched from inside a Git working tree.
 - Cold daemon sessions can hydrate on first agent use if policy allows it.
 - External agent use goes through `ActionExternal`, not the TUI-style view path.
 - `forged-sign` now does an auth preflight so Git commit signing can show cleaner auth errors.

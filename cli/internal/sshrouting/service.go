@@ -118,6 +118,16 @@ func (s *Service) Prepare(req PrepareRequest) error {
 			probeProved = proved
 		}
 	}
+	if target.Kind == TargetSSH {
+		probed, proved, err := s.probeSSHServer(target, operation, plan)
+		if err != nil {
+			return err
+		}
+		if proved || probed != nil {
+			selected = probed
+			probeProved = proved
+		}
+	}
 
 	s.mu.Lock()
 	s.expireBeforeLocked(now.Add(-routeSnippetTTL))
@@ -303,11 +313,13 @@ func (s *Service) resolveTarget(req PrepareRequest, operation OperationClass) (T
 		User:         req.User,
 		Port:         req.Port,
 	}
-	if target, _, ok := ResolveProcessGitTarget(req.ClientPID, input); ok {
-		return target, nil
-	}
-	if resolved, err := ResolveGitTargetForOperation(req.CWD, req.Branch, operation); err == nil {
-		return resolved, nil
+	if operation != OperationSSHAuth {
+		if target, _, ok := ResolveProcessGitTarget(req.ClientPID, input); ok {
+			return target, nil
+		}
+		if resolved, err := ResolveGitTargetForOperation(req.CWD, req.Branch, operation); err == nil {
+			return resolved, nil
+		}
 	}
 	resolved, err := ResolveSSHTarget(input)
 	if err != nil {
@@ -353,6 +365,55 @@ func (s *Service) probeGitProvider(target Target, operation OperationClass, plan
 		case ProbeDenied:
 			continue
 		case ProbeSkipped, ProbeInconclusive:
+			inconclusive = true
+		}
+		if ctx.Err() != nil {
+			inconclusive = true
+			break
+		}
+	}
+	if attempted > 0 && !inconclusive {
+		return []string{}, false, nil
+	}
+	return nil, false, nil
+}
+
+func (s *Service) probeSSHServer(target Target, operation OperationClass, plan CandidatePlan) ([]string, bool, error) {
+	if s.keyStore == nil {
+		return nil, false, nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), probeTotalTimeout)
+	defer cancel()
+
+	attempted := 0
+	inconclusive := false
+	for _, candidate := range plan.Candidates {
+		attempted++
+		result := ProbeSSHServer(ctx, target, candidate, s.keyStore)
+		switch result.Status {
+		case ProbeSuccess:
+			proofOperation := operation
+			if proofOperation == OperationUnknown {
+				proofOperation = OperationSSHAuth
+			}
+			if err := s.keyStore.RecordSSHRouteProof(
+				target.Canonical,
+				candidate.Fingerprint,
+				vault.SSHRouteProofSSHAuth,
+				proofOperation.String(),
+				s.now(),
+			); err != nil {
+				return nil, false, err
+			}
+			return []string{candidate.Fingerprint}, true, nil
+		case ProbeDenied:
+			continue
+		case ProbeSkipped:
+			if result.Message == "host key is not trusted" || result.Message == "no known_hosts files found" {
+				return nil, false, nil
+			}
+			inconclusive = true
+		case ProbeInconclusive:
 			inconclusive = true
 		}
 		if ctx.Err() != nil {
