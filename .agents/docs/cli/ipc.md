@@ -2,7 +2,7 @@
 title: Daemon IPC
 applies_to:
   - cli/internal/ipc/**
-last_verified: 2026-04-27
+last_verified: 2026-05-03
 stable: yes
 ---
 
@@ -19,6 +19,7 @@ stable: yes
 - `status` exposes enough sensitive state for the TUI to detect cold vs active session.
 - Key list/view/export handlers ask the sync bus for a lightweight foreground refresh before reading local vault data.
 - Hidden SSH route IPC prepares per-attempt snippets from `%C`, `%h`, `%p`, `%r`, and `%n`; prepare failures are quiet so the managed SSH config fails closed with no default identities.
+- Dev-only TUI diagnostics use SSH route list/clear IPC. Clearing routes must call the route service so vault tombstones and sync mutation handling stay correct.
 - Windows IPC support is still incomplete.
 
 ## Decisions

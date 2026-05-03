@@ -110,6 +110,7 @@ func classifyState(s Snapshot) State {
 		s.Service.Installed &&
 		s.Service.ConfigValid &&
 		s.Service.Running &&
+		serviceOwnsDaemon(s) &&
 		s.IPCSocketReady &&
 		s.AgentSocketReady &&
 		(s.AgentDisabled || sshHealthy)
@@ -129,6 +130,13 @@ func classifyState(s Snapshot) State {
 	}
 
 	return StateDegraded
+}
+
+func serviceOwnsDaemon(s Snapshot) bool {
+	if s.Service.PID == 0 {
+		return true
+	}
+	return s.DaemonPID > 0 && s.Service.PID == s.DaemonPID
 }
 
 func (e *Engine) pathExists(path string) bool {

@@ -170,6 +170,15 @@ func runInteractiveIntent(intent tui.Intent) error {
 		DisableCommitSigning: func() (actions.CommitSigningStatus, error) {
 			return actions.DisableCommitSigning(paths)
 		},
+		LoadSSHRoutingDebug: func() (actions.SSHRoutingDebug, error) {
+			return actions.LoadSSHRoutingDebug(paths)
+		},
+		ClearSSHRoute: func(target string) error {
+			return actions.ClearSSHRoute(paths, target)
+		},
+		ClearAllSSHRoutes: func() error {
+			return actions.ClearAllSSHRoutes(paths)
+		},
 		CopyText:      copyTextToClipboard,
 		OpenLink:      openLinkInBrowser,
 		DefaultServer: ipc.DefaultAPIServer,

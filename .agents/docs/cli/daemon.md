@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-04-27
+last_verified: 2026-05-03
 stable: partial
 ---
 
@@ -27,6 +27,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - When the shared session is cleared, the daemon drops back to cold state.
 - Sync only exists while account credentials are present and a live vault session is available.
 - While sync is active, learned SSH route proofs mark the vault dirty and the sync bus also runs low-frequency status checks.
+- Service repair replaces any unmanaged `forged daemon` that still owns the runtime sockets before launchd/system service restart, and health checks only trust service sockets when the managed service PID matches the daemon PID file on platforms that expose it.
 - Windows support is still partial around socket transport and platform helpers.
 
 ## Decisions

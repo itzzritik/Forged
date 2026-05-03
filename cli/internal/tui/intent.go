@@ -28,6 +28,8 @@ const (
 	RouteAgentSigning RouteID = "agent/signing"
 
 	RouteDoctorOverview RouteID = "doctor/overview"
+
+	RouteLabRouting RouteID = "lab/routing"
 )
 
 func DashboardIntent() Intent {

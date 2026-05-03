@@ -5,6 +5,7 @@ type ServiceStatus struct {
 	ConfigValid bool
 	Loaded      bool
 	Running     bool
+	PID         int
 	Repairable  bool
 	Detail      string
 }

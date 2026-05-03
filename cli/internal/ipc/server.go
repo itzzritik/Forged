@@ -21,6 +21,9 @@ import (
 type SSHRouteHandler interface {
 	Prepare(sshrouting.PrepareRequest) error
 	Success(attempt string, clientPID int) error
+	DebugSnapshot() (sshrouting.DebugSnapshot, error)
+	Clear(target string) error
+	ClearAll() error
 }
 
 type Server struct {
@@ -181,6 +184,12 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleSSHRoutePrepare(req.Args)
 	case CmdSSHRouteSuccess:
 		return s.handleSSHRouteSuccess(req.Args)
+	case CmdSSHRoutesList:
+		return s.handleSSHRoutesList()
+	case CmdSSHRouteClear:
+		return s.handleSSHRouteClear(req.Args)
+	case CmdSSHRoutesClearAll:
+		return s.handleSSHRoutesClearAll()
 	case CmdSensitiveAuth:
 		return s.handleSensitiveAuth(req.Args)
 	case CmdSensitivePassword:
@@ -245,6 +254,45 @@ func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 
+	return OkResponse(nil)
+}
+
+func (s *Server) handleSSHRoutesList() Response {
+	if s.sshRoutes == nil {
+		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
+	}
+
+	s.refreshForRead("ssh_routes_list")
+	snapshot, err := s.sshRoutes.DebugSnapshot()
+	if err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(snapshot)
+}
+
+func (s *Server) handleSSHRouteClear(raw json.RawMessage) Response {
+	if s.sshRoutes == nil {
+		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
+	}
+
+	var args SSHRouteClearArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
+	}
+	if err := s.sshRoutes.Clear(args.Target); err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(nil)
+}
+
+func (s *Server) handleSSHRoutesClearAll() Response {
+	if s.sshRoutes == nil {
+		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
+	}
+
+	if err := s.sshRoutes.ClearAll(); err != nil {
+		return ErrorResponse(err)
+	}
 	return OkResponse(nil)
 }
 

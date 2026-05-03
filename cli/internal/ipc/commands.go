@@ -19,6 +19,9 @@ const (
 	CmdStatus            = "status"
 	CmdSSHRoutePrepare   = "ssh-route-prepare"
 	CmdSSHRouteSuccess   = "ssh-route-success"
+	CmdSSHRoutesList     = "ssh-routes-list"
+	CmdSSHRouteClear     = "ssh-route-clear"
+	CmdSSHRoutesClearAll = "ssh-routes-clear-all"
 
 	DefaultAPIServer = "https://forged-api.ritik.me"
 	DefaultWebApp    = "https://forged.ritik.me"
@@ -43,4 +46,8 @@ type SSHRoutePrepareArgs struct {
 type SSHRouteSuccessArgs struct {
 	Attempt   string `json:"attempt"`
 	ClientPID int    `json:"client_pid"`
+}
+
+type SSHRouteClearArgs struct {
+	Target string `json:"target"`
 }

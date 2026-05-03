@@ -55,6 +55,9 @@ type Dependencies struct {
 	DisableSSHAgent           func() error
 	EnableCommitSigning       func(string) (actions.CommitSigningStatus, error)
 	DisableCommitSigning      func() (actions.CommitSigningStatus, error)
+	LoadSSHRoutingDebug       func() (actions.SSHRoutingDebug, error)
+	ClearSSHRoute             func(string) error
+	ClearAllSSHRoutes         func() error
 	CopyText                  func(string) error
 	OpenLink                  func(string) error
 	DefaultServer             string
@@ -298,6 +301,9 @@ type model struct {
 	disableSSHAgent           func() error
 	enableCommitSigning       func(string) (actions.CommitSigningStatus, error)
 	disableCommitSigning      func() (actions.CommitSigningStatus, error)
+	loadSSHRoutingDebug       func() (actions.SSHRoutingDebug, error)
+	clearSSHRoute             func(string) error
+	clearAllSSHRoutes         func() error
 	copyText                  func(string) error
 	openLink                  func(string) error
 	defaultServer             string
@@ -384,6 +390,7 @@ type model struct {
 	keyExport   keyExportState
 	manage      manageState
 	agent       agentState
+	lab         labState
 }
 
 func Run(intent Intent, deps Dependencies) (Result, error) {
@@ -430,6 +437,12 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("TUI enable-commit-signing dependency is required")
 	case deps.DisableCommitSigning == nil:
 		return Result{}, fmt.Errorf("TUI disable-commit-signing dependency is required")
+	case deps.LoadSSHRoutingDebug == nil:
+		return Result{}, fmt.Errorf("TUI SSH routing debug dependency is required")
+	case deps.ClearSSHRoute == nil:
+		return Result{}, fmt.Errorf("TUI SSH route clear dependency is required")
+	case deps.ClearAllSSHRoutes == nil:
+		return Result{}, fmt.Errorf("TUI SSH routes clear-all dependency is required")
 	case deps.CopyText == nil:
 		return Result{}, fmt.Errorf("TUI copy-text dependency is required")
 	case deps.OpenLink == nil:
@@ -477,6 +490,9 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		disableSSHAgent:           deps.DisableSSHAgent,
 		enableCommitSigning:       deps.EnableCommitSigning,
 		disableCommitSigning:      deps.DisableCommitSigning,
+		loadSSHRoutingDebug:       deps.LoadSSHRoutingDebug,
+		clearSSHRoute:             deps.ClearSSHRoute,
+		clearAllSSHRoutes:         deps.ClearAllSSHRoutes,
 		copyText:                  deps.CopyText,
 		openLink:                  deps.OpenLink,
 		defaultServer:             deps.DefaultServer,
@@ -584,6 +600,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.screen = screenDashboard
 		m.systemHeader = systemHeaderChecking
+		needsRepair := msg.snapshot.State != readiness.StateReady &&
+			msg.snapshot.State != readiness.StateReadyEmpty
+		if needsRepair {
+			m.startupUnlockPending = true
+			m.startupUnlockNeedsRepair = false
+			return m, m.startStartupRepair()
+		}
 		if msg.snapshot.IPCSocketReady {
 			if !m.hasLocalUnlockTrust() {
 				m.showPasswordScreen(passwordStartupUnlock, "", "", true)
@@ -591,8 +614,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.passwordInput.Init()
 			}
 			m.startupUnlockPending = true
-			m.startupUnlockNeedsRepair = msg.snapshot.State != readiness.StateReady &&
-				msg.snapshot.State != readiness.StateReadyEmpty
+			m.startupUnlockNeedsRepair = false
 			return m, m.startStartupUnlockFlow()
 		}
 		m.startupUnlockPending = true
@@ -755,9 +777,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.runtimeStatus = msg.status
 			m.runtimeLoaded = true
-		} else if m.snapshot.LoggedIn && m.systemHeader == systemHeaderHealthy {
-			m.runtimeStatus.Error = msg.err.Error()
-			m.runtimeLoaded = true
+		} else {
+			m.runtimeStatus.Syncing = false
+			if m.snapshot.LoggedIn {
+				m.runtimeStatus.Error = msg.err.Error()
+				m.runtimeLoaded = true
+			}
 		}
 		if cmd := m.handleSensitiveSessionLoss(wasUnlocked); cmd != nil {
 			return m, cmd
@@ -848,6 +873,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleAgentSigningKeysMsg(msg)
 	case agentSigningFinishedMsg:
 		return m.handleAgentSigningFinishedMsg(msg)
+	case labRoutingLoadedMsg:
+		return m.handleLabRoutingLoadedMsg(msg)
+	case labRoutingClearedMsg:
+		return m.handleLabRoutingClearedMsg(msg)
 	case copyFinishedMsg:
 		if msg.err != nil {
 			if m.screen == screenLogin {
@@ -1063,6 +1092,9 @@ func (m *model) headerPageTitle() string {
 		if m.isAgentSigningRoute() {
 			return "Commit Signing"
 		}
+		if m.isLabRoutingRoute() {
+			return "SSH Routing Lab"
+		}
 		if m.isDoctorOverviewRoute() {
 			return "Doctor"
 		}
@@ -1146,6 +1178,13 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 				{Label: "Home"},
 				{Label: "Agent"},
 				{Label: "Commit Signing", Current: true},
+			}
+		}
+		if m.isLabRoutingRoute() {
+			return []shell.Breadcrumb{
+				{Label: "Home"},
+				{Label: "Lab"},
+				{Label: "SSH Routing", Current: true},
 			}
 		}
 		if m.isDoctorOverviewRoute() {
@@ -1286,6 +1325,9 @@ func (m *model) renderBody(contentWidth int) string {
 		}
 		if m.isAgentSigningRoute() {
 			return m.renderAgentSigningBody(contentWidth)
+		}
+		if m.isLabRoutingRoute() {
+			return m.renderLabRoutingBody(contentWidth)
 		}
 		if m.isDoctorDashboardTab() {
 			return m.renderDoctorDashboardBody(contentWidth)
@@ -1504,6 +1546,9 @@ func (m *model) footerActions() []shell.FooterAction {
 			actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 			return actions
 		}
+		if m.isLabRoutingRoute() {
+			return m.labFooterActions()
+		}
 		if m.isDoctorDashboardTab() {
 			return m.doctorFooterActions(true)
 		}
@@ -1612,6 +1657,10 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	if m.isAgentSigningRoute() {
 		return m.updateAgentSigningKeys(msg)
+	}
+
+	if m.isLabRoutingRoute() {
+		return m.updateLabRoutingKeys(msg)
 	}
 
 	if m.isDoctorDashboardTab() {
@@ -1927,7 +1976,7 @@ func (m *model) dashboardTabs() []dashboardTab {
 		return nil
 	}
 
-	return []dashboardTab{
+	tabs := []dashboardTab{
 		{
 			Label: "Key",
 			Pages: []dashboardPage{
@@ -1950,6 +1999,13 @@ func (m *model) dashboardTabs() []dashboardTab {
 			Pages: nil,
 		},
 	}
+	if pages := m.labDashboardPages(); len(pages) > 0 {
+		tabs = append(tabs, dashboardTab{
+			Label: "Lab",
+			Pages: pages,
+		})
+	}
+	return tabs
 }
 
 func (m *model) normalizeDashboardSelection(tabs []dashboardTab) {
@@ -2057,6 +2113,8 @@ func (m *model) switchDashboardTab(delta int, tabs []dashboardTab) tea.Cmd {
 		return tea.Batch(m.refreshSnapshotCmd(), m.loadSigningStatusCmd())
 	case "Doctor":
 		return tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd())
+	case "Lab":
+		return nil
 	default:
 		return nil
 	}
@@ -2129,6 +2187,12 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 			Summary: "Inspect health and fix issues",
 		},
 	}
+	if m.isDevBuild() {
+		areas = append(areas, dashboardscreen.Area{
+			Label:   "Lab",
+			Summary: "Inspect developer-only routing internals",
+		})
+	}
 
 	if m.snapshot.KeyCount == 0 {
 		areas[0].Summary = "Browse, create, import, and export keys"
@@ -2169,7 +2233,7 @@ func (m *model) usesSpinner() bool {
 	case screenPassword:
 		return m.passwordBusy
 	case screenDashboard:
-		return m.keyUsesSpinner() || m.agentUsesSpinner() || m.manage.syncBusy || m.manage.logoutBusy || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
+		return m.keyUsesSpinner() || m.agentUsesSpinner() || m.lab.loading || m.lab.busy || m.manage.syncBusy || m.manage.logoutBusy || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
 	default:
 		return false
 	}
@@ -2744,6 +2808,8 @@ func (m *model) showCurrentRoute() tea.Cmd {
 		)
 	case RouteAgentSigning:
 		return m.startAgentSigningRoute()
+	case RouteLabRouting:
+		return m.startLabRoutingRoute()
 	case RouteVaultHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
 		cmds := []tea.Cmd{}
 		if m.session.Current().ID == RouteVaultHome {
@@ -2794,6 +2860,8 @@ func (m *model) pendingDashboardRouteTitle() string {
 		return "Agent"
 	case RouteAgentSigning:
 		return "Commit Signing"
+	case RouteLabRouting:
+		return "SSH Routing Lab"
 	case RouteAccountStatus:
 		return "Profile"
 	case RouteSyncHome:
@@ -2878,6 +2946,12 @@ func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Home"},
 			{Label: "Agent"},
 			{Label: "Commit Signing", Current: true},
+		}
+	case RouteLabRouting:
+		return []shell.Breadcrumb{
+			{Label: "Home"},
+			{Label: "Lab"},
+			{Label: "SSH Routing", Current: true},
 		}
 	case RouteAccountStatus:
 		return []shell.Breadcrumb{

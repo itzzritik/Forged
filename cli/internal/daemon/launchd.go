@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"text/template"
 	"time"
@@ -141,7 +142,9 @@ func StartService() error {
 	); err != nil {
 		return err
 	}
-	waitForDaemonExit(paths)
+	if err := stopExistingDaemon(paths); err != nil {
+		return err
+	}
 	if err := bootstrapLaunchdService(); err != nil {
 		return err
 	}
@@ -251,7 +254,8 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 		}
 
 		status.Loaded = true
-		status.Running = launchdPrintIndicatesRunning(string(out))
+		status.PID = launchdPrintPID(string(out))
+		status.Running = status.PID > 0
 		switch {
 		case service.Legacy && status.Running:
 			status.Detail = "legacy service running"
@@ -286,14 +290,43 @@ func launchdServiceTargetForLabel(label string) string {
 	return launchdDomain() + "/" + label
 }
 
-func waitForDaemonExit(paths config.Paths) {
-	deadline := time.Now().Add(3 * time.Second)
+func stopExistingDaemon(paths config.Paths) error {
+	if waitForDaemonExit(paths, 2*time.Second) {
+		return nil
+	}
+
+	pid, running := IsRunning(paths)
+	if !running {
+		return nil
+	}
+	process, err := os.FindProcess(pid)
+	if err != nil {
+		return nil
+	}
+	if err := process.Signal(os.Interrupt); err != nil {
+		return fmt.Errorf("Stopping existing daemon PID %d: %w", pid, err)
+	}
+	if waitForDaemonExit(paths, 3*time.Second) {
+		return nil
+	}
+
+	_ = process.Signal(os.Kill)
+	if waitForDaemonExit(paths, time.Second) {
+		return nil
+	}
+	return fmt.Errorf("Stopping existing daemon PID %d: timed out", pid)
+}
+
+func waitForDaemonExit(paths config.Paths, timeout time.Duration) bool {
+	deadline := time.Now().Add(timeout)
 	for time.Now().Before(deadline) {
 		if _, running := IsRunning(paths); !running {
-			return
+			return true
 		}
 		time.Sleep(100 * time.Millisecond)
 	}
+	_, running := IsRunning(paths)
+	return !running
 }
 
 func findBinary() (string, error) {
@@ -427,7 +460,21 @@ func xmlEscape(value string) string {
 	return buf.String()
 }
 
-func launchdPrintIndicatesRunning(out string) bool {
-	lower := strings.ToLower(out)
-	return strings.Contains(lower, "pid =") && !strings.Contains(lower, "pid = 0")
+func launchdPrintPID(out string) int {
+	for _, line := range strings.Split(out, "\n") {
+		line = strings.TrimSpace(line)
+		if !strings.HasPrefix(strings.ToLower(line), "pid =") {
+			continue
+		}
+		parts := strings.SplitN(line, "=", 2)
+		if len(parts) != 2 {
+			continue
+		}
+		raw := strings.TrimSpace(parts[1])
+		pid, err := strconv.Atoi(raw)
+		if err == nil && pid > 0 {
+			return pid
+		}
+	}
+	return 0
 }
