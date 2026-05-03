@@ -2,9 +2,11 @@ package config
 
 import (
 	"bytes"
+	"context"
 	"os"
 	"os/exec"
 	"strings"
+	"time"
 )
 
 type SSHAgentOwner struct {
@@ -15,8 +17,14 @@ type SSHAgentOwner struct {
 func (o SSHAgentOwner) IsUnknown() bool { return o.Name == "" }
 func (o SSHAgentOwner) IsForged() bool  { return o.Name == "Forged" }
 
+const sshConfigProbeTimeout = 2 * time.Second
+
 func DetectSSHAgentOwner(paths Paths) (SSHAgentOwner, error) {
-	cmd := exec.Command("ssh", "-G", "github.com")
+	ctx, cancel := context.WithTimeout(context.Background(), sshConfigProbeTimeout)
+	defer cancel()
+
+	cmd := exec.CommandContext(ctx, "ssh", "-G", "github.com")
+	cmd.Env = append(os.Environ(), "FORGED_SSH_ROUTE_SKIP=1")
 	out, err := cmd.Output()
 	if err != nil {
 		return SSHAgentOwner{}, err

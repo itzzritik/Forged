@@ -147,9 +147,11 @@ type maintenanceProgressMsg struct {
 }
 
 type maintenanceFinishedMsg struct {
-	id     int
-	result readiness.RunResult
-	err    error
+	id        int
+	result    readiness.RunResult
+	err       error
+	unlocked  bool
+	unlockErr error
 }
 
 type setupTaskDoneMsg struct {
@@ -258,8 +260,10 @@ const (
 )
 
 type pendingSetupResult struct {
-	result readiness.RunResult
-	err    error
+	result    readiness.RunResult
+	err       error
+	unlocked  bool
+	unlockErr error
 }
 
 type copyFinishedMsg struct {
@@ -300,6 +304,7 @@ type model struct {
 	appVersion                string
 	signingStatus             actions.CommitSigningStatus
 	signingLoaded             bool
+	signingError              string
 	signingLoadID             int
 
 	spinner spinner.Model
@@ -586,7 +591,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				return m, m.passwordInput.Init()
 			}
 			m.startupUnlockPending = true
-			m.startupUnlockNeedsRepair = true
+			m.startupUnlockNeedsRepair = msg.snapshot.State != readiness.StateReady &&
+				msg.snapshot.State != readiness.StateReadyEmpty
 			return m, m.startStartupUnlockFlow()
 		}
 		m.startupUnlockPending = true
@@ -669,10 +675,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.startMaintenance(maintenanceTriggerPostLogin, nil, false, "Finishing account setup", "Linking the logged-in account to the local daemon and refreshing machine state.", msg.creds.Email)
 	case restoreFinishedMsg:
 		if msg.id != m.restoreID {
+			for i := range msg.password {
+				msg.password[i] = 0
+			}
 			return m, nil
 		}
 		m.passwordBusy = false
 		if msg.err != nil {
+			for i := range msg.password {
+				msg.password[i] = 0
+			}
 			switch {
 			case errors.Is(msg.err, readiness.ErrInvalidRestorePassword):
 				m.passwordInput.SetError("Couldn't decrypt vault, incorrect password")
@@ -683,7 +695,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		return m, m.startMaintenance(maintenanceTriggerUnlock, msg.password, false, "Setting up Forged", "Restoring your vault and preparing secure access on this machine.", m.passwordAuth)
+		cmd := m.startMaintenance(maintenanceTriggerUnlock, msg.password, false, "Setting up Forged", "Restoring your vault and preparing secure access on this machine.", m.passwordAuth)
+		for i := range msg.password {
+			msg.password[i] = 0
+		}
+		return m, cmd
 	case maintenanceProgressMsg:
 		if msg.id != m.maintenanceID {
 			return m, nil
@@ -694,7 +710,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.id != m.maintenanceID {
 			return m, nil
 		}
-		return m, m.handleMaintenanceFinished(msg.result, msg.err)
+		return m, m.handleMaintenanceFinished(msg.result, msg.err, msg.unlocked, msg.unlockErr)
 	case setupTaskDoneMsg:
 		if m.setupFinalizing || !m.isSetupSequence() || msg.sequence != m.setupSequenceID {
 			return m, nil
@@ -720,7 +736,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		pending := m.setupPending
 		m.setupPending = nil
 		m.setupFinalizing = false
-		return m, m.handleMaintenanceFinished(pending.result, pending.err)
+		return m, m.handleMaintenanceFinished(pending.result, pending.err, pending.unlocked, pending.unlockErr)
 	case snapshotRefreshMsg:
 		return m.handleSnapshotRefreshMsg(msg)
 	case securityStateMsg:
@@ -926,6 +942,16 @@ func (m *model) isCenteredStartupUnlockScreen() bool {
 	return m.screen == screenPassword && m.passwordFlow == passwordStartupUnlock
 }
 
+func (m *model) canRetryStartupSystemAuth() bool {
+	return m.screen == screenPassword &&
+		m.passwordFlow == passwordStartupUnlock &&
+		!m.passwordBusy &&
+		!m.passwordHideInput &&
+		m.passwordInput != nil &&
+		m.passwordInput.IsEmpty() &&
+		m.hasLocalUnlockTrust()
+}
+
 func (m *model) productRailItems() []shell.StatusItem {
 	return []shell.StatusItem{
 		{Label: "Encrypted key vault", Icon: "✦"},
@@ -978,6 +1004,9 @@ func (m *model) systemHeaderItem() shell.StatusItem {
 func (m *model) commitSigningHeaderItem() shell.StatusItem {
 	if !m.signingLoaded {
 		return shell.StatusItem{Label: "Checking signing", Icon: m.spinner.View()}
+	}
+	if strings.TrimSpace(m.signingError) != "" {
+		return shell.StatusItem{Label: "Signing issue", Tone: shell.StatusToneDanger}
 	}
 	switch m.signingStatus.Mode {
 	case actions.CommitSigningForged:
@@ -1391,10 +1420,16 @@ func (m *model) footerActions() []shell.FooterAction {
 			return nil
 		}
 		enterLabel := "Continue"
+		if m.passwordFlow == passwordStartupUnlock && m.passwordHideInput {
+			enterLabel = "System Auth"
+		}
 		if m.passwordInput != nil && m.passwordInput.FieldCount() > 1 && m.passwordInput.FocusIndex() < m.passwordInput.FieldCount()-1 {
 			enterLabel = "Next"
 		}
 		actions := []shell.FooterAction{{Key: "Enter", Label: enterLabel}}
+		if m.canRetryStartupSystemAuth() {
+			actions = append(actions, shell.FooterAction{Key: "A", Label: "System Auth"})
+		}
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 		return actions
 	default:
@@ -1797,6 +1832,11 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.showCurrentRoute()
 		}
 		return m, tea.Quit
+	case "a", "A":
+		if m.canRetryStartupSystemAuth() {
+			return m, m.startStartupUnlockFlow()
+		}
+		return m, m.passwordInput.Update(msg)
 	case "enter":
 		if m.passwordFlow == passwordStartupUnlock && m.passwordHideInput && !m.passwordBusy {
 			return m, m.startStartupUnlockFlow()
@@ -2237,6 +2277,12 @@ func (m *model) restoreLinkedVault(id int, password []byte) tea.Cmd {
 	passwordCopy := append([]byte(nil), password...)
 	return func() tea.Msg {
 		err := restore(passwordCopy)
+		if err != nil {
+			for i := range passwordCopy {
+				passwordCopy[i] = 0
+			}
+			return restoreFinishedMsg{id: id, err: err}
+		}
 		return restoreFinishedMsg{id: id, password: passwordCopy, err: err}
 	}
 }
@@ -2273,6 +2319,7 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 	id := m.maintenanceID
 	repairFn := m.repair
 	createVault := m.createVault
+	unlock := m.unlockSensitiveLaunch
 	passwordCopy := append([]byte(nil), password...)
 	progress := func(stage readiness.ProgressStage) {
 		select {
@@ -2285,10 +2332,16 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 		m.spinner.Tick,
 		m.waitForMaintenanceProgress(id, progressCh),
 		func() tea.Msg {
+			defer close(progressCh)
+			defer func() {
+				for i := range passwordCopy {
+					passwordCopy[i] = 0
+				}
+			}()
+
 			if createVaultFirst {
 				progress(readiness.ProgressVault)
 				if err := createVault(passwordCopy); err != nil {
-					close(progressCh)
 					return maintenanceFinishedMsg{id: id, err: err}
 				}
 			}
@@ -2308,8 +2361,24 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 			}
 
 			result, err := repairFn(opts)
-			close(progressCh)
-			return maintenanceFinishedMsg{id: id, result: result, err: err}
+			unlocked := false
+			var unlockErr error
+			if err == nil &&
+				len(passwordCopy) > 0 &&
+				result.Snapshot.VaultExists &&
+				result.Next != readiness.NextActionNeedsPassword &&
+				(trigger == maintenanceTriggerSetup || trigger == maintenanceTriggerUnlock) {
+				unlockResult, err := unlock(passwordCopy)
+				switch {
+				case err != nil:
+					unlockErr = err
+				case unlockResult.PasswordRequired:
+					unlockErr = errors.New("startup authentication still required")
+				default:
+					unlocked = true
+				}
+			}
+			return maintenanceFinishedMsg{id: id, result: result, err: err, unlocked: unlocked, unlockErr: unlockErr}
 		},
 	)
 }
@@ -2327,11 +2396,15 @@ func (m *model) waitForMaintenanceProgress(id int, ch <-chan readiness.ProgressS
 	}
 }
 
-func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error) tea.Cmd {
+func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error, unlocked bool, unlockErr error) tea.Cmd {
 	m.snapshot = result.Snapshot
 	m.summary = result.Summary
 	m.systemHeader = m.systemHeaderForSnapshot(result.Snapshot)
 	m.maintenanceProgress = nil
+	if unlocked {
+		m.runtimeStatus.Unlocked = true
+		m.runtimeStatus.SensitiveKnown = true
+	}
 	if m.screen == screenPassword {
 		m.passwordBusy = false
 		m.passwordBusyMessage = ""
@@ -2389,6 +2462,18 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error)
 	default:
 		if (m.maintenanceTrigger == maintenanceTriggerSetup || m.maintenanceTrigger == maintenanceTriggerUnlock) && result.Snapshot.VaultExists {
 			m.popWizardRoutes()
+			if unlocked {
+				m.startupUnlockPending = false
+				m.startupUnlockNeedsRepair = false
+				m.setupVariant = setupVariantNone
+				m.maintenanceUsedPassword = false
+				m.maintenanceAuthEmail = ""
+				return m.finishVaultBoot()
+			}
+			if unlockErr != nil {
+				m.runtimeStatus.Unlocked = false
+				m.runtimeStatus.SensitiveKnown = false
+			}
 			return m.restartAfterVaultReady()
 		}
 		if m.maintenanceTrigger == maintenanceTriggerBoot && result.Snapshot.VaultExists && m.startupUnlockPending && !m.startupUnlockNeedsRepair {
@@ -2466,6 +2551,9 @@ func (m *model) submitStartupUnlock(password []byte) tea.Cmd {
 func (m *model) finishVaultBoot() tea.Cmd {
 	m.notice = notice{}
 	m.screen = screenDashboard
+	if m.systemHeader == systemHeaderChecking {
+		m.systemHeader = m.systemHeaderForSnapshot(m.snapshot)
+	}
 	m.passwordFlow = ""
 	m.passwordTitle = ""
 	m.passwordContext = ""
@@ -2575,6 +2663,7 @@ func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.setupPending = nil
 	m.runtimeLoaded = false
 	m.signingLoaded = false
+	m.signingError = ""
 	return tea.Batch(
 		m.spinner.Tick,
 		m.assessCurrentState(),

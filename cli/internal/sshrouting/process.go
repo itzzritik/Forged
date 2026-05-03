@@ -2,6 +2,7 @@ package sshrouting
 
 import (
 	"fmt"
+	"net/url"
 	"os/exec"
 	"runtime"
 	"strconv"
@@ -88,7 +89,111 @@ func gitCommandRepoPath(command string) string {
 		}
 		return fields[i+1]
 	}
+	if remote := gitRemoteArg(fields, "clone"); remote != "" {
+		return repoPathFromGitRemote(remote)
+	}
+	if remote := gitRemoteArg(fields, "ls-remote"); remote != "" {
+		return repoPathFromGitRemote(remote)
+	}
 	return ""
+}
+
+func gitRemoteArg(fields []string, subcommand string) string {
+	start := gitSubcommandIndex(fields, subcommand)
+	if start < 0 {
+		return ""
+	}
+	for i := start + 1; i < len(fields); i++ {
+		field := strings.TrimSpace(fields[i])
+		if field == "" {
+			continue
+		}
+		if field == "--" {
+			if i+1 < len(fields) {
+				return fields[i+1]
+			}
+			return ""
+		}
+		if strings.HasPrefix(field, "--") {
+			if optionHasInlineValue(field) {
+				continue
+			}
+			if optionTakesValue(field) && i+1 < len(fields) {
+				i++
+			}
+			continue
+		}
+		if strings.HasPrefix(field, "-") && field != "-" {
+			if shortOptionTakesValue(field) && i+1 < len(fields) {
+				i++
+			}
+			continue
+		}
+		return field
+	}
+	return ""
+}
+
+func gitSubcommandIndex(fields []string, subcommand string) int {
+	for i, field := range fields {
+		base := strings.Trim(strings.ToLower(field), `"'`)
+		if base == subcommand {
+			return i
+		}
+		if strings.HasSuffix(base, "/git-"+subcommand) || base == "git-"+subcommand {
+			return i
+		}
+	}
+	return -1
+}
+
+func repoPathFromGitRemote(remote string) string {
+	trimmed := strings.Trim(strings.TrimSpace(remote), `"'`)
+	if trimmed == "" {
+		return ""
+	}
+	if target, err := normalizeGitRemote(trimmed); err == nil && target.Owner != "" && target.Repo != "" {
+		return target.Owner + "/" + target.Repo
+	}
+	if u, err := url.Parse(trimmed); err == nil && u.Host != "" {
+		return normalizeRepoPath(u.Path)
+	}
+	if colon := strings.Index(trimmed, ":"); colon >= 0 {
+		at := strings.Index(trimmed, "@")
+		if at >= 0 && at < colon {
+			return normalizeRepoPath(trimmed[colon+1:])
+		}
+	}
+	return normalizeRepoPath(trimmed)
+}
+
+func optionHasInlineValue(option string) bool {
+	return strings.Contains(option, "=")
+}
+
+func optionTakesValue(option string) bool {
+	name := strings.TrimPrefix(option, "--")
+	switch name {
+	case "branch", "origin", "upload-pack", "template", "reference", "reference-if-able",
+		"separate-git-dir", "depth", "shallow-since", "shallow-exclude", "jobs",
+		"config", "server-option", "filter":
+		return true
+	default:
+		return false
+	}
+}
+
+func shortOptionTakesValue(option string) bool {
+	trimmed := strings.TrimPrefix(option, "-")
+	if len(trimmed) != 1 {
+		return false
+	}
+	switch trimmed {
+	case "b", "o", "u", "c", "j":
+		return true
+	default:
+		return false
+	}
 }
 
 func shellFields(command string) []string {

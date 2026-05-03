@@ -653,10 +653,13 @@ func (m *model) handleSigningStatusMsg(msg signingStatusMsg) (tea.Model, tea.Cmd
 		return m, nil
 	}
 	if msg.err != nil {
+		m.signingLoaded = true
+		m.signingError = msg.err.Error()
 		return m, nil
 	}
 	m.signingStatus = msg.status
 	m.signingLoaded = true
+	m.signingError = ""
 	if m.isAgentSigningRoute() && msg.status.Mode == actions.CommitSigningForged {
 		m.selectAgentSigningByName(msg.status.KeyName)
 	}
@@ -720,6 +723,7 @@ func (m *model) handleAgentSigningFinishedMsg(msg agentSigningFinishedMsg) (tea.
 	m.agent.signing.err = ""
 	m.signingStatus = msg.status
 	m.signingLoaded = true
+	m.signingError = ""
 	if msg.status.Mode == actions.CommitSigningForged {
 		m.selectAgentSigningByName(msg.status.KeyName)
 	}

@@ -135,6 +135,15 @@ func (p *PasswordInput) FieldCount() int {
 	return len(p.fields)
 }
 
+func (p *PasswordInput) IsEmpty() bool {
+	for _, field := range p.fields {
+		if field.Value() != "" {
+			return false
+		}
+	}
+	return true
+}
+
 func (p *PasswordInput) MoveNext() {
 	p.moveFocus("down")
 }
