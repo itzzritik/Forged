@@ -30,23 +30,18 @@ type SyncConfig struct {
 
 type SecurityConfig struct {
 	MasterPasswordInterval string `toml:"master_password_interval"`
-	ExternalUsePolicy      string `toml:"external_use_policy"`
 }
 
 const (
 	MasterPasswordInterval7Days  = "7d"
 	MasterPasswordInterval15Days = "15d"
 	MasterPasswordInterval30Days = "30d"
-
-	ExternalUsePolicyDeny  = "deny"
-	ExternalUsePolicyAllow = "allow"
 )
 
 func Load(path string) (Config, error) {
 	var cfg Config
 	cfg.Agent.LogLevel = "info"
 	cfg.Security.MasterPasswordInterval = MasterPasswordInterval7Days
-	cfg.Security.ExternalUsePolicy = ExternalUsePolicyDeny
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return cfg, nil
@@ -88,7 +83,6 @@ func Save(path string, cfg Config) error {
 	body.WriteString(fmt.Sprintf("enabled = %t\n", cfg.Sync.Enabled))
 	body.WriteString("\n\n[security]\n")
 	body.WriteString(fmt.Sprintf("master_password_interval = %q\n", cfg.Security.MasterPasswordInterval))
-	body.WriteString(fmt.Sprintf("external_use_policy = %q\n", cfg.Security.ExternalUsePolicy))
 
 	return os.WriteFile(path, []byte(body.String()), 0o600)
 }
@@ -106,15 +100,6 @@ func MasterPasswordIntervalDuration(value string) time.Duration {
 
 func normalizeConfig(cfg *Config) {
 	cfg.Security.MasterPasswordInterval = NormalizeMasterPasswordInterval(cfg.Security.MasterPasswordInterval)
-	if strings.TrimSpace(cfg.Security.ExternalUsePolicy) == "" {
-		cfg.Security.ExternalUsePolicy = ExternalUsePolicyDeny
-	}
-	switch strings.TrimSpace(strings.ToLower(cfg.Security.ExternalUsePolicy)) {
-	case ExternalUsePolicyAllow:
-		cfg.Security.ExternalUsePolicy = ExternalUsePolicyAllow
-	default:
-		cfg.Security.ExternalUsePolicy = ExternalUsePolicyDeny
-	}
 }
 
 func NormalizeMasterPasswordInterval(value string) string {
@@ -145,18 +130,6 @@ func SetAgentDisabled(paths Paths, disabled bool) error {
 		cfg.Agent.Socket = paths.AgentSocket()
 	}
 	cfg.Agent.Disabled = disabled
-	return Save(paths.ConfigFile(), cfg)
-}
-
-func SetExternalUsePolicy(paths Paths, policy string) error {
-	cfg, err := Load(paths.ConfigFile())
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(cfg.Agent.Socket) == "" {
-		cfg.Agent.Socket = paths.AgentSocket()
-	}
-	cfg.Security.ExternalUsePolicy = policy
 	return Save(paths.ConfigFile(), cfg)
 }
 

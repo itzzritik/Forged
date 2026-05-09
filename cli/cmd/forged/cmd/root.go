@@ -83,6 +83,7 @@ func installRootSubcommands(cmd *cobra.Command) {
 		daemonCmd,
 		logsCmd,
 		signCmd,
+		daemonFreshenCmd,
 		sshRoutePrepareCmd,
 		sshRouteSuccessCmd,
 	} {
@@ -94,6 +95,7 @@ func installRootSubcommands(cmd *cobra.Command) {
 		versionCmd,
 		logsCmd,
 		signCmd,
+		daemonFreshenCmd,
 		sshRoutePrepareCmd,
 		sshRouteSuccessCmd,
 	)

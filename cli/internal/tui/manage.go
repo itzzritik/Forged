@@ -22,7 +22,6 @@ const (
 	manageItemSignIn            manageItemID = "sign-in"
 	manageItemSync              manageItemID = "sync"
 	manageItemMasterInterval    manageItemID = "master-password-interval"
-	manageItemExternalPolicy    manageItemID = "external-use-policy"
 	manageItemChangePassword    manageItemID = "change-password"
 	manageItemLogout            manageItemID = "logout"
 	manageListMinHeight                      = 6
@@ -135,14 +134,6 @@ func (m *model) manageItems() []manageItem {
 			Summary: m.masterPasswordIntervalSummary(),
 		},
 	)
-	if m.shouldShowExternalUsePolicy() {
-		items = append(items, manageItem{
-			ID:      manageItemExternalPolicy,
-			Label:   "External Use Policy",
-			Summary: m.externalUsePolicySummary(),
-		})
-	}
-
 	items = append(items, manageItem{
 		ID:      manageItemChangePassword,
 		Label:   "Change Master Password",
@@ -410,11 +401,6 @@ func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
 			m.session.Push(Route{ID: RouteVaultMasterPasswordInterval})
 		}
 		return m, m.showCurrentRoute()
-	case manageItemExternalPolicy:
-		m.manage.logoutArmed = false
-		m.manage.settingItem = ""
-		m.manage.settingErr = ""
-		return m, m.saveManageSecuritySettingCmd(manageItemExternalPolicy, m.nextExternalUsePolicy())
 	case manageItemChangePassword:
 		m.manage.logoutArmed = false
 		if m.session.Current().ID != RouteVaultChangePassword {
@@ -692,35 +678,8 @@ func (m *model) masterPasswordIntervalSummary() string {
 	return fmt.Sprintf("Ask for your master password again every %s on this device.", formatMasterPasswordInterval(m.currentMasterPasswordInterval()))
 }
 
-func (m *model) externalUsePolicySummary() string {
-	if !m.securityLoaded {
-		return "Loading security settings"
-	}
-	current := m.currentExternalUsePolicy()
-	next := m.nextExternalUsePolicy()
-	if current == config.ExternalUsePolicyAllow {
-		return fmt.Sprintf("Allow external signing and SSH auth when system authentication is unavailable. Press Enter to switch to %s.", formatExternalUsePolicy(next))
-	}
-	return fmt.Sprintf("Deny external signing and SSH auth when system authentication is unavailable. Press Enter to switch to %s.", formatExternalUsePolicy(next))
-}
-
 func (m *model) currentMasterPasswordInterval() string {
 	return config.NormalizeMasterPasswordInterval(m.securityState.MasterPasswordInterval)
-}
-
-func (m *model) currentExternalUsePolicy() string {
-	value := strings.TrimSpace(m.securityState.ExternalUsePolicy)
-	if value == "" {
-		return config.ExternalUsePolicyDeny
-	}
-	return value
-}
-
-func (m *model) nextExternalUsePolicy() string {
-	if m.currentExternalUsePolicy() == config.ExternalUsePolicyAllow {
-		return config.ExternalUsePolicyDeny
-	}
-	return config.ExternalUsePolicyAllow
 }
 
 func formatMasterPasswordInterval(value string) string {
@@ -762,33 +721,14 @@ func (m *model) currentMasterPasswordIntervalIndex() int {
 	return 0
 }
 
-func formatExternalUsePolicy(value string) string {
-	if value == config.ExternalUsePolicyAllow {
-		return "Always allow external use"
-	}
-	return "Always deny external use"
-}
-
-func (m *model) shouldShowExternalUsePolicy() bool {
-	switch m.securityState.SystemAuthCapability {
-	case securityCapabilityUnavailableByPlatform, securityCapabilityUnavailableByEnv:
-		return true
-	default:
-		return false
-	}
-}
-
 func (m *model) saveManageSecuritySettingCmd(item manageItemID, value string) tea.Cmd {
 	setInterval := m.setMasterPasswordInterval
-	setPolicy := m.setExternalUsePolicy
 	loadSecurity := m.loadSecurityState
 	return func() tea.Msg {
 		var err error
 		switch item {
 		case manageItemMasterInterval:
 			err = setInterval(value)
-		case manageItemExternalPolicy:
-			err = setPolicy(value)
 		default:
 			return manageSecuritySavedMsg{item: item, err: fmt.Errorf("Unknown security setting")}
 		}

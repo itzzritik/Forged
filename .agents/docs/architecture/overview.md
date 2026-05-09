@@ -2,7 +2,7 @@
 title: Architecture Overview
 applies_to:
   - "**"
-last_verified: 2026-04-23
+last_verified: 2026-05-09
 stable: yes
 ---
 
@@ -13,7 +13,7 @@ Forged is a local-first SSH key manager with a background daemon, a Bubble Tea T
 ## Must know
 
 - `forged` hosts the CLI and TUI. The daemon renders nothing.
-- `forged-sign` is the Git signer. `forged-auth` is the native-auth helper. `forged-server` is the HTTP API.
+- `forged-sign` is the Git signer. `forged-auth` is the System Auth helper. `forged-server` is the HTTP API.
 - TUI talks to the daemon over `ctl.sock`; SSH clients talk to `agent.sock`.
 - Web `/api/*` is a thin proxy to `forged-server`; business logic stays in the server or CLI.
 - Sync is event-bus driven. Callers mark state dirty; they do not run sync directly.
@@ -22,4 +22,4 @@ Forged is a local-first SSH key manager with a background daemon, a Bubble Tea T
 ## Decisions
 
 - Agent and control sockets stay separate.
-- Native auth stays in a helper binary so the daemon remains non-interactive.
+- System Auth stays in a helper binary so the daemon remains non-interactive.

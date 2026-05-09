@@ -24,6 +24,7 @@ builds:
       - -s -w
       - -X github.com/itzzritik/forged/cli/cmd/forged/cmd.version={{.Version}}
       - -X github.com/itzzritik/forged/cli/cmd/forged/cmd.commit={{.Commit}}
+      - -X github.com/itzzritik/forged/cli/internal/buildinfo.ID={{.Commit}}
 
   - id: forged-sign
     dir: ./cli

@@ -11,7 +11,7 @@ applies_to:
   - server/Dockerfile
 depends_on:
   - ops/platform-packaging.md
-last_verified: 2026-04-23
+last_verified: 2026-05-09
 stable: partial
 ---
 
@@ -26,6 +26,7 @@ One manual GitHub Actions workflow publishes CLI releases.
 - macOS binaries are not notarized. Windows binaries are not Authenticode-signed. Linux archives are unsigned.
 - The macOS Swift helper must be built on macOS and passed into the release flow as an artifact.
 - The npm wrapper is a launcher for native platform packages, not a JS implementation.
+- CLI builds embed a daemon build id. Local `just build-cli` refreshes an installed daemon after rebuilding; releases use the commit id for the daemon freshness check.
 
 ## Decisions
 

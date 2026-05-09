@@ -10,7 +10,7 @@ Authoritative routing lives in root `AGENTS.md`. This file is only a browse aid.
 ## CLI
 - `cli/daemon.md` — daemon lifecycle, cold start, and live-session behavior
 - `cli/ipc.md` — control socket model and IPC invariants
-- `cli/sensitive-auth.md` — native auth, local unlock trust, and session policy
+- `cli/sensitive-auth.md` — System Auth, device unlock, and session policy
 - `cli/ssh-agent.md` — SSH agent behavior and external-use rules
 - `cli/tui.md` — TUI state model, auth wall, and shell rules
 - `cli/vault.md` — local vault behavior and password/encryption boundaries

@@ -45,7 +45,6 @@ type Dependencies struct {
 	LoadStatus                func() (RuntimeStatus, error)
 	LoadSecurityState         func() (SecurityState, error)
 	SetMasterPasswordInterval func(string) error
-	SetExternalUsePolicy      func(string) error
 	ProbeSensitive            func() (SensitiveState, error)
 	HasLocalUnlockTrust       func() bool
 	UnlockSensitiveLaunch     func([]byte) (actions.UnlockResult, error)
@@ -220,7 +219,6 @@ type RuntimeStatus struct {
 
 type SecurityState struct {
 	MasterPasswordInterval string
-	ExternalUsePolicy      string
 	SystemAuthCapability   string
 	SecureStoreCapability  string
 }
@@ -291,7 +289,6 @@ type model struct {
 	loadStatus                func() (RuntimeStatus, error)
 	loadSecurityState         func() (SecurityState, error)
 	setMasterPasswordInterval func(string) error
-	setExternalUsePolicy      func(string) error
 	probeSensitive            func() (SensitiveState, error)
 	hasLocalUnlockTrust       func() bool
 	unlockSensitiveLaunch     func([]byte) (actions.UnlockResult, error)
@@ -417,8 +414,6 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("TUI load-security-state dependency is required")
 	case deps.SetMasterPasswordInterval == nil:
 		return Result{}, fmt.Errorf("TUI set-master-password-interval dependency is required")
-	case deps.SetExternalUsePolicy == nil:
-		return Result{}, fmt.Errorf("TUI set-external-use-policy dependency is required")
 	case deps.ProbeSensitive == nil:
 		return Result{}, fmt.Errorf("TUI probe-sensitive dependency is required")
 	case deps.HasLocalUnlockTrust == nil:
@@ -480,7 +475,6 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		loadStatus:                deps.LoadStatus,
 		loadSecurityState:         deps.LoadSecurityState,
 		setMasterPasswordInterval: deps.SetMasterPasswordInterval,
-		setExternalUsePolicy:      deps.SetExternalUsePolicy,
 		probeSensitive:            deps.ProbeSensitive,
 		hasLocalUnlockTrust:       deps.HasLocalUnlockTrust,
 		unlockSensitiveLaunch:     deps.UnlockSensitiveLaunch,

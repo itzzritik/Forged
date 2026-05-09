@@ -93,16 +93,12 @@ func runInteractiveIntent(intent tui.Intent) error {
 			}
 			return tui.SecurityState{
 				MasterPasswordInterval: state.MasterPasswordInterval,
-				ExternalUsePolicy:      state.ExternalUsePolicy,
 				SystemAuthCapability:   state.SystemAuthCapability,
 				SecureStoreCapability:  state.SecureStoreCapability,
 			}, nil
 		},
 		SetMasterPasswordInterval: func(value string) error {
 			return actions.SetMasterPasswordInterval(paths, value)
-		},
-		SetExternalUsePolicy: func(value string) error {
-			return actions.SetExternalUsePolicy(paths, value)
 		},
 		ProbeSensitive: func() (tui.SensitiveState, error) {
 			client := ipc.NewClient(paths.CtlSocket())

@@ -95,6 +95,7 @@ func serviceHealthy(snapshot Snapshot) bool {
 		snapshot.Service.ConfigValid &&
 		snapshot.Service.Running &&
 		serviceOwnsDaemon(snapshot) &&
+		serviceBuildFresh(snapshot) &&
 		snapshot.IPCSocketReady &&
 		snapshot.AgentSocketReady
 }

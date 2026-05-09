@@ -3,9 +3,7 @@ default:
 
 # Build
 build-cli:
-    cd cli && go build -o ../bin/forged ./cmd/forged
-    cd cli && go build -o ../bin/forged-sign ./cmd/forged-sign
-    ./scripts/build-forged-auth.sh
+    ./scripts/build-cli.sh
 
 build-server:
     cd server && go build -o ../bin/forged-server ./cmd/forged-server

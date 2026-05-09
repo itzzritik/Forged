@@ -3,7 +3,6 @@ package actions
 import (
 	"context"
 	"encoding/base64"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -40,24 +39,17 @@ func UnlockSensitive(paths config.Paths, password []byte) (UnlockResult, error) 
 }
 
 func UnlockSensitiveLaunch(paths config.Paths, password []byte) (UnlockResult, error) {
-	return unlockSensitive(paths, password, true)
+	return unlockSensitive(paths, password, false)
 }
 
 func unlockSensitive(paths config.Paths, password []byte, force bool) (UnlockResult, error) {
 	if len(password) == 0 {
-		wasUnlocked := sensitiveAlreadyUnlocked(paths)
 		_, err := authorizeSensitiveResultWithOptions(paths, sensitiveauth.ActionView, nil, force)
 		switch {
 		case err == nil:
 			return UnlockResult{}, nil
 		case IsSensitiveAuthRequired(err):
 			return UnlockResult{PasswordRequired: true, Prompt: unlockPrompt(err, sensitiveauth.ActionView.PasswordPrompt())}, nil
-		case !wasUnlocked && sensitiveAlreadyUnlocked(paths):
-			return UnlockResult{}, nil
-		case sensitiveAuthErrorContains(err, "authentication canceled"):
-			return UnlockResult{PasswordRequired: true, Prompt: "System authentication was canceled. Try system auth again, or enter your master password."}, nil
-		case sensitiveAuthErrorContains(err, "authentication failed"):
-			return UnlockResult{PasswordRequired: true, Prompt: "Authentication failed. Enter your master password to continue."}, nil
 		default:
 			return UnlockResult{}, err
 		}
@@ -76,29 +68,6 @@ func unlockPrompt(err error, fallback string) string {
 		return strings.TrimSpace(target.Prompt)
 	}
 	return fallback
-}
-
-func sensitiveAuthErrorContains(err error, needle string) bool {
-	if err == nil {
-		return false
-	}
-	return strings.Contains(strings.ToLower(err.Error()), strings.ToLower(needle))
-}
-
-func sensitiveAlreadyUnlocked(paths config.Paths) bool {
-	resp, err := ipc.NewClient(paths.CtlSocket()).CallWithTimeout(ipc.CmdStatus, nil, 500*time.Millisecond)
-	if err != nil {
-		return false
-	}
-	var status struct {
-		Sensitive *struct {
-			Unlocked *bool `json:"unlocked"`
-		} `json:"sensitive"`
-	}
-	if err := json.Unmarshal(resp.Data, &status); err != nil {
-		return false
-	}
-	return status.Sensitive != nil && status.Sensitive.Unlocked != nil && *status.Sensitive.Unlocked
 }
 
 func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []byte) (ChangePasswordResult, error) {

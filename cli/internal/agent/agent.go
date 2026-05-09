@@ -298,7 +298,7 @@ func (a *ForgedAgent) ensurePrivateKeyAccess() error {
 		return err
 	}
 	if result.PasswordRequired {
-		return fmt.Errorf("System authentication is required for external use")
+		return fmt.Errorf("System Auth is required for external use")
 	}
 	return nil
 }

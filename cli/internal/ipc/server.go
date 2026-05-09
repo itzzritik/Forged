@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/activity"
+	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"github.com/itzzritik/forged/cli/internal/sshrouting"
 	forgedsync "github.com/itzzritik/forged/cli/internal/sync"
@@ -212,8 +213,6 @@ func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
-
-	s.ensureExternalSession()
 
 	if err := s.sshRoutes.Prepare(sshrouting.PrepareRequest{
 		Attempt:      args.Attempt,
@@ -751,9 +750,14 @@ func (s *Server) handleSensitiveLock() Response {
 }
 
 func (s *Server) handleStatus() Response {
+	buildID := buildinfo.CurrentID()
 	status := map[string]any{
 		"pid":       os.Getpid(),
 		"key_count": s.keyCount(),
+		"build_id":  buildID,
+		"build": map[string]any{
+			"id": buildID,
+		},
 	}
 
 	if s.authBroker != nil {

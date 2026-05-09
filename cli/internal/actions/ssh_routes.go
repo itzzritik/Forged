@@ -3,14 +3,10 @@ package actions
 import (
 	"encoding/json"
 	"fmt"
-	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
-	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 )
 
@@ -84,26 +80,10 @@ func LoadSSHRoutingDebug(paths config.Paths) (SSHRoutingDebug, error) {
 	if err == nil {
 		return snapshot, nil
 	}
-	if !isUnknownIPCCommand(err, ipc.CmdSSHRoutesList) && !isDaemonUnavailable(err) {
-		return SSHRoutingDebug{}, err
+	if isUnknownIPCCommand(err, ipc.CmdSSHRoutesList) {
+		return SSHRoutingDebug{}, fmt.Errorf("SSH routing diagnostics need a fresh Forged daemon; run Doctor > Fix Issues")
 	}
-
-	if refreshErr := refreshDaemonForSSHRoutingDebug(paths); refreshErr != nil {
-		return SSHRoutingDebug{}, fmt.Errorf("refreshing daemon for SSH Routing Lab: %w", refreshErr)
-	}
-	unlock, unlockErr := UnlockSensitiveLaunch(paths, nil)
-	if unlockErr != nil {
-		return SSHRoutingDebug{}, fmt.Errorf("unlocking refreshed daemon for SSH Routing Lab: %w", unlockErr)
-	}
-	if unlock.PasswordRequired {
-		return SSHRoutingDebug{}, fmt.Errorf("daemon was refreshed; unlock Forged again to load vault-backed route memory")
-	}
-
-	snapshot, err = loadSSHRoutingDebug(paths)
-	if err != nil {
-		return SSHRoutingDebug{}, fmt.Errorf("loading SSH routing debug after daemon refresh: %w", err)
-	}
-	return snapshot, nil
+	return SSHRoutingDebug{}, err
 }
 
 func loadSSHRoutingDebug(paths config.Paths) (SSHRoutingDebug, error) {
@@ -118,105 +98,9 @@ func loadSSHRoutingDebug(paths config.Paths) (SSHRoutingDebug, error) {
 	return snapshot, nil
 }
 
-func refreshDaemonForSSHRoutingDebug(paths config.Paths) error {
-	if pid, running := daemon.IsRunning(paths); running {
-		if err := stopForgedDaemon(pid); err != nil {
-			return err
-		}
-		if err := waitForSSHRoutingDebugReady(paths, 2*time.Second); err == nil {
-			return nil
-		}
-	}
-
-	if err := startDirectDaemon(paths); err != nil {
-		return err
-	}
-	return waitForDaemonStatus(paths, 6*time.Second)
-}
-
-func stopForgedDaemon(pid int) error {
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return fmt.Errorf("finding daemon process %d: %w", pid, err)
-	}
-	if err := process.Signal(os.Interrupt); err != nil {
-		return fmt.Errorf("stopping daemon process %d: %w", pid, err)
-	}
-	return nil
-}
-
-func startDirectDaemon(paths config.Paths) error {
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("finding current binary: %w", err)
-	}
-	exe, err = filepath.EvalSymlinks(exe)
-	if err != nil {
-		exe, _ = os.Executable()
-	}
-
-	if err := os.MkdirAll(filepath.Dir(paths.LogFile()), 0700); err != nil {
-		return fmt.Errorf("creating log directory: %w", err)
-	}
-	logFile, err := os.OpenFile(paths.LogFile(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0600)
-	if err != nil {
-		return fmt.Errorf("opening daemon log: %w", err)
-	}
-	defer logFile.Close()
-
-	cmd := exec.Command(exe, "daemon")
-	cmd.SysProcAttr = detachedDaemonProcAttr()
-	cmd.Stdout = logFile
-	cmd.Stderr = logFile
-	if err := cmd.Start(); err != nil {
-		return fmt.Errorf("starting daemon: %w", err)
-	}
-	return cmd.Process.Release()
-}
-
-func waitForSSHRoutingDebugReady(paths config.Paths, timeout time.Duration) error {
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		if _, err := loadSSHRoutingDebug(paths); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-	if lastErr != nil {
-		return lastErr
-	}
-	return fmt.Errorf("waiting for SSH routing debug")
-}
-
-func waitForDaemonStatus(paths config.Paths, timeout time.Duration) error {
-	client := ipc.NewClient(paths.CtlSocket())
-	deadline := time.Now().Add(timeout)
-	var lastErr error
-	for time.Now().Before(deadline) {
-		if _, err := client.Call(ipc.CmdStatus, nil); err == nil {
-			return nil
-		} else {
-			lastErr = err
-		}
-		time.Sleep(150 * time.Millisecond)
-	}
-	if lastErr != nil {
-		return fmt.Errorf("waiting for daemon status: %w", lastErr)
-	}
-	return fmt.Errorf("waiting for daemon status")
-}
-
 func isUnknownIPCCommand(err error, command string) bool {
 	message := strings.ToLower(strings.TrimSpace(err.Error()))
 	return strings.Contains(message, "unknown command") && strings.Contains(message, strings.ToLower(command))
-}
-
-func isDaemonUnavailable(err error) bool {
-	message := strings.ToLower(strings.TrimSpace(err.Error()))
-	return strings.Contains(message, "daemon is not running")
 }
 
 func ClearSSHRoute(paths config.Paths, target string) error {

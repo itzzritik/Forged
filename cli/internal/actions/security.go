@@ -15,7 +15,6 @@ import (
 
 type SecurityState struct {
 	MasterPasswordInterval string
-	ExternalUsePolicy      string
 	SystemAuthCapability   string
 	SecureStoreCapability  string
 }
@@ -28,7 +27,6 @@ func LoadSecurityState(paths config.Paths) (SecurityState, error) {
 
 	return SecurityState{
 		MasterPasswordInterval: config.NormalizeMasterPasswordInterval(cfg.Security.MasterPasswordInterval),
-		ExternalUsePolicy:      cfg.Security.ExternalUsePolicy,
 		SystemAuthCapability:   string(inspectNativeCapability(helperBinaryPath())),
 		SecureStoreCapability:  string(sensitiveauth.NewSecureStore().Capability(context.Background())),
 	}, nil
@@ -36,10 +34,6 @@ func LoadSecurityState(paths config.Paths) (SecurityState, error) {
 
 func SetMasterPasswordInterval(paths config.Paths, interval string) error {
 	return config.SetMasterPasswordInterval(paths, interval)
-}
-
-func SetExternalUsePolicy(paths config.Paths, policy string) error {
-	return config.SetExternalUsePolicy(paths, policy)
 }
 
 func inspectNativeCapability(helperPath string) sensitiveauth.CapabilityState {

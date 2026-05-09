@@ -41,7 +41,7 @@ func (a Action) PasswordPrompt() string {
 	case ActionExternal:
 		return ""
 	default:
-		return "Native authentication unavailable. Enter your master password to unlock private-key access:"
+		return "System Auth is unavailable. Enter your master password to unlock Forged."
 	}
 }
 

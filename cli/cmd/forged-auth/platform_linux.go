@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -18,6 +19,9 @@ func providerName() string { return "pkexec" }
 
 func authorize(ctx context.Context, action sensitiveauth.Action) string {
 	_ = action
+	if !hasGraphicalSession() {
+		return "unavailable_by_environment"
+	}
 	path, err := exec.LookPath("pkexec")
 	if err != nil {
 		return "unavailable_by_environment"
@@ -38,10 +42,18 @@ func authorize(ctx context.Context, action sensitiveauth.Action) string {
 }
 
 func status() string {
+	if !hasGraphicalSession() {
+		return "unavailable_by_environment"
+	}
 	if _, err := exec.LookPath("pkexec"); err != nil {
 		return "unavailable_by_environment"
 	}
 	return "ok"
+}
+
+func hasGraphicalSession() bool {
+	return strings.TrimSpace(os.Getenv("DISPLAY")) != "" ||
+		strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != ""
 }
 
 func startLockLoop(onLock func()) {

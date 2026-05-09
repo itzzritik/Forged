@@ -10,45 +10,51 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 )
 
+type DaemonRuntimeStatus struct {
+	KeyCount int
+	BuildID  string
+}
+
 type Engine struct {
 	Paths config.Paths
 
-	statPath        func(string) bool
-	inspectService  func(config.Paths) (daemon.ServiceStatus, error)
-	isRunning       func(config.Paths) (int, bool)
-	socketReady     func(string) bool
-	isSSHEnabled    func(config.Paths) bool
-	detectOwner     func(config.Paths) (config.SSHAgentOwner, error)
-	loadCredentials func(string) (bool, error)
-	loadKeyCount    func(string) (int, error)
-	ensureConfig    func(config.Paths) error
-	enableSSH       func(config.Paths) error
-	ensureService   func(config.Paths, daemon.RuntimeSpec) error
-	serviceRuntime  func() (daemon.RuntimeSpec, error)
-	sleep           func()
-	serviceRetries  int
+	statPath         func(string) bool
+	inspectService   func(config.Paths) (daemon.ServiceStatus, error)
+	isRunning        func(config.Paths) (int, bool)
+	socketReady      func(string) bool
+	isSSHEnabled     func(config.Paths) bool
+	detectOwner      func(config.Paths) (config.SSHAgentOwner, error)
+	loadCredentials  func(string) (bool, error)
+	loadDaemonStatus func(string) (DaemonRuntimeStatus, error)
+	ensureConfig     func(config.Paths) error
+	enableSSH        func(config.Paths) error
+	ensureService    func(config.Paths, daemon.RuntimeSpec) error
+	serviceRuntime   func() (daemon.RuntimeSpec, error)
+	sleep            func()
+	serviceRetries   int
 }
 
 func New(paths config.Paths) *Engine {
 	return &Engine{
-		Paths:           paths,
-		statPath:        fileExists,
-		inspectService:  daemon.InspectService,
-		isRunning:       daemon.IsRunning,
-		socketReady:     defaultSocketReady,
-		isSSHEnabled:    config.IsSSHAgentEnabled,
-		detectOwner:     config.DetectSSHAgentOwner,
-		loadCredentials: defaultCredentialsValid,
-		loadKeyCount:    defaultLoadKeyCount,
-		ensureConfig:    ensureDefaultConfigFile,
-		enableSSH:       config.EnableSSHAgent,
-		ensureService:   daemon.EnsureService,
-		serviceRuntime:  daemon.DefaultRuntimeSpec,
+		Paths:            paths,
+		statPath:         fileExists,
+		inspectService:   daemon.InspectService,
+		isRunning:        daemon.IsRunning,
+		socketReady:      defaultSocketReady,
+		isSSHEnabled:     config.IsSSHAgentEnabled,
+		detectOwner:      config.DetectSSHAgentOwner,
+		loadCredentials:  defaultCredentialsValid,
+		loadDaemonStatus: defaultDaemonRuntimeStatus,
+		ensureConfig:     ensureDefaultConfigFile,
+		enableSSH:        config.EnableSSHAgent,
+		ensureService:    daemon.EnsureService,
+		serviceRuntime:   daemon.DefaultRuntimeSpec,
 		sleep: func() {
 			time.Sleep(500 * time.Millisecond)
 		},
@@ -63,6 +69,7 @@ func (e *Engine) Assess() (Snapshot, error) {
 		ManagedConfigReady: e.pathExists(e.Paths.SSHManagedConfig()),
 		AgentDisabled:      config.IsAgentDisabled(e.Paths),
 		SSHEnabled:         e.isSSH(e.Paths),
+		CurrentBuildID:     buildinfo.CurrentID(),
 	}
 
 	service, err := e.serviceStatus(e.Paths)
@@ -89,8 +96,9 @@ func (e *Engine) Assess() (Snapshot, error) {
 	}
 
 	if snapshot.IPCSocketReady {
-		if keyCount, err := e.keyCount(e.Paths.CtlSocket()); err == nil {
-			snapshot.KeyCount = keyCount
+		if status, err := e.daemonStatus(e.Paths.CtlSocket()); err == nil {
+			snapshot.KeyCount = status.KeyCount
+			snapshot.DaemonBuildID = status.BuildID
 		}
 	}
 
@@ -111,6 +119,7 @@ func classifyState(s Snapshot) State {
 		s.Service.ConfigValid &&
 		s.Service.Running &&
 		serviceOwnsDaemon(s) &&
+		serviceBuildFresh(s) &&
 		s.IPCSocketReady &&
 		s.AgentSocketReady &&
 		(s.AgentDisabled || sshHealthy)
@@ -137,6 +146,14 @@ func serviceOwnsDaemon(s Snapshot) bool {
 		return true
 	}
 	return s.DaemonPID > 0 && s.Service.PID == s.DaemonPID
+}
+
+func serviceBuildFresh(s Snapshot) bool {
+	current := strings.TrimSpace(s.CurrentBuildID)
+	if current == "" {
+		return true
+	}
+	return strings.TrimSpace(s.DaemonBuildID) == current
 }
 
 func (e *Engine) pathExists(path string) bool {
@@ -188,11 +205,11 @@ func (e *Engine) credentials(path string) (bool, error) {
 	return defaultCredentialsValid(path)
 }
 
-func (e *Engine) keyCount(socketPath string) (int, error) {
-	if e != nil && e.loadKeyCount != nil {
-		return e.loadKeyCount(socketPath)
+func (e *Engine) daemonStatus(socketPath string) (DaemonRuntimeStatus, error) {
+	if e != nil && e.loadDaemonStatus != nil {
+		return e.loadDaemonStatus(socketPath)
 	}
-	return defaultLoadKeyCount(socketPath)
+	return defaultDaemonRuntimeStatus(socketPath)
 }
 
 func fileExists(path string) bool {
@@ -238,20 +255,28 @@ func defaultCredentialsValid(path string) (bool, error) {
 	return token != "" && strings.TrimSpace(creds.ServerURL) != "", nil
 }
 
-func defaultLoadKeyCount(socketPath string) (int, error) {
+func defaultDaemonRuntimeStatus(socketPath string) (DaemonRuntimeStatus, error) {
 	resp, err := ipc.NewClient(socketPath).Call(ipc.CmdStatus, nil)
 	if err != nil {
-		return 0, err
+		return DaemonRuntimeStatus{}, err
 	}
 
 	var result struct {
-		KeyCount int `json:"key_count"`
+		KeyCount int    `json:"key_count"`
+		BuildID  string `json:"build_id"`
+		Build    struct {
+			ID string `json:"id"`
+		} `json:"build"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return 0, err
+		return DaemonRuntimeStatus{}, err
 	}
 
-	return result.KeyCount, nil
+	buildID := strings.TrimSpace(result.BuildID)
+	if buildID == "" {
+		buildID = strings.TrimSpace(result.Build.ID)
+	}
+	return DaemonRuntimeStatus{KeyCount: result.KeyCount, BuildID: buildID}, nil
 }
 
 func ensureDefaultConfigFile(paths config.Paths) error {
@@ -272,7 +297,6 @@ enabled = false
 
 [security]
 master_password_interval = "7d"
-external_use_policy = "deny"
 `, paths.AgentSocket())
 
 	return os.WriteFile(paths.ConfigFile(), []byte(content), 0o600)

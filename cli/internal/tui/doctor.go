@@ -180,9 +180,6 @@ func (m *model) doctorRows() []doctorRow {
 		m.doctorSecureStoreRow(),
 		m.doctorSyncAccountRow(),
 	}
-	if m.shouldShowExternalUsePolicy() {
-		rows = append(rows, m.doctorExternalUsePolicyRow())
-	}
 
 	sort.SliceStable(rows, func(i, j int) bool {
 		if rows[i].severity != rows[j].severity {
@@ -289,6 +286,18 @@ func (m *model) doctorDaemonRow() doctorRow {
 		detail := "Running"
 		if m.snapshot.DaemonPID > 0 {
 			detail = fmt.Sprintf("PID %d", m.snapshot.DaemonPID)
+		}
+		if strings.TrimSpace(m.snapshot.CurrentBuildID) != "" && strings.TrimSpace(m.snapshot.DaemonBuildID) != strings.TrimSpace(m.snapshot.CurrentBuildID) {
+			return doctorRow{
+				screen: doctorscreen.Row{
+					Check:  "Daemon",
+					Status: "✕ Outdated",
+					Detail: "Run Fix Issues",
+					Tone:   doctorscreen.ToneDanger,
+				},
+				severity: doctorSeverityDanger,
+				order:    3,
+			}
 		}
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -538,7 +547,7 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "System Auth",
 				Status: "✓ Available",
-				Detail: "System authentication is ready for sensitive actions",
+				Detail: "System Auth is ready for sensitive actions",
 				Tone:   doctorscreen.ToneSuccess,
 			},
 			severity: doctorSeveritySuccess,
@@ -560,7 +569,7 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "System Auth",
 				Status: "✕ Broken",
-				Detail: "System authentication is expected but not working",
+				Detail: "System Auth is expected but not working",
 				Tone:   doctorscreen.ToneDanger,
 			},
 			severity: doctorSeverityDanger,
@@ -616,42 +625,5 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 			severity: doctorSeverityDanger,
 			order:    10,
 		}
-	}
-}
-
-func (m *model) doctorExternalUsePolicyRow() doctorRow {
-	if !m.securityLoaded {
-		return doctorRow{
-			screen: doctorscreen.Row{
-				Check:  "External Use",
-				Status: "! Checking",
-				Detail: "Loading security state",
-				Tone:   doctorscreen.ToneWarning,
-			},
-			severity: doctorSeverityWarning,
-			order:    11,
-		}
-	}
-	if m.securityState.ExternalUsePolicy == config.ExternalUsePolicyAllow {
-		return doctorRow{
-			screen: doctorscreen.Row{
-				Check:  "External Use",
-				Status: "! Allow external",
-				Detail: "SSH auth and signing may proceed without system auth on unsupported environments",
-				Tone:   doctorscreen.ToneWarning,
-			},
-			severity: doctorSeverityWarning,
-			order:    11,
-		}
-	}
-	return doctorRow{
-		screen: doctorscreen.Row{
-			Check:  "External Use",
-			Status: "✓ Deny by default",
-			Detail: "SSH auth and signing are blocked when system auth is unavailable",
-			Tone:   doctorscreen.ToneSuccess,
-		},
-		severity: doctorSeveritySuccess,
-		order:    11,
 	}
 }

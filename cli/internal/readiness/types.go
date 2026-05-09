@@ -59,6 +59,8 @@ type ProgressFunc func(ProgressStage)
 type Snapshot struct {
 	State              State
 	KeyCount           int
+	CurrentBuildID     string
+	DaemonBuildID      string
 	LoggedIn           bool
 	VaultExists        bool
 	ConfigExists       bool

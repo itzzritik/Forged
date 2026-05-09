@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-05-03
+last_verified: 2026-05-09
 stable: partial
 ---
 
@@ -28,6 +28,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Sync only exists while account credentials are present and a live vault session is available.
 - While sync is active, learned SSH route proofs mark the vault dirty and the sync bus also runs low-frequency status checks.
 - Service repair replaces any unmanaged `forged daemon` that still owns the runtime sockets before launchd/system service restart, and health checks only trust service sockets when the managed service PID matches the daemon PID file on platforms that expose it.
+- Daemon status exposes a build id. Readiness treats a running daemon with a different or missing build id as degraded and repairs it by reinstalling/restarting the managed service.
 - Windows support is still partial around socket transport and platform helpers.
 
 ## Decisions
