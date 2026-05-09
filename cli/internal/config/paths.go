@@ -23,6 +23,9 @@ func (p Paths) LocalUnlockBlobFile() string {
 	return filepath.Join(p.ConfigDir, "local-unlock.json")
 }
 func (p Paths) InstallIDFile() string { return filepath.Join(p.ConfigDir, "install.id") }
+func (p Paths) HeadlessUnlockKeyFile() string {
+	return filepath.Join(p.ConfigDir, "headless-unlock.key")
+}
 
 func (p Paths) SSHManagedDir() string {
 	return filepath.Join(p.ConfigDir, "ssh")

@@ -4,7 +4,7 @@ applies_to:
   - cli/internal/tui/**
 depends_on:
   - cli/ipc.md
-last_verified: 2026-05-09
+last_verified: 2026-05-10
 stable: yes
 ---
 

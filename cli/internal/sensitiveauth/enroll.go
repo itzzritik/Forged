@@ -7,6 +7,8 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -46,13 +48,9 @@ func RecoverEnrolledSymmetricKey(paths config.Paths) ([]byte, error) {
 		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Local unlock enrollment user mismatch"))
 	}
 
-	store := NewSecureStore()
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-
-	deviceKey, err := store.LoadDeviceKey(ctx, installID)
+	deviceKey, err := recoverLocalEnrollmentDeviceKey(paths, enrollment, installID)
 	if err != nil {
-		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Loading secure-store device key: %w", err))
+		return nil, err
 	}
 	defer zeroSensitiveBytes(deviceKey)
 
@@ -95,6 +93,9 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 	store := NewSecureStore()
 	capability := store.Capability(context.Background())
 	if !capability.IsAvailable() {
+		if isHeadlessLocalUnlockAllowed(capability) {
+			return refreshHeadlessLocalEnrollment(paths, symmetricKey, capability)
+		}
 		return EnrollmentResult{
 			Capability: capability,
 			Reason:     "secure storage unavailable for local unlock enrollment",
@@ -137,6 +138,7 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 
 	enrollment := LocalEnrollment{
 		Version:                  LocalEnrollmentVersion,
+		TrustMode:                LocalEnrollmentTrustSecureStore,
 		InstallID:                installID,
 		LocalUser:                CurrentLocalUser(),
 		CreatedAt:                time.Now().UTC(),
@@ -170,6 +172,7 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 
 func InvalidateLocalEnrollment(paths config.Paths) error {
 	_ = DeleteLocalEnrollment(paths.LocalUnlockBlobFile())
+	_ = os.Remove(paths.HeadlessUnlockKeyFile())
 
 	installID, err := osReadTrimmed(paths.InstallIDFile())
 	if err != nil || installID == "" {
@@ -185,6 +188,126 @@ func InvalidateLocalEnrollment(paths config.Paths) error {
 		err != ErrSecureStoreNotFound &&
 		err != ErrSecureStoreBroken {
 		return err
+	}
+	return nil
+}
+
+func recoverLocalEnrollmentDeviceKey(paths config.Paths, enrollment *LocalEnrollment, installID string) ([]byte, error) {
+	if enrollment != nil && enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile {
+		deviceKey, err := os.ReadFile(paths.HeadlessUnlockKeyFile())
+		if err != nil {
+			return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Reading headless local unlock key: %w", err))
+		}
+		if len(deviceKey) != vault.KeySize {
+			zeroSensitiveBytes(deviceKey)
+			return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Headless local unlock key is invalid"))
+		}
+		return deviceKey, nil
+	}
+
+	store := NewSecureStore()
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	deviceKey, err := store.LoadDeviceKey(ctx, installID)
+	if err != nil {
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Loading secure-store device key: %w", err))
+	}
+	return deviceKey, nil
+}
+
+func refreshHeadlessLocalEnrollment(paths config.Paths, symmetricKey []byte, capability CapabilityState) (EnrollmentResult, error) {
+	installID, err := LoadOrCreateInstallID(paths)
+	if err != nil {
+		return EnrollmentResult{
+			Capability: CapabilityBroken,
+			Reason:     err.Error(),
+		}, nil
+	}
+
+	deviceKey := make([]byte, vault.KeySize)
+	if _, err := rand.Read(deviceKey); err != nil {
+		return EnrollmentResult{
+			Capability: CapabilityBroken,
+			Reason:     fmt.Sprintf("generating headless device key: %v", err),
+		}, nil
+	}
+	defer zeroSensitiveBytes(deviceKey)
+
+	localKey, err := deriveLocalEnrollmentKey(deviceKey)
+	if err != nil {
+		return EnrollmentResult{
+			Capability: CapabilityBroken,
+			Reason:     err.Error(),
+		}, nil
+	}
+	defer zeroSensitiveBytes(localKey)
+
+	wrappedVaultKey, err := vault.EncryptCombined(localKey, symmetricKey)
+	if err != nil {
+		return EnrollmentResult{
+			Capability: CapabilityBroken,
+			Reason:     fmt.Sprintf("wrapping vault symmetric key: %v", err),
+		}, nil
+	}
+
+	if err := writeHeadlessUnlockKey(paths.HeadlessUnlockKeyFile(), deviceKey); err != nil {
+		return EnrollmentResult{
+			Capability: CapabilityBroken,
+			Reason:     err.Error(),
+		}, nil
+	}
+
+	enrollment := LocalEnrollment{
+		Version:                  LocalEnrollmentVersion,
+		TrustMode:                LocalEnrollmentTrustHeadlessFile,
+		InstallID:                installID,
+		LocalUser:                CurrentLocalUser(),
+		CreatedAt:                time.Now().UTC(),
+		WrappedVaultSymmetricKey: wrappedVaultKey,
+	}
+	if err := WriteLocalEnrollment(paths.LocalUnlockBlobFile(), enrollment); err != nil {
+		_ = os.Remove(paths.HeadlessUnlockKeyFile())
+		return EnrollmentResult{
+			Capability: CapabilityBroken,
+			Reason:     err.Error(),
+		}, nil
+	}
+
+	return EnrollmentResult{
+		Refreshed:  true,
+		Capability: capability,
+	}, nil
+}
+
+func writeHeadlessUnlockKey(path string, key []byte) error {
+	if len(key) != vault.KeySize {
+		return fmt.Errorf("Headless local unlock key is invalid")
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("Creating headless local unlock directory: %w", err)
+	}
+
+	tmp, err := os.CreateTemp(filepath.Dir(path), "headless-unlock-*.tmp")
+	if err != nil {
+		return fmt.Errorf("Creating headless local unlock temp file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.Write(key); err != nil {
+		tmp.Close()
+		return fmt.Errorf("Writing headless local unlock key: %w", err)
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return fmt.Errorf("Setting headless local unlock permissions: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("Closing headless local unlock temp file: %w", err)
+	}
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("Replacing headless local unlock key: %w", err)
 	}
 	return nil
 }
@@ -221,6 +344,9 @@ func enrollmentExpired(paths config.Paths, enrollment *LocalEnrollment) bool {
 	if enrollment == nil {
 		return true
 	}
+	if enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile {
+		return false
+	}
 	if !enrollment.CreatedAt.IsZero() {
 		expiry := enrollment.CreatedAt.Add(config.MasterPasswordIntervalDuration(loadMasterPasswordInterval(paths)))
 		return time.Now().UTC().After(expiry)
@@ -229,6 +355,16 @@ func enrollmentExpired(paths config.Paths, enrollment *LocalEnrollment) bool {
 		return time.Now().UTC().After(enrollment.ExpiresAt)
 	}
 	return false
+}
+
+func isHeadlessLocalUnlockAllowed(capability CapabilityState) bool {
+	if !capability.IsUnavailable() {
+		return false
+	}
+	if strings.EqualFold(strings.TrimSpace(os.Getenv("FORGED_HEADLESS")), "1") {
+		return true
+	}
+	return runtime.GOOS == "linux"
 }
 
 func osReadTrimmed(path string) (string, error) {

@@ -602,11 +602,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startStartupRepair()
 		}
 		if msg.snapshot.IPCSocketReady {
-			if !m.hasLocalUnlockTrust() {
-				m.showPasswordScreen(passwordStartupUnlock, "", "", true)
-				m.passwordContext = "Enter your master password to open Forged."
-				return m, m.passwordInput.Init()
-			}
 			m.startupUnlockPending = true
 			m.startupUnlockNeedsRepair = false
 			return m, m.startStartupUnlockFlow()
@@ -2522,11 +2517,6 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 			return m.restartAfterVaultReady()
 		}
 		if m.maintenanceTrigger == maintenanceTriggerBoot && result.Snapshot.VaultExists && m.startupUnlockPending && !m.startupUnlockNeedsRepair {
-			if !m.hasLocalUnlockTrust() {
-				m.showPasswordScreen(passwordStartupUnlock, "", "", true)
-				m.passwordContext = "Enter your master password to open Forged."
-				return m.passwordInput.Init()
-			}
 			return m.startStartupUnlockFlow()
 		}
 		m.popWizardRoutes()

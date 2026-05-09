@@ -7,7 +7,7 @@ depends_on:
   - architecture/security-model.md
   - cli/daemon.md
   - cli/ipc.md
-last_verified: 2026-05-09
+last_verified: 2026-05-10
 stable: partial
 ---
 
@@ -25,7 +25,7 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
   - daemon restart
 - On desktop, TUI unlock tries System Auth first and falls back to the universal master-password page on cancel, failure, unavailable System Auth, or missing device unlock.
 - On desktop, external SSH/signing tries System Auth and denies on cancel/failure. It never falls back to master password.
-- On headless machines, System Auth is treated as unavailable. TUI/external use hydrate from enrolled device unlock without prompting; if that enrollment is missing, the machine must be opened once with the master password before SSH/signing can work.
+- On headless machines, System Auth is treated as unavailable. The first successful master-password unlock creates file-backed local unlock trust; after that TUI and external SSH/signing hydrate from it without prompting.
 - Export and change-password are always master-password-only. Export issues a short export token and does not rely on System Auth.
 - Open TUI sessions relock after system lock/sleep and after 4 minutes of idle time.
 - External System Auth prompts are single-flight with a short failure cooldown so parallel SSH/signing requests do not spam prompts.

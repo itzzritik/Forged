@@ -14,10 +14,16 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 )
 
-const LocalEnrollmentVersion = 1
+const (
+	LocalEnrollmentVersion = 1
+
+	LocalEnrollmentTrustSecureStore  = "secure_store"
+	LocalEnrollmentTrustHeadlessFile = "headless_file"
+)
 
 type LocalEnrollment struct {
 	Version                  int       `json:"version"`
+	TrustMode                string    `json:"trust_mode,omitempty"`
 	InstallID                string    `json:"install_id"`
 	LocalUser                string    `json:"local_user,omitempty"`
 	CreatedAt                time.Time `json:"created_at"`
