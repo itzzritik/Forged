@@ -29,7 +29,7 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
 - Export and change-password are always master-password-only. Export issues a short export token and does not rely on System Auth.
 - Open TUI sessions relock after system lock/sleep and after 4 minutes of idle time.
 - External System Auth prompts are single-flight with a short failure cooldown so parallel SSH/signing requests do not spam prompts.
-- Internal SSH route preparation must not prompt auth. It can use public data or an already active daemon session.
+- SSH route preparation normally uses public in-memory route data and does not prompt. If a cold daemon has no route cache, it may trigger external auth once to hydrate the vault before writing the route snippet.
 - `broken` and `unavailable` are separate states. Unavailable means no System Auth path, usually headless; broken means the desktop System Auth path exists but failed unexpectedly.
 - `Master Password Interval` is a local device policy because device unlock enrollment is per-device.
 - Successful master-password fallback refreshes device unlock best-effort.

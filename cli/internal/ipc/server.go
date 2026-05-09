@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log/slog"
 	"net"
@@ -214,7 +215,7 @@ func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
-	if err := s.sshRoutes.Prepare(sshrouting.PrepareRequest{
+	req := sshrouting.PrepareRequest{
 		Attempt:      args.Attempt,
 		ClientPID:    args.ClientPID,
 		CWD:          args.CWD,
@@ -222,21 +223,38 @@ func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
 		OriginalHost: args.OriginalHost,
 		User:         args.User,
 		Port:         args.Port,
-	}); err != nil {
+	}
+	if err := s.sshRoutes.Prepare(req); err != nil {
+		if errors.Is(err, sshrouting.ErrRouteMemoryLocked) {
+			if authErr := s.ensureExternalSession(); authErr != nil {
+				return ErrorResponse(authErr)
+			}
+			err = s.sshRoutes.Prepare(req)
+		}
+		if err == nil {
+			return OkResponse(nil)
+		}
 		return ErrorResponse(err)
 	}
 
 	return OkResponse(nil)
 }
 
-func (s *Server) ensureExternalSession() {
+func (s *Server) ensureExternalSession() error {
 	s.stateMu.RLock()
 	locked := s.keyStore == nil
 	s.stateMu.RUnlock()
 	if !locked || s.authBroker == nil {
-		return
+		return nil
 	}
-	_, _ = s.authBroker.Authorize(context.Background(), sensitiveauth.ActionExternal)
+	result, err := s.authBroker.Authorize(context.Background(), sensitiveauth.ActionExternal)
+	if err != nil {
+		return err
+	}
+	if result.PasswordRequired {
+		return fmt.Errorf("System Auth is required for external use")
+	}
+	return nil
 }
 
 func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {

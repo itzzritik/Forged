@@ -2,6 +2,7 @@ package sshrouting
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -9,6 +10,8 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
+
+var ErrRouteMemoryLocked = errors.New("SSH route memory is locked")
 
 type PrepareRequest struct {
 	Attempt      string
@@ -38,6 +41,8 @@ type Service struct {
 	mu            sync.RWMutex
 	paths         config.Paths
 	keyStore      *vault.KeyStore
+	cachedKeys    []vault.Key
+	cachedRoutes  map[string]vault.SSHRoute
 	now           func() time.Time
 	attempts      map[string]Attempt
 	clientAttempt map[int]string
@@ -60,6 +65,9 @@ func (s *Service) SetKeyStore(keyStore *vault.KeyStore) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.keyStore = keyStore
+	if keyStore != nil {
+		s.refreshCacheFromKeyStoreLocked(keyStore)
+	}
 }
 
 func (s *Service) SetOnMutation(fn func(reason string)) {
@@ -83,11 +91,9 @@ func (s *Service) Prepare(req PrepareRequest) error {
 		operation = OperationSSHAuth
 	}
 
-	var routes map[string]vault.SSHRoute
-	var keys []vault.Key
-	if s.keyStore != nil {
-		routes = s.keyStore.SSHRoutes()
-		keys = s.keyStore.List()
+	keyStore, routes, keys := s.routingSnapshot()
+	if keyStore == nil && len(keys) == 0 {
+		return ErrRouteMemoryLocked
 	}
 
 	refs, err := BuildKeyRefs(keys, s.paths.SSHManagedKeysDir())
@@ -115,7 +121,7 @@ func (s *Service) Prepare(req PrepareRequest) error {
 		}
 	}
 	probeProved := false
-	if target.Kind == TargetGit && !plan.HadExact {
+	if target.Kind == TargetGit && !plan.HadExact && keyStore != nil {
 		probed, proved, err := s.probeGitProvider(target, operation, plan, refByFingerprint)
 		if err != nil {
 			return err
@@ -125,7 +131,7 @@ func (s *Service) Prepare(req PrepareRequest) error {
 			probeProved = proved
 		}
 	}
-	if target.Kind == TargetSSH {
+	if target.Kind == TargetSSH && keyStore != nil {
 		probed, proved, err := s.probeSSHServer(target, operation, plan)
 		if err != nil {
 			return err
@@ -173,20 +179,25 @@ func (s *Service) Success(attempt string, clientPID int) error {
 
 	if len(remaining) == 0 {
 		RemoveRouteSnippet(s.paths.SSHRouteRuntimeDir(), current.Token)
-	} else if s.keyStore != nil {
-		refs, err := BuildKeyRefs(s.keyStore.List(), s.paths.SSHManagedKeysDir())
+	} else {
+		keyStore, _, keys := s.routingSnapshot()
+		if keyStore != nil {
+			keys = keyStore.List()
+		}
+		refs, err := BuildKeyRefs(keys, s.paths.SSHManagedKeysDir())
 		if err == nil {
 			_ = WriteRouteSnippet(s.paths.SSHRouteRuntimeDir(), current.Token, refsForFingerprints(remaining, KeyRefsByFingerprint(refs)))
 		}
 	}
 
-	if current.LastKey == "" || s.keyStore == nil {
+	keyStore, _, _ := s.routingSnapshot()
+	if current.LastKey == "" || keyStore == nil {
 		return nil
 	}
 	if current.Target.Kind == TargetGit {
 		return nil
 	}
-	if err := s.keyStore.RecordSSHRouteProof(
+	if err := keyStore.RecordSSHRouteProof(
 		current.Target.Canonical,
 		current.LastKey,
 		vault.SSHRouteProofSSHAuth,
@@ -195,6 +206,7 @@ func (s *Service) Success(attempt string, clientPID int) error {
 	); err != nil {
 		return err
 	}
+	s.refreshCacheFromKeyStore()
 	s.notifyMutation("ssh_route_learned")
 	return nil
 }
@@ -309,6 +321,83 @@ func (s *Service) candidatesForTokenLocked(token string) []string {
 	return out
 }
 
+func (s *Service) routingSnapshot() (*vault.KeyStore, map[string]vault.SSHRoute, []vault.Key) {
+	s.mu.RLock()
+	keyStore := s.keyStore
+	cachedRoutes := cloneRouteCache(s.cachedRoutes)
+	cachedKeys := clonePublicRoutingKeys(s.cachedKeys)
+	s.mu.RUnlock()
+
+	if keyStore == nil {
+		return nil, cachedRoutes, cachedKeys
+	}
+
+	routes := cloneRouteCache(keyStore.SSHRoutes())
+	keys := publicRoutingKeys(keyStore.List())
+
+	s.mu.Lock()
+	if s.keyStore == keyStore {
+		s.cachedRoutes = cloneRouteCache(routes)
+		s.cachedKeys = clonePublicRoutingKeys(keys)
+	}
+	s.mu.Unlock()
+
+	return keyStore, routes, keys
+}
+
+func (s *Service) refreshCacheFromKeyStore() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.keyStore != nil {
+		s.refreshCacheFromKeyStoreLocked(s.keyStore)
+	}
+}
+
+func (s *Service) refreshCacheFromKeyStoreLocked(keyStore *vault.KeyStore) {
+	s.cachedRoutes = cloneRouteCache(keyStore.SSHRoutes())
+	s.cachedKeys = publicRoutingKeys(keyStore.List())
+}
+
+func publicRoutingKeys(keys []vault.Key) []vault.Key {
+	out := make([]vault.Key, 0, len(keys))
+	for _, key := range keys {
+		key.EncryptedPrivateKey = ""
+		key.EncryptedCipherKey = ""
+		key.PrivateKey = nil
+		out = append(out, key)
+	}
+	return out
+}
+
+func clonePublicRoutingKeys(keys []vault.Key) []vault.Key {
+	out := make([]vault.Key, len(keys))
+	copy(out, keys)
+	for i := range out {
+		out[i].EncryptedPrivateKey = ""
+		out[i].EncryptedCipherKey = ""
+		out[i].PrivateKey = nil
+	}
+	return out
+}
+
+func cloneRouteCache(routes map[string]vault.SSHRoute) map[string]vault.SSHRoute {
+	if len(routes) == 0 {
+		return nil
+	}
+	out := make(map[string]vault.SSHRoute, len(routes))
+	for target, route := range routes {
+		if len(route.Attempts) > 0 {
+			attempts := make(map[string]time.Time, len(route.Attempts))
+			for fingerprint, attemptedAt := range route.Attempts {
+				attempts[fingerprint] = attemptedAt
+			}
+			route.Attempts = attempts
+		}
+		out[target] = route
+	}
+	return out
+}
+
 func routeAttemptKey(token string, clientPID int) string {
 	return fmt.Sprintf("%s:%d", token, clientPID)
 }
@@ -371,6 +460,7 @@ func (s *Service) probeGitProvider(target Target, operation OperationClass, plan
 				); err != nil {
 					return nil, false, err
 				}
+				s.refreshCacheFromKeyStore()
 				s.notifyMutation("ssh_route_learned")
 			}
 			return []string{candidate.Fingerprint}, true, nil
@@ -417,6 +507,7 @@ func (s *Service) probeSSHServer(target Target, operation OperationClass, plan C
 			); err != nil {
 				return nil, false, err
 			}
+			s.refreshCacheFromKeyStore()
 			s.notifyMutation("ssh_route_learned")
 			return []string{candidate.Fingerprint}, true, nil
 		case ProbeDenied:
