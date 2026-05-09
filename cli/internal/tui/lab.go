@@ -6,22 +6,21 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
-	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
+	keyscreen "github.com/itzzritik/forged/cli/internal/tui/screens/keys"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
 const (
-	labRouteListHeight  = 8
-	labWideLayoutWidth  = 104
-	labInspectorMinSize = 38
+	labRoutingPollInterval = 2 * time.Second
+	labRouteVisibleRows    = 10
 )
 
 type labState struct {
 	routing     actions.SSHRoutingDebug
 	loading     bool
+	refreshing  bool
 	busy        bool
 	err         string
 	notice      string
@@ -43,34 +42,19 @@ type labRoutingClearedMsg struct {
 	err error
 }
 
-func (m *model) isDevBuild() bool {
-	version := strings.ToLower(strings.TrimSpace(m.appVersion))
-	version = strings.TrimPrefix(version, "v")
-	return version == "dev" || strings.HasPrefix(version, "dev-") || strings.HasSuffix(version, "-dev")
-}
-
-func (m *model) labDashboardPages() []dashboardPage {
-	if !m.isDevBuild() {
-		return nil
-	}
-	return []dashboardPage{
-		{
-			Label:   "SSH Routing",
-			Summary: "Inspect learned route memory, public key hints, and active SSH attempts",
-			Route:   RouteLabRouting,
-		},
-	}
+type labRoutingPollMsg struct {
+	id int
 }
 
 func (m *model) isLabRoutingRoute() bool {
-	return m.isDevBuild() &&
-		m.screen == screenDashboard &&
+	return m.screen == screenDashboard &&
 		m.snapshot.VaultExists &&
-		m.session.Current().ID == RouteLabRouting
+		m.session.Current().ID == RouteAgentRouting
 }
 
 func (m *model) startLabRoutingRoute() tea.Cmd {
-	m.lab.loading = true
+	m.lab.loading = len(m.lab.routing.Routes) == 0
+	m.lab.refreshing = !m.lab.loading
 	m.lab.busy = false
 	m.lab.err = ""
 	m.lab.notice = ""
@@ -108,15 +92,16 @@ func (m *model) handleLabRoutingLoadedMsg(msg labRoutingLoadedMsg) (tea.Model, t
 		return m, nil
 	}
 	m.lab.loading = false
+	m.lab.refreshing = false
 	m.lab.busy = false
 	if msg.err != nil {
 		m.lab.err = msg.err.Error()
-		return m, nil
+		return m, m.scheduleLabRoutingPoll()
 	}
 	m.lab.routing = msg.routing
 	m.lab.err = ""
 	m.normalizeLabSelection()
-	return m, nil
+	return m, m.scheduleLabRoutingPoll()
 }
 
 func (m *model) handleLabRoutingClearedMsg(msg labRoutingClearedMsg) (tea.Model, tea.Cmd) {
@@ -128,17 +113,39 @@ func (m *model) handleLabRoutingClearedMsg(msg labRoutingClearedMsg) (tea.Model,
 	m.lab.clearAll = false
 	if msg.err != nil {
 		m.lab.err = msg.err.Error()
-		return m, nil
+		return m, m.scheduleLabRoutingPoll()
 	}
 	m.lab.notice = "Route memory cleared"
-	m.lab.loading = true
+	m.lab.loading = false
+	m.lab.refreshing = true
 	m.lab.requestID++
 	id := m.lab.requestID
-	return m, tea.Batch(m.spinner.Tick, m.loadLabRoutingCmd(id))
+	return m, m.loadLabRoutingCmd(id)
+}
+
+func (m *model) handleLabRoutingPollMsg(msg labRoutingPollMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.lab.requestID || !m.isLabRoutingRoute() {
+		return m, nil
+	}
+	if m.lab.busy || m.lab.clearTarget != "" || m.lab.clearAll {
+		return m, m.scheduleLabRoutingPoll()
+	}
+	m.lab.refreshing = true
+	return m, m.loadLabRoutingCmd(msg.id)
+}
+
+func (m *model) scheduleLabRoutingPoll() tea.Cmd {
+	if !m.isLabRoutingRoute() {
+		return nil
+	}
+	id := m.lab.requestID
+	return tea.Tick(labRoutingPollInterval, func(time.Time) tea.Msg {
+		return labRoutingPollMsg{id: id}
+	})
 }
 
 func (m *model) updateLabRoutingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.lab.loading || m.lab.busy {
+	if m.lab.busy {
 		switch msg.String() {
 		case "esc":
 			if m.session.Back() {
@@ -185,8 +192,6 @@ func (m *model) updateLabRoutingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.normalizeLabSelection()
 		}
 		return m, nil
-	case "r", "R":
-		return m, m.startLabRoutingRoute()
 	case "c":
 		if route, ok := m.selectedLabRoute(); ok {
 			m.lab.clearTarget = route.Target
@@ -219,8 +224,8 @@ func (m *model) normalizeLabSelection() {
 	if m.lab.offset > m.lab.selected {
 		m.lab.offset = m.lab.selected
 	}
-	if m.lab.selected >= m.lab.offset+labRouteListHeight {
-		m.lab.offset = m.lab.selected - labRouteListHeight + 1
+	if m.lab.selected >= m.lab.offset+labRouteVisibleRows {
+		m.lab.offset = m.lab.selected - labRouteVisibleRows + 1
 	}
 	if m.lab.offset < 0 {
 		m.lab.offset = 0
@@ -236,265 +241,132 @@ func (m *model) selectedLabRoute() (actions.SSHRouteDebug, bool) {
 }
 
 func (m *model) renderLabRoutingBody(contentWidth int) string {
-	if m.lab.loading {
-		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
-			Title:       "Loading SSH routing",
-			Description: "Reading learned routes, public hints, and active attempts",
-		}, m.spinner.View(), contentWidth)
-	}
-
-	width := max(48, contentWidth)
+	width := max(36, min(contentWidth, theme.HeroMaxWidth+10))
 	sections := []string{
-		m.renderLabRoutingSummary(width),
+		m.renderLabRouteSummary(width),
 		"",
-		m.renderLabRoutingConsole(width),
-	}
-
-	bottom := m.labStatusLine(width)
-	if bottom != "" {
-		return shell.DockBottom(strings.Join(sections, "\n")+"\n", bottom)
+		m.renderLabRouteBrowser(width),
 	}
 	return strings.Join(sections, "\n")
 }
 
-func (m *model) renderLabRoutingSummary(width int) string {
-	routing := m.lab.routing
-	gitRoutes, sshRoutes := labRouteKindCounts(routing.Routes)
-	staleHints := 0
-	for _, hint := range routing.PublicHints {
-		if hint.Stale {
-			staleHints++
+func (m *model) renderLabRouteSummary(width int) string {
+	route, ok := m.selectedLabRoute()
+	if !ok {
+		if m.lab.loading {
+			return theme.BodyStrong.Render(m.spinner.View() + " Reading SSH route memory")
 		}
+		return strings.Join([]string{
+			theme.Warning.Render("! No learned SSH routes"),
+			theme.BodyMuted.Render("Routes appear here after successful Git or SSH authentication."),
+		}, "\n")
 	}
 
-	items := []string{
-		labMetric(len(routing.Routes), "learned", theme.ToneAccent),
-		labMetric(gitRoutes, "git", theme.ToneNeutral),
-		labMetric(sshRoutes, "ssh", theme.ToneNeutral),
-		labMetric(len(routing.RuntimeAttempts), "active", labToneForCount(len(routing.RuntimeAttempts), theme.ToneWarning)),
-		labMetric(len(routing.PublicHints), "hints", labHintTone(staleHints)),
+	status := labRouteSummaryTitle(route, width)
+	if m.lab.loading {
+		status = theme.BodyStrong.Render(m.spinner.View() + " Updating route memory")
 	}
-	if staleHints > 0 {
-		items = append(items, labMetric(staleHints, "stale", theme.ToneDanger))
-	}
-	return lipgloss.NewStyle().Width(width).Render(strings.Join(items, theme.BodyMuted.Render("  ·  ")))
+
+	return status + "\n" + labRouteSummaryMeta(route)
 }
 
-func (m *model) renderLabRoutingConsole(width int) string {
-	if width >= labWideLayoutWidth {
-		gap := 4
-		inspectorWidth := max(labInspectorMinSize, min(54, width/3))
-		listWidth := max(52, width-inspectorWidth-gap)
-		if listWidth+inspectorWidth+gap > width {
-			listWidth = max(42, width-inspectorWidth-gap)
-		}
-		return lipgloss.JoinHorizontal(
-			lipgloss.Top,
-			lipgloss.NewStyle().Width(listWidth).Render(m.renderLabRouteList(listWidth)),
-			strings.Repeat(" ", gap),
-			lipgloss.NewStyle().Width(inspectorWidth).Render(m.renderLabInspector(inspectorWidth)),
-		)
-	}
-
-	return strings.Join([]string{
-		m.renderLabRouteList(width),
-		"",
-		m.renderLabInspector(width),
-	}, "\n")
+func (m *model) renderLabRouteBrowser(width int) string {
+	return keyscreen.RenderBrowser(keyscreen.BrowserScreen{
+		SearchView:       "Live route memory",
+		SearchNotice:     m.labBrowserNotice(),
+		CountLabel:       m.labRouteCountLabel(),
+		NameHeader:       "TARGET",
+		TypeHeader:       "KEY",
+		DetailHeader:     "SERVICE",
+		NameWidth:        34,
+		TypeWidth:        24,
+		MinDetailWidth:   12,
+		VisibleRows:      labRouteVisibleRows,
+		PreserveTypeCase: true,
+		Rows:             m.labRouteBrowserRows(),
+		SelectedIndex:    m.labRouteSelectedIndex(),
+		ShowTopBorder:    true,
+		HideFooter:       true,
+		EmptyTitle:       "No routes to show",
+		EmptySubtitle:    m.labEmptySubtitle(),
+	}, m.spinner.View(), width)
 }
 
-func labMetric(value int, label string, tone theme.Tone) string {
-	numberStyle := theme.BodyStrong
-	switch tone {
-	case theme.ToneAccent:
-		numberStyle = theme.Kicker
-	case theme.ToneSuccess:
-		numberStyle = theme.Success
-	case theme.ToneWarning:
-		numberStyle = theme.Warning
-	case theme.ToneDanger:
-		numberStyle = theme.Danger
-	}
-	return numberStyle.Render(fmt.Sprintf("%d", value)) + " " + theme.BodyMuted.Render(label)
-}
-
-func labToneForCount(value int, nonZero theme.Tone) theme.Tone {
-	if value > 0 {
-		return nonZero
-	}
-	return theme.ToneNeutral
-}
-
-func labHintTone(stale int) theme.Tone {
-	if stale > 0 {
-		return theme.ToneDanger
-	}
-	return theme.ToneSuccess
-}
-
-func labRouteKindCounts(routes []actions.SSHRouteDebug) (gitRoutes int, sshRoutes int) {
+func (m *model) labRouteBrowserRows() []keyscreen.BrowserRow {
+	routes := m.labVisibleRoutes()
+	rows := make([]keyscreen.BrowserRow, 0, len(routes))
 	for _, route := range routes {
-		switch route.Kind {
-		case "git":
-			gitRoutes++
-		case "ssh":
-			sshRoutes++
-		}
+		rows = append(rows, keyscreen.BrowserRow{
+			Name:        routeLabel(route),
+			Type:        labRouteKeyLabel(route),
+			Fingerprint: labRouteServiceLabel(route),
+		})
 	}
-	return gitRoutes, sshRoutes
+	return rows
 }
 
-func (m *model) renderLabRouteList(width int) string {
+func (m *model) labVisibleRoutes() []actions.SSHRouteDebug {
 	routes := m.lab.routing.Routes
-	title := shell.JoinRow(
-		width,
-		theme.SectionTitle.Render("Routes"),
-		theme.BodyMuted.Render(m.labRouteRangeLabel()),
-	)
 	if len(routes) == 0 {
-		return title + "\n" + theme.BodyMuted.Render("No learned routes yet.")
+		return nil
 	}
 	m.normalizeLabSelection()
-
-	start := m.lab.offset
-	end := min(len(routes), start+labRouteListHeight)
-	innerWidth := max(36, width-2)
-	ageWidth := 8
-	proofWidth := min(12, max(8, innerWidth/7))
-	keyWidth := min(24, max(16, innerWidth/4))
-	targetWidth := max(12, innerWidth-keyWidth-proofWidth-ageWidth-8)
-
-	lines := []string{
-		title,
-		theme.RowLabel.Render(
-			"  " +
-				labPadRight("TARGET", targetWidth+2) +
-				labPadRight("KEY", keyWidth+2) +
-				labPadRight("PROOF", proofWidth+2) +
-				"LAST",
-		),
-	}
-	for index := start; index < end; index++ {
-		route := routes[index]
-		lines = append(lines, labRouteRow(route, index == m.lab.selected, targetWidth, keyWidth, proofWidth, ageWidth))
-	}
-	for len(lines) < labRouteListHeight+2 {
-		lines = append(lines, "")
-	}
-	return strings.Join(lines, "\n")
+	start := min(max(m.lab.offset, 0), len(routes))
+	end := min(len(routes), start+labRouteVisibleRows)
+	return routes[start:end]
 }
 
-func (m *model) labRouteRangeLabel() string {
+func (m *model) labRouteSelectedIndex() int {
+	if m.lab.selected < m.lab.offset {
+		return 0
+	}
+	return m.lab.selected - m.lab.offset
+}
+
+func (m *model) labRouteCountLabel() string {
 	total := len(m.lab.routing.Routes)
 	if total == 0 {
+		if m.lab.loading {
+			return "loading"
+		}
 		return "0 routes"
 	}
 	start := min(total, m.lab.offset+1)
-	end := min(total, m.lab.offset+labRouteListHeight)
-	return fmt.Sprintf("%d-%d of %d", start, end, total)
-}
-
-func labRouteRow(route actions.SSHRouteDebug, selected bool, targetWidth, keyWidth, proofWidth, ageWidth int) string {
-	prefix := theme.BodyMuted.Render("  ")
-	targetStyle := theme.BodyStrong
-	keyStyle := theme.Body
-	proofStyle := theme.BodyMuted
-	ageStyle := theme.BodyMuted
-	if selected {
-		prefix = theme.Bullet.Render("▸ ")
-		targetStyle = theme.Kicker
-		keyStyle = theme.BodyStrong
-		proofStyle = theme.BodyStrong
-	}
-
-	target := targetStyle.Render(labPadRight(labTruncate(routeLabel(route), targetWidth), targetWidth+2))
-	key := keyStyle.Render(labPadRight(labTruncate(labRouteKeyLabel(route), keyWidth), keyWidth+2))
-	proof := proofStyle.Render(labPadRight(labTruncate(labProofLabel(route.ProvenBy), proofWidth), proofWidth+2))
-	last := ageStyle.Render(labTruncate(labRouteLastUsed(route), ageWidth))
-	return prefix + target + key + proof + last
-}
-
-func (m *model) renderLabInspector(width int) string {
-	route, ok := m.selectedLabRoute()
-	if !ok {
-		return theme.SectionTitle.Render("Inspector") + "\n" + theme.BodyMuted.Render("Select a route to inspect.")
-	}
-
-	routeTitle := shell.JoinRow(
-		width,
-		theme.SectionTitle.Render("Inspector"),
-		theme.Chip(labRouteTypeLabel(route), theme.ToneAccent),
-	)
-	lines := []string{
-		routeTitle,
-		theme.BodyStrong.Width(width).Render(routeLabel(route)),
-		theme.BodyMuted.Width(width).Render(labRouteSubtitle(route)),
-		"",
-		labInspectorRow("Key", labRouteKeyLabel(route), width),
-		labInspectorRow("Ref", labFirstNonEmpty(route.KeyRef, "not linked"), width),
-		labInspectorRow("Proof", labProofSentence(route.ProvenBy), width),
-		labInspectorRow("Usage", labUsageLabel(route), width),
-		labInspectorRow("Scope", labScopeLabel(route), width),
-	}
-	if fingerprint := labShortFingerprint(route.Fingerprint); fingerprint != "" {
-		lines = append(lines, labInspectorRow("Fingerprint", fingerprint, width))
-	}
-	if len(route.Attempts) > 0 {
-		lines = append(lines, labInspectorRow("Attempts", labAttemptsLabel(route.Attempts), width))
-	}
-	lines = append(lines, "", m.renderLabSignals(width))
-	return strings.Join(lines, "\n")
-}
-
-func (m *model) renderLabSignals(width int) string {
-	attempts := m.lab.routing.RuntimeAttempts
-	hints := m.lab.routing.PublicHints
-	staleHints := 0
-	for _, hint := range hints {
-		if hint.Stale {
-			staleHints++
+	end := min(total, m.lab.offset+labRouteVisibleRows)
+	if total <= labRouteVisibleRows {
+		if total == 1 {
+			return "1 route"
 		}
+		return fmt.Sprintf("%d routes", total)
 	}
-
-	active := "none"
-	if len(attempts) > 0 {
-		active = fmt.Sprintf("%d snippet", len(attempts))
-		if len(attempts) != 1 {
-			active += "s"
-		}
-		active += " · newest " + labAgeSeconds(attempts[0].AgeSeconds)
-	}
-	hintLabel := fmt.Sprintf("%d current", len(hints))
-	if staleHints > 0 {
-		hintLabel = fmt.Sprintf("%d current · %d stale", len(hints), staleHints)
-	}
-
-	lines := []string{
-		theme.SectionTitle.Render("Signals"),
-		labInspectorRow("Active", active, width),
-		labInspectorRow("Key hints", hintLabel, width),
-	}
-	if len(hints) > 0 {
-		lines = append(lines, labInspectorRow("Newest hint", labNewestHintLabel(hints), width))
-	}
-	return strings.Join(lines, "\n")
+	return fmt.Sprintf("%d-%d of %d routes", start, end, total)
 }
 
-func (m *model) labStatusLine(width int) string {
+func (m *model) labBrowserNotice() string {
 	if m.lab.busy {
-		return theme.BodyStrong.Width(width).Render(m.spinner.View() + " Clearing route memory")
+		return "Clearing route memory"
 	}
-	if m.lab.err != "" {
-		return theme.Danger.Width(width).Render("✕ " + m.lab.err)
+	if strings.TrimSpace(m.lab.err) != "" {
+		return "✕ " + m.lab.err
 	}
-	if m.lab.notice != "" {
-		return theme.Warning.Width(width).Render(m.lab.notice)
+	if strings.TrimSpace(m.lab.notice) != "" {
+		return m.lab.notice
 	}
-	return theme.BodyMuted.Width(width).Render("Route memory is stored in the encrypted vault. Runtime snippets are temporary.")
+	return ""
+}
+
+func (m *model) labEmptySubtitle() string {
+	if m.lab.loading {
+		return "Reading learned routes from the daemon"
+	}
+	if strings.TrimSpace(m.lab.err) != "" {
+		return "Forged will retry while this screen is open"
+	}
+	return "Use Git or SSH once and learned routes will appear here"
 }
 
 func (m *model) labFooterActions() []shell.FooterAction {
-	if m.lab.loading || m.lab.busy {
+	if m.lab.busy {
 		return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 	}
 	if m.lab.clearTarget != "" || m.lab.clearAll {
@@ -505,7 +377,6 @@ func (m *model) labFooterActions() []shell.FooterAction {
 	}
 	return []shell.FooterAction{
 		{Key: "↑/↓", Label: "Select"},
-		{Key: "R", Label: "Refresh"},
 		{Key: "C", Label: "Clear Route"},
 		{Key: "Shift+C", Label: "Clear All"},
 		{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
@@ -522,18 +393,56 @@ func routeLabel(route actions.SSHRouteDebug) string {
 	return route.Target
 }
 
-func labRouteSubtitle(route actions.SSHRouteDebug) string {
-	if route.Kind == "git" {
-		return labFirstNonEmpty(route.Host, "git host") + " · " + labOperationLabel(route.Operation)
-	}
-	if route.Kind == "ssh" {
-		return labFirstNonEmpty(route.Host, "ssh host") + " · " + labFirstNonEmpty(route.User, "unknown user")
-	}
-	return labFirstNonEmpty(route.Target, "unknown route")
-}
-
 func labRouteKeyLabel(route actions.SSHRouteDebug) string {
 	return labFirstNonEmpty(route.KeyName, route.KeyRef, labShortFingerprint(route.Fingerprint), "unknown key")
+}
+
+func labRouteSummaryTitle(route actions.SSHRouteDebug, width int) string {
+	targetWidth := max(18, (width*3)/5)
+	keyWidth := max(14, width-targetWidth-3)
+	target := theme.Success.Render(labTruncate(routeLabel(route), targetWidth))
+	key := theme.BodyStrong.Render(labTruncate(labRouteKeyLabel(route), keyWidth))
+	return target + theme.BodyMuted.Render("  ·  ") + key
+}
+
+func labRouteSummaryMeta(route actions.SSHRouteDebug) string {
+	parts := []string{
+		labRouteServiceLabel(route),
+		labRouteAccessLabel(route),
+		"last " + labRouteLastUsed(route),
+		labRouteUseCount(route.SuccessCount),
+	}
+	return theme.BodyMuted.Render(strings.Join(parts, "  ·  "))
+}
+
+func labRouteServiceLabel(route actions.SSHRouteDebug) string {
+	switch strings.ToLower(strings.TrimSpace(route.Host)) {
+	case "github.com":
+		return "GitHub"
+	case "gitlab.com":
+		return "GitLab"
+	case "bitbucket.org":
+		return "Bitbucket"
+	}
+	switch route.Kind {
+	case "git":
+		return labFirstNonEmpty(route.Host, "Git")
+	case "ssh":
+		return "SSH"
+	default:
+		return "Route"
+	}
+}
+
+func labRouteAccessLabel(route actions.SSHRouteDebug) string {
+	switch route.Kind {
+	case "git":
+		return labOperationLabel(route.Operation)
+	case "ssh":
+		return "SSH auth"
+	default:
+		return "learned"
+	}
 }
 
 func labRouteLastUsed(route actions.SSHRouteDebug) string {
@@ -543,127 +452,11 @@ func labRouteLastUsed(route actions.SSHRouteDebug) string {
 	return labAgo(route.Updated)
 }
 
-func labRouteTypeLabel(route actions.SSHRouteDebug) string {
-	switch route.Kind {
-	case "git":
-		return "Git repo"
-	case "ssh":
-		return "SSH host"
-	default:
-		return "Route"
+func labRouteUseCount(count int) string {
+	if count == 1 {
+		return "1 successful use"
 	}
-}
-
-func labProofLabel(value string) string {
-	switch value {
-	case "provider_probe":
-		return "Verified"
-	case "ssh_auth":
-		return "SSH Auth"
-	case "":
-		return "Learned"
-	default:
-		return strings.ReplaceAll(value, "_", " ")
-	}
-}
-
-func labProofSentence(value string) string {
-	switch value {
-	case "provider_probe":
-		return "Verified by provider access probe"
-	case "ssh_auth":
-		return "Learned from successful SSH authentication"
-	case "":
-		return "Learned route with no proof label"
-	default:
-		return labProofLabel(value)
-	}
-}
-
-func labOperationLabel(value string) string {
-	switch value {
-	case "read":
-		return "read access"
-	case "write":
-		return "write access"
-	case "ssh_auth":
-		return "SSH authentication"
-	case "":
-		return "unknown operation"
-	default:
-		return strings.ReplaceAll(value, "_", " ")
-	}
-}
-
-func labUsageLabel(route actions.SSHRouteDebug) string {
-	uses := fmt.Sprintf("%d successful uses", route.SuccessCount)
-	if route.SuccessCount == 1 {
-		uses = "1 successful use"
-	}
-	return uses + " · last " + labRouteLastUsed(route)
-}
-
-func labScopeLabel(route actions.SSHRouteDebug) string {
-	switch route.Kind {
-	case "git":
-		return "repo-level route · " + labOperationLabel(route.Operation)
-	case "ssh":
-		return "host-level route · " + labFirstNonEmpty(route.User, "unknown user")
-	default:
-		return "learned route"
-	}
-}
-
-func labAttemptsLabel(attempts []actions.SSHRouteDebugAttempt) string {
-	if len(attempts) == 0 {
-		return "none"
-	}
-	parts := make([]string, 0, min(3, len(attempts)))
-	for index, attempt := range attempts {
-		if index >= 3 {
-			break
-		}
-		parts = append(parts, labFirstNonEmpty(attempt.KeyName, attempt.KeyRef, labShortFingerprint(attempt.Fingerprint), "unknown")+" "+labAgo(attempt.AttemptedAt))
-	}
-	if more := len(attempts) - len(parts); more > 0 {
-		parts = append(parts, fmt.Sprintf("+%d more", more))
-	}
-	return strings.Join(parts, ", ")
-}
-
-func labNewestHintLabel(hints []actions.SSHRoutePublicHint) string {
-	if len(hints) == 0 {
-		return "none"
-	}
-	newest := hints[0]
-	for _, hint := range hints[1:] {
-		if hint.Updated.After(newest.Updated) {
-			newest = hint
-		}
-	}
-	label := labFirstNonEmpty(newest.KeyName, newest.Ref, labShortFingerprint(newest.Fingerprint), "unknown")
-	if newest.Stale {
-		label += " · stale"
-	}
-	return label + " · " + labAgo(newest.Updated)
-}
-
-func labInspectorRow(label, value string, width int) string {
-	labelWidth := 11
-	valueWidth := max(10, width-labelWidth-2)
-	return labPadRight(theme.RowLabel.Render(labTruncate(label, labelWidth)), labelWidth+2) +
-		theme.Body.Render(labTruncate(strings.TrimSpace(value), valueWidth))
-}
-
-func labShortFingerprint(value string) string {
-	value = strings.TrimSpace(value)
-	if value == "" {
-		return ""
-	}
-	if strings.HasPrefix(value, "SHA256:") {
-		value = strings.TrimPrefix(value, "SHA256:")
-	}
-	return "SHA256:" + labTruncate(value, 12)
+	return fmt.Sprintf("%d successful uses", count)
 }
 
 func labAgo(t time.Time) string {
@@ -689,15 +482,30 @@ func labAgeSeconds(seconds int64) string {
 	}
 }
 
-func labPadRight(value string, width int) string {
-	if width <= 0 {
-		return value
+func labOperationLabel(value string) string {
+	switch value {
+	case "read":
+		return "read access"
+	case "write":
+		return "write access"
+	case "ssh_auth":
+		return "SSH authentication"
+	case "":
+		return "unknown operation"
+	default:
+		return strings.ReplaceAll(value, "_", " ")
 	}
-	visible := lipgloss.Width(value)
-	if visible >= width {
-		return value
+}
+
+func labShortFingerprint(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return ""
 	}
-	return value + strings.Repeat(" ", width-visible)
+	if strings.HasPrefix(value, "SHA256:") {
+		value = strings.TrimPrefix(value, "SHA256:")
+	}
+	return "SHA256:" + labTruncate(value, 12)
 }
 
 func labTruncate(value string, width int) string {

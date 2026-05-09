@@ -22,6 +22,7 @@ type agentItemID string
 const (
 	agentItemSSHToggle     agentItemID = "ssh-toggle"
 	agentItemCommitSigning agentItemID = "commit-signing"
+	agentItemSSHRouting    agentItemID = "ssh-routing"
 	agentListMinHeight                 = 6
 )
 
@@ -104,6 +105,7 @@ func (m *model) agentItems() []agentItem {
 
 	return []agentItem{
 		{ID: agentItemSSHToggle, Label: sshLabel, Summary: sshSummary},
+		{ID: agentItemSSHRouting, Label: "SSH Routing", Summary: "Inspect and clear learned SSH and Git route memory"},
 		{ID: agentItemCommitSigning, Label: "Commit Signing", Summary: signingSummary},
 	}
 }
@@ -516,6 +518,11 @@ func (m *model) openAgentItem(item agentItem) (tea.Model, tea.Cmd) {
 	case agentItemCommitSigning:
 		if m.session.Current().ID != RouteAgentSigning {
 			m.session.Push(Route{ID: RouteAgentSigning})
+		}
+		return m, m.showCurrentRoute()
+	case agentItemSSHRouting:
+		if m.session.Current().ID != RouteAgentRouting {
+			m.session.Push(Route{ID: RouteAgentRouting})
 		}
 		return m, m.showCurrentRoute()
 	default:

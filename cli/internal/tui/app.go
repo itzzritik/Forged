@@ -877,6 +877,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLabRoutingLoadedMsg(msg)
 	case labRoutingClearedMsg:
 		return m.handleLabRoutingClearedMsg(msg)
+	case labRoutingPollMsg:
+		return m.handleLabRoutingPollMsg(msg)
 	case copyFinishedMsg:
 		if msg.err != nil {
 			if m.screen == screenLogin {
@@ -1093,7 +1095,7 @@ func (m *model) headerPageTitle() string {
 			return "Commit Signing"
 		}
 		if m.isLabRoutingRoute() {
-			return "SSH Routing Lab"
+			return "SSH Routing"
 		}
 		if m.isDoctorOverviewRoute() {
 			return "Doctor"
@@ -1183,7 +1185,7 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 		if m.isLabRoutingRoute() {
 			return []shell.Breadcrumb{
 				{Label: "Home"},
-				{Label: "Lab"},
+				{Label: "Agent"},
 				{Label: "SSH Routing", Current: true},
 			}
 		}
@@ -1999,12 +2001,6 @@ func (m *model) dashboardTabs() []dashboardTab {
 			Pages: nil,
 		},
 	}
-	if pages := m.labDashboardPages(); len(pages) > 0 {
-		tabs = append(tabs, dashboardTab{
-			Label: "Lab",
-			Pages: pages,
-		})
-	}
 	return tabs
 }
 
@@ -2113,8 +2109,6 @@ func (m *model) switchDashboardTab(delta int, tabs []dashboardTab) tea.Cmd {
 		return tea.Batch(m.refreshSnapshotCmd(), m.loadSigningStatusCmd())
 	case "Doctor":
 		return tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd())
-	case "Lab":
-		return nil
 	default:
 		return nil
 	}
@@ -2187,13 +2181,6 @@ func (m *model) dashboardAreas() []dashboardscreen.Area {
 			Summary: "Inspect health and fix issues",
 		},
 	}
-	if m.isDevBuild() {
-		areas = append(areas, dashboardscreen.Area{
-			Label:   "Lab",
-			Summary: "Inspect developer-only routing internals",
-		})
-	}
-
 	if m.snapshot.KeyCount == 0 {
 		areas[0].Summary = "Browse, create, import, and export keys"
 	} else if m.snapshot.KeyCount == 1 {
@@ -2808,7 +2795,7 @@ func (m *model) showCurrentRoute() tea.Cmd {
 		)
 	case RouteAgentSigning:
 		return m.startAgentSigningRoute()
-	case RouteLabRouting:
+	case RouteAgentRouting:
 		return m.startLabRoutingRoute()
 	case RouteVaultHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
 		cmds := []tea.Cmd{}
@@ -2860,8 +2847,8 @@ func (m *model) pendingDashboardRouteTitle() string {
 		return "Agent"
 	case RouteAgentSigning:
 		return "Commit Signing"
-	case RouteLabRouting:
-		return "SSH Routing Lab"
+	case RouteAgentRouting:
+		return "SSH Routing"
 	case RouteAccountStatus:
 		return "Profile"
 	case RouteSyncHome:
@@ -2947,10 +2934,10 @@ func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Agent"},
 			{Label: "Commit Signing", Current: true},
 		}
-	case RouteLabRouting:
+	case RouteAgentRouting:
 		return []shell.Breadcrumb{
 			{Label: "Home"},
-			{Label: "Lab"},
+			{Label: "Agent"},
 			{Label: "SSH Routing", Current: true},
 		}
 	case RouteAccountStatus:
