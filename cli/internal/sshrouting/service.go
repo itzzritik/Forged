@@ -93,6 +93,7 @@ func (s *Service) Prepare(req PrepareRequest) error {
 
 	keyStore, routes, keys := s.routingSnapshot()
 	if keyStore == nil && len(keys) == 0 {
+		_ = WriteRouteSnippet(s.paths.SSHRouteRuntimeDir(), req.Attempt, nil)
 		return ErrRouteMemoryLocked
 	}
 

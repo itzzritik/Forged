@@ -7,7 +7,7 @@ applies_to:
   - cli/internal/platform/pipe_windows.go
 depends_on:
   - cli/daemon.md
-last_verified: 2026-05-09
+last_verified: 2026-05-10
 stable: yes
 ---
 
@@ -17,8 +17,8 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 
 ## Must know
 
-- OpenSSH routing is primarily config-driven: managed `Match exec` prepares a short-lived `%C.conf` snippet with public-key hint files and `IdentitiesOnly yes`.
-- `%C` is connection-scope, so concurrent same-host routes share the snippet name. The service tracks attempts by client PID and writes the union of active candidates for that `%C`; agent signing still filters by PID.
+- OpenSSH routing is primarily config-driven: managed `Match exec` prepares short-lived `%C` public-key slot files and enables them through per-slot `Match exec test -f ...` blocks with `IdentitiesOnly yes`.
+- `%C` is connection-scope, so concurrent same-host routes share the slot directory. The service tracks attempts by client PID and writes the union of active candidates for that `%C`; agent signing still filters by PID.
 - The routing service keeps an in-memory public route/key cache after vault lock. This lets route prepare emit candidate public-key hints after system lock so OpenSSH reaches the agent and external System Auth can run at signing time.
 - Routed OpenSSH clients are scoped by peer PID as a fallback. If a route exists with zero candidates, the agent exposes zero keys instead of falling back to the full vault.
 - GitHub/GitLab repo routes are considered proven only after a provider repo probe. Exact proven repo routes emit only the proven key; same-owner and same-host history only rank candidates.
@@ -32,4 +32,4 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 
 - Agent mutation operations stay unsupported; the TUI is the write surface.
 - Agent and control traffic stay on separate sockets.
-- Private keys are never written for routing. Stable hint files under the managed SSH config contain public keys only; runtime snippets are short-lived.
+- Private keys are never written for routing. Stable hint files under the managed SSH config and runtime route slots contain public keys only.

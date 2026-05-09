@@ -9,8 +9,9 @@ import (
 )
 
 const (
-	publicHintTTL   = 5 * time.Minute
-	routeSnippetTTL = 5 * time.Minute
+	publicHintTTL          = 5 * time.Minute
+	routeSnippetTTL        = 5 * time.Minute
+	routeIdentitySlotCount = 6
 )
 
 func SyncPublicHintFiles(dir string, refs []KeyRef, now time.Time) error {
@@ -40,6 +41,10 @@ func WriteRouteSnippet(dir, attempt string, refs []KeyRef) error {
 		return fmt.Errorf("Creating SSH route runtime directory: %w", err)
 	}
 
+	if err := writeRouteIdentitySlots(dir, attempt, refs); err != nil {
+		return err
+	}
+
 	var lines []string
 	lines = append(lines, "# Forged SSH route attempt")
 	lines = append(lines, "IdentitiesOnly yes")
@@ -53,6 +58,41 @@ func WriteRouteSnippet(dir, attempt string, refs []KeyRef) error {
 	return atomicWriteFile(filepath.Join(dir, attempt+".conf"), []byte(content), 0o600)
 }
 
+func writeRouteIdentitySlots(dir, attempt string, refs []KeyRef) error {
+	attemptDir := filepath.Join(dir, attempt)
+	if err := os.MkdirAll(attemptDir, 0o700); err != nil {
+		return fmt.Errorf("Creating SSH route identity slots: %w", err)
+	}
+
+	for slot := 1; slot <= routeIdentitySlotCount; slot++ {
+		path := routeIdentitySlotPath(dir, attempt, slot)
+		index := slot - 1
+		if index >= len(refs) || strings.TrimSpace(refs[index].PublicKey) == "" {
+			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+				return fmt.Errorf("Removing stale SSH route identity slot: %w", err)
+			}
+			continue
+		}
+		content := strings.TrimSpace(refs[index].PublicKey) + "\n"
+		if err := atomicWriteFile(path, []byte(content), 0o600); err != nil {
+			return fmt.Errorf("Writing SSH route identity slot: %w", err)
+		}
+	}
+	return nil
+}
+
+func routeIdentitySlotPattern(dir string, slot int) string {
+	return filepath.Join(dir, "%C", routeIdentitySlotName(slot))
+}
+
+func routeIdentitySlotPath(dir, attempt string, slot int) string {
+	return filepath.Join(dir, attempt, routeIdentitySlotName(slot))
+}
+
+func routeIdentitySlotName(slot int) string {
+	return fmt.Sprintf("k%d.pub", slot)
+}
+
 func CleanupRouteRuntime(dir string, cutoff time.Time) error {
 	entries, err := os.ReadDir(dir)
 	if err != nil {
@@ -62,15 +102,19 @@ func CleanupRouteRuntime(dir string, cutoff time.Time) error {
 		return err
 	}
 	for _, entry := range entries {
-		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".conf") {
-			continue
-		}
 		path := filepath.Join(dir, entry.Name())
 		info, err := entry.Info()
 		if err != nil {
 			continue
 		}
-		if info.ModTime().Before(cutoff) {
+		if !info.ModTime().Before(cutoff) {
+			continue
+		}
+		if entry.IsDir() {
+			_ = os.RemoveAll(path)
+			continue
+		}
+		if strings.HasSuffix(entry.Name(), ".conf") {
 			_ = os.Remove(path)
 		}
 	}
@@ -82,6 +126,7 @@ func RemoveRouteSnippet(dir, attempt string) {
 		return
 	}
 	_ = os.Remove(filepath.Join(dir, attempt+".conf"))
+	_ = os.RemoveAll(filepath.Join(dir, attempt))
 }
 
 func cleanupUnknownHintFiles(dir string, keep map[string]struct{}, cutoff time.Time) error {

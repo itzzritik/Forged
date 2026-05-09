@@ -72,9 +72,22 @@ func renderRouteHooks(paths config.Paths, selfPath string) string {
 		fmt.Sprintf("Match exec %s", sshConfigQuote(prepare)),
 		"    IdentitiesOnly yes",
 		"    IdentityFile none",
-		fmt.Sprintf("    Include %q", filepath.Join(paths.SSHRouteRuntimeDir(), "%C.conf")),
 		fmt.Sprintf("    LocalCommand %s", success),
+		renderRouteIdentitySlotHooks(paths),
 	}, "\n")
+}
+
+func renderRouteIdentitySlotHooks(paths config.Paths) string {
+	lines := make([]string, 0, routeIdentitySlotCount*2)
+	for slot := 1; slot <= routeIdentitySlotCount; slot++ {
+		path := routeIdentitySlotPattern(paths.SSHRouteRuntimeDir(), slot)
+		test := "test -f " + shellQuote(path)
+		lines = append(lines,
+			fmt.Sprintf("Match exec %s", sshConfigQuote(test)),
+			fmt.Sprintf("    IdentityFile %q", path),
+		)
+	}
+	return strings.Join(lines, "\n")
 }
 
 func shellQuote(value string) string {
