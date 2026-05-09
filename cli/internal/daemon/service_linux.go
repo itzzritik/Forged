@@ -64,14 +64,14 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		return fmt.Errorf("Writing unit file: %w", err)
 	}
 
-	exec.Command("systemctl", "--user", "daemon-reload").Run()
-	exec.Command("systemctl", "--user", "enable", serviceName).Run()
+	systemctlUser("daemon-reload").Run()
+	systemctlUser("enable", serviceName).Run()
 
 	return nil
 }
 
 func StartService() error {
-	cmd := exec.Command("systemctl", "--user", "start", serviceName)
+	cmd := systemctlUser("start", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("Starting service: %s: %w", string(out), err)
 	}
@@ -79,7 +79,7 @@ func StartService() error {
 }
 
 func StopService() error {
-	cmd := exec.Command("systemctl", "--user", "stop", serviceName)
+	cmd := systemctlUser("stop", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("Stopping service: %s: %w", string(out), err)
 	}
@@ -87,7 +87,7 @@ func StopService() error {
 }
 
 func RestartService() error {
-	cmd := exec.Command("systemctl", "--user", "restart", serviceName)
+	cmd := systemctlUser("restart", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("Restarting service: %s: %w", string(out), err)
 	}
@@ -95,13 +95,13 @@ func RestartService() error {
 }
 
 func UninstallService() error {
-	exec.Command("systemctl", "--user", "stop", serviceName).Run()
-	exec.Command("systemctl", "--user", "disable", serviceName).Run()
+	systemctlUser("stop", serviceName).Run()
+	systemctlUser("disable", serviceName).Run()
 	path := unitPath()
 	if _, err := os.Stat(path); err == nil {
 		os.Remove(path)
 	}
-	exec.Command("systemctl", "--user", "daemon-reload").Run()
+	systemctlUser("daemon-reload").Run()
 	return nil
 }
 
@@ -120,7 +120,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	status.Installed = true
 	status.ConfigValid = true
 
-	cmd := exec.Command("systemctl", "--user", "show", serviceName, "--property=LoadState,ActiveState,SubState", "--value")
+	cmd := systemctlUser("show", serviceName, "--property=LoadState,ActiveState,SubState", "--value")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		status.Detail = strings.TrimSpace(string(out))
@@ -169,4 +169,26 @@ func formatSystemdExecStart(runtime RuntimeSpec) string {
 		parts = append(parts, strconv.Quote(arg))
 	}
 	return strings.Join(parts, " ")
+}
+
+func systemctlUser(args ...string) *exec.Cmd {
+	cmd := exec.Command("systemctl", append([]string{"--user"}, args...)...)
+	cmd.Env = systemdUserEnv()
+	return cmd
+}
+
+func systemdUserEnv() []string {
+	env := os.Environ()
+	runtimeDir := os.Getenv("XDG_RUNTIME_DIR")
+	if runtimeDir == "" {
+		runtimeDir = filepath.Join("/run/user", strconv.Itoa(os.Getuid()))
+		env = append(env, "XDG_RUNTIME_DIR="+runtimeDir)
+	}
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") == "" {
+		bus := filepath.Join(runtimeDir, "bus")
+		if _, err := os.Stat(bus); err == nil {
+			env = append(env, "DBUS_SESSION_BUS_ADDRESS=unix:path="+bus)
+		}
+	}
+	return env
 }
