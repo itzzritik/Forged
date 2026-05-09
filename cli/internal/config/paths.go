@@ -75,51 +75,27 @@ func (p Paths) PIDFile() string { return filepath.Join(p.RuntimeDir, "daemon.pid
 func (p Paths) LogFile() string { return filepath.Join(p.StateDir, "logs", "forged.log") }
 
 func DefaultPaths() Paths {
+	home, _ := os.UserHomeDir()
+	base := filepath.Join(home, ".config", "forged")
+	runtimeDir := filepath.Join(base, "runtime")
+	if runtime.GOOS == "linux" {
+		runtimeDir = filepath.Join(envOrDefault("XDG_RUNTIME_DIR", filepath.Join("/run", "user", uidStr())), "forged")
+	}
 	switch runtime.GOOS {
-	case "linux":
-		return linuxPaths()
 	case "windows":
-		return windowsPaths()
+		return Paths{
+			ConfigDir:  base,
+			DataDir:    filepath.Join(base, "data"),
+			RuntimeDir: base,
+			StateDir:   base,
+		}
 	default:
-		return darwinPaths()
-	}
-}
-
-func windowsPaths() Paths {
-	appData := envOrDefault("APPDATA", filepath.Join(os.Getenv("USERPROFILE"), "AppData", "Roaming"))
-	base := filepath.Join(appData, "forged")
-	return Paths{
-		ConfigDir:  base,
-		DataDir:    base,
-		RuntimeDir: base,
-		StateDir:   base,
-	}
-}
-
-func darwinPaths() Paths {
-	home, _ := os.UserHomeDir()
-	base := filepath.Join(home, ".forged")
-	return Paths{
-		ConfigDir:  filepath.Join(base, "config"),
-		DataDir:    filepath.Join(base, "data"),
-		RuntimeDir: filepath.Join(base, "runtime"),
-		StateDir:   base,
-	}
-}
-
-func linuxPaths() Paths {
-	home, _ := os.UserHomeDir()
-
-	configDir := envOrDefault("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
-	dataDir := envOrDefault("XDG_DATA_HOME", filepath.Join(home, ".local", "share"))
-	runtimeDir := envOrDefault("XDG_RUNTIME_DIR", filepath.Join("/run", "user", uidStr()))
-	stateDir := envOrDefault("XDG_STATE_HOME", filepath.Join(home, ".local", "state"))
-
-	return Paths{
-		ConfigDir:  filepath.Join(configDir, "forged"),
-		DataDir:    filepath.Join(dataDir, "forged"),
-		RuntimeDir: filepath.Join(runtimeDir, "forged"),
-		StateDir:   filepath.Join(stateDir, "forged"),
+		return Paths{
+			ConfigDir:  base,
+			DataDir:    filepath.Join(base, "data"),
+			RuntimeDir: runtimeDir,
+			StateDir:   base,
+		}
 	}
 }
 

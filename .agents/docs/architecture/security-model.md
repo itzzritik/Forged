@@ -22,8 +22,8 @@ Forged is zero-knowledge. The server stores the encrypted vault blob, KDF params
 - Password change rewraps the vault symmetric key. It does not re-encrypt every item and it does not rotate the inner symmetric key.
 - Local unlock trust is per-device:
   - secure-store device key
-  - `config/local-unlock.json`
-  - `config/install.id`
+  - `~/.config/forged/local-unlock.json`
+  - `~/.config/forged/install.id`
 - The daemon now starts cold. It does not need a stored plaintext master password to boot.
 - Active auth creates a shared session. The session can be cleared by expiry, system lock/sleep, or TUI idle lock.
 - Private keys are now decrypted on demand. They are not kept plaintext for the whole session anymore.

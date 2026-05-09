@@ -78,6 +78,9 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 	if _, running := daemon.IsRunning(paths); !running {
 		return nil
 	}
+	if !daemonHasActiveVaultSession(paths) {
+		return nil
+	}
 
 	_, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSyncLink, ipc.SyncLinkArgs{
 		ServerURL: creds.ServerURL,
@@ -88,6 +91,22 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 		return fmt.Errorf("Linking running daemon: %w", err)
 	}
 	return nil
+}
+
+func daemonHasActiveVaultSession(paths config.Paths) bool {
+	resp, err := ipc.NewClient(paths.CtlSocket()).CallWithTimeout(ipc.CmdStatus, nil, 3*time.Second)
+	if err != nil {
+		return false
+	}
+	var status struct {
+		Sensitive *struct {
+			Active bool `json:"active"`
+		} `json:"sensitive"`
+	}
+	if err := json.Unmarshal(resp.Data, &status); err != nil || status.Sensitive == nil {
+		return false
+	}
+	return status.Sensitive.Active
 }
 
 func ClearCredentials(paths config.Paths) error {

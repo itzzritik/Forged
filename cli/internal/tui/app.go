@@ -684,7 +684,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loginScreen.Status = "Finishing account setup"
 		m.loginScreen.Error = ""
 		if !m.snapshot.VaultExists {
-			m.showPasswordScreen(passwordRestore, msg.creds.Email, "", true)
+			m.showPasswordScreen(passwordRestore, msg.creds.Email, "", false)
 			return m, m.passwordInput.Init()
 		}
 
@@ -2737,8 +2737,8 @@ func (m *model) showPasswordScreenOnRoute(route RouteID, flow passwordFlow, auth
 		m.passwordContext = "Set an encryption password for your vault. Save it securely. If you lose it, your keys are lost."
 		m.passwordInput = components.NewCreatePasswordInput()
 	case passwordRestore:
-		m.passwordTitle = "Unlock your vault"
-		m.passwordContext = "Master password is required to decrypt this vault and unlock its keys"
+		m.passwordTitle = "Master Password"
+		m.passwordContext = "Enter your master password to restore and unlock your synced vault."
 		m.passwordInput = components.NewUnlockPasswordInput()
 	case passwordKeyView:
 		m.passwordTitle = "Unlock private key"
