@@ -16,4 +16,5 @@ go build -o "$repo_root/bin/forged-sign" ./cmd/forged-sign
 
 cd "$repo_root"
 ./scripts/build-forged-auth.sh
-./bin/forged __daemon-freshen --quiet
+
+./bin/forged __daemon-freshen --quiet || true
