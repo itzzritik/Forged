@@ -10,16 +10,30 @@ wrapper="$root/npm/cli"
 version="${1#v}"
 
 find_archive() {
-  node - "$dist/artifacts.json" "$1" "$2" "$3" <<'NODE'
+  node - "$dist/artifacts.json" "$root" "$dist" "$1" "$2" "$3" <<'NODE'
 const fs = require("node:fs");
-const [file, os, arch, format] = process.argv.slice(2);
-const { artifacts = [] } = JSON.parse(fs.readFileSync(file, "utf8"));
+const path = require("node:path");
+
+const [file, root, dist, os, arch, format] = process.argv.slice(2);
+const data = JSON.parse(fs.readFileSync(file, "utf8"));
+const artifacts = Array.isArray(data) ? data : data.artifacts || [];
 const ext = format === "zip" ? ".zip" : ".tar.gz";
 const match = artifacts.find(a =>
-  a.type === "Archive" && a.goos === os && a.goarch === arch && (a.path || a.name || "").endsWith(ext)
+  String(a.type || "").toLowerCase() === "archive" &&
+  a.goos === os &&
+  a.goarch === arch &&
+  (a.path || a.name || "").endsWith(ext)
 );
 if (!match) { console.error(`no archive for ${os}/${arch}`); process.exit(1); }
-process.stdout.write(match.path || match.name);
+
+const archive = match.path || match.name;
+if (path.isAbsolute(archive)) {
+  process.stdout.write(archive);
+} else if (archive.includes("/") || archive.includes("\\")) {
+  process.stdout.write(path.resolve(root, archive));
+} else {
+  process.stdout.write(path.join(dist, archive));
+}
 NODE
 }
 
@@ -29,7 +43,7 @@ copy_platform() {
   if [[ "$os" == "windows" ]]; then format="zip"; ext=".exe"; fi
 
   local archive pkg_dir extract_dir
-  archive="$root/$(find_archive "$os" "$arch" "$format")"
+  archive="$(find_archive "$os" "$arch" "$format")"
   pkg_dir="$out/$pkg"
   extract_dir="$(mktemp -d)"
 

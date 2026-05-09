@@ -27,6 +27,7 @@ One manual GitHub Actions workflow publishes CLI releases.
 - The macOS Swift helper must be built on macOS and passed into the release flow as an artifact.
 - The npm wrapper is a launcher for native platform packages, not a JS implementation.
 - CLI builds embed a daemon build id. Local `just build-cli` refreshes an installed daemon after rebuilding; releases use the commit id for the daemon freshness check.
+- GoReleaser artifact metadata can be either a top-level array or an object with `artifacts`; npm packaging must accept both.
 
 ## Decisions
 
