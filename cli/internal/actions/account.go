@@ -50,11 +50,11 @@ func CredentialsPath(paths config.Paths) string {
 
 func LoadCredentials(paths config.Paths) (AccountCredentials, error) {
 	creds, err := accountauth.Load(paths)
-	if errors.Is(err, os.ErrNotExist) {
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, accountauth.ErrLoginRequired) {
 		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Manage > Log In")
 	}
 	if err != nil {
-		return AccountCredentials{}, fmt.Errorf("Corrupted credentials file")
+		return AccountCredentials{}, fmt.Errorf("Could not load saved login: %w", err)
 	}
 	return creds, nil
 }
@@ -120,7 +120,7 @@ func ClearCredentials(paths config.Paths) error {
 		}
 	}
 
-	if err := os.Remove(CredentialsPath(paths)); err != nil && !os.IsNotExist(err) {
+	if err := accountauth.Delete(paths); err != nil {
 		return err
 	}
 	for _, path := range []string{paths.SyncStateFile(), paths.SyncDirtyFile()} {

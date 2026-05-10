@@ -17,9 +17,17 @@ type Paths struct {
 func (p Paths) ConfigFile() string      { return filepath.Join(p.ConfigDir, "config.toml") }
 func (p Paths) VaultFile() string       { return filepath.Join(p.DataDir, "vault.forged") }
 func (p Paths) AuthDir() string         { return filepath.Join(p.ConfigDir, "auth") }
-func (p Paths) CredentialsFile() string { return filepath.Join(p.AuthDir(), "credentials.json") }
-func (p Paths) SyncStateFile() string   { return filepath.Join(p.DataDir, "sync-state.json") }
-func (p Paths) SyncDirtyFile() string   { return filepath.Join(p.DataDir, "sync.dirty") }
+func (p Paths) AccountFile() string     { return filepath.Join(p.AuthDir(), "account.json") }
+func (p Paths) CredentialsFile() string { return p.AccountFile() }
+func (p Paths) LegacyCredentialsFile() string {
+	return filepath.Join(p.AuthDir(), "credentials.json")
+}
+func (p Paths) AccountSecretFile() string { return filepath.Join(p.AuthDir(), "account-secret.enc") }
+func (p Paths) AccountSecretKeyFile() string {
+	return filepath.Join(p.AuthDir(), "account-secret.key")
+}
+func (p Paths) SyncStateFile() string { return filepath.Join(p.DataDir, "sync-state.json") }
+func (p Paths) SyncDirtyFile() string { return filepath.Join(p.DataDir, "sync.dirty") }
 func (p Paths) LocalUnlockBlobFile() string {
 	return filepath.Join(p.AuthDir(), "local-unlock.json")
 }

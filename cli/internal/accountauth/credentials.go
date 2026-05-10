@@ -3,8 +3,10 @@ package accountauth
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -32,37 +34,136 @@ type Credentials struct {
 	Name             string    `json:"name,omitempty"`
 }
 
+type accountMetadata struct {
+	Version           int       `json:"version"`
+	ServerURL         string    `json:"server_url"`
+	CredentialID      string    `json:"credential_id"`
+	CredentialBackend string    `json:"credential_backend"`
+	AccessExpiresAt   time.Time `json:"access_expires_at,omitempty"`
+	RefreshExpiresAt  time.Time `json:"refresh_expires_at,omitempty"`
+	UserID            string    `json:"user_id"`
+	Email             string    `json:"email"`
+	Name              string    `json:"name,omitempty"`
+	UpdatedAt         time.Time `json:"updated_at"`
+}
+
+type credentialSecret struct {
+	Version      int    `json:"version"`
+	AccessToken  string `json:"access_token,omitempty"`
+	RefreshToken string `json:"refresh_token,omitempty"`
+}
+
 func CredentialsPath(paths config.Paths) string {
 	return paths.CredentialsFile()
 }
 
 func Load(paths config.Paths) (Credentials, error) {
-	data, err := os.ReadFile(CredentialsPath(paths))
+	metadata, err := readMetadata(CredentialsPath(paths))
 	if err != nil {
 		return Credentials{}, err
 	}
 
-	var creds Credentials
-	if err := json.Unmarshal(data, &creds); err != nil {
-		return Credentials{}, err
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	secret, err := storeForBackend(paths, metadata.CredentialBackend).Load(ctx, metadata.CredentialID)
+	if errors.Is(err, ErrCredentialSecretNotFound) {
+		return Credentials{}, ErrLoginRequired
+	}
+	if err != nil {
+		return Credentials{}, fmt.Errorf("Loading account secret: %w", err)
 	}
 
+	creds := Credentials{
+		ServerURL:        metadata.ServerURL,
+		Token:            secret.AccessToken,
+		AccessToken:      secret.AccessToken,
+		AccessExpiresAt:  metadata.AccessExpiresAt,
+		RefreshToken:     secret.RefreshToken,
+		RefreshExpiresAt: metadata.RefreshExpiresAt,
+		UserID:           metadata.UserID,
+		Email:            metadata.Email,
+		Name:             metadata.Name,
+	}
 	normalizeCredentials(&creds)
 	return creds, nil
 }
 
 func Save(paths config.Paths, creds Credentials) error {
-	path := CredentialsPath(paths)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-
 	normalizeCredentials(&creds)
-	data, err := json.MarshalIndent(creds, "", "  ")
+
+	credentialID, oldMetadata, err := credentialIDForSave(paths)
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0o600)
+
+	secret := credentialSecret{
+		Version:      1,
+		AccessToken:  creds.AccessToken,
+		RefreshToken: creds.RefreshToken,
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+
+	store := preferredCredentialStore(ctx, paths)
+	if err := store.Save(ctx, credentialID, secret); err != nil && store.Backend() != backendEncryptedFile {
+		store = newFileCredentialStore(paths)
+		if fallbackErr := store.Save(ctx, credentialID, secret); fallbackErr != nil {
+			return fmt.Errorf("Saving account secret: %w", errors.Join(err, fallbackErr))
+		}
+	} else if err != nil {
+		return fmt.Errorf("Saving account secret: %w", err)
+	}
+
+	metadata := accountMetadata{
+		Version:           1,
+		ServerURL:         creds.ServerURL,
+		CredentialID:      credentialID,
+		CredentialBackend: store.Backend(),
+		AccessExpiresAt:   creds.AccessExpiresAt,
+		RefreshExpiresAt:  creds.RefreshExpiresAt,
+		UserID:            creds.UserID,
+		Email:             creds.Email,
+		Name:              creds.Name,
+		UpdatedAt:         time.Now().UTC(),
+	}
+	if err := writeMetadata(CredentialsPath(paths), metadata); err != nil {
+		return err
+	}
+
+	if oldMetadata != nil && (oldMetadata.CredentialID != metadata.CredentialID || oldMetadata.CredentialBackend != metadata.CredentialBackend) {
+		_ = storeForBackend(paths, oldMetadata.CredentialBackend).Delete(ctx, oldMetadata.CredentialID)
+	}
+	_ = os.Remove(paths.LegacyCredentialsFile())
+	return nil
+}
+
+func Delete(paths config.Paths) error {
+	metadata, err := readMetadata(CredentialsPath(paths))
+	if err == nil {
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer cancel()
+		if err := storeForBackend(paths, metadata.CredentialBackend).Delete(ctx, metadata.CredentialID); err != nil &&
+			!errors.Is(err, ErrCredentialSecretNotFound) &&
+			!errors.Is(err, ErrCredentialStoreUnavailable) {
+			return fmt.Errorf("Deleting account secret: %w", err)
+		}
+		if metadata.CredentialBackend != backendEncryptedFile {
+			_ = newFileCredentialStore(paths).Delete(ctx, metadata.CredentialID)
+		}
+	} else if os.IsNotExist(err) {
+		_ = newFileCredentialStore(paths).Delete(context.Background(), "")
+	} else {
+		return err
+	}
+
+	for _, path := range []string{CredentialsPath(paths), paths.LegacyCredentialsFile()} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return err
+		}
+	}
+	return nil
 }
 
 func EnsureFresh(ctx context.Context, paths config.Paths) (Credentials, error) {
@@ -129,6 +230,102 @@ func normalizeCredentials(creds *Credentials) {
 			creds.Name = fallbackAccountName(creds.Email)
 		}
 	}
+}
+
+func readMetadata(path string) (accountMetadata, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return accountMetadata{}, err
+	}
+
+	var metadata accountMetadata
+	if err := json.Unmarshal(data, &metadata); err != nil {
+		return accountMetadata{}, fmt.Errorf("Parsing account metadata: %w", err)
+	}
+	metadata.ServerURL = strings.TrimSpace(metadata.ServerURL)
+	metadata.CredentialID = strings.TrimSpace(metadata.CredentialID)
+	metadata.CredentialBackend = strings.TrimSpace(metadata.CredentialBackend)
+	metadata.UserID = strings.TrimSpace(metadata.UserID)
+	metadata.Email = strings.TrimSpace(metadata.Email)
+	metadata.Name = strings.TrimSpace(metadata.Name)
+	if metadata.ServerURL == "" || metadata.CredentialID == "" {
+		return accountMetadata{}, ErrLoginRequired
+	}
+	return metadata, nil
+}
+
+func writeMetadata(path string, metadata accountMetadata) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("Creating account directory: %w", err)
+	}
+
+	body, err := json.MarshalIndent(metadata, "", "  ")
+	if err != nil {
+		return fmt.Errorf("Serializing account metadata: %w", err)
+	}
+	return writePrivateFile(path, body)
+}
+
+func credentialIDForSave(paths config.Paths) (string, *accountMetadata, error) {
+	if metadata, err := readMetadata(CredentialsPath(paths)); err == nil && metadata.CredentialID != "" {
+		return metadata.CredentialID, &metadata, nil
+	} else if err != nil && !os.IsNotExist(err) && !errors.Is(err, ErrLoginRequired) {
+		return "", nil, err
+	}
+
+	installID, err := loadOrCreateInstallID(paths.InstallIDFile())
+	if err != nil {
+		return "", nil, err
+	}
+	return "account-" + installID, nil, nil
+}
+
+func loadOrCreateInstallID(path string) (string, error) {
+	if data, err := os.ReadFile(path); err == nil {
+		if id := strings.TrimSpace(string(data)); id != "" {
+			return id, nil
+		}
+	} else if !os.IsNotExist(err) {
+		return "", fmt.Errorf("Reading device ID: %w", err)
+	}
+
+	raw := make([]byte, 16)
+	if _, err := rand.Read(raw); err != nil {
+		return "", fmt.Errorf("Generating device ID: %w", err)
+	}
+	id := hex.EncodeToString(raw)
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return "", fmt.Errorf("Creating device ID directory: %w", err)
+	}
+	if err := writePrivateFile(path, []byte(id+"\n")); err != nil {
+		return "", fmt.Errorf("Writing device ID: %w", err)
+	}
+	return id, nil
+}
+
+func writePrivateFile(path string, body []byte) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
+	if err != nil {
+		return err
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+
+	if _, err := tmp.Write(body); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Chmod(0o600); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmpPath, path)
 }
 
 func refresh(ctx context.Context, creds Credentials) (Credentials, error) {

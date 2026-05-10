@@ -2,6 +2,7 @@ package readiness
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net"
 	"os"
@@ -10,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
@@ -30,7 +32,7 @@ type Engine struct {
 	socketReady      func(string) bool
 	isSSHEnabled     func(config.Paths) bool
 	detectOwner      func(config.Paths) (config.SSHAgentOwner, error)
-	loadCredentials  func(string) (bool, error)
+	loadCredentials  func(config.Paths) (bool, error)
 	loadDaemonStatus func(string) (DaemonRuntimeStatus, error)
 	ensureConfig     func(config.Paths) error
 	enableSSH        func(config.Paths) error
@@ -91,7 +93,7 @@ func (e *Engine) Assess() (Snapshot, error) {
 		snapshot.IdentityAgentOwner = owner
 	}
 
-	if loggedIn, err := e.credentials(e.Paths.CredentialsFile()); err == nil {
+	if loggedIn, err := e.credentials(e.Paths); err == nil {
 		snapshot.LoggedIn = loggedIn
 	}
 
@@ -198,11 +200,11 @@ func (e *Engine) owner(paths config.Paths) (config.SSHAgentOwner, error) {
 	return config.DetectSSHAgentOwner(paths)
 }
 
-func (e *Engine) credentials(path string) (bool, error) {
+func (e *Engine) credentials(paths config.Paths) (bool, error) {
 	if e != nil && e.loadCredentials != nil {
-		return e.loadCredentials(path)
+		return e.loadCredentials(paths)
 	}
-	return defaultCredentialsValid(path)
+	return defaultCredentialsValid(paths)
 }
 
 func (e *Engine) daemonStatus(socketPath string) (DaemonRuntimeStatus, error) {
@@ -230,29 +232,15 @@ func defaultSocketReady(path string) bool {
 	return true
 }
 
-func defaultCredentialsValid(path string) (bool, error) {
-	raw, err := os.ReadFile(path)
+func defaultCredentialsValid(paths config.Paths) (bool, error) {
+	creds, err := accountauth.Load(paths)
+	if errors.Is(err, os.ErrNotExist) || errors.Is(err, accountauth.ErrLoginRequired) {
+		return false, nil
+	}
 	if err != nil {
-		if os.IsNotExist(err) {
-			return false, nil
-		}
 		return false, err
 	}
-
-	var creds struct {
-		Token       string `json:"token"`
-		AccessToken string `json:"access_token"`
-		ServerURL   string `json:"server_url"`
-	}
-	if err := json.Unmarshal(raw, &creds); err != nil {
-		return false, err
-	}
-
-	token := strings.TrimSpace(creds.AccessToken)
-	if token == "" {
-		token = strings.TrimSpace(creds.Token)
-	}
-	return token != "" && strings.TrimSpace(creds.ServerURL) != "", nil
+	return strings.TrimSpace(creds.ServerURL) != "" && accountauth.CurrentToken(creds) != "", nil
 }
 
 func defaultDaemonRuntimeStatus(socketPath string) (DaemonRuntimeStatus, error) {
