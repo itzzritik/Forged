@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-05-09
+last_verified: 2026-05-10
 stable: partial
 ---
 
@@ -30,7 +30,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Service repair replaces any unmanaged `forged daemon` that still owns the runtime sockets before launchd/system service restart, and health checks only trust service sockets when the managed service PID matches the daemon PID file on platforms that expose it.
 - Daemon status exposes a build id. Readiness treats a running daemon with a different or missing build id as degraded and repairs it by reinstalling/restarting the managed service.
 - Linux user-service commands derive `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` when shells omit them, which is common in headless SSH or remote-editor sessions.
-- Persistent Forged state lives under `~/.config/forged` on every OS. Linux keeps runtime sockets under `/run/user/<uid>/forged`; other Unix runtime files use `~/.config/forged/runtime`.
+- Persistent Forged state lives under `~/.config/forged` on every OS. Auth/device trust lives under `~/.config/forged/auth`. Linux keeps runtime sockets under `/run/user/<uid>/forged`; macOS and Windows use `~/.config/forged/runtime` for runtime metadata, with Windows sockets using named pipes.
 - Windows support is still partial around socket transport and platform helpers.
 
 ## Decisions

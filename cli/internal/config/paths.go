@@ -16,15 +16,16 @@ type Paths struct {
 
 func (p Paths) ConfigFile() string      { return filepath.Join(p.ConfigDir, "config.toml") }
 func (p Paths) VaultFile() string       { return filepath.Join(p.DataDir, "vault.forged") }
-func (p Paths) CredentialsFile() string { return filepath.Join(p.ConfigDir, "credentials.json") }
+func (p Paths) AuthDir() string         { return filepath.Join(p.ConfigDir, "auth") }
+func (p Paths) CredentialsFile() string { return filepath.Join(p.AuthDir(), "credentials.json") }
 func (p Paths) SyncStateFile() string   { return filepath.Join(p.DataDir, "sync-state.json") }
 func (p Paths) SyncDirtyFile() string   { return filepath.Join(p.DataDir, "sync.dirty") }
 func (p Paths) LocalUnlockBlobFile() string {
-	return filepath.Join(p.ConfigDir, "local-unlock.json")
+	return filepath.Join(p.AuthDir(), "local-unlock.json")
 }
-func (p Paths) InstallIDFile() string { return filepath.Join(p.ConfigDir, "install.id") }
+func (p Paths) InstallIDFile() string { return filepath.Join(p.AuthDir(), "device.id") }
 func (p Paths) HeadlessUnlockKeyFile() string {
-	return filepath.Join(p.ConfigDir, "headless-unlock.key")
+	return filepath.Join(p.AuthDir(), "headless-unlock.key")
 }
 
 func (p Paths) SSHManagedDir() string {
@@ -80,26 +81,20 @@ func (p Paths) LogFile() string { return filepath.Join(p.StateDir, "logs", "forg
 func DefaultPaths() Paths {
 	home, _ := os.UserHomeDir()
 	base := filepath.Join(home, ".config", "forged")
-	runtimeDir := filepath.Join(base, "runtime")
+
+	return Paths{
+		ConfigDir:  base,
+		DataDir:    filepath.Join(base, "data"),
+		RuntimeDir: defaultRuntimeDir(base),
+		StateDir:   base,
+	}
+}
+
+func defaultRuntimeDir(base string) string {
 	if runtime.GOOS == "linux" {
-		runtimeDir = filepath.Join(envOrDefault("XDG_RUNTIME_DIR", filepath.Join("/run", "user", uidStr())), "forged")
+		return filepath.Join(envOrDefault("XDG_RUNTIME_DIR", filepath.Join("/run", "user", uidStr())), "forged")
 	}
-	switch runtime.GOOS {
-	case "windows":
-		return Paths{
-			ConfigDir:  base,
-			DataDir:    filepath.Join(base, "data"),
-			RuntimeDir: base,
-			StateDir:   base,
-		}
-	default:
-		return Paths{
-			ConfigDir:  base,
-			DataDir:    filepath.Join(base, "data"),
-			RuntimeDir: runtimeDir,
-			StateDir:   base,
-		}
-	}
+	return filepath.Join(base, "runtime")
 }
 
 func envOrDefault(key, fallback string) string {
