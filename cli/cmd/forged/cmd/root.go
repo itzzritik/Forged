@@ -17,7 +17,6 @@ var (
 
 var retiredCommandHints = map[string]string{
 	"agent":    "Run `forged` and use the Agent tab.",
-	"doctor":   "Run `forged` and use the Doctor tab.",
 	"key":      "Run `forged` and use the Key tab.",
 	"login":    "Run `forged` and use Manage > Log In.",
 	"logout":   "Run `forged` and use Manage > Log Out.",
@@ -95,6 +94,7 @@ func installRootSubcommands(cmd *cobra.Command) {
 		versionCmd,
 		logsCmd,
 		signCmd,
+		doctorCmd,
 		daemonFreshenCmd,
 		sshRoutePrepareCmd,
 		sshRouteSuccessCmd,

@@ -81,7 +81,7 @@ func Save(path string, cfg Config) error {
 		body.WriteString(fmt.Sprintf("interval = %q\n", cfg.Sync.Interval))
 	}
 	body.WriteString(fmt.Sprintf("enabled = %t\n", cfg.Sync.Enabled))
-	body.WriteString("\n\n[security]\n")
+	body.WriteString("\n[security]\n")
 	body.WriteString(fmt.Sprintf("master_password_interval = %q\n", cfg.Security.MasterPasswordInterval))
 
 	return os.WriteFile(path, []byte(body.String()), 0o600)

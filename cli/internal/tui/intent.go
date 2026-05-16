@@ -35,6 +35,10 @@ func DashboardIntent() Intent {
 	return NewIntent(RouteDashboardHome)
 }
 
+func DoctorIntent() Intent {
+	return NewIntent(RouteDoctorOverview)
+}
+
 type Intent struct {
 	Entry    RouteID
 	Boundary RouteID

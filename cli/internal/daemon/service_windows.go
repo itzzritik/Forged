@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"encoding/xml"
 	"fmt"
 	"os"
 	"os/exec"
@@ -102,6 +103,16 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	status.Installed = true
 	status.ConfigValid = true
 
+	if binary, err := extractWindowsTaskBinary(taskName); err == nil && binary != "" {
+		status.BinaryPath = binary
+		if !binaryExecutable(binary) {
+			status.BinaryMissing = true
+			status.ConfigValid = false
+			status.Detail = fmt.Sprintf("service binary missing: %s", binary)
+			return status, nil
+		}
+	}
+
 	cmd := exec.Command("schtasks", "/Query", "/TN", taskName, "/FO", "LIST")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -130,4 +141,44 @@ func findBinary() (string, error) {
 		return "", fmt.Errorf("Cannot find Forged binary: %w", err)
 	}
 	return filepath.Abs(self)
+}
+
+// extractWindowsTaskBinary returns the executable declared in the Actions/Exec
+// block of the registered scheduled task. Returns an empty string if the task
+// has no Exec action.
+func extractWindowsTaskBinary(name string) (string, error) {
+	out, err := exec.Command("schtasks", "/Query", "/TN", name, "/XML").Output()
+	if err != nil {
+		return "", err
+	}
+	var task struct {
+		Actions struct {
+			Exec []struct {
+				Command string `xml:"Command"`
+			} `xml:"Exec"`
+		} `xml:"Actions"`
+	}
+	if err := xml.Unmarshal(out, &task); err != nil {
+		return "", err
+	}
+	for _, action := range task.Actions.Exec {
+		if cmd := strings.TrimSpace(action.Command); cmd != "" {
+			return cmd, nil
+		}
+	}
+	return "", nil
+}
+
+func binaryExecutable(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return false
+	}
+	return true
 }

@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"bytes"
+	"encoding/json"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -239,6 +240,22 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	status.ConfigValid = true
 
 	for _, service := range services {
+		if service.Legacy {
+			continue
+		}
+		if binary, err := extractLaunchdBinary(service.Path); err == nil && binary != "" {
+			status.BinaryPath = binary
+			if !binaryExecutable(binary) {
+				status.BinaryMissing = true
+				status.ConfigValid = false
+				status.Detail = fmt.Sprintf("service binary missing: %s", binary)
+				return status, nil
+			}
+			break
+		}
+	}
+
+	for _, service := range services {
 		out, err := exec.Command("launchctl", "print", launchdServiceTargetForLabel(service.Label)).CombinedOutput()
 		if err != nil {
 			message := strings.TrimSpace(string(out))
@@ -450,6 +467,42 @@ func validateLaunchdPlist(path string) error {
 		return fmt.Errorf("Validating plist: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
+}
+
+// extractLaunchdBinary reads the first entry of ProgramArguments from a plist
+// at path. Uses `plutil -convert json -o -` so we don't ship our own plist
+// parser. Returns the absolute binary path or an empty string if the plist
+// cannot be decoded.
+func extractLaunchdBinary(path string) (string, error) {
+	cmd := exec.Command("plutil", "-convert", "json", "-o", "-", path)
+	out, err := cmd.Output()
+	if err != nil {
+		return "", err
+	}
+	var decoded struct {
+		ProgramArguments []string `json:"ProgramArguments"`
+	}
+	if err := json.Unmarshal(out, &decoded); err != nil {
+		return "", err
+	}
+	if len(decoded.ProgramArguments) == 0 {
+		return "", nil
+	}
+	return strings.TrimSpace(decoded.ProgramArguments[0]), nil
+}
+
+func binaryExecutable(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return false
+	}
+	return info.Mode()&0o111 != 0
 }
 
 func xmlEscape(value string) string {

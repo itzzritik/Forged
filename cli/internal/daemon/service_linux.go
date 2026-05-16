@@ -120,6 +120,16 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	status.Installed = true
 	status.ConfigValid = true
 
+	if binary, err := extractSystemdBinary(unitPath()); err == nil && binary != "" {
+		status.BinaryPath = binary
+		if !binaryExecutable(binary) {
+			status.BinaryMissing = true
+			status.ConfigValid = false
+			status.Detail = fmt.Sprintf("service binary missing: %s", binary)
+			return status, nil
+		}
+	}
+
 	cmd := systemctlUser("show", serviceName, "--property=LoadState,ActiveState,SubState", "--value")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
@@ -160,6 +170,51 @@ func findBinary() (string, error) {
 		return "", fmt.Errorf("Cannot find Forged binary: %w", err)
 	}
 	return filepath.Abs(self)
+}
+
+// extractSystemdBinary returns the binary path declared by the ExecStart= line
+// in the given unit file. The path is the first quoted-or-unquoted token after
+// the '='. Returns an empty string if the unit has no ExecStart line.
+func extractSystemdBinary(path string) (string, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return "", err
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "ExecStart=") {
+			continue
+		}
+		value := strings.TrimSpace(strings.TrimPrefix(trimmed, "ExecStart="))
+		value = strings.TrimLeft(value, "-@:!|+")
+		if value == "" {
+			return "", nil
+		}
+		if value[0] == '"' {
+			if end := strings.Index(value[1:], "\""); end >= 0 {
+				return value[1 : 1+end], nil
+			}
+		}
+		if idx := strings.IndexAny(value, " \t"); idx > 0 {
+			return value[:idx], nil
+		}
+		return value, nil
+	}
+	return "", nil
+}
+
+func binaryExecutable(path string) bool {
+	if strings.TrimSpace(path) == "" {
+		return false
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return false
+	}
+	if info.IsDir() {
+		return false
+	}
+	return info.Mode()&0o111 != 0
 }
 
 func formatSystemdExecStart(runtime RuntimeSpec) string {
