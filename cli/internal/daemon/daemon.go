@@ -3,7 +3,6 @@ package daemon
 import (
 	"context"
 	"fmt"
-	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -162,8 +161,10 @@ func (d *Daemon) setupLogging() error {
 		MaxAge:     30,
 	}
 
-	w := io.MultiWriter(os.Stderr, lj)
-	d.logger = slog.New(slog.NewTextHandler(w, &slog.HandlerOptions{
+	// Don't MultiWriter to os.Stderr: when running under launchd/systemd the
+	// service config already redirects stderr into this same log file, which
+	// would double every line.
+	d.logger = slog.New(slog.NewTextHandler(lj, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))
 

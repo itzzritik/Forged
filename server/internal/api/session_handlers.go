@@ -174,6 +174,18 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.initRefreshCache()
+	presentedHash := serverauth.HashRefreshSecret(secret)
+
+	// Grace path: a recent rotation of this exact secret means an honest
+	// retry from a single client (network hiccup, near-simultaneous calls).
+	// Serve the cached response instead of family-revoking.
+	if cached, ok := s.refreshRotates.lookup(presentedHash); ok {
+		s.logAuthSecurityInfoEvent("refresh served from grace cache", "remote_addr", r.RemoteAddr, "session_id", sessionID)
+		writeJSON(w, http.StatusOK, cached)
+		return
+	}
+
 	newSecret, newSecretHash, err := serverauth.GenerateRefreshSecret()
 	if err != nil {
 		s.logAuthSecurityEvent("refresh failed", "reason", "secret_generation_failed", "remote_addr", r.RemoteAddr, "session_id", sessionID, "error", err)
@@ -184,11 +196,19 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 	next, user, err := s.DB.RotateRefreshSession(
 		r.Context(),
 		sessionID,
-		serverauth.HashRefreshSecret(secret),
+		presentedHash,
 		newSecretHash,
 		time.Now().Add(serverauth.RefreshTokenTTL).UTC(),
 	)
 	if errors.Is(err, db.ErrRefreshSessionReplay) {
+		// Second lookup: another goroutine may have populated the grace
+		// cache between our first lookup and the DB call. This keeps a
+		// concurrent honest retry from triggering family-revoke.
+		if cached, ok := s.refreshRotates.lookup(presentedHash); ok {
+			s.logAuthSecurityInfoEvent("refresh served from grace cache", "remote_addr", r.RemoteAddr, "session_id", sessionID, "post_db", true)
+			writeJSON(w, http.StatusOK, cached)
+			return
+		}
 		s.logAuthSecurityEvent("refresh replay detected", "remote_addr", r.RemoteAddr, "session_id", sessionID)
 		writeError(w, http.StatusUnauthorized, "Refresh token is not valid")
 		return
@@ -210,6 +230,7 @@ func (s *Server) handleRefresh(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "Could not issue token pair")
 		return
 	}
+	s.refreshRotates.store(presentedHash, response)
 	s.logAuthSecurityInfoEvent("refresh rotated", "remote_addr", r.RemoteAddr, "session_id", next.ID, "user_id", user.ID)
 	writeJSON(w, http.StatusOK, response)
 }

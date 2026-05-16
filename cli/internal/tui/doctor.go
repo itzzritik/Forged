@@ -504,26 +504,66 @@ func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
 }
 
 func (m *model) doctorSyncAccountRow() doctorRow {
-	if m.snapshot.LoggedIn {
+	if !m.snapshot.LoggedIn {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Sync Account",
-				Status: "✓ Logged in",
-				Detail: "Multi-device sync available",
-				Tone:   doctorscreen.ToneSuccess,
+				Status: "! Not logged in",
+				Detail: "Multi-device sync unavailable",
+				Tone:   doctorscreen.ToneWarning,
 			},
-			severity: doctorSeveritySuccess,
+			severity: doctorSeverityWarning,
 			order:    12,
 		}
 	}
+
+	if m.runtimeLoaded {
+		if syncErr := strings.TrimSpace(m.runtimeStatus.Error); syncErr != "" {
+			return doctorRow{
+				screen: doctorscreen.Row{
+					Check:  "Sync Account",
+					Status: "✕ Sync error",
+					Detail: syncErr,
+					Tone:   doctorscreen.ToneDanger,
+				},
+				severity: doctorSeverityDanger,
+				order:    12,
+			}
+		}
+		if m.runtimeStatus.Syncing {
+			return doctorRow{
+				screen: doctorscreen.Row{
+					Check:  "Sync Account",
+					Status: "… Syncing",
+					Detail: "Multi-device sync in progress",
+					Tone:   doctorscreen.ToneWarning,
+				},
+				severity: doctorSeverityWarning,
+				order:    12,
+			}
+		}
+		if m.runtimeStatus.Linked && m.runtimeStatus.Dirty {
+			return doctorRow{
+				screen: doctorscreen.Row{
+					Check:  "Sync Account",
+					Status: "! Pending changes",
+					Detail: "Local changes have not synced yet",
+					Tone:   doctorscreen.ToneWarning,
+				},
+				severity: doctorSeverityWarning,
+				order:    12,
+			}
+		}
+	}
+
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "Sync Account",
-			Status: "! Not logged in",
-			Detail: "Multi-device sync unavailable",
-			Tone:   doctorscreen.ToneWarning,
+			Status: "✓ Logged in",
+			Detail: "Multi-device sync available",
+			Tone:   doctorscreen.ToneSuccess,
 		},
-		severity: doctorSeverityWarning,
+		severity: doctorSeveritySuccess,
 		order:    12,
 	}
 }

@@ -13,12 +13,22 @@ import (
 )
 
 type Server struct {
-	DB         *db.DB
-	Secret     string
-	OAuth      auth.OAuthConfig
-	DevMode    bool
-	Logger     *slog.Logger
-	HTTPClient *http.Client
+	DB             *db.DB
+	Secret         string
+	OAuth          auth.OAuthConfig
+	DevMode        bool
+	Logger         *slog.Logger
+	HTTPClient     *http.Client
+	refreshRotates *rotationCache
+}
+
+// initRefreshCache lazily creates the rotation cache on first use. Kept as a
+// method (rather than a constructor argument) so existing call sites that
+// build Server with struct-literal initialization don't need to change.
+func (s *Server) initRefreshCache() {
+	if s.refreshRotates == nil {
+		s.refreshRotates = newRotationCache()
+	}
 }
 
 func (s *Server) Routes() http.Handler {

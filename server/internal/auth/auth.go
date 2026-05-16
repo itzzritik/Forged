@@ -13,9 +13,19 @@ import (
 )
 
 const (
-	LegacyTokenTTL  = 30 * 24 * time.Hour
-	AccessTokenTTL  = 15 * time.Minute
-	RefreshTokenTTL = 30 * 24 * time.Hour
+	LegacyTokenTTL = 30 * 24 * time.Hour
+	AccessTokenTTL = 15 * time.Minute
+	// RefreshTokenTTL bounds the lifetime of a single refresh secret. Each
+	// successful rotation issues a fresh secret with a fresh window, so an
+	// actively-used CLI keeps sliding forward indefinitely; this is only the
+	// hard cap on inactivity.
+	RefreshTokenTTL = 90 * 24 * time.Hour
+	// RefreshGracePeriod is the window during which presenting a refresh
+	// secret that was just rotated returns the most-recent token pair
+	// instead of family-revoking. Absorbs honest retries (network hiccups,
+	// near-simultaneous client requests) without weakening replay
+	// detection materially.
+	RefreshGracePeriod = 30 * time.Second
 )
 
 var ErrInvalidRefreshToken = errors.New("invalid refresh token")

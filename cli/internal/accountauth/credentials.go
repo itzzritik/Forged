@@ -11,16 +11,41 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 )
 
 var ErrLoginRequired = errors.New("log-in required")
+
+// refreshMu serializes the load → refresh → save sequence in EnsureFresh so
+// two callers in the same process never present the same refresh token to the
+// server. The server has a 30s grace window for honest replays, but
+// serializing here removes most of the race entirely.
+var refreshMu sync.Mutex
+
+// memCreds holds the most-recent refresh result in memory. If a successful
+// rotation fails to persist (disk full, keychain locked, OS suspended
+// mid-write), the new tokens still survive in this process: subsequent
+// EnsureFresh calls use the in-memory copy instead of re-presenting the
+// already-rotated disk token. The cache lives for the lifetime of the daemon
+// process; on restart we fall back to disk, accepting one possible re-login
+// in the very rare crash-during-save case.
+var memCreds atomic.Pointer[Credentials]
+
+// refresh401RetryDelay is the pause before retrying a 401 once. Pairs with
+// the server-side RefreshGracePeriod: if the first call's response was lost
+// in flight, the server has already rotated and cached the new pair under
+// our presented secret; the retry hits the cache and we get the new tokens
+// back instead of being family-revoked.
+const refresh401RetryDelay = 350 * time.Millisecond
 
 type Credentials struct {
 	ServerURL        string    `json:"server_url"`
@@ -58,6 +83,10 @@ func CredentialsPath(paths config.Paths) string {
 }
 
 func Load(paths config.Paths) (Credentials, error) {
+	if cached := memCreds.Load(); cached != nil && credsAreFresher(*cached, paths) {
+		return *cached, nil
+	}
+
 	metadata, err := readMetadata(CredentialsPath(paths))
 	if err != nil {
 		return Credentials{}, err
@@ -87,6 +116,25 @@ func Load(paths config.Paths) (Credentials, error) {
 	}
 	normalizeCredentials(&creds)
 	return creds, nil
+}
+
+// credsAreFresher reports whether the in-memory cache's refresh token is
+// newer than what's on disk. Used to ensure a save-failed cache entry isn't
+// discarded by a stale disk read.
+func credsAreFresher(cached Credentials, paths config.Paths) bool {
+	if strings.TrimSpace(cached.RefreshToken) == "" {
+		return false
+	}
+	metadata, err := readMetadata(CredentialsPath(paths))
+	if err != nil {
+		// Disk unreadable — cache is all we have.
+		return true
+	}
+	if metadata.UpdatedAt.IsZero() {
+		return true
+	}
+	// If disk is at or ahead of cache, prefer disk (someone else wrote it).
+	return cached.RefreshExpiresAt.After(metadata.RefreshExpiresAt)
 }
 
 func Save(paths config.Paths, creds Credentials) error {
@@ -140,6 +188,7 @@ func Save(paths config.Paths, creds Credentials) error {
 }
 
 func Delete(paths config.Paths) error {
+	memCreds.Store(nil)
 	metadata, err := readMetadata(CredentialsPath(paths))
 	if err == nil {
 		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -167,6 +216,9 @@ func Delete(paths config.Paths) error {
 }
 
 func EnsureFresh(ctx context.Context, paths config.Paths) (Credentials, error) {
+	refreshMu.Lock()
+	defer refreshMu.Unlock()
+
 	creds, err := Load(paths)
 	if err != nil {
 		return Credentials{}, err
@@ -179,11 +231,32 @@ func EnsureFresh(ctx context.Context, paths config.Paths) (Credentials, error) {
 	}
 
 	refreshed, err := refresh(ctx, creds)
+	if errors.Is(err, ErrLoginRequired) {
+		// One retry: a 401 here can mean an in-flight rotation whose
+		// response we lost. The server keeps a short grace window for
+		// the same presented secret. If we're in that window, the
+		// retry returns the freshly-rotated pair instead of staying
+		// stuck.
+		time.Sleep(refresh401RetryDelay)
+		refreshed, err = refresh(ctx, creds)
+	}
 	if err != nil {
 		return Credentials{}, err
 	}
+
+	// Publish to the in-memory cache FIRST so a failed disk save doesn't
+	// leave the next caller presenting the now-revoked refresh token. The
+	// server has already committed the rotation by this point; the new
+	// tokens are the only ones that work.
+	memCreds.Store(&refreshed)
+
 	if err := Save(paths, refreshed); err != nil {
-		return Credentials{}, fmt.Errorf("Saving refreshed credentials: %w", err)
+		// Don't return the error — we have the new tokens in memory.
+		// Returning here would make the caller treat this as a failure
+		// even though sync can proceed. Log loudly so the issue is
+		// visible to anyone reading the daemon log.
+		slog.Error("saving refreshed credentials failed; running from in-memory tokens",
+			"error", err)
 	}
 	return refreshed, nil
 }
