@@ -1,10 +1,8 @@
 package agent
 
 import (
-	"fmt"
 	"log/slog"
 	"net"
-	"os"
 	"sync"
 
 	"github.com/itzzritik/forged/cli/internal/platform"
@@ -28,16 +26,9 @@ func NewServer(socketPath string, a *ForgedAgent, logger *slog.Logger) *Server {
 }
 
 func (s *Server) Start() error {
-	os.Remove(s.socketPath)
-
-	ln, err := net.Listen("unix", s.socketPath)
+	ln, err := platform.Listen(s.socketPath)
 	if err != nil {
-		return fmt.Errorf("Listening on %s: %w", s.socketPath, err)
-	}
-
-	if err := os.Chmod(s.socketPath, 0600); err != nil {
-		ln.Close()
-		return fmt.Errorf("Setting socket permissions: %w", err)
+		return err
 	}
 
 	s.listener = ln

@@ -4,30 +4,17 @@ package platform
 
 import (
 	"fmt"
-	"net"
-	"time"
 
 	"github.com/Microsoft/go-winio"
 )
 
+// Pipe paths kept here for callers that still hard-code them. New code should
+// read these from config.Paths instead, but these constants stay as a
+// fallback for parity with the old CtlPipeName / AgentPipeName references.
 const (
 	AgentPipeName = `\\.\pipe\forged-agent`
 	CtlPipeName   = `\\.\pipe\forged-ctl`
 )
-
-func ListenPipe(name string) (net.Listener, error) {
-	cfg := &winio.PipeConfig{
-		SecurityDescriptor: "D:P(A;;GA;;;SY)(A;;GA;;;BA)(A;;GA;;;OW)",
-		InputBufferSize:    65536,
-		OutputBufferSize:   65536,
-	}
-
-	ln, err := winio.ListenPipe(name, cfg)
-	if err != nil {
-		return nil, fmt.Errorf("Listening on pipe %s: %w", name, err)
-	}
-	return ln, nil
-}
 
 func IsSocketAlive(path string) bool {
 	conn, err := winio.DialPipe(path, nil)
@@ -38,14 +25,13 @@ func IsSocketAlive(path string) bool {
 	return true
 }
 
+// CleanStaleSocket reports whether a pipe with the same name is currently
+// being served by another process. Named pipes auto-clean on close, so
+// there is nothing to remove — we only need to refuse to start if the name
+// is taken.
 func CleanStaleSocket(path string) error {
 	if IsSocketAlive(path) {
 		return fmt.Errorf("Pipe %s is in use by another process", path)
 	}
 	return nil
-}
-
-func DialPipe(name string) (net.Conn, error) {
-	timeout := 2 * time.Second
-	return winio.DialPipe(name, &timeout)
 }

@@ -14,7 +14,21 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 )
 
-const taskName = "ForgedSSHAgent"
+// taskName produces a per-user scheduled-task name so two users on the same
+// Windows box don't clobber each other's installations. The username is part
+// of the path produced by os.UserHomeDir(); we fall back to a generic name
+// if for some reason the home dir is unavailable.
+func taskName() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return "ForgedSSHAgent"
+	}
+	user := filepath.Base(home)
+	if user == "" || user == "." || user == string(filepath.Separator) {
+		return "ForgedSSHAgent"
+	}
+	return "ForgedSSHAgent-" + user
+}
 
 func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	runtime, err := normalizeRuntimeSpec(runtime)
@@ -55,7 +69,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	}
 	defer os.Remove(tmpFile)
 
-	cmd := exec.Command("schtasks", "/Create", "/TN", taskName, "/XML", tmpFile, "/F")
+	cmd := exec.Command("schtasks", "/Create", "/TN", taskName(), "/XML", tmpFile, "/F")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("Creating scheduled task (binary=%q): %w; schtasks output: %q",
 			runtime.Binary, err, strings.TrimSpace(string(out)))
@@ -73,7 +87,7 @@ func xmlEscape(value string) string {
 }
 
 func StartService() error {
-	cmd := exec.Command("schtasks", "/Run", "/TN", taskName)
+	cmd := exec.Command("schtasks", "/Run", "/TN", taskName())
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("Starting task: %s: %w", string(out), err)
 	}
@@ -81,7 +95,7 @@ func StartService() error {
 }
 
 func StopService() error {
-	cmd := exec.Command("schtasks", "/End", "/TN", taskName)
+	cmd := exec.Command("schtasks", "/End", "/TN", taskName())
 	cmd.CombinedOutput()
 	return nil
 }
@@ -93,13 +107,13 @@ func RestartService() error {
 
 func UninstallService() error {
 	StopService()
-	cmd := exec.Command("schtasks", "/Delete", "/TN", taskName, "/F")
+	cmd := exec.Command("schtasks", "/Delete", "/TN", taskName(), "/F")
 	cmd.CombinedOutput()
 	return nil
 }
 
 func ServiceInstalled() bool {
-	cmd := exec.Command("schtasks", "/Query", "/TN", taskName)
+	cmd := exec.Command("schtasks", "/Query", "/TN", taskName())
 	return cmd.Run() == nil
 }
 
@@ -113,7 +127,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	status.Installed = true
 	status.ConfigValid = true
 
-	if binary, err := extractWindowsTaskBinary(taskName); err == nil && binary != "" {
+	if binary, err := extractWindowsTaskBinary(taskName()); err == nil && binary != "" {
 		status.BinaryPath = binary
 		if !binaryExecutable(binary) {
 			status.BinaryMissing = true
@@ -123,7 +137,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 		}
 	}
 
-	cmd := exec.Command("schtasks", "/Query", "/TN", taskName, "/FO", "LIST")
+	cmd := exec.Command("schtasks", "/Query", "/TN", taskName(), "/FO", "LIST")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		status.Detail = string(out)
