@@ -3,6 +3,7 @@
 package daemon
 
 import (
+	"bytes"
 	"encoding/xml"
 	"fmt"
 	"os"
@@ -24,7 +25,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	logDir := filepath.Dir(paths.LogFile())
 	os.MkdirAll(logDir, 0700)
 
-	xml := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-16"?>
+	xmlBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <Triggers>
     <LogonTrigger>
@@ -46,20 +47,29 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
       <Arguments>%s</Arguments>
     </Exec>
   </Actions>
-</Task>`, runtime.Binary, strings.Join(runtime.Args, " "))
+</Task>`, xmlEscape(runtime.Binary), xmlEscape(strings.Join(runtime.Args, " ")))
 
 	tmpFile := filepath.Join(os.TempDir(), "forged-task.xml")
-	if err := os.WriteFile(tmpFile, []byte(xml), 0600); err != nil {
+	if err := os.WriteFile(tmpFile, []byte(xmlBody), 0600); err != nil {
 		return fmt.Errorf("Writing task XML: %w", err)
 	}
 	defer os.Remove(tmpFile)
 
 	cmd := exec.Command("schtasks", "/Create", "/TN", taskName, "/XML", tmpFile, "/F")
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("Creating scheduled task: %s: %w", string(out), err)
+		return fmt.Errorf("Creating scheduled task (binary=%q): %w; schtasks output: %q",
+			runtime.Binary, err, strings.TrimSpace(string(out)))
 	}
 
 	return nil
+}
+
+func xmlEscape(value string) string {
+	var buf bytes.Buffer
+	if err := xml.EscapeText(&buf, []byte(value)); err != nil {
+		return value
+	}
+	return buf.String()
 }
 
 func StartService() error {
