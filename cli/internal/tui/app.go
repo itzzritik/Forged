@@ -768,7 +768,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.runtimeLoaded = true
 		} else {
 			m.runtimeStatus.Syncing = false
-			if m.snapshot.LoggedIn {
+			if m.snapshot.LoggedIn && m.snapshot.IPCSocketReady {
 				m.runtimeStatus.Error = msg.err.Error()
 				m.runtimeLoaded = true
 			}

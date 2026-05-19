@@ -2,6 +2,7 @@ package tui
 
 import (
 	"fmt"
+	"runtime"
 	"sort"
 	"strings"
 
@@ -598,7 +599,7 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "System Auth",
 				Status: "! Unavailable",
-				Detail: "External use follows your configured policy on this machine",
+				Detail: systemAuthUnavailableHint(),
 				Tone:   doctorscreen.ToneWarning,
 			},
 			severity: doctorSeverityWarning,
@@ -648,7 +649,7 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "Secure Store",
 				Status: "! Unavailable",
-				Detail: "Master-password trust cannot be remembered securely",
+				Detail: secureStoreUnavailableHint(),
 				Tone:   doctorscreen.ToneWarning,
 			},
 			severity: doctorSeverityWarning,
@@ -665,5 +666,29 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 			severity: doctorSeverityDanger,
 			order:    10,
 		}
+	}
+}
+
+func systemAuthUnavailableHint() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "Windows Hello is not enrolled — set up a Hello PIN/face/fingerprint to enable"
+	case "linux":
+		return "No graphical session detected; biometric prompts are disabled"
+	case "darwin":
+		return "Touch ID is not enrolled on this device"
+	default:
+		return "External use follows your configured policy on this machine"
+	}
+}
+
+func secureStoreUnavailableHint() string {
+	switch runtime.GOOS {
+	case "windows":
+		return "DPAPI-backed device key is not yet wired on Windows — using headless fallback"
+	case "linux":
+		return "Secret Service / D-Bus not available; using headless fallback"
+	default:
+		return "Master-password trust cannot be remembered securely"
 	}
 }

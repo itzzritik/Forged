@@ -8,11 +8,22 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 )
+
+// currentTaskUser returns "DOMAIN\\username" on Windows. Task Scheduler
+// requires this in <UserId> for LogonTrigger and Principal blocks so the
+// task installs without needing admin elevation.
+func currentTaskUser() string {
+	if u, err := user.Current(); err == nil && strings.TrimSpace(u.Username) != "" {
+		return u.Username
+	}
+	return ""
+}
 
 // taskName produces a per-user scheduled-task name so two users on the same
 // Windows box don't clobber each other's installations. The username is part
@@ -39,42 +50,90 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	logDir := filepath.Dir(paths.LogFile())
 	os.MkdirAll(logDir, 0700)
 
+	userID := currentTaskUser()
+	userBlock := ""
+	principalRef := ""
+	if userID != "" {
+		userBlock = "\n      <UserId>" + xmlEscape(userID) + "</UserId>"
+		principalRef = ` Context="Author"`
+	}
+	principalsBlock := ""
+	if userID != "" {
+		principalsBlock = fmt.Sprintf(`
+  <Principals>
+    <Principal id="Author">
+      <UserId>%s</UserId>
+      <LogonType>InteractiveToken</LogonType>
+      <RunLevel>LeastPrivilege</RunLevel>
+    </Principal>
+  </Principals>`, xmlEscape(userID))
+	}
+
 	xmlBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
+  <RegistrationInfo>
+    <Description>Forged SSH Agent daemon</Description>
+  </RegistrationInfo>
   <Triggers>
     <LogonTrigger>
-      <Enabled>true</Enabled>
+      <Enabled>true</Enabled>%s
     </LogonTrigger>
-  </Triggers>
+  </Triggers>%s
   <Settings>
+    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
+    <AllowHardTerminate>true</AllowHardTerminate>
+    <StartWhenAvailable>true</StartWhenAvailable>
+    <RunOnlyIfNetworkAvailable>false</RunOnlyIfNetworkAvailable>
+    <IdleSettings>
+      <StopOnIdleEnd>false</StopOnIdleEnd>
+      <RestartOnIdle>false</RestartOnIdle>
+    </IdleSettings>
+    <AllowStartOnDemand>true</AllowStartOnDemand>
+    <Enabled>true</Enabled>
+    <Hidden>false</Hidden>
+    <RunOnlyIfIdle>false</RunOnlyIfIdle>
+    <WakeToRun>false</WakeToRun>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>
+    <Priority>7</Priority>
     <RestartOnFailure>
       <Interval>PT1M</Interval>
       <Count>3</Count>
     </RestartOnFailure>
   </Settings>
-  <Actions>
+  <Actions%s>
     <Exec>
       <Command>%s</Command>
       <Arguments>%s</Arguments>
     </Exec>
   </Actions>
-</Task>`, xmlEscape(runtime.Binary), xmlEscape(strings.Join(runtime.Args, " ")))
+</Task>`,
+		userBlock,
+		principalsBlock,
+		principalRef,
+		xmlEscape(runtime.Binary),
+		xmlEscape(strings.Join(runtime.Args, " ")))
 
 	tmpFile := filepath.Join(os.TempDir(), "forged-task.xml")
 	if err := os.WriteFile(tmpFile, []byte(xmlBody), 0600); err != nil {
 		return fmt.Errorf("Writing task XML: %w", err)
 	}
-	defer os.Remove(tmpFile)
 
 	cmd := exec.Command("schtasks", "/Create", "/TN", taskName(), "/XML", tmpFile, "/F")
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("Creating scheduled task (binary=%q): %w; schtasks output: %q",
-			runtime.Binary, err, strings.TrimSpace(string(out)))
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		// Keep the XML on failure so the user can reproduce the schtasks call
+		// manually and see the full error. Truncated TUI display would otherwise
+		// hide schtasks's most useful diagnostics.
+		diagPath := filepath.Join(paths.StateDir, "logs", "task-install-failed.xml")
+		_ = os.MkdirAll(filepath.Dir(diagPath), 0o700)
+		_ = os.WriteFile(diagPath, []byte(xmlBody), 0o600)
+		os.Remove(tmpFile)
+		return fmt.Errorf("Creating scheduled task failed: %w; output: %q; xml saved to %s",
+			err, strings.TrimSpace(string(out)), diagPath)
 	}
-
+	os.Remove(tmpFile)
 	return nil
 }
 
