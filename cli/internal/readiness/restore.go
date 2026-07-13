@@ -147,7 +147,10 @@ func buildRestoredVault(result forgedsync.PullResult, password []byte) (vault.He
 		return vault.Header{}, nil, err
 	}
 
-	masterKey := vault.DeriveKey(password, kdf)
+	masterKey, err := vault.DeriveKey(password, kdf)
+	if err != nil {
+		return vault.Header{}, nil, fmt.Errorf("Invalid remote vault KDF parameters: %w", err)
+	}
 	defer wipeBytes(masterKey)
 
 	stretchedKey, err := vault.DeriveStretchedKey(masterKey)

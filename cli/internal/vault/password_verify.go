@@ -25,7 +25,10 @@ func RecoverSymmetricKey(path string, password []byte) ([]byte, error) {
 		return nil, err
 	}
 
-	masterKey := DeriveKey(password, header.KDF)
+	masterKey, err := DeriveKey(password, header.KDF)
+	if err != nil {
+		return nil, fmt.Errorf("Deriving master key: %w", err)
+	}
 	defer zeroBytes(masterKey)
 
 	stretchedKey, err := DeriveStretchedKey(masterKey)

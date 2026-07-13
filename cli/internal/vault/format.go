@@ -12,7 +12,8 @@ var Magic = [8]byte{'F', 'O', 'R', 'G', 'E', 'D', 0x00, 0x01}
 const (
 	CurrentVersion   uint16 = 2
 	ProtectedKeySize        = 60 // nonce(12) + ciphertext(32) + tag(16)
-	HeaderSize              = 8 + 2 + SaltSize + 4 + 4 + 1 + ProtectedKeySize + NonceSize // 123 bytes
+
+	HeaderSize = 8 + 2 + SaltSize + 4 + 4 + 1 + ProtectedKeySize + NonceSize // 123 bytes
 )
 
 type Header struct {
@@ -78,6 +79,9 @@ func ReadHeader(r io.Reader) (Header, error) {
 	}
 	if err := binary.Read(r, binary.LittleEndian, &h.KDF.Parallelism); err != nil {
 		return Header{}, fmt.Errorf("Reading parallelism: %w", err)
+	}
+	if err := validateKDFParams(h.KDF); err != nil {
+		return Header{}, fmt.Errorf("Invalid KDF parameters: %w", err)
 	}
 	if _, err := io.ReadFull(r, h.ProtectedKey[:]); err != nil {
 		return Header{}, fmt.Errorf("Reading protected key: %w", err)

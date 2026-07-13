@@ -91,7 +91,10 @@ func Create(path string, password []byte) (*Vault, error) {
 
 	kdf := DefaultKDFParams()
 
-	masterKey := DeriveKey(password, kdf)
+	masterKey, err := DeriveKey(password, kdf)
+	if err != nil {
+		return nil, fmt.Errorf("Deriving master key: %w", err)
+	}
 
 	stretchedKey, err := DeriveStretchedKey(masterKey)
 	if err != nil {
@@ -207,7 +210,10 @@ func openVault(path string, password []byte) (*Vault, error) {
 		return nil, err
 	}
 
-	masterKey := DeriveKey(password, header.KDF)
+	masterKey, err := DeriveKey(password, header.KDF)
+	if err != nil {
+		return nil, fmt.Errorf("Deriving master key: %w", err)
+	}
 
 	stretchedKey, err := DeriveStretchedKey(masterKey)
 	if err != nil {
@@ -393,7 +399,10 @@ func (v *Vault) ChangePassword(newPassword []byte) error {
 
 	newKDF := DefaultKDFParams()
 
-	newMasterKey := DeriveKey(newPassword, newKDF)
+	newMasterKey, err := DeriveKey(newPassword, newKDF)
+	if err != nil {
+		return fmt.Errorf("Deriving new master key: %w", err)
+	}
 
 	newStretchedKey, err := DeriveStretchedKey(newMasterKey)
 	if err != nil {

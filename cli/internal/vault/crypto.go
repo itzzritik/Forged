@@ -15,6 +15,10 @@ const (
 	SaltSize  = 32
 	KeySize   = 32
 	NonceSize = 12
+
+	maxKDFTimeCost uint32 = 10
+	maxKDFMemory   uint32 = 256 * 1024
+	maxKDFThreads  uint8  = 16
 )
 
 type KDFParams struct {
@@ -37,7 +41,35 @@ func DefaultKDFParams() KDFParams {
 	}
 }
 
-func DeriveKey(password []byte, params KDFParams) []byte {
+func validateKDFParams(params KDFParams) error {
+	if params.TimeCost == 0 {
+		return fmt.Errorf("Time cost must be greater than zero")
+	}
+	if params.TimeCost > maxKDFTimeCost {
+		return fmt.Errorf("Time cost %d exceeds maximum %d", params.TimeCost, maxKDFTimeCost)
+	}
+	if params.Parallelism == 0 {
+		return fmt.Errorf("Parallelism must be greater than zero")
+	}
+	if params.Parallelism > maxKDFThreads {
+		return fmt.Errorf("Parallelism %d exceeds maximum %d", params.Parallelism, maxKDFThreads)
+	}
+
+	minMemory := uint32(8) * uint32(params.Parallelism)
+	if params.MemoryCost < minMemory {
+		return fmt.Errorf("Memory cost %d KiB is below minimum %d KiB", params.MemoryCost, minMemory)
+	}
+	if params.MemoryCost > maxKDFMemory {
+		return fmt.Errorf("Memory cost %d KiB exceeds maximum %d KiB", params.MemoryCost, maxKDFMemory)
+	}
+	return nil
+}
+
+func DeriveKey(password []byte, params KDFParams) ([]byte, error) {
+	if err := validateKDFParams(params); err != nil {
+		return nil, err
+	}
+
 	return argon2.IDKey(
 		password,
 		params.Salt[:],
@@ -45,7 +77,7 @@ func DeriveKey(password []byte, params KDFParams) []byte {
 		params.MemoryCost,
 		params.Parallelism,
 		KeySize,
-	)
+	), nil
 }
 
 func Encrypt(key, plaintext []byte) (nonce []byte, ciphertext []byte, err error) {
