@@ -9,7 +9,6 @@ import (
 	"fmt"
 	"os"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -19,7 +18,6 @@ import (
 )
 
 type KeyStore struct {
-	mu    sync.RWMutex
 	vault *Vault
 }
 
@@ -28,11 +26,11 @@ func NewKeyStore(v *Vault) *KeyStore {
 }
 
 func (ks *KeyStore) List() []Key {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
+	ks.vault.mu.RLock()
+	defer ks.vault.mu.RUnlock()
 
-	out := make([]Key, len(ks.vault.Data.Keys))
-	copy(out, ks.vault.Data.Keys)
+	out := make([]Key, len(ks.vault.data.Keys))
+	copy(out, ks.vault.data.Keys)
 	for i := range out {
 		out[i].Type = keytypes.Normalize(out[i].Type)
 	}
@@ -40,10 +38,10 @@ func (ks *KeyStore) List() []Key {
 }
 
 func (ks *KeyStore) Get(name string) (Key, bool) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
+	ks.vault.mu.RLock()
+	defer ks.vault.mu.RUnlock()
 
-	for _, k := range ks.vault.Data.Keys {
+	for _, k := range ks.vault.data.Keys {
 		if k.Name == name {
 			k.Type = keytypes.Normalize(k.Type)
 			return k, true
@@ -53,17 +51,17 @@ func (ks *KeyStore) Get(name string) (Key, bool) {
 }
 
 func (ks *KeyStore) ResolveName(input string) (string, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
+	ks.vault.mu.RLock()
+	defer ks.vault.mu.RUnlock()
 
 	normalized := normalizeKeyName(input)
 	if normalized == "" {
 		return "", &KeyNameResolveError{Query: input}
 	}
 
-	matches := rankNameMatches(ks.vault.Data.Keys, normalized)
+	matches := rankNameMatches(ks.vault.data.Keys, normalized)
 	if len(matches) == 0 {
-		suggestions, more := cappedSuggestions(suggestNameMatches(ks.vault.Data.Keys, normalized))
+		suggestions, more := cappedSuggestions(suggestNameMatches(ks.vault.data.Keys, normalized))
 		return "", &KeyNameResolveError{
 			Query:       input,
 			Suggestions: suggestions,
@@ -95,8 +93,8 @@ func (ks *KeyStore) ResolveName(input string) (string, error) {
 }
 
 func (ks *KeyStore) Generate(name, comment string) (Key, error) {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
+	ks.vault.mu.Lock()
+	defer ks.vault.mu.Unlock()
 
 	if ks.nameExists(name) {
 		return Key{}, fmt.Errorf("Key %q already exists", name)
@@ -158,17 +156,17 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 		UpdatedAt:           now,
 		Tags:                []string{},
 		Version:             1,
-		DeviceOrigin:        ks.vault.DeviceID(),
+		DeviceOrigin:        ks.vault.data.Metadata.DeviceID,
 	}
 
-	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
+	originalVersionVector := cloneVersionVector(ks.vault.data.VersionVector)
 	storedKey := key
 	storedKey.PrivateKey = nil
-	ks.vault.Data.Keys = append(ks.vault.Data.Keys, storedKey)
+	ks.vault.data.Keys = append(ks.vault.data.Keys, storedKey)
 	ks.bumpVersionVector()
-	if err := ks.vault.Save(); err != nil {
-		ks.vault.Data.Keys = ks.vault.Data.Keys[:len(ks.vault.Data.Keys)-1]
-		ks.vault.Data.VersionVector = originalVersionVector
+	if err := ks.vault.saveLocked(); err != nil {
+		ks.vault.data.Keys = ks.vault.data.Keys[:len(ks.vault.data.Keys)-1]
+		ks.vault.data.VersionVector = originalVersionVector
 		return Key{}, fmt.Errorf("Saving vault: %w", err)
 	}
 	for i := range privateKeyBytes {
@@ -180,8 +178,8 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 }
 
 func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Key, error) {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
+	ks.vault.mu.Lock()
+	defer ks.vault.mu.Unlock()
 
 	if ks.nameExists(name) {
 		return Key{}, fmt.Errorf("Key %q already exists", name)
@@ -231,17 +229,17 @@ func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Ke
 		UpdatedAt:           now,
 		Tags:                []string{},
 		Version:             1,
-		DeviceOrigin:        ks.vault.DeviceID(),
+		DeviceOrigin:        ks.vault.data.Metadata.DeviceID,
 	}
 
-	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
+	originalVersionVector := cloneVersionVector(ks.vault.data.VersionVector)
 	storedKey := key
 	storedKey.PrivateKey = nil
-	ks.vault.Data.Keys = append(ks.vault.Data.Keys, storedKey)
+	ks.vault.data.Keys = append(ks.vault.data.Keys, storedKey)
 	ks.bumpVersionVector()
-	if err := ks.vault.Save(); err != nil {
-		ks.vault.Data.Keys = ks.vault.Data.Keys[:len(ks.vault.Data.Keys)-1]
-		ks.vault.Data.VersionVector = originalVersionVector
+	if err := ks.vault.saveLocked(); err != nil {
+		ks.vault.data.Keys = ks.vault.data.Keys[:len(ks.vault.data.Keys)-1]
+		ks.vault.data.VersionVector = originalVersionVector
 		return Key{}, fmt.Errorf("Saving vault: %w", err)
 	}
 	for i := range normalized.Bytes {
@@ -261,26 +259,26 @@ func (ks *KeyStore) AddFromFile(name, path, comment string) (Key, error) {
 }
 
 func (ks *KeyStore) Remove(name string) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
+	ks.vault.mu.Lock()
+	defer ks.vault.mu.Unlock()
 
 	idx := ks.indexOf(name)
 	if idx < 0 {
 		return fmt.Errorf("Key %q not found", name)
 	}
 
-	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
-	originalTombstones := cloneTombstones(ks.vault.Data.Tombstones)
-	removed := ks.vault.Data.Keys[idx]
-	ks.vault.Data.Keys = append(ks.vault.Data.Keys[:idx], ks.vault.Data.Keys[idx+1:]...)
+	originalVersionVector := cloneVersionVector(ks.vault.data.VersionVector)
+	originalTombstones := cloneTombstones(ks.vault.data.Tombstones)
+	removed := ks.vault.data.Keys[idx]
+	ks.vault.data.Keys = append(ks.vault.data.Keys[:idx], ks.vault.data.Keys[idx+1:]...)
 	now := time.Now().UTC()
 	ks.upsertTombstone(removed.ID, now)
 	ks.bumpVersionVector()
 
-	if err := ks.vault.Save(); err != nil {
-		ks.vault.Data.Keys = append(ks.vault.Data.Keys[:idx], append([]Key{removed}, ks.vault.Data.Keys[idx:]...)...)
-		ks.vault.Data.Tombstones = originalTombstones
-		ks.vault.Data.VersionVector = originalVersionVector
+	if err := ks.vault.saveLocked(); err != nil {
+		ks.vault.data.Keys = append(ks.vault.data.Keys[:idx], append([]Key{removed}, ks.vault.data.Keys[idx:]...)...)
+		ks.vault.data.Tombstones = originalTombstones
+		ks.vault.data.VersionVector = originalVersionVector
 		return fmt.Errorf("Saving vault: %w", err)
 	}
 
@@ -288,8 +286,8 @@ func (ks *KeyStore) Remove(name string) error {
 }
 
 func (ks *KeyStore) Rename(oldName, newName string) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
+	ks.vault.mu.Lock()
+	defer ks.vault.mu.Unlock()
 
 	if ks.nameExists(newName) {
 		return fmt.Errorf("Key %q already exists", newName)
@@ -300,16 +298,16 @@ func (ks *KeyStore) Rename(oldName, newName string) error {
 		return fmt.Errorf("Key %q not found", oldName)
 	}
 
-	original := cloneKey(ks.vault.Data.Keys[idx])
-	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
-	ks.vault.Data.Keys[idx].Name = newName
-	ks.vault.Data.Keys[idx].UpdatedAt = time.Now().UTC()
-	ks.vault.Data.Keys[idx].Version++
+	original := cloneKey(ks.vault.data.Keys[idx])
+	originalVersionVector := cloneVersionVector(ks.vault.data.VersionVector)
+	ks.vault.data.Keys[idx].Name = newName
+	ks.vault.data.Keys[idx].UpdatedAt = time.Now().UTC()
+	ks.vault.data.Keys[idx].Version++
 	ks.bumpVersionVector()
 
-	if err := ks.vault.Save(); err != nil {
-		ks.vault.Data.Keys[idx] = original
-		ks.vault.Data.VersionVector = originalVersionVector
+	if err := ks.vault.saveLocked(); err != nil {
+		ks.vault.data.Keys[idx] = original
+		ks.vault.data.VersionVector = originalVersionVector
 		return fmt.Errorf("Saving vault: %w", err)
 	}
 
@@ -317,10 +315,10 @@ func (ks *KeyStore) Rename(oldName, newName string) error {
 }
 
 func (ks *KeyStore) Export(name string) (string, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
+	ks.vault.mu.RLock()
+	defer ks.vault.mu.RUnlock()
 
-	for _, k := range ks.vault.Data.Keys {
+	for _, k := range ks.vault.data.Keys {
 		if k.Name == name {
 			if k.Comment != "" {
 				return k.PublicKey + " " + k.Comment, nil
@@ -332,56 +330,59 @@ func (ks *KeyStore) Export(name string) (string, error) {
 }
 
 func (ks *KeyStore) PrivateKeyBytes(name string) ([]byte, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
+	ks.vault.mu.RLock()
+	defer ks.vault.mu.RUnlock()
 
 	idx := ks.indexOf(name)
 	if idx < 0 {
 		return nil, fmt.Errorf("Key %q not found", name)
 	}
-	return ks.decryptPrivateKeyLocked(&ks.vault.Data.Keys[idx])
+	return ks.decryptPrivateKeyLocked(&ks.vault.data.Keys[idx])
 }
 
 func (ks *KeyStore) RecordUsage(name string) {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
+	ks.vault.mu.Lock()
+	defer ks.vault.mu.Unlock()
+	if ks.vault.closed {
+		return
+	}
 
 	idx := ks.indexOf(name)
 	if idx < 0 {
 		return
 	}
 	now := time.Now().UTC()
-	ks.vault.Data.Keys[idx].LastUsedAt = &now
+	ks.vault.data.Keys[idx].LastUsedAt = &now
 }
 
 func (ks *KeyStore) SetGitSigning(keyName string, enabled bool) error {
-	ks.mu.Lock()
-	defer ks.mu.Unlock()
+	ks.vault.mu.Lock()
+	defer ks.vault.mu.Unlock()
 
 	idx := ks.indexOf(keyName)
 	if idx < 0 {
 		return fmt.Errorf("Key %q not found", keyName)
 	}
 
-	originalKeys := cloneKeys(ks.vault.Data.Keys)
-	originalVersionVector := cloneVersionVector(ks.vault.Data.VersionVector)
+	originalKeys := cloneKeys(ks.vault.data.Keys)
+	originalVersionVector := cloneVersionVector(ks.vault.data.VersionVector)
 	now := time.Now().UTC()
 	changed := false
 	if enabled {
-		for i := range ks.vault.Data.Keys {
-			if i != idx && ks.vault.Data.Keys[i].GitSigning {
-				ks.vault.Data.Keys[i].GitSigning = false
-				ks.vault.Data.Keys[i].UpdatedAt = now
-				ks.vault.Data.Keys[i].Version++
+		for i := range ks.vault.data.Keys {
+			if i != idx && ks.vault.data.Keys[i].GitSigning {
+				ks.vault.data.Keys[i].GitSigning = false
+				ks.vault.data.Keys[i].UpdatedAt = now
+				ks.vault.data.Keys[i].Version++
 				changed = true
 			}
 		}
 	}
 
-	if ks.vault.Data.Keys[idx].GitSigning != enabled {
-		ks.vault.Data.Keys[idx].GitSigning = enabled
-		ks.vault.Data.Keys[idx].UpdatedAt = now
-		ks.vault.Data.Keys[idx].Version++
+	if ks.vault.data.Keys[idx].GitSigning != enabled {
+		ks.vault.data.Keys[idx].GitSigning = enabled
+		ks.vault.data.Keys[idx].UpdatedAt = now
+		ks.vault.data.Keys[idx].Version++
 		changed = true
 	}
 
@@ -390,19 +391,19 @@ func (ks *KeyStore) SetGitSigning(keyName string, enabled bool) error {
 	}
 
 	ks.bumpVersionVector()
-	if err := ks.vault.Save(); err != nil {
-		ks.vault.Data.Keys = originalKeys
-		ks.vault.Data.VersionVector = originalVersionVector
+	if err := ks.vault.saveLocked(); err != nil {
+		ks.vault.data.Keys = originalKeys
+		ks.vault.data.VersionVector = originalVersionVector
 		return err
 	}
 	return nil
 }
 
 func (ks *KeyStore) GetGitSigningKey() (Key, bool) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
+	ks.vault.mu.RLock()
+	defer ks.vault.mu.RUnlock()
 
-	for _, k := range ks.vault.Data.Keys {
+	for _, k := range ks.vault.data.Keys {
 		if k.GitSigning {
 			return k, true
 		}
@@ -411,16 +412,16 @@ func (ks *KeyStore) GetGitSigningKey() (Key, bool) {
 }
 
 func (ks *KeyStore) SignerByPublicKey(pub ssh.PublicKey) (ssh.Signer, string, string, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
+	ks.vault.mu.RLock()
+	defer ks.vault.mu.RUnlock()
 
 	if ks.vault == nil {
 		return nil, "", "", fmt.Errorf("Vault is locked")
 	}
 
 	wanted := pub.Marshal()
-	for i := range ks.vault.Data.Keys {
-		key := &ks.vault.Data.Keys[i]
+	for i := range ks.vault.data.Keys {
+		key := &ks.vault.data.Keys[i]
 		parsed, err := parseAuthorizedPublicKey(key.PublicKey)
 		if err != nil {
 			continue
@@ -448,16 +449,16 @@ func (ks *KeyStore) SignerByPublicKey(pub ssh.PublicKey) (ssh.Signer, string, st
 }
 
 func (ks *KeyStore) Signers() ([]ssh.Signer, error) {
-	ks.mu.RLock()
-	defer ks.mu.RUnlock()
+	ks.vault.mu.RLock()
+	defer ks.vault.mu.RUnlock()
 
 	if ks.vault == nil {
 		return nil, fmt.Errorf("Vault is locked")
 	}
 
-	signers := make([]ssh.Signer, 0, len(ks.vault.Data.Keys))
-	for i := range ks.vault.Data.Keys {
-		privateKey, err := ks.decryptPrivateKeyLocked(&ks.vault.Data.Keys[i])
+	signers := make([]ssh.Signer, 0, len(ks.vault.data.Keys))
+	for i := range ks.vault.data.Keys {
+		privateKey, err := ks.decryptPrivateKeyLocked(&ks.vault.data.Keys[i])
 		if err != nil {
 			return nil, err
 		}
@@ -468,7 +469,7 @@ func (ks *KeyStore) Signers() ([]ssh.Signer, error) {
 		}
 		_ = platform.Munlock(privateKey)
 		if err != nil {
-			return nil, fmt.Errorf("Parsing private key for %s: %w", ks.vault.Data.Keys[i].Name, err)
+			return nil, fmt.Errorf("Parsing private key for %s: %w", ks.vault.data.Keys[i].Name, err)
 		}
 		signers = append(signers, signer)
 	}
@@ -520,7 +521,7 @@ func parseAuthorizedPublicKey(authorizedKey string) (ssh.PublicKey, error) {
 }
 
 func (ks *KeyStore) indexOf(name string) int {
-	for i, k := range ks.vault.Data.Keys {
+	for i, k := range ks.vault.data.Keys {
 		if k.Name == name {
 			return i
 		}
@@ -529,35 +530,35 @@ func (ks *KeyStore) indexOf(name string) int {
 }
 
 func (ks *KeyStore) bumpVersionVector() {
-	deviceID := ks.vault.DeviceID()
+	deviceID := ks.vault.data.Metadata.DeviceID
 	if deviceID == "" {
 		return
 	}
 
-	if ks.vault.Data.VersionVector == nil {
-		ks.vault.Data.VersionVector = map[string]int64{}
+	if ks.vault.data.VersionVector == nil {
+		ks.vault.data.VersionVector = map[string]int64{}
 	}
-	ks.vault.Data.VersionVector[deviceID]++
+	ks.vault.data.VersionVector[deviceID]++
 }
 
 func (ks *KeyStore) upsertTombstone(keyID string, deletedAt time.Time) {
 	tombstone := Tombstone{
 		KeyID:           keyID,
 		DeletedAt:       deletedAt,
-		DeletedByDevice: ks.vault.DeviceID(),
+		DeletedByDevice: ks.vault.data.Metadata.DeviceID,
 	}
 
-	for i := range ks.vault.Data.Tombstones {
-		if ks.vault.Data.Tombstones[i].KeyID != keyID {
+	for i := range ks.vault.data.Tombstones {
+		if ks.vault.data.Tombstones[i].KeyID != keyID {
 			continue
 		}
-		if deletedAt.After(ks.vault.Data.Tombstones[i].DeletedAt) {
-			ks.vault.Data.Tombstones[i] = tombstone
+		if deletedAt.After(ks.vault.data.Tombstones[i].DeletedAt) {
+			ks.vault.data.Tombstones[i] = tombstone
 		}
 		return
 	}
 
-	ks.vault.Data.Tombstones = append(ks.vault.Data.Tombstones, tombstone)
+	ks.vault.data.Tombstones = append(ks.vault.data.Tombstones, tombstone)
 }
 
 func cloneKeys(keys []Key) []Key {

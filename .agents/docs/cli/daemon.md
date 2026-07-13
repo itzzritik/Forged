@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-05-10
+last_verified: 2026-07-14
 stable: partial
 ---
 
@@ -25,6 +25,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - It now boots cold by default. Installed services and foreground `forged daemon` no longer depend on a stored plaintext master password.
 - A live vault session exists only after sensitive auth or password fallback hydrates it.
 - When the shared session is cleared, the daemon drops back to cold state.
+- Session clear waits for admitted sync work to finish before zeroing and closing the vault.
 - Sync only exists while account credentials are present and a live vault session is available.
 - While sync is active, learned SSH route proofs mark the vault dirty and the sync bus also runs low-frequency status checks.
 - Service repair replaces any unmanaged `forged daemon` that still owns the runtime sockets before launchd/system service restart, and health checks only trust service sockets when the managed service PID matches the daemon PID file on platforms that expose it.

@@ -635,7 +635,7 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 		return OkResponse(map[string]any{"version": state.LastKnownServerVersion})
 	}
 
-	blob, err := v.ExportForSync()
+	blob, kdf, protectedKeyBytes, err := v.ExportForSync()
 	if err != nil {
 		return ErrorResponse(fmt.Errorf("Exporting vault: %w", err))
 	}
@@ -652,8 +652,8 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 		expectedVersion = status.Version
 	}
 
-	protectedKey := base64.StdEncoding.EncodeToString(v.ProtectedKeyBytes())
-	result, err := client.Push(blob, v.KDFParams(), protectedKey, expectedVersion)
+	protectedKey := base64.StdEncoding.EncodeToString(protectedKeyBytes)
+	result, err := client.Push(blob, kdf, protectedKey, expectedVersion)
 	if err != nil {
 		return ErrorResponse(fmt.Errorf("Sync push: %w", err))
 	}

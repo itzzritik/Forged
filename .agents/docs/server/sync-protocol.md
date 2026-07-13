@@ -6,7 +6,7 @@ applies_to:
 depends_on:
   - server/db-schema.md
   - cli/vault.md
-last_verified: 2026-04-27
+last_verified: 2026-07-14
 stable: yes
 ---
 
@@ -23,6 +23,8 @@ Sync is encrypted-blob push/pull with optimistic locking. The server stores blob
 - Key deletes and SSH-route deletes use tombstones.
 - Local sync state keeps the last synced base blob and last known server version.
 - The daemon checks `/sync/status` before background or foreground refresh pulls. It pulls the encrypted blob only when the server version changed.
+- Pull and link merges apply to the latest local vault state inside one transaction; network calls stay outside that lock.
+- Stopping a sync bus drains work admitted before the stop before the vault can close.
 
 ## Decisions
 

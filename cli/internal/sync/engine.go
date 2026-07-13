@@ -48,13 +48,13 @@ func (e *Engine) PushCurrent(ctx context.Context, state *SyncState) error {
 
 	_ = ctx
 
-	blob, err := e.vault.ExportForSync()
+	blob, kdf, protectedKeyBytes, err := e.vault.ExportForSync()
 	if err != nil {
 		return err
 	}
 
-	protectedKey := base64.StdEncoding.EncodeToString(e.vault.ProtectedKeyBytes())
-	result, err := e.client.Push(blob, e.vault.KDFParams(), protectedKey, state.LastKnownServerVersion)
+	protectedKey := base64.StdEncoding.EncodeToString(protectedKeyBytes)
+	result, err := e.client.Push(blob, kdf, protectedKey, state.LastKnownServerVersion)
 	if err != nil {
 		return err
 	}
@@ -75,7 +75,7 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 		return vault.VaultData{}, PullResult{}, err
 	}
 
-	plaintext, err := vault.DecryptCombined(e.vault.Key(), result.Blob)
+	plaintext, err := e.vault.DecryptSyncBlob(result.Blob)
 	if err != nil {
 		return vault.VaultData{}, PullResult{}, err
 	}
@@ -87,10 +87,10 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 
 	now := time.Now().UTC()
 	if !state.Dirty {
-		original := e.vault.Data
-		e.vault.Data = MergeVaults(e.vault.Data, remote)
-		if err := e.vault.Save(); err != nil {
-			e.vault.Data = original
+		if err := e.vault.UpdateData(func(local *vault.VaultData) error {
+			*local = MergeVaults(*local, remote)
+			return nil
+		}); err != nil {
 			return vault.VaultData{}, PullResult{}, err
 		}
 		state.LastSyncedBaseBlob = append([]byte(nil), result.Blob...)
@@ -115,7 +115,6 @@ func (e *Engine) MergeAndRetry(ctx context.Context, state *SyncState) error {
 		return fmt.Errorf("Sync state required")
 	}
 
-	local := e.vault.Data
 	remote, result, err := e.PullLatest(ctx, state)
 	if err != nil {
 		return err
@@ -126,10 +125,10 @@ func (e *Engine) MergeAndRetry(ctx context.Context, state *SyncState) error {
 		return err
 	}
 
-	original := e.vault.Data
-	e.vault.Data = MergeThreeWay(base, local, remote, e.vault.DeviceID(), remote.Metadata.DeviceID)
-	if err := e.vault.Save(); err != nil {
-		e.vault.Data = original
+	if err := e.vault.UpdateData(func(local *vault.VaultData) error {
+		*local = MergeThreeWay(base, *local, remote, local.Metadata.DeviceID, remote.Metadata.DeviceID)
+		return nil
+	}); err != nil {
 		return err
 	}
 
@@ -142,14 +141,24 @@ func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, 
 		return fmt.Errorf("Sync state required")
 	}
 
-	local := e.vault.Data
 	remote, result, remoteExists, err := e.fetchRemote(ctx)
 	if err != nil {
 		return err
 	}
 
-	merged, action, err := DecideFirstLinkAction(*state, userID, local, remote, remoteExists)
-	if err != nil {
+	var action FirstLinkAction
+	if err := e.vault.UpdateData(func(local *vault.VaultData) error {
+		merged, nextAction, err := DecideFirstLinkAction(*state, userID, *local, remote, remoteExists)
+		if err != nil {
+			return err
+		}
+		action = nextAction
+		switch action {
+		case FirstLinkAdoptRemote, FirstLinkMergeAndPush:
+			*local = merged
+		}
+		return nil
+	}); err != nil {
 		return err
 	}
 
@@ -160,12 +169,6 @@ func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, 
 	case FirstLinkNoop:
 		return nil
 	case FirstLinkAdoptRemote:
-		original := e.vault.Data
-		e.vault.Data = merged
-		if err := e.vault.Save(); err != nil {
-			e.vault.Data = original
-			return err
-		}
 		if remoteExists {
 			now := time.Now().UTC()
 			state.LastKnownServerVersion = result.Version
@@ -183,12 +186,6 @@ func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, 
 		state.MarkDirty("", time.Time{})
 		return e.PushCurrent(ctx, state)
 	case FirstLinkMergeAndPush:
-		original := e.vault.Data
-		e.vault.Data = merged
-		if err := e.vault.Save(); err != nil {
-			e.vault.Data = original
-			return err
-		}
 		if remoteExists {
 			now := time.Now().UTC()
 			state.LastKnownServerVersion = result.Version
@@ -264,7 +261,7 @@ func (e *Engine) decodeBaseBlob(blob []byte) (vault.VaultData, error) {
 		return vault.VaultData{}, nil
 	}
 
-	plaintext, err := vault.DecryptCombined(e.vault.Key(), blob)
+	plaintext, err := e.vault.DecryptSyncBlob(blob)
 	if err != nil {
 		return vault.VaultData{}, err
 	}
@@ -292,7 +289,7 @@ func (e *Engine) fetchRemote(ctx context.Context) (vault.VaultData, PullResult, 
 		return vault.VaultData{}, PullResult{}, false, err
 	}
 
-	plaintext, err := vault.DecryptCombined(e.vault.Key(), result.Blob)
+	plaintext, err := e.vault.DecryptSyncBlob(result.Blob)
 	if err != nil {
 		return vault.VaultData{}, PullResult{}, false, err
 	}

@@ -5,7 +5,7 @@ applies_to:
   - cli/internal/crypto/**
 depends_on:
   - architecture/security-model.md
-last_verified: 2026-05-03
+last_verified: 2026-07-14
 stable: partial
 ---
 
@@ -16,6 +16,8 @@ The local vault is the encrypted source of truth for keys, metadata, and synced 
 ## Must know
 
 - The vault symmetric key is the real data-encryption root. The master password only unwraps it.
+- The vault owns the in-process transaction lock shared by key operations and sync. Sync updates a cloned snapshot and publishes it only after the encrypted file is written successfully.
+- Closing a vault makes stale references unusable before its symmetric key is zeroed.
 - Password verification can recover the vault symmetric key without opening the whole vault for normal use.
 - Password change rewraps the vault symmetric key. It does not rotate that key today.
 - Local unlock trust is device-local even though the vault itself is shared.

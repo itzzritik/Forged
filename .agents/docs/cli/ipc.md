@@ -2,7 +2,7 @@
 title: Daemon IPC
 applies_to:
   - cli/internal/ipc/**
-last_verified: 2026-05-09
+last_verified: 2026-07-14
 stable: yes
 ---
 
@@ -18,6 +18,7 @@ stable: yes
 - `sensitive-auth` takes an `action` and optional `force`. `force=true` is used for launch auth.
 - `status` exposes sensitive session state and daemon build id so the TUI/readiness layer can detect cold, active, and stale daemon states.
 - Key list/view/export handlers ask the sync bus for a lightweight foreground refresh before reading local vault data.
+- Manual sync captures the encrypted blob, KDF parameters, and protected key from one vault snapshot.
 - Hidden SSH route IPC prepares per-attempt snippets from `%C`, `%h`, `%p`, `%r`, and `%n`; prepare failures are quiet so the managed SSH config fails closed with no default identities.
 - If route prepare finds no public route cache because the daemon is cold, IPC runs external auth once and retries prepare after hydration.
 - TUI diagnostics use SSH route list/clear IPC. Clearing routes must call the route service so vault tombstones and sync mutation handling stay correct.

@@ -499,7 +499,6 @@ func (d *Daemon) clearActiveSession(reason string) {
 	defer d.sessionMu.Unlock()
 
 	if d.syncBus != nil {
-		d.syncBus.PersistDirtyFlag()
 		d.syncBus.Stop()
 		d.syncBus = nil
 		if d.ipcServer != nil {

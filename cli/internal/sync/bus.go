@@ -58,6 +58,7 @@ type Bus struct {
 	stopped          bool
 	stopOnce         sync.Once
 	stopCh           chan struct{}
+	active           sync.WaitGroup
 }
 
 func DefaultBusConfig() BusConfig {
@@ -238,12 +239,24 @@ func (b *Bus) LifecycleRefresh(reason string) {
 }
 
 func (b *Bus) AuthLinked(ctx context.Context, userID, serverURL string) error {
-	b.mu.Lock()
-	if b.stopped {
+	for {
+		b.mu.Lock()
+		if b.stopped {
+			b.mu.Unlock()
+			return nil
+		}
+		if b.syncing {
+			done := b.syncDone
+			b.mu.Unlock()
+			if err := waitForSync(ctx, done); err != nil {
+				return err
+			}
+			continue
+		}
+		b.beginSyncLocked()
 		b.mu.Unlock()
-		return nil
+		break
 	}
-	b.mu.Unlock()
 
 	linker, ok := b.engine.(linkRuntime)
 	if !ok {
@@ -252,12 +265,14 @@ func (b *Bus) AuthLinked(ctx context.Context, userID, serverURL string) error {
 		b.state.ServerURL = serverURL
 		b.persistLocked()
 		b.mu.Unlock()
+		b.finishPull(nil)
 		return nil
 	}
 	err := linker.ReconcileOnLink(ctx, b.state, userID, serverURL)
 	b.mu.Lock()
 	b.persistLocked()
 	b.mu.Unlock()
+	b.finishPull(err)
 	return err
 }
 
@@ -342,12 +357,6 @@ func (b *Bus) MarkDirty(reason string) {
 
 func (b *Bus) RequestPull(reason string) {
 	b.LifecycleRefresh(reason)
-}
-
-func (b *Bus) PersistDirtyFlag() {
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	b.persistLocked()
 }
 
 func (b *Bus) SnapshotState() SyncState {
@@ -523,6 +532,7 @@ func (b *Bus) finishPush(err error) {
 	b.mu.Unlock()
 
 	close(done)
+	b.active.Done()
 
 	if err == nil {
 		if queuedPush {
@@ -556,6 +566,7 @@ func (b *Bus) finishPull(err error) {
 	b.mu.Unlock()
 
 	close(done)
+	b.active.Done()
 
 	if queuedPush {
 		b.enqueuePush("queued_push")
@@ -565,6 +576,7 @@ func (b *Bus) finishPull(err error) {
 }
 
 func (b *Bus) beginSyncLocked() {
+	b.active.Add(1)
 	b.syncing = true
 	b.syncDone = make(chan struct{})
 }
@@ -583,9 +595,12 @@ func (b *Bus) Stop() {
 		}
 		b.queuedPush = false
 		b.queuedRefresh = false
-		b.persistLocked()
 		b.mu.Unlock()
 		close(b.stopCh)
+		b.active.Wait()
+		b.mu.Lock()
+		b.persistLocked()
+		b.mu.Unlock()
 	})
 }
 
@@ -605,6 +620,9 @@ func (b *Bus) nextRetryDelayLocked() time.Duration {
 }
 
 func (b *Bus) scheduleRetryLocked(delay time.Duration) {
+	if b.stopped {
+		return
+	}
 	if b.retryTimer != nil {
 		b.retryTimer.Stop()
 	}

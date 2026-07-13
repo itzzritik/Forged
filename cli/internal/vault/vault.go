@@ -6,18 +6,21 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 type Vault struct {
+	mu           sync.RWMutex
 	path         string
 	lockFile     *os.File
 	kdf          KDFParams
 	key          []byte // Symmetric Key (random, decrypted from Protected Symmetric Key)
 	protectedKey [ProtectedKeySize]byte
-	Data         VaultData
+	data         VaultData
+	closed       bool
 }
 
 type VaultData struct {
@@ -135,7 +138,7 @@ func Create(path string, password []byte) (*Vault, error) {
 		kdf:          kdf,
 		key:          symmetricKey,
 		protectedKey: protectedKey,
-		Data: VaultData{
+		data: VaultData{
 			Keys: []Key{},
 			Metadata: Metadata{
 				CreatedAt: time.Now().UTC(),
@@ -255,7 +258,7 @@ func openVault(path string, password []byte) (*Vault, error) {
 		kdf:          header.KDF,
 		key:          symmetricKey,
 		protectedKey: header.ProtectedKey,
-		Data:         vd,
+		data:         vd,
 	}
 
 	return v, nil
@@ -295,13 +298,27 @@ func openVaultWithSymmetricKey(path string, symmetricKey []byte) (*Vault, error)
 		kdf:          header.KDF,
 		key:          workingKey,
 		protectedKey: header.ProtectedKey,
-		Data:         vd,
+		data:         vd,
 	}, nil
 }
 
 func (v *Vault) Save() error {
-	normalizeVaultKeyTypes(&v.Data)
-	plaintext, err := json.Marshal(v.Data)
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	return v.saveLocked()
+}
+
+func (v *Vault) saveLocked() error {
+	return v.saveDataLocked(&v.data)
+}
+
+func (v *Vault) saveDataLocked(data *VaultData) error {
+	if err := v.ensureOpenLocked(); err != nil {
+		return err
+	}
+
+	normalizeVaultKeyTypes(data)
+	plaintext, err := json.Marshal(data)
 	if err != nil {
 		return fmt.Errorf("Serializing vault: %w", err)
 	}
@@ -326,9 +343,16 @@ func (v *Vault) Save() error {
 }
 
 func (v *Vault) Close() {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if v.closed {
+		return
+	}
+	v.closed = true
 	for i := range v.key {
 		v.key[i] = 0
 	}
+	v.key = nil
 	v.releaseLock()
 }
 
@@ -337,22 +361,36 @@ func (v *Vault) Path() string {
 }
 
 func (v *Vault) Key() []byte {
-	return v.key
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return append([]byte(nil), v.key...)
 }
 
 func (v *Vault) KDFParams() KDFParams {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
 	return v.kdf
 }
 
 func (v *Vault) ProtectedKeyBytes() []byte {
-	return v.protectedKey[:]
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return append([]byte(nil), v.protectedKey[:]...)
 }
 
 func (v *Vault) DeviceID() string {
-	return v.Data.Metadata.DeviceID
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	return v.data.Metadata.DeviceID
 }
 
 func (v *Vault) ChangePassword(newPassword []byte) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err := v.ensureOpenLocked(); err != nil {
+		return err
+	}
+
 	newKDF := DefaultKDFParams()
 
 	newMasterKey := DeriveKey(newPassword, newKDF)
@@ -389,19 +427,65 @@ func (v *Vault) ChangePassword(newPassword []byte) error {
 	v.kdf = newKDF
 	v.protectedKey = protectedKeyArr
 
-	return v.Save()
+	return v.saveLocked()
 }
 
-func (v *Vault) ExportForSync() ([]byte, error) {
-	normalizeVaultKeyTypes(&v.Data)
-	plaintext, err := json.Marshal(v.Data)
-	if err != nil {
-		return nil, fmt.Errorf("Serializing vault: %w", err)
+func (v *Vault) ExportForSync() ([]byte, KDFParams, []byte, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if err := v.ensureOpenLocked(); err != nil {
+		return nil, KDFParams{}, nil, err
 	}
-	return EncryptCombined(v.key, plaintext)
+
+	plaintext, err := json.Marshal(v.data)
+	if err != nil {
+		return nil, KDFParams{}, nil, fmt.Errorf("Serializing vault: %w", err)
+	}
+	blob, err := EncryptCombined(v.key, plaintext)
+	if err != nil {
+		return nil, KDFParams{}, nil, err
+	}
+	protectedKey := append([]byte(nil), v.protectedKey[:]...)
+	return blob, v.kdf, protectedKey, nil
+}
+
+func (v *Vault) DecryptSyncBlob(data []byte) ([]byte, error) {
+	v.mu.RLock()
+	defer v.mu.RUnlock()
+	if err := v.ensureOpenLocked(); err != nil {
+		return nil, err
+	}
+	return DecryptCombined(v.key, data)
+}
+
+func (v *Vault) UpdateData(update func(*VaultData) error) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err := v.ensureOpenLocked(); err != nil {
+		return err
+	}
+
+	next, err := cloneVaultData(v.data)
+	if err != nil {
+		return err
+	}
+	if err := update(&next); err != nil {
+		return err
+	}
+	if err := v.saveDataLocked(&next); err != nil {
+		return err
+	}
+	v.data = next
+	return nil
 }
 
 func (v *Vault) ImportFromSync(data []byte) error {
+	v.mu.Lock()
+	defer v.mu.Unlock()
+	if err := v.ensureOpenLocked(); err != nil {
+		return err
+	}
+
 	plaintext, err := DecryptCombined(v.key, data)
 	if err != nil {
 		return err
@@ -411,8 +495,30 @@ func (v *Vault) ImportFromSync(data []byte) error {
 		return fmt.Errorf("Parsing synced vault: %w", err)
 	}
 	normalizeVaultKeyTypes(&vd)
-	v.Data = vd
-	return v.Save()
+	if err := v.saveDataLocked(&vd); err != nil {
+		return err
+	}
+	v.data = vd
+	return nil
+}
+
+func (v *Vault) ensureOpenLocked() error {
+	if v.closed || len(v.key) != KeySize {
+		return fmt.Errorf("Vault is closed")
+	}
+	return nil
+}
+
+func cloneVaultData(data VaultData) (VaultData, error) {
+	raw, err := json.Marshal(data)
+	if err != nil {
+		return VaultData{}, fmt.Errorf("Cloning vault data: %w", err)
+	}
+	var cloned VaultData
+	if err := json.Unmarshal(raw, &cloned); err != nil {
+		return VaultData{}, fmt.Errorf("Cloning vault data: %w", err)
+	}
+	return cloned, nil
 }
 
 func atomicWrite(path string, data []byte) error {
