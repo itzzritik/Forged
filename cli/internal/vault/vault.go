@@ -168,14 +168,17 @@ func Create(path string, password []byte) (*Vault, error) {
 }
 
 func Open(path string, password []byte) (*Vault, error) {
-	v, err := openVault(path, password)
+	lockFile, err := acquireVaultLock(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := v.acquireLock(); err != nil {
-		v.Close()
+
+	v, err := openVault(path, password)
+	if err != nil {
+		releaseVaultLock(lockFile)
 		return nil, err
 	}
+	v.lockFile = lockFile
 	return v, nil
 }
 
@@ -188,14 +191,17 @@ func OpenReadOnlyWithSymmetricKey(path string, symmetricKey []byte) (*Vault, err
 }
 
 func OpenWithSymmetricKey(path string, symmetricKey []byte) (*Vault, error) {
-	v, err := openVaultWithSymmetricKey(path, symmetricKey)
+	lockFile, err := acquireVaultLock(path)
 	if err != nil {
 		return nil, err
 	}
-	if err := v.acquireLock(); err != nil {
-		v.Close()
+
+	v, err := openVaultWithSymmetricKey(path, symmetricKey)
+	if err != nil {
+		releaseVaultLock(lockFile)
 		return nil, err
 	}
+	v.lockFile = lockFile
 	return v, nil
 }
 
@@ -564,28 +570,38 @@ func atomicWrite(path string, data []byte) error {
 }
 
 func (v *Vault) acquireLock() error {
-	lockPath := v.path + ".lock"
+	f, err := acquireVaultLock(v.path)
+	if err != nil {
+		return err
+	}
+	v.lockFile = f
+	return nil
+}
+
+func acquireVaultLock(path string) (*os.File, error) {
+	lockPath := path + ".lock"
 	f, err := os.OpenFile(lockPath, os.O_CREATE|os.O_RDWR, 0600)
 	if err != nil {
-		return fmt.Errorf("Opening lock file: %w", err)
+		return nil, fmt.Errorf("Opening lock file: %w", err)
 	}
 
 	if err := platform.LockFile(f); err != nil {
 		f.Close()
-		return fmt.Errorf("Vault is locked by another process")
+		return nil, fmt.Errorf("Vault is locked by another process")
 	}
 
-	v.lockFile = f
-	return nil
+	return f, nil
 }
 
 func (v *Vault) releaseLock() {
 	if v.lockFile == nil {
 		return
 	}
-	platform.UnlockFile(v.lockFile)
-	name := v.lockFile.Name()
-	v.lockFile.Close()
-	os.Remove(name)
+	releaseVaultLock(v.lockFile)
 	v.lockFile = nil
+}
+
+func releaseVaultLock(f *os.File) {
+	platform.UnlockFile(f)
+	f.Close()
 }

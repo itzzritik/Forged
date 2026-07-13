@@ -17,6 +17,7 @@ The local vault is the encrypted source of truth for keys, metadata, and synced 
 
 - The vault symmetric key is the real data-encryption root. The master password only unwraps it.
 - The vault owns the in-process transaction lock shared by key operations and sync. Sync updates a cloned snapshot and publishes it only after the encrypted file is written successfully.
+- Writable opens acquire the persistent OS lock file before reading vault state. The lock path is never unlinked during release, so every process keeps locking the same file identity.
 - Closing a vault makes stale references unusable before its symmetric key is zeroed.
 - Password verification can recover the vault symmetric key without opening the whole vault for normal use.
 - Password change rewraps the vault symmetric key. It does not rotate that key today.
