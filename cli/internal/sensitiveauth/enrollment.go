@@ -28,6 +28,7 @@ type LocalEnrollment struct {
 	LocalUser                string    `json:"local_user,omitempty"`
 	CreatedAt                time.Time `json:"created_at"`
 	ExpiresAt                time.Time `json:"expires_at"`
+	LastUsedAt               time.Time `json:"last_used_at,omitempty"`
 	WrappedVaultSymmetricKey []byte    `json:"wrapped_vault_symmetric_key"`
 }
 

@@ -65,6 +65,16 @@ func main() {
 				Status:   authorize(context.Background(), action),
 				Provider: providerName(),
 			})
+		case "collect-password":
+			// TODO(windows): wire CredUIPromptForWindowsCredentials for a native
+			// password popup. Until then, report unavailable so the broker falls
+			// back to the "open Forged" deny message instead of hanging.
+			emit(sensitiveauth.HelperResponse{
+				ID:       req.ID,
+				Type:     req.Type,
+				Status:   "unavailable_by_platform",
+				Provider: providerName(),
+			})
 		case "subscribe-locks":
 			emit(sensitiveauth.HelperResponse{
 				ID:       req.ID,

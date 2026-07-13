@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import LocalAuthentication
 
@@ -14,6 +15,7 @@ struct HelperResponse: Encodable {
     let status: String?
     let provider: String?
     let message: String?
+    var secret: String? = nil
 }
 
 final class HelperRuntime {
@@ -21,7 +23,10 @@ final class HelperRuntime {
     private let writeQueue = DispatchQueue(label: "me.ritik.forged.auth.write")
     private var inputBuffer = Data()
 
-    func run() {
+    // start wires up stdin and lock observers. The caller runs the NSApplication
+    // event loop (below) rather than dispatchMain(): AppKit UI must run on the
+    // real pthread main thread, which dispatchMain() parks away from GCD.
+    func start() {
         let center = DistributedNotificationCenter.default()
         center.addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: nil) { [weak self] _ in
             self?.emit(HelperResponse(id: nil, type: "event", status: "session_locked", provider: "local-authentication", message: nil))
@@ -38,8 +43,6 @@ final class HelperRuntime {
             }
             self?.ingest(data)
         }
-
-        dispatchMain()
     }
 
     private func ingest(_ data: Data) {
@@ -57,6 +60,8 @@ final class HelperRuntime {
         switch req.type {
         case "authorize":
             authorize(request: req)
+        case "collect-password":
+            collectPassword(request: req)
         case "subscribe-locks":
             emit(HelperResponse(id: req.id, type: req.type, status: "ok", provider: "local-authentication", message: nil))
         case "status":
@@ -109,6 +114,35 @@ final class HelperRuntime {
         }
     }
 
+    // collectPassword shows a native master-password prompt. Used for external
+    // (SSH/signing) use once the device-unlock window has lapsed, where there is
+    // no TUI to fall back to. Must run on the main thread for AppKit.
+    private func collectPassword(request: HelperRequest) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+
+            NSApp.activate(ignoringOtherApps: true)
+
+            let alert = NSAlert()
+            alert.messageText = "Forged is locked"
+            alert.informativeText = (request.reason?.isEmpty == false ? request.reason! : "Enter your Forged master password to continue.")
+            alert.addButton(withTitle: "Unlock")
+            alert.addButton(withTitle: "Cancel")
+
+            let field = NSSecureTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+            field.placeholderString = "Master password"
+            alert.accessoryView = field
+            alert.window.initialFirstResponder = field
+
+            if alert.runModal() == .alertFirstButtonReturn {
+                let encoded = Data(field.stringValue.utf8).base64EncodedString()
+                self.emit(HelperResponse(id: request.id, type: request.type, status: "ok", provider: "local-authentication", message: nil, secret: encoded))
+            } else {
+                self.emit(HelperResponse(id: request.id, type: request.type, status: "canceled", provider: "local-authentication", message: nil))
+            }
+        }
+    }
+
     private func emit(_ response: HelperResponse) {
         writeQueue.async {
             guard let data = try? self.encoder.encode(response) else { return }
@@ -134,7 +168,14 @@ final class HelperRuntime {
 }
 
 let runtime = HelperRuntime()
-runtime.run()
+runtime.start()
+
+// Accessory app: no Dock icon, but can show the master-password popup and take
+// keyboard focus. app.run() drains the main GCD queue on the real main thread,
+// which AppKit's NSAlert requires.
+let app = NSApplication.shared
+app.setActivationPolicy(.accessory)
+app.run()
 
 func helperUnavailableStatus(_ error: LAError?) -> String {
     guard let error else { return "unavailable_by_environment" }

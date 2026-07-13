@@ -411,7 +411,11 @@ func (d *Daemon) HydrateFromEnrollment() error {
 		return err
 	}
 	defer zeroSecret(symmetricKey)
-	return d.hydrateWithSymmetricKey(symmetricKey, "local_enrollment")
+	if err := d.hydrateWithSymmetricKey(symmetricKey, "local_enrollment"); err != nil {
+		return err
+	}
+	sensitiveauth.RenewLocalEnrollmentUsage(d.paths)
+	return nil
 }
 
 func (d *Daemon) HydrateFromPassword(password []byte) error {

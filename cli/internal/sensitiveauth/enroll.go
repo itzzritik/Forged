@@ -340,6 +340,11 @@ func loadMasterPasswordInterval(paths config.Paths) string {
 	return config.NormalizeMasterPasswordInterval(cfg.Security.MasterPasswordInterval)
 }
 
+// localEnrollmentHardCap forces one master-password re-verification even on a
+// continuously-active device, no matter how often Touch ID slides the window.
+// It is the backstop that separates "slide on use" from "never expire".
+const localEnrollmentHardCap = 90 * 24 * time.Hour
+
 func enrollmentExpired(paths config.Paths, enrollment *LocalEnrollment) bool {
 	if enrollment == nil {
 		return true
@@ -347,14 +352,82 @@ func enrollmentExpired(paths config.Paths, enrollment *LocalEnrollment) bool {
 	if enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile {
 		return false
 	}
-	if !enrollment.CreatedAt.IsZero() {
-		expiry := enrollment.CreatedAt.Add(config.MasterPasswordIntervalDuration(loadMasterPasswordInterval(paths)))
-		return time.Now().UTC().After(expiry)
+
+	now := time.Now().UTC()
+	interval := config.MasterPasswordIntervalDuration(loadMasterPasswordInterval(paths))
+
+	// Absolute cap since the last master-password entry (CreatedAt). Guard so a
+	// future interval longer than the cap can never expire before the window.
+	hardCap := localEnrollmentHardCap
+	if interval > hardCap {
+		hardCap = interval
+	}
+	if !enrollment.CreatedAt.IsZero() && now.After(enrollment.CreatedAt.Add(hardCap)) {
+		return true
+	}
+
+	// Sliding window: LastUsedAt is stamped on every biometric unlock, so an
+	// active device only expires after a full interval with no use. Fall back to
+	// CreatedAt for enrollments written before sliding existed.
+	lastUsed := enrollment.LastUsedAt
+	if lastUsed.IsZero() {
+		lastUsed = enrollment.CreatedAt
+	}
+	if !lastUsed.IsZero() {
+		return now.After(lastUsed.Add(interval))
 	}
 	if !enrollment.ExpiresAt.IsZero() {
-		return time.Now().UTC().After(enrollment.ExpiresAt)
+		return now.After(enrollment.ExpiresAt)
 	}
 	return false
+}
+
+// renewLocalEnrollmentThrottle keeps repeated cold hydrates from rewriting the
+// blob constantly; the sliding window only needs coarse "used recently" fidelity.
+const renewLocalEnrollmentThrottle = time.Hour
+
+// RenewLocalEnrollmentUsage slides the enrollment window forward after a
+// successful biometric unlock. Best-effort: if the rewrite fails the only cost
+// is an earlier expiry, never lost access, so errors are swallowed.
+func RenewLocalEnrollmentUsage(paths config.Paths) {
+	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+	if err != nil || enrollment == nil {
+		return
+	}
+	if enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile {
+		return // headless never expires; nothing to slide
+	}
+	now := time.Now().UTC()
+	if !enrollment.LastUsedAt.IsZero() && now.Sub(enrollment.LastUsedAt) < renewLocalEnrollmentThrottle {
+		return
+	}
+	enrollment.LastUsedAt = now
+	_ = WriteLocalEnrollment(paths.LocalUnlockBlobFile(), *enrollment)
+}
+
+// LocalEnrollmentUsable reports whether a non-expired device-unlock enrollment
+// exists for this install, without touching the secure store or biometrics. The
+// broker uses it to skip a doomed Touch ID prompt and fall through to the
+// master-password popup once the sliding window has lapsed.
+func LocalEnrollmentUsable(paths config.Paths) bool {
+	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+	if err != nil || enrollment == nil {
+		return false
+	}
+	if enrollmentExpired(paths, enrollment) {
+		return false
+	}
+	if enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile {
+		return true
+	}
+	installID, err := osReadTrimmed(paths.InstallIDFile())
+	if err != nil || installID == "" || enrollment.InstallID != installID {
+		return false
+	}
+	if expectedUser := strings.TrimSpace(enrollment.LocalUser); expectedUser != "" && expectedUser != CurrentLocalUser() {
+		return false
+	}
+	return true
 }
 
 func isHeadlessLocalUnlockAllowed(capability CapabilityState) bool {

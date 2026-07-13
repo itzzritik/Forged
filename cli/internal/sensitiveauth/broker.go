@@ -15,17 +15,20 @@ import (
 )
 
 type Broker struct {
-	paths     config.Paths
-	logger    *slog.Logger
-	helper    *HelperClient
-	password  *PasswordVerifier
-	leases    *leaseState
-	session   SessionController
-	nativeMu  sync.RWMutex
-	native    CapabilityState
-	systemMu  sync.Mutex
-	systemRun *systemAuthCall
-	cooldown  systemAuthCooldown
+	paths      config.Paths
+	logger     *slog.Logger
+	helper     *HelperClient
+	password   *PasswordVerifier
+	leases     *leaseState
+	session    SessionController
+	nativeMu   sync.RWMutex
+	native     CapabilityState
+	systemMu   sync.Mutex
+	systemRun  *systemAuthCall
+	cooldown   systemAuthCooldown
+	pwMu       sync.Mutex
+	pwRunning  bool
+	pwCooldown time.Time
 }
 
 type systemAuthCall struct {
@@ -44,6 +47,8 @@ type systemAuthCooldown struct {
 }
 
 const externalPromptCooldown = 10 * time.Second
+
+const externalPasswordReason = "Enter your Forged master password to keep SSH working."
 
 type SessionController interface {
 	HasActiveSession() bool
@@ -107,6 +112,20 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 	}
 
 	if b.helper != nil {
+		// External use can't fall back to the TUI's master-password page. Once the
+		// device-unlock window has lapsed (or was never enrolled), a Touch ID prompt
+		// can't restart it. ssh won't wait for a human, so we fire the master-password
+		// popup in the background to unlock the shared session and fail this request;
+		// the next connection then succeeds.
+		// ponytail: darwin-only gate — the collect-password popup is macOS-only for
+		// now. Extend when Windows CredUI / Linux zenity land.
+		if action == ActionExternal && !LocalEnrollmentUsable(b.paths) {
+			if runtime.GOOS == "darwin" {
+				b.promptPasswordUnlock()
+				return AuthorizeResult{}, externalUseLockedError()
+			}
+			return AuthorizeResult{}, externalUseNoDeviceUnlockError()
+		}
 		capability, err := b.authorizeSystem(ctx, action)
 		switch {
 		case err == nil:
@@ -223,6 +242,47 @@ func (b *Broker) allowExport(now time.Time) AuthorizeResult {
 	return AuthorizeResult{
 		Authorized:  true,
 		ExportToken: b.leases.IssueExportToken(now),
+	}
+}
+
+// promptPasswordUnlock opens the master-password popup in the background and
+// returns immediately — the triggering SSH request is expected to fail, since
+// ssh won't wait for a human. Entering the password unlocks the shared session
+// so the next connection succeeds. Single-flight + cooldown so a retry storm
+// shows one popup and does not re-nag after a dismissal.
+func (b *Broker) promptPasswordUnlock() {
+	b.pwMu.Lock()
+	if b.pwRunning || time.Now().Before(b.pwCooldown) {
+		b.pwMu.Unlock()
+		return
+	}
+	b.pwRunning = true
+	b.pwMu.Unlock()
+
+	go func() {
+		b.runPasswordUnlock()
+		b.pwMu.Lock()
+		b.pwRunning = false
+		b.pwCooldown = time.Now().Add(externalPromptCooldown)
+		b.pwMu.Unlock()
+	}()
+}
+
+func (b *Broker) runPasswordUnlock() {
+	password, err := b.helper.CollectPassword(context.Background(), externalPasswordReason)
+	if err != nil {
+		if b.logger != nil && !errors.Is(err, ErrAuthenticationCanceled) {
+			b.logger.Warn("master-password popup unavailable", "error", err)
+		}
+		return
+	}
+	defer zeroSensitiveBytes(password)
+
+	// Verifies against the vault, hydrates the shared session, and (via
+	// PasswordVerifier) refreshes the device-unlock enrollment — restarting the
+	// sliding window and hard cap. Subsequent SSH connections then pass.
+	if _, err := b.AuthorizeWithPassword(ActionExternal, password); err != nil && b.logger != nil {
+		b.logger.Warn("master-password unlock failed", "error", err)
 	}
 }
 
@@ -351,6 +411,10 @@ func externalUseCanceledError() error {
 
 func externalUseFailedError() error {
 	return fmt.Errorf("System Auth failed")
+}
+
+func externalUseLockedError() error {
+	return fmt.Errorf("Forged is locked; enter your master password in the Forged prompt, then retry")
 }
 
 func externalUseNoDeviceUnlockError() error {

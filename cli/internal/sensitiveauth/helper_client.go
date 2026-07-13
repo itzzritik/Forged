@@ -3,6 +3,7 @@ package sensitiveauth
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -104,6 +105,33 @@ func (c *HelperClient) Authorize(ctx context.Context, action Action) (Capability
 		return capability, ErrNativeBroken
 	default:
 		return capability, ErrAuthenticationFailed
+	}
+}
+
+// CollectPassword shows a native master-password popup and returns the entered
+// bytes. Caller owns and must zero the returned slice.
+func (c *HelperClient) CollectPassword(ctx context.Context, reason string) ([]byte, error) {
+	resp, err := c.do(ctx, NewCollectPasswordRequest(c.id(), reason))
+	if err != nil {
+		return nil, ErrNativeBroken
+	}
+
+	switch resp.Status {
+	case helperStatusOK:
+		if resp.Secret == "" {
+			return nil, ErrAuthenticationFailed
+		}
+		secret, decErr := base64.StdEncoding.DecodeString(resp.Secret)
+		if decErr != nil || len(secret) == 0 {
+			return nil, ErrAuthenticationFailed
+		}
+		return secret, nil
+	case helperStatusCanceled:
+		return nil, ErrAuthenticationCanceled
+	case helperStatusUnavailablePlatform, helperStatusUnavailableEnv, helperStatusUnavailable:
+		return nil, ErrNativeUnavailable
+	default:
+		return nil, ErrAuthenticationFailed
 	}
 }
 
