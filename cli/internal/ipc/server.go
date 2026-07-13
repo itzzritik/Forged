@@ -2,7 +2,6 @@ package ipc
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -622,43 +621,20 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("Server URL and token required"))
 	}
 
-	v, _, err := s.requireVaultAndKeyStore()
+	_, _, err := s.requireVaultAndKeyStore()
 	if err != nil {
 		return ErrorResponse(err)
 	}
 
-	if s.syncBus != nil {
-		if err := s.syncBus.ForceSync(context.Background(), "manual_sync"); err != nil {
-			return ErrorResponse(fmt.Errorf("Sync failed: %w", err))
-		}
-		state := s.syncBus.SnapshotState()
-		return OkResponse(map[string]any{"version": state.LastKnownServerVersion})
+	if s.syncBus == nil {
+		return ErrorResponse(fmt.Errorf("Sync is unavailable; restart Forged and try again"))
 	}
 
-	blob, kdf, protectedKeyBytes, err := v.ExportForSync()
-	if err != nil {
-		return ErrorResponse(fmt.Errorf("Exporting vault: %w", err))
+	if err := s.syncBus.ForceSync(context.Background(), "manual_sync"); err != nil {
+		return ErrorResponse(fmt.Errorf("Sync failed: %w", err))
 	}
-
-	client := forgedsync.NewClient(a.ServerURL, a.Token, "")
-
-	status, err := client.Status()
-	if err != nil {
-		return ErrorResponse(fmt.Errorf("Checking sync status: %w", err))
-	}
-
-	var expectedVersion int64
-	if status.HasVault {
-		expectedVersion = status.Version
-	}
-
-	protectedKey := base64.StdEncoding.EncodeToString(protectedKeyBytes)
-	result, err := client.Push(blob, kdf, protectedKey, expectedVersion)
-	if err != nil {
-		return ErrorResponse(fmt.Errorf("Sync push: %w", err))
-	}
-
-	return OkResponse(map[string]any{"version": result.Version})
+	state := s.syncBus.SnapshotState()
+	return OkResponse(map[string]any{"version": state.LastKnownServerVersion})
 }
 
 func (s *Server) handleSyncLink(raw json.RawMessage) Response {
