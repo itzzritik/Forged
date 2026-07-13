@@ -8,7 +8,7 @@ applies_to:
   - web/src/workers/**
   - server/internal/api/vault_handlers.go
   - server/migrations/**
-last_verified: 2026-05-10
+last_verified: 2026-07-14
 stable: partial
 ---
 

@@ -47,8 +47,9 @@ func (s *leaseState) IsExpired(now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
+	expired := !s.activeUntil.IsZero() && !now.Before(s.activeUntil)
 	s.pruneLocked(now)
-	return !s.activeUntil.IsZero() && !now.Before(s.activeUntil)
+	return expired
 }
 
 func (s *leaseState) IssueExportToken(now time.Time) string {
@@ -84,9 +85,6 @@ func (s *leaseState) Clear() {
 }
 
 func (s *leaseState) pruneLocked(now time.Time) {
-	if !s.activeUntil.IsZero() && !now.Before(s.activeUntil) {
-		s.activeUntil = time.Time{}
-	}
 	for issuedToken, expiresAt := range s.exportTokens {
 		if !now.Before(expiresAt) {
 			delete(s.exportTokens, issuedToken)

@@ -21,6 +21,7 @@ type Broker struct {
 	password   *PasswordVerifier
 	leases     *leaseState
 	session    SessionController
+	sessionMu  sync.Mutex
 	nativeMu   sync.RWMutex
 	native     CapabilityState
 	systemMu   sync.Mutex
@@ -130,10 +131,11 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 		switch {
 		case err == nil:
 			b.setNativeCapability(capability)
-			if err := b.ensureSessionFromEnrollment(); err != nil {
+			result, err := b.grantWithEnrollment(action, time.Now())
+			if err != nil {
 				return b.handleMissingDeviceUnlock(action, "System Auth succeeded, but this device needs your master password to finish unlocking Forged.", err)
 			}
-			return b.grant(action, time.Now()), nil
+			return result, nil
 		case errors.Is(err, ErrNativeUnavailable):
 			b.setNativeCapability(capability)
 			return b.authorizeWithoutSystemAuth(action, capability)
@@ -165,6 +167,9 @@ func (b *Broker) AuthorizeWithPassword(action Action, password []byte) (Authoriz
 	if err := b.password.Verify(password); err != nil {
 		return AuthorizeResult{}, fmt.Errorf("Authentication failed")
 	}
+
+	b.sessionMu.Lock()
+	defer b.sessionMu.Unlock()
 	if b.session != nil && !b.session.HasActiveSession() {
 		if err := b.session.HydrateFromPassword(password); err != nil {
 			return AuthorizeResult{}, fmt.Errorf("Unlocking vault session: %w", err)
@@ -173,7 +178,7 @@ func (b *Broker) AuthorizeWithPassword(action Action, password []byte) (Authoriz
 	if action == ActionExport {
 		return b.allowExport(time.Now()), nil
 	}
-	return b.grant(action, time.Now()), nil
+	return b.grantLocked(action, time.Now()), nil
 }
 
 func (b *Broker) IsUnlocked() bool {
@@ -197,8 +202,11 @@ func (b *Broker) Lock(reason string) {
 }
 
 func (b *Broker) hasActiveSession(now time.Time) bool {
+	b.sessionMu.Lock()
+	defer b.sessionMu.Unlock()
+
 	if b.leases.IsExpired(now) {
-		b.clearSharedSession("session_expired")
+		b.clearSharedSessionLocked("session_expired")
 		return false
 	}
 	if !b.leases.IsUnlocked(now) {
@@ -212,6 +220,12 @@ func (b *Broker) hasActiveSession(now time.Time) bool {
 }
 
 func (b *Broker) clearSharedSession(reason string) {
+	b.sessionMu.Lock()
+	defer b.sessionMu.Unlock()
+	b.clearSharedSessionLocked(reason)
+}
+
+func (b *Broker) clearSharedSessionLocked(reason string) {
 	b.leases.Clear()
 	if b.session != nil {
 		b.session.ClearActiveSession(reason)
@@ -221,7 +235,7 @@ func (b *Broker) clearSharedSession(reason string) {
 	}
 }
 
-func (b *Broker) grant(action Action, now time.Time) AuthorizeResult {
+func (b *Broker) grantLocked(action Action, now time.Time) AuthorizeResult {
 	b.leases.GrantView(now)
 	result := AuthorizeResult{Authorized: true}
 	if action == ActionExport {
@@ -331,13 +345,14 @@ func (b *Broker) authorizeWithoutSystemAuth(action Action, capability Capability
 		return passwordRequired(action.PasswordPrompt()), nil
 	}
 
-	if err := b.ensureSessionFromEnrollment(); err != nil {
+	result, err := b.grantWithEnrollment(action, time.Now())
+	if err != nil {
 		return b.handleMissingDeviceUnlock(action, "Enter your master password to unlock this device.", err)
 	}
 	if b.logger != nil {
 		b.logger.Info("allowing use without System Auth", "action", action, "capability", capability)
 	}
-	return b.grant(action, time.Now()), nil
+	return result, nil
 }
 
 func isHeadlessAuthMode(capability CapabilityState) bool {
@@ -350,11 +365,17 @@ func isHeadlessAuthMode(capability CapabilityState) bool {
 	return runtime.GOOS == "linux"
 }
 
-func (b *Broker) ensureSessionFromEnrollment() error {
+func (b *Broker) grantWithEnrollment(action Action, now time.Time) (AuthorizeResult, error) {
+	b.sessionMu.Lock()
+	defer b.sessionMu.Unlock()
+
 	if b.session == nil || b.session.HasActiveSession() {
-		return nil
+		return b.grantLocked(action, now), nil
 	}
-	return b.session.HydrateFromEnrollment()
+	if err := b.session.HydrateFromEnrollment(); err != nil {
+		return AuthorizeResult{}, err
+	}
+	return b.grantLocked(action, now), nil
 }
 
 func (b *Broker) handleMissingDeviceUnlock(action Action, prompt string, err error) (AuthorizeResult, error) {

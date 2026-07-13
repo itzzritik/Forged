@@ -7,7 +7,7 @@ depends_on:
   - architecture/security-model.md
   - cli/daemon.md
   - cli/ipc.md
-last_verified: 2026-07-01
+last_verified: 2026-07-14
 stable: partial
 ---
 
@@ -23,6 +23,8 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
   - system lock/sleep
   - explicit TUI idle lock
   - daemon restart
+- An expired shared-session timestamp remains as cleanup evidence until the broker clears or replaces it; token pruning cannot hide session expiry.
+- Lease expiry, daemon hydration, authorization grants, and session clearing share one broker transition lock; native prompts run outside it.
 - On desktop, TUI unlock tries System Auth first and falls back to the universal master-password page on cancel, failure, unavailable System Auth, or missing device unlock.
 - On desktop, external SSH/signing tries System Auth while the device-unlock window is usable, and denies on cancel/failure. When that window has lapsed (or was never enrolled), macOS fires a native master-password popup in the background and fails the triggering request immediately (ssh won't wait for a human); entering the password unlocks the shared session so the *next* connection succeeds. Single-flight + cooldown so a retry storm shows one popup and doesn't re-nag after dismissal. Windows/Linux still deny with an "open Forged" message pending native password prompts (broker gate is `runtime.GOOS == "darwin"`).
 - On headless machines, System Auth is treated as unavailable. The first successful master-password unlock creates file-backed local unlock trust; after that TUI and external SSH/signing hydrate from it without prompting.
