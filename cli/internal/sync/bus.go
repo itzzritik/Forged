@@ -55,6 +55,7 @@ type Bus struct {
 	queuedRefresh    bool
 	lastAgentRefresh time.Time
 	retryIndex       int
+	mutationVersion  uint64
 	stopped          bool
 	stopOnce         sync.Once
 	stopCh           chan struct{}
@@ -126,12 +127,22 @@ func (b *Bus) LocalMutation(reason string) {
 		b.mu.Unlock()
 		return
 	}
+	b.mutationVersion++
 	b.state.MarkDirty("", time.Time{})
 	b.persistLocked()
 
 	if b.retryTimer != nil {
 		b.retryTimer.Stop()
 		b.retryTimer = nil
+	}
+	if b.syncing {
+		if b.timer != nil {
+			b.timer.Stop()
+			b.timer = nil
+		}
+		b.queuedPush = true
+		b.mu.Unlock()
+		return
 	}
 	if b.timer != nil {
 		b.timer.Stop()
@@ -268,10 +279,9 @@ func (b *Bus) AuthLinked(ctx context.Context, userID, serverURL string) error {
 		b.finishPull(nil)
 		return nil
 	}
-	err := linker.ReconcileOnLink(ctx, b.state, userID, serverURL)
-	b.mu.Lock()
-	b.persistLocked()
-	b.mu.Unlock()
+	state, mutationVersion := b.engineStateSnapshot()
+	err := linker.ReconcileOnLink(ctx, &state, userID, serverURL)
+	b.applyEngineState(state, mutationVersion)
 	b.finishPull(err)
 	return err
 }
@@ -363,8 +373,7 @@ func (b *Bus) SnapshotState() SyncState {
 	b.mu.Lock()
 	defer b.mu.Unlock()
 
-	snapshot := *b.state
-	snapshot.LastSyncedBaseBlob = append([]byte(nil), b.state.LastSyncedBaseBlob...)
+	snapshot := cloneSyncState(*b.state)
 	snapshot.Syncing = b.syncing
 	return snapshot
 }
@@ -375,6 +384,7 @@ func (b *Bus) CheckDirtyFlag() {
 	}
 	if _, err := os.Stat(b.cfg.DirtyFlagPath); err == nil {
 		b.mu.Lock()
+		b.mutationVersion++
 		b.state.MarkDirty("", time.Time{})
 		b.persistLocked()
 		_ = os.Remove(b.cfg.DirtyFlagPath)
@@ -431,17 +441,23 @@ func (b *Bus) enqueueRefresh(reason string, timeout time.Duration) {
 }
 
 func (b *Bus) executePush(ctx context.Context, reason string) error {
-	err := b.engine.PushCurrent(ctx, b.state)
+	state, mutationVersion := b.engineStateSnapshot()
+	err := b.engine.PushCurrent(ctx, &state)
 	if err == nil {
+		b.applyEngineState(state, mutationVersion)
 		return nil
 	}
 	if errors.Is(err, ErrVersionConflict) {
 		if merger, ok := b.engine.(mergeRetryRuntime); ok {
-			if mergeErr := merger.MergeAndRetry(ctx, b.state); mergeErr == nil {
+			if mergeErr := merger.MergeAndRetry(ctx, &state); mergeErr == nil {
+				b.applyEngineState(state, mutationVersion)
 				return nil
+			} else {
+				err = mergeErr
 			}
 		}
 	}
+	b.applyEngineState(state, mutationVersion)
 	if b.logger != nil {
 		b.logger.Debug("push failed", "reason", reason, "error", err)
 	}
@@ -449,13 +465,12 @@ func (b *Bus) executePush(ctx context.Context, reason string) error {
 }
 
 func (b *Bus) executePull(ctx context.Context, reason string) error {
-	_, _, err := b.engine.PullLatest(ctx, b.state)
+	state, mutationVersion := b.engineStateSnapshot()
+	_, _, err := b.engine.PullLatest(ctx, &state)
+	b.applyEngineState(state, mutationVersion)
 	if err != nil && b.logger != nil {
 		b.logger.Debug("pull failed", "reason", reason, "error", err)
 	}
-	b.mu.Lock()
-	b.persistLocked()
-	b.mu.Unlock()
 	return err
 }
 
@@ -476,7 +491,8 @@ func (b *Bus) executeRefresh(ctx context.Context, reason string) error {
 }
 
 func (b *Bus) remoteNeedsPull(ctx context.Context, checker remoteStatusRuntime, reason string) (bool, error) {
-	status, err := checker.RemoteStatus(ctx, b.state)
+	state, _ := b.engineStateSnapshot()
+	status, err := checker.RemoteStatus(ctx, &state)
 	if errors.Is(err, ErrStatusUnsupported) {
 		return true, nil
 	}
@@ -579,6 +595,34 @@ func (b *Bus) beginSyncLocked() {
 	b.active.Add(1)
 	b.syncing = true
 	b.syncDone = make(chan struct{})
+}
+
+func (b *Bus) engineStateSnapshot() (SyncState, uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return cloneSyncState(*b.state), b.mutationVersion
+}
+
+func (b *Bus) applyEngineState(next SyncState, mutationVersion uint64) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+
+	mutatedDuringSync := mutationVersion != b.mutationVersion
+	*b.state = cloneSyncState(next)
+	if mutatedDuringSync {
+		b.state.MarkDirty("", time.Time{})
+		if b.timer != nil {
+			b.timer.Stop()
+			b.timer = nil
+		}
+		b.queuedPush = true
+	}
+	b.persistLocked()
+}
+
+func cloneSyncState(state SyncState) SyncState {
+	state.LastSyncedBaseBlob = append([]byte(nil), state.LastSyncedBaseBlob...)
+	return state
 }
 
 func (b *Bus) Stop() {

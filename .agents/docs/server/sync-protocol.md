@@ -24,6 +24,7 @@ Sync is encrypted-blob push/pull with optimistic locking. The server stores blob
 - Local sync state keeps the last synced base blob and last known server version.
 - The daemon checks `/sync/status` before background or foreground refresh pulls. It pulls the encrypted blob only when the server version changed.
 - Pull and link merges apply to the latest local vault state inside one transaction; network calls stay outside that lock.
+- Sync engines work on state snapshots. If a local mutation arrives during network work, the completed server metadata is kept while the newer mutation stays dirty and queues another push.
 - Stopping a sync bus drains work admitted before the stop before the vault can close.
 
 ## Decisions
