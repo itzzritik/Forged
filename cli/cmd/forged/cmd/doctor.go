@@ -24,13 +24,13 @@ func init() {
 }
 
 func runDoctorCommand(cmd *cobra.Command, args []string) error {
+	if !isInteractiveTerminal() {
+		return fmt.Errorf("Forged requires an interactive terminal. Re-run from a TTY")
+	}
 	if doctorFix {
 		if err := runHeadlessDoctorFix(); err != nil {
 			fmt.Fprintln(cmd.ErrOrStderr(), "Pre-fix encountered an error:", err)
 		}
-	}
-	if !isInteractiveTerminal() {
-		return fmt.Errorf("Forged requires an interactive terminal. Re-run from a TTY")
 	}
 	return runInteractiveIntent(tui.DoctorIntent())
 }
