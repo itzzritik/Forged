@@ -4,6 +4,7 @@ package platform
 
 import (
 	"fmt"
+	"time"
 
 	"github.com/Microsoft/go-winio"
 )
@@ -17,7 +18,8 @@ const (
 )
 
 func IsSocketAlive(path string) bool {
-	conn, err := winio.DialPipe(path, nil)
+	timeout := 500 * time.Millisecond
+	conn, err := winio.DialPipe(path, &timeout)
 	if err != nil {
 		return false
 	}

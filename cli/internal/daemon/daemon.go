@@ -76,10 +76,6 @@ func (d *Daemon) Run(password []byte) error {
 		}
 	}
 
-	if err := d.writePID(); err != nil {
-		return err
-	}
-
 	d.activityLog = activity.NewActivityLog(1000)
 
 	if err := d.startIPC(); err != nil {
@@ -91,6 +87,10 @@ func (d *Daemon) Run(password []byte) error {
 	}
 
 	if err := d.startAgent(); err != nil {
+		return err
+	}
+
+	if err := d.writePID(); err != nil {
 		return err
 	}
 
@@ -179,20 +179,30 @@ func (d *Daemon) cleanStaleState() error {
 	}
 
 	pidPath := d.paths.PIDFile()
+	if runtime.GOOS == "windows" {
+		// PID reuse cannot be disambiguated without command-line inspection.
+		// Recheck the authoritative named pipes before removing stale metadata.
+		for _, pipe := range []string{d.paths.AgentSocket(), d.paths.CtlSocket()} {
+			if platform.IsSocketAlive(pipe) {
+				return fmt.Errorf("Daemon already running")
+			}
+		}
+		os.Remove(pidPath)
+		return nil
+	}
+
 	if data, err := os.ReadFile(pidPath); err == nil {
 		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			if process, err := os.FindProcess(pid); err == nil {
-				if err := process.Signal(syscall.Signal(0)); err == nil {
-					if command, inspectErr := processCommandLine(pid); inspectErr == nil {
-						if isForgedDaemonCommand(command) {
-							return fmt.Errorf("Daemon already running (PID %d)", pid)
-						}
-						if d.logger != nil {
-							d.logger.Warn("ignoring stale daemon pid file because pid belongs to another process", "pid", pid, "command", command)
-						}
-					} else {
+			if platform.ProcessAlive(pid) {
+				if command, inspectErr := processCommandLine(pid); inspectErr == nil {
+					if isForgedDaemonCommand(command) {
 						return fmt.Errorf("Daemon already running (PID %d)", pid)
 					}
+					if d.logger != nil {
+						d.logger.Warn("ignoring stale daemon pid file because pid belongs to another process", "pid", pid, "command", command)
+					}
+				} else {
+					return fmt.Errorf("Daemon already running (PID %d)", pid)
 				}
 			}
 		}
@@ -579,7 +589,7 @@ func (d *Daemon) shutdown() {
 
 	os.Remove(d.paths.AgentSocket())
 	os.Remove(d.paths.CtlSocket())
-	os.Remove(d.paths.PIDFile())
+	removeOwnedPIDFile(d.paths.PIDFile(), os.Getpid())
 
 	d.logger.Info("daemon stopped")
 }
@@ -588,6 +598,14 @@ func zeroSecret(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+func removeOwnedPIDFile(path string, pid int) {
+	data, err := os.ReadFile(path)
+	if err != nil || strings.TrimSpace(string(data)) != strconv.Itoa(pid) {
+		return
+	}
+	os.Remove(path)
 }
 
 func IsRunning(paths config.Paths) (int, bool) {
@@ -599,11 +617,7 @@ func IsRunning(paths config.Paths) (int, bool) {
 	if err != nil {
 		return 0, false
 	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return 0, false
-	}
-	if err := process.Signal(syscall.Signal(0)); err != nil {
+	if !platform.ProcessAlive(pid) {
 		return 0, false
 	}
 	if command, err := processCommandLine(pid); err == nil && !isForgedDaemonCommand(command) {

@@ -33,6 +33,8 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Linux user-service commands derive `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` when shells omit them, which is common in headless SSH or remote-editor sessions.
 - Persistent Forged state lives under `~/.config/forged` on every OS. Auth/device trust lives under `~/.config/forged/auth`. Linux keeps runtime sockets under `/run/user/<uid>/forged`; macOS and Windows use `~/.config/forged/runtime` for runtime metadata, with Windows sockets using named pipes.
 - Windows support is still partial around socket transport and platform helpers.
+- Windows daemon health uses bounded named-pipe probes plus the native process exit status; Unix continues to use signal-zero liveness.
+- A daemon publishes its PID only after both servers start and removes the PID file only while it still owns that record.
 
 ## Decisions
 

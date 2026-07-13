@@ -4,10 +4,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -16,6 +14,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 type DaemonRuntimeStatus struct {
@@ -220,16 +219,7 @@ func fileExists(path string) bool {
 }
 
 func defaultSocketReady(path string) bool {
-	if runtime.GOOS == "windows" {
-		return false
-	}
-
-	conn, err := net.DialTimeout("unix", path, time.Second)
-	if err != nil {
-		return false
-	}
-	conn.Close()
-	return true
+	return platform.IsSocketAlive(path)
 }
 
 func defaultCredentialsValid(paths config.Paths) (bool, error) {
