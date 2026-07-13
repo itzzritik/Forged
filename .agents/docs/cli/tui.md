@@ -4,7 +4,7 @@ applies_to:
   - cli/internal/tui/**
 depends_on:
   - cli/ipc.md
-last_verified: 2026-05-10
+last_verified: 2026-07-14
 stable: yes
 ---
 
@@ -27,6 +27,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Runtime sync errors must clear the in-memory syncing flag so stale status cannot leave the header spinner active forever.
 - Startup unlock uses the shared auth broker: desktop TUI tries System Auth and falls back to the universal master-password page; headless TUI hydrates enrolled device unlock without prompting.
 - Master-password screens share one component for create, restore, unlock fallback, export, repair, and change-password flows.
+- Printable keys always reach focused inputs. Ctrl-C is the only global quit shortcut; startup System Auth retry uses Ctrl-A while the password field is empty.
 - While locked, the header uses the welcome product rail instead of live system status.
 - Manage owns user-facing security settings. Doctor shows security capability state.
 - `Master Password Interval` is local to the device, not synced through the vault.

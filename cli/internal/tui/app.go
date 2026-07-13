@@ -1461,7 +1461,7 @@ func (m *model) footerActions() []shell.FooterAction {
 		}
 		actions := []shell.FooterAction{{Key: "Enter", Label: enterLabel}}
 		if m.canRetryStartupSystemAuth() {
-			actions = append(actions, shell.FooterAction{Key: "A", Label: "System Auth"})
+			actions = append(actions, shell.FooterAction{Key: "Ctrl+A", Label: "System Auth"})
 		}
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 		return actions
@@ -1584,7 +1584,7 @@ func (m *model) footerActions() []shell.FooterAction {
 
 func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
-	case "ctrl+c", "q":
+	case "ctrl+c":
 		return m, tea.Quit
 	}
 
@@ -1872,7 +1872,7 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.showCurrentRoute()
 		}
 		return m, tea.Quit
-	case "a", "A":
+	case "ctrl+a":
 		if m.canRetryStartupSystemAuth() {
 			return m, m.startStartupUnlockFlow()
 		}
