@@ -23,7 +23,7 @@ type doctorReportCopiedMsg struct {
 }
 
 func (m *model) isDoctorOverviewRoute() bool {
-	return m.screen == screenDashboard && m.snapshot.VaultExists && m.session.Current().ID == RouteDoctorOverview
+	return m.screen == screenDashboard && m.session.Current().ID == RouteDoctorOverview
 }
 
 func (m *model) isDoctorDashboardTab() bool {
@@ -104,7 +104,7 @@ func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "r", "R":
-		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd())
+		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd(), m.invalidateSigningStatusCmd())
 	case "c", "C":
 		return m, m.copyDoctorReportCmd()
 	case "enter":
@@ -132,7 +132,7 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "right", "l":
 		return m, m.switchDashboardTab(1, tabs)
 	case "r", "R":
-		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd())
+		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd(), m.invalidateSigningStatusCmd())
 	case "c", "C":
 		return m, m.copyDoctorReportCmd()
 	case "enter":
@@ -231,7 +231,10 @@ func (m *model) startDoctorRepair(password []byte) tea.Cmd {
 
 func (m *model) doctorCanFixIssues() bool {
 	s := m.snapshot
-	if !s.VaultExists || !s.ConfigExists {
+	if !s.VaultExists {
+		return false
+	}
+	if !s.ConfigExists {
 		return true
 	}
 	if !s.Service.Installed || !s.Service.ConfigValid || !s.Service.Running {

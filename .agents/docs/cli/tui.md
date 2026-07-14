@@ -28,6 +28,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Doctor distinguishes unsupported System Auth from a prompt that is unavailable in the current environment.
 - Doctor shows explicit Linux headless mode as file-backed trust and labels desktop System Auth detection as terminal-local rather than daemon readiness.
 - Doctor security refreshes accept only their newest response and render inspection failures instead of staying on Checking or showing stale capability rows.
+- The standalone `forged doctor` route remains available when no vault exists; it reports device-level health instead of replacing diagnostics with onboarding.
 - Doctor checks stay in dependency order while their status icon and tone show changing health.
 - The Agent tab includes SSH Routing diagnostics. The page reads and clears route memory through daemon IPC and keeps route memory current with background polling while the page is open.
 - SSH Routing diagnostics reuse the Commit Signing browser-table pattern: selected item summary on top, a compact table below, and no manual refresh footer action.

@@ -553,6 +553,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.maintenanceUsedPassword = false
 			m.discardPasswordInput()
 			m.screen = screenDashboard
+			if m.isDoctorOverviewRoute() {
+				m.systemHeader = m.systemHeaderForSnapshot(msg.snapshot)
+				return m, tea.Batch(m.loadSecurityStateCmd(), m.invalidateSigningStatusCmd())
+			}
 			m.systemHeader = systemHeaderHealthy
 			return m, nil
 		}
@@ -1041,6 +1045,9 @@ func (m *model) vaultSyncHeaderItem() shell.StatusItem {
 	case systemHeaderFixing:
 		return shell.StatusItem{Label: "Repairing vault", Icon: m.spinner.View()}
 	}
+	if !m.snapshot.VaultExists {
+		return shell.StatusItem{Label: "Vault missing", Tone: shell.StatusToneDanger}
+	}
 	if m.runtimeUnavailable {
 		if !m.snapshot.LoggedIn {
 			return shell.StatusItem{Label: "Local vault unavailable", Tone: shell.StatusToneDanger}
@@ -1069,7 +1076,7 @@ func (m *model) headerPageTitle() string {
 	if m.isWelcomeState() {
 		return ""
 	}
-	if m.screen == screenDashboard && m.snapshot.VaultExists {
+	if m.screen == screenDashboard && (m.snapshot.VaultExists || m.isDoctorOverviewRoute()) {
 		if m.isKeyRoute() {
 			return m.keyHeaderTitle()
 		}
@@ -1135,7 +1142,7 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 		return nil
 	}
 
-	if m.screen == screenDashboard && m.snapshot.VaultExists {
+	if m.screen == screenDashboard && (m.snapshot.VaultExists || m.isDoctorOverviewRoute()) {
 		if m.isKeyRoute() {
 			return m.keyBreadcrumbs()
 		}
@@ -2484,12 +2491,17 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 	case readiness.NextActionNeedsInteractiveSetup:
 		if result.Snapshot.LoggedIn {
 			m.showDashboardNotice("No synced vault was found for this account. Start a new vault on this device.", dashboardscreen.ToneWarning)
+		} else if m.maintenanceTrigger == maintenanceTriggerDoctor {
+			m.showDashboardNotice("No repairs were made. Create or restore a vault to continue.", dashboardscreen.ToneWarning)
 		} else {
 			m.showDashboardNotice(m.summaryMessage(), dashboardscreen.ToneSuccess)
 		}
 		m.popWizardRoutes()
 		m.discardPasswordInput()
 		m.screen = screenDashboard
+		if m.maintenanceTrigger == maintenanceTriggerDoctor {
+			return m.loadSecurityStateCmd()
+		}
 		return nil
 	default:
 		if (m.maintenanceTrigger == maintenanceTriggerSetup || m.maintenanceTrigger == maintenanceTriggerUnlock) && result.Snapshot.VaultExists {
@@ -2987,11 +2999,14 @@ func (m *model) showDashboardNotice(message string, tone dashboardscreen.Tone) {
 }
 
 func (m *model) isWelcomeState() bool {
-	return m.bootAssessed && m.screen == screenDashboard && len(m.dashboardOptions()) > 0
+	return m.bootAssessed &&
+		m.screen == screenDashboard &&
+		m.session.Current().ID != RouteDoctorOverview &&
+		len(m.dashboardOptions()) > 0
 }
 
 func (m *model) shouldShowProductRail() bool {
-	return !m.snapshot.VaultExists
+	return !m.snapshot.VaultExists && !m.isDoctorOverviewRoute()
 }
 
 func (m *model) serverURL() string {
@@ -3018,9 +3033,6 @@ func (m *model) pollRuntimeStatus(delay time.Duration) tea.Cmd {
 }
 
 func (m *model) loadSecurityStateCmd() tea.Cmd {
-	if !m.snapshot.VaultExists {
-		return nil
-	}
 	m.securityLoadID++
 	id := m.securityLoadID
 	loadSecurityState := m.deps.LoadSecurityState
