@@ -923,7 +923,7 @@ func (m *model) View() string {
 		bodyWidth = contentWidth
 	}
 	header := m.renderHeader(contentWidth)
-	footer := shell.RenderFooter(m.footerActions()...)
+	footer := shell.RenderFooter(contentWidth, m.footerActions()...)
 	tightFooter := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isAgentSigningRoute()
 	tightBody := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isTabbedDashboardRoot()
 	bodyHeight := shell.BodyHeight(m.width, m.height, header, footer, tightFooter, tightBody)

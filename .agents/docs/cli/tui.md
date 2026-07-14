@@ -51,6 +51,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Valid password submissions reset every field immediately; leaving a password screen discards the component, and background commands clear their owned byte copies when done.
 - Printable keys always reach focused inputs. Ctrl-C is the only global quit shortcut, except while master-password rotation is changing local and remote state; startup System Auth retry uses Ctrl-A while the password field is empty.
 - Single-letter footer actions accept either letter case. Separate actions use separate letters instead of Shift-only variants.
+- Footers stay on one line and compact to key badges when labels do not fit; extreme widths retain the final escape action and mark omitted actions.
 - UI chrome falls back to ASCII for non-UTF-8 or legacy terminals; `FORGED_ASCII=1` forces it without rewriting user-provided text.
 - Foreground colors adapt to the terminal background; `FORGED_COLOR_SCHEME=light|dark` overrides incorrect detection.
 - On supported terminals, the TUI uses the alternate screen so account and key data do not remain in shell scrollback after exit.
