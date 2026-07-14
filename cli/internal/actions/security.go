@@ -47,7 +47,7 @@ func inspectNativeCapability(helperPath string) sensitiveauth.CapabilityState {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 
-	if err := client.Start(ctx, nil); err != nil {
+	if err := client.Start(ctx, nil, nil); err != nil {
 		return sensitiveauth.CapabilityBroken
 	}
 	defer client.Close()

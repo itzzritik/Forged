@@ -15,15 +15,18 @@ import (
 )
 
 type HelperClient struct {
-	logger    *slog.Logger
-	path      string
-	cmd       *exec.Cmd
-	stdin     *bufio.Writer
-	stdinPipe io.WriteCloser
-	responses map[string]chan HelperResponse
-	onLock    func()
-	mu        sync.Mutex
-	nextID    atomic.Uint64
+	logger           *slog.Logger
+	path             string
+	cmd              *exec.Cmd
+	stdin            *bufio.Writer
+	stdinPipe        io.WriteCloser
+	responses        map[string]chan HelperResponse
+	onLock           func()
+	onExit           func()
+	intentionalClose bool
+	terminalNotified bool
+	mu               sync.Mutex
+	nextID           atomic.Uint64
 }
 
 func NewHelperClient(path string, logger *slog.Logger) *HelperClient {
@@ -34,7 +37,7 @@ func NewHelperClient(path string, logger *slog.Logger) *HelperClient {
 	}
 }
 
-func (c *HelperClient) Start(ctx context.Context, onLock func()) error {
+func (c *HelperClient) Start(ctx context.Context, onLock, onExit func()) error {
 	cmd := exec.CommandContext(ctx, c.path)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
@@ -50,10 +53,15 @@ func (c *HelperClient) Start(ctx context.Context, onLock func()) error {
 		return err
 	}
 
+	c.mu.Lock()
 	c.cmd = cmd
 	c.stdin = bufio.NewWriter(stdin)
 	c.stdinPipe = stdin
 	c.onLock = onLock
+	c.onExit = onExit
+	c.intentionalClose = false
+	c.terminalNotified = false
+	c.mu.Unlock()
 
 	go c.readLoop(bufio.NewScanner(stdout))
 
@@ -70,6 +78,7 @@ func (c *HelperClient) Start(ctx context.Context, onLock func()) error {
 
 func (c *HelperClient) Close() error {
 	c.mu.Lock()
+	c.intentionalClose = true
 	cmd := c.cmd
 	stdin := c.stdinPipe
 	for id := range c.responses {
@@ -247,7 +256,13 @@ func (c *HelperClient) readLoop(scanner *bufio.Scanner) {
 		delete(c.responses, id)
 		close(ch)
 	}
+	onExit := c.onExit
+	unexpectedExit := !c.intentionalClose && !c.terminalNotified
+	c.terminalNotified = true
 	c.mu.Unlock()
+	if unexpectedExit && onExit != nil {
+		onExit()
+	}
 }
 
 func (c *HelperClient) id() string {

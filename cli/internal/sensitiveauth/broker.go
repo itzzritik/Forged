@@ -23,21 +23,22 @@ type Broker struct {
 	sessionMu sync.Mutex
 	// authGeneration is guarded by sessionMu. It serializes a lock event with
 	// the final session grant, so a pre-lock prompt cannot restore a session.
-	authGeneration uint64
-	nativeMu       sync.RWMutex
-	native         CapabilityState
-	systemMu       sync.Mutex
-	systemRun      *systemAuthCall
-	cooldown       systemAuthCooldown
-	pwMu           sync.Mutex
-	pwRun          *passwordUnlockCall
-	pwCooldown     time.Time
-	lifecycleMu    sync.Mutex
-	stopping       bool
-	stopOnce       sync.Once
-	background     sync.WaitGroup
-	stopCtx        context.Context
-	stopCancel     context.CancelFunc
+	authGeneration   uint64
+	nativeMu         sync.RWMutex
+	native           CapabilityState
+	helperTerminated bool
+	systemMu         sync.Mutex
+	systemRun        *systemAuthCall
+	cooldown         systemAuthCooldown
+	pwMu             sync.Mutex
+	pwRun            *passwordUnlockCall
+	pwCooldown       time.Time
+	lifecycleMu      sync.Mutex
+	stopping         bool
+	stopOnce         sync.Once
+	background       sync.WaitGroup
+	stopCtx          context.Context
+	stopCancel       context.CancelFunc
 }
 
 type systemAuthCall struct {
@@ -90,14 +91,14 @@ func NewBroker(paths config.Paths, helperPath string, logger *slog.Logger, sessi
 
 	if helperPath != "" {
 		helper := NewHelperClient(helperPath, logger)
-		if err := helper.Start(context.Background(), func() { b.Invalidate("system_lock") }); err != nil {
+		b.helper = helper
+		b.setNativeCapability(CapabilityAvailable)
+		if err := helper.Start(context.Background(), func() { b.Invalidate("system_lock") }, b.helperExited); err != nil {
+			b.helper = nil
 			if b.logger != nil {
 				b.logger.Debug("sensitive auth helper unavailable", "error", err, "path", helperPath)
 			}
-			b.native = CapabilityUnavailableByEnv
-		} else {
-			b.helper = helper
-			b.native = CapabilityAvailable
+			b.setNativeCapability(CapabilityUnavailableByEnv)
 		}
 	}
 
@@ -130,6 +131,20 @@ func (b *Broker) Close() {
 		_ = b.helper.Close()
 	}
 	b.Invalidate("shutdown")
+}
+
+func (b *Broker) helperExited() {
+	b.lifecycleMu.Lock()
+	stopping := b.stopping
+	b.lifecycleMu.Unlock()
+	if stopping {
+		return
+	}
+	b.Invalidate("system_auth_helper_lost")
+	b.nativeMu.Lock()
+	b.helperTerminated = true
+	b.native = CapabilityBroken
+	b.nativeMu.Unlock()
 }
 
 func (b *Broker) Authorize(ctx context.Context, action Action) (AuthorizeResult, error) {
@@ -692,6 +707,9 @@ func externalUseHydrationError() error {
 func (b *Broker) setNativeCapability(capability CapabilityState) {
 	b.nativeMu.Lock()
 	defer b.nativeMu.Unlock()
+	if b.helperTerminated {
+		return
+	}
 	b.native = capability
 }
 
