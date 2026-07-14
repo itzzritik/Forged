@@ -120,6 +120,7 @@ type keyImportAutoReturnMsg struct {
 
 type keyBrowserState struct {
 	loading    bool
+	loaded     bool
 	refreshing bool
 	err        string
 	notice     string
@@ -292,7 +293,7 @@ func (m *model) keyRouteLoaded() bool {
 
 	switch m.session.Current().ID {
 	case RouteKeysBrowser:
-		return m.keyBrowser.loading || m.keyBrowser.err != "" || len(m.keyBrowser.all) > 0 || strings.TrimSpace(m.keyBrowser.notice) != "" || strings.TrimSpace(m.keyBrowser.input.Value()) != ""
+		return m.keyBrowser.loading || m.keyBrowser.loaded || m.keyBrowser.err != "" || strings.TrimSpace(m.keyBrowser.notice) != "" || strings.TrimSpace(m.keyBrowser.input.Value()) != ""
 	case RouteKeysDetail:
 		return !m.keyDetail.resolving && (m.keyDetail.loading || m.keyDetail.err != "" || strings.TrimSpace(m.keyDetail.key.Name) != "")
 	case RouteKeysRename:
@@ -1187,7 +1188,7 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 			m.keyBrowser.input.Blur()
 			return nil
 		}
-		if len(m.keyBrowser.all) > 0 {
+		if m.keyBrowser.loaded {
 			m.applyKeyBrowserRoute(route)
 			m.keyBrowser.loading = false
 			m.keyBrowser.refreshing = m.snapshot.LoggedIn
@@ -1501,7 +1502,7 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 		case RouteKeysBrowser:
 			m.keyBrowser.loading = false
 			m.keyBrowser.refreshing = false
-			if msg.preserve && len(m.keyBrowser.all) > 0 {
+			if msg.preserve && m.keyBrowser.loaded {
 				m.keyBrowser.notice = errorText
 				return m, nil
 			}
@@ -2020,6 +2021,7 @@ func (m *model) fallbackKeyBrowser(keys []actions.KeySummary, query string, noti
 
 func (m *model) prepareKeyBrowser(keys []actions.KeySummary, query string, notice string, searchActive bool) {
 	m.keyBrowser.loading = false
+	m.keyBrowser.loaded = true
 	m.keyBrowser.refreshing = false
 	m.keyBrowser.err = ""
 	m.keyBrowser.notice = strings.TrimSpace(notice)
@@ -2107,7 +2109,7 @@ func (m *model) refreshKeyBrowser(sync bool) tea.Cmd {
 }
 
 func (m *model) preloadKeyBrowser() tea.Cmd {
-	if !m.snapshot.VaultExists || len(m.keyBrowser.all) > 0 {
+	if !m.snapshot.VaultExists || m.keyBrowser.loaded {
 		return nil
 	}
 	return m.listLocalKeys(m.nextKeyListID(), true)
@@ -2154,6 +2156,7 @@ func (m *model) storeKeyCache(keys []actions.KeySummary) {
 		preserveName = key.Name
 	}
 	m.keyBrowser.all = keys
+	m.keyBrowser.loaded = true
 	m.refreshKeyBrowserRows()
 	m.selectKeyBrowserByName(preserveName)
 }
