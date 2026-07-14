@@ -1,6 +1,7 @@
 package actions
 
 import (
+	"bytes"
 	"context"
 	"encoding/base64"
 	"errors"
@@ -78,7 +79,12 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 	if err != nil {
 		return ChangePasswordResult{}, fmt.Errorf("Wrong password or corrupted vault")
 	}
+	symmetricKey := check.Key()
+	expectedKDF := check.KDFParams()
+	expectedProtectedKey := check.ProtectedKeyBytes()
 	check.Close()
+	defer clear(symmetricKey)
+	defer clear(expectedProtectedKey)
 
 	restartRequired, err := stopDaemonForPasswordChange(paths)
 	defer func() {
@@ -98,7 +104,8 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		return ChangePasswordResult{}, err
 	}
 
-	v, err := vault.Open(paths.VaultFile(), currentPassword)
+	v, err := vault.OpenWithSymmetricKey(paths.VaultFile(), symmetricKey)
+	clear(symmetricKey)
 	if err != nil {
 		if errors.Is(err, vault.ErrVaultLocked) {
 			return ChangePasswordResult{}, fmt.Errorf("Vault is busy. Try again.")
@@ -111,6 +118,13 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 			v.Close()
 		}
 	}()
+	actualProtectedKey := v.ProtectedKeyBytes()
+	headerMatches := v.KDFParams() == expectedKDF && bytes.Equal(actualProtectedKey, expectedProtectedKey)
+	clear(actualProtectedKey)
+	clear(expectedProtectedKey)
+	if !headerMatches {
+		return ChangePasswordResult{}, fmt.Errorf("Wrong password or corrupted vault")
+	}
 
 	if err := v.ChangePassword(newPassword); err != nil {
 		return ChangePasswordResult{}, fmt.Errorf("Changing password: %w", err)
