@@ -244,7 +244,7 @@ func (m *model) selectedLabRoute() (actions.SSHRouteDebug, bool) {
 
 func (m *model) renderLabRoutingBody(contentWidth int, bodyHeight int) string {
 	m.resizeLabPage(bodyHeight)
-	width := max(36, min(contentWidth, theme.HeroMaxWidth+10))
+	width := max(1, min(contentWidth, theme.HeroMaxWidth+10))
 	summary := m.renderLabRouteSummary(width)
 	if bodyHeight < 7 {
 		return summary
