@@ -165,7 +165,7 @@ func (m *model) updateLabRoutingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.lab.requestID++
 			id := m.lab.requestID
 			return m, tea.Batch(m.spinner.Tick, m.clearLabRoutingCmd(id, m.lab.clearTarget, m.lab.clearAll))
-		case "esc", "c", "C":
+		case "esc":
 			m.lab.clearTarget = ""
 			m.lab.clearAll = false
 			m.lab.notice = ""
@@ -192,13 +192,13 @@ func (m *model) updateLabRoutingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.normalizeLabSelection()
 		}
 		return m, nil
-	case "c":
+	case "c", "C":
 		if route, ok := m.selectedLabRoute(); ok {
 			m.lab.clearTarget = route.Target
 			m.lab.notice = "Press Enter to clear the selected learned route."
 		}
 		return m, nil
-	case "C":
+	case "a", "A":
 		if len(m.lab.routing.Routes) > 0 {
 			m.lab.clearAll = true
 			m.lab.notice = "Press Enter to clear all learned routes."
@@ -378,7 +378,7 @@ func (m *model) labFooterActions() []shell.FooterAction {
 	return []shell.FooterAction{
 		{Key: "↑/↓", Label: "Select"},
 		{Key: "C", Label: "Clear Route"},
-		{Key: "Shift+C", Label: "Clear All"},
+		{Key: "A", Label: "Clear All"},
 		{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 	}
 }

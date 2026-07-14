@@ -447,7 +447,7 @@ func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.agent.signing.disableArmed = false
 			m.agent.signing.err = ""
 			return m, m.runDisableCommitSigning()
-		case "esc", "d":
+		case "esc", "d", "D":
 			m.agent.signing.disableArmed = false
 			return m, nil
 		default:
@@ -508,14 +508,14 @@ func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.agent.signing.err = ""
 		m.moveAgentSigningSelection(1)
 		return m, nil
-	case "r":
+	case "r", "R":
 		if m.signingError == "" {
 			return m, nil
 		}
 		m.signingLoaded = false
 		m.signingError = ""
 		return m, m.startAgentSigningRoute()
-	case "d":
+	case "d", "D":
 		if !m.signingStatus.Enabled() {
 			return m, nil
 		}

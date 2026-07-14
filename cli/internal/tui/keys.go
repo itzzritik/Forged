@@ -770,7 +770,7 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyBrowser.searchActive = true
 		m.keyBrowser.input.Focus()
 		return m, textinput.Blink
-	case "r":
+	case "r", "R":
 		if m.keyBrowser.loading || m.keyBrowser.refreshing {
 			return m, nil
 		}
@@ -786,12 +786,12 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.session.Push(Route{ID: RouteKeysDetail, Params: map[string]string{"name": key.Name, "source": "browser"}})
 			return m, m.showCurrentRoute()
 		}
-	case "e":
+	case "e", "E":
 		if key, ok := m.selectedKeyRow(); ok {
 			m.session.Push(Route{ID: RouteKeysRename, Params: map[string]string{"old_name": key.Name, "source": "browser"}})
 			return m, m.showCurrentRoute()
 		}
-	case "d":
+	case "d", "D":
 		if key, ok := m.selectedKeyRow(); ok {
 			m.session.Push(Route{ID: RouteKeysDelete, Params: map[string]string{"name": key.Name, "source": "browser"}})
 			return m, m.showCurrentRoute()
@@ -821,7 +821,7 @@ func (m *model) updateKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.keyDetail.err != "" {
 			return m, m.startKeyRouteLoad()
 		}
-	case "c":
+	case "c", "C":
 		if strings.TrimSpace(m.keyDetail.key.PublicKey) == "" {
 			return m, nil
 		}
@@ -829,7 +829,7 @@ func (m *model) updateKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyDetail.statusErr = ""
 		m.keyDetail.busy = true
 		return m, tea.Batch(m.spinner.Tick, m.copyKeyText(m.keyDetail.key.PublicKey, "Public key copied"))
-	case "f":
+	case "f", "F":
 		if strings.TrimSpace(m.keyDetail.key.Fingerprint) == "" {
 			return m, nil
 		}
@@ -837,7 +837,7 @@ func (m *model) updateKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyDetail.statusErr = ""
 		m.keyDetail.busy = true
 		return m, tea.Batch(m.spinner.Tick, m.copyKeyText(m.keyDetail.key.Fingerprint, "Fingerprint copied"))
-	case "k":
+	case "k", "K":
 		name := strings.TrimSpace(m.keyDetail.key.Name)
 		if name == "" {
 			return m, nil

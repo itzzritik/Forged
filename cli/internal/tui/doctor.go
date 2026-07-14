@@ -96,7 +96,7 @@ func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.showCurrentRoute()
 		}
 		return m, tea.Quit
-	case "r":
+	case "r", "R":
 		return m, m.refreshSnapshotCmd()
 	case "enter":
 		if !m.doctorCanFixIssues() || m.maintenanceBusy {
@@ -122,7 +122,7 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.switchDashboardTab(-1, tabs)
 	case "right", "l":
 		return m, m.switchDashboardTab(1, tabs)
-	case "r":
+	case "r", "R":
 		return m, m.refreshSnapshotCmd()
 	case "enter":
 		if !m.doctorCanFixIssues() || m.maintenanceBusy {

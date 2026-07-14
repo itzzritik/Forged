@@ -1862,7 +1862,7 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.showCurrentRoute()
 		}
 		return m, tea.Quit
-	case "c":
+	case "c", "C":
 		if m.loginScreen.URL == "" || m.loginScreen.Error != "" {
 			return m, nil
 		}
