@@ -80,7 +80,6 @@ func installRootSubcommands(cmd *cobra.Command) {
 
 	for _, hiddenCmd := range []*cobra.Command{
 		daemonCmd,
-		logsCmd,
 		signCmd,
 		daemonFreshenCmd,
 		sshRoutePrepareCmd,

@@ -18,7 +18,7 @@ var signCmd = &cobra.Command{
 
 var logsCmd = &cobra.Command{
 	Use:   "logs",
-	Short: "Tail daemon logs",
+	Short: "Follow daemon logs",
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
 		logPath := paths.LogFile()

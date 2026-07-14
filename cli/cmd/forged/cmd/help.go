@@ -37,6 +37,13 @@ func renderRootHelp(w io.Writer) {
 			},
 		},
 		{
+			Title: "Maintenance",
+			Entries: []helpEntry{
+				{Name: "doctor", Description: "diagnose and repair this device"},
+				{Name: "logs", Description: "follow daemon logs"},
+			},
+		},
+		{
 			Title: "Info",
 			Entries: []helpEntry{
 				{Name: "help", Description: "show help"},
@@ -58,7 +65,8 @@ func renderRootHelp(w io.Writer) {
 	fmt.Fprintln(w, "Examples:")
 	for _, example := range []string{
 		"  forged",
-		"  forged help",
+		"  forged doctor --fix",
+		"  forged logs",
 		"  forged version",
 	} {
 		fmt.Fprintln(w, example)
