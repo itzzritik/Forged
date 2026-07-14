@@ -259,29 +259,32 @@ func (m *model) renderLabRoutingBody(contentWidth int, bodyHeight int) string {
 
 func (m *model) renderLabRouteSummary(width int) string {
 	route, ok := m.selectedLabRoute()
+	title := ""
+	detail := ""
 	if !ok {
 		if m.lab.loading {
-			return theme.BodyStrong.Render(m.spinner.View() + " Reading SSH route memory")
+			title = theme.BodyStrong.Render(m.spinner.View() + " Reading SSH route memory")
+		} else {
+			title = theme.Warning.Render("! No learned SSH routes")
+			detail = theme.BodyMuted.Render("Routes appear here after successful Git or SSH authentication.")
 		}
-		return strings.Join([]string{
-			theme.Warning.Render("! No learned SSH routes"),
-			theme.BodyMuted.Render("Routes appear here after successful Git or SSH authentication."),
-		}, "\n")
+	} else {
+		title = labRouteSummaryTitle(route, width)
+		detail = labRouteSummaryMeta(route)
+		if m.lab.loading {
+			title = theme.BodyStrong.Render(m.spinner.View() + " Updating route memory")
+		}
 	}
 
-	status := labRouteSummaryTitle(route, width)
-	if m.lab.loading {
-		status = theme.BodyStrong.Render(m.spinner.View() + " Updating route memory")
+	if notice := m.labSummaryNotice(); notice != "" {
+		detail = notice
 	}
-
-	return status + "\n" + labRouteSummaryMeta(route)
+	count := theme.BodyMuted.Render(m.labRouteCountLabel())
+	return ansi.Truncate(title, width, theme.Glyphs.Ellipsis) + "\n" + labSummaryRow(detail, count, width)
 }
 
 func (m *model) renderLabRouteBrowser(width int) string {
 	return keyscreen.RenderBrowser(keyscreen.BrowserScreen{
-		SearchView:       "Live route memory",
-		SearchNotice:     m.labBrowserNotice(),
-		CountLabel:       m.labRouteCountLabel(),
 		NameHeader:       "TARGET",
 		TypeHeader:       "KEY",
 		DetailHeader:     "SERVICE",
@@ -373,6 +376,42 @@ func (m *model) labBrowserNotice() string {
 		return m.lab.notice
 	}
 	return ""
+}
+
+func (m *model) labSummaryNotice() string {
+	notice := m.labBrowserNotice()
+	if notice == "" {
+		return ""
+	}
+	switch {
+	case m.lab.busy:
+		return theme.BodyStrong.Render(notice)
+	case strings.TrimSpace(m.lab.err) != "":
+		return theme.Danger.Render(notice)
+	default:
+		return theme.Warning.Render(notice)
+	}
+}
+
+func labSummaryRow(left string, right string, width int) string {
+	width = max(1, width)
+	left = ansi.Truncate(left, width, theme.Glyphs.Ellipsis)
+	right = ansi.Truncate(right, width, theme.Glyphs.Ellipsis)
+	if strings.TrimSpace(left) == "" {
+		return right
+	}
+	if strings.TrimSpace(right) == "" {
+		return left
+	}
+
+	rightWidth := ansi.StringWidth(right)
+	leftWidth := width - rightWidth - 2
+	if leftWidth < 8 {
+		return left
+	}
+	left = ansi.Truncate(left, leftWidth, theme.Glyphs.Ellipsis)
+	gap := max(2, width-ansi.StringWidth(left)-rightWidth)
+	return left + strings.Repeat(" ", gap) + right
 }
 
 func (m *model) labEmptySubtitle() string {
