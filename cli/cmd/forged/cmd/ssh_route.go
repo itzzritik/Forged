@@ -31,7 +31,7 @@ var sshRoutePrepareCmd = &cobra.Command{
 			return nil
 		}
 
-		_, err = ctlClient().Call(ipc.CmdSSHRoutePrepare, ipc.SSHRoutePrepareArgs{
+		_, err = ctlClient().CallWithTimeout(ipc.CmdSSHRoutePrepare, ipc.SSHRoutePrepareArgs{
 			Attempt:      sshRouteAttempt,
 			ClientPID:    os.Getppid(),
 			CWD:          cwd,
@@ -39,7 +39,7 @@ var sshRoutePrepareCmd = &cobra.Command{
 			OriginalHost: sshRouteOriginalHost,
 			User:         sshRouteUser,
 			Port:         sshRoutePort,
-		})
+		}, ipc.SSHRoutePrepareCallTimeout)
 		if err != nil {
 			debugSSHRoute("prepare: %v", err)
 		}

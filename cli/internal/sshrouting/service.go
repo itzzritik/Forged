@@ -45,6 +45,8 @@ type Service struct {
 	cachedRoutes  map[string]vault.SSHRoute
 	now           func() time.Time
 	attempts      map[string]Attempt
+	attemptOwners map[string]uint64
+	attemptSeq    uint64
 	clientAttempt map[int]string
 	prober        ProviderProber
 	onMutation    func(reason string)
@@ -56,6 +58,7 @@ func NewService(paths config.Paths, keyStore *vault.KeyStore) *Service {
 		keyStore:      keyStore,
 		now:           func() time.Time { return time.Now().UTC() },
 		attempts:      map[string]Attempt{},
+		attemptOwners: map[string]uint64{},
 		clientAttempt: map[int]string{},
 		prober:        NewProviderProber(paths.AgentSocket()),
 	}
@@ -76,21 +79,38 @@ func (s *Service) SetOnMutation(fn func(reason string)) {
 	s.onMutation = fn
 }
 
-func (s *Service) Prepare(req PrepareRequest) error {
-	return s.PrepareContext(context.Background(), req)
-}
-
 func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error {
-	if err := ctx.Err(); err != nil {
-		return err
-	}
 	if err := validateAttemptToken(req.Attempt); err != nil {
 		return err
 	}
 
 	now := s.now()
-	operation := InspectProcess(req.ClientPID).Operation
-	target, err := s.resolveTarget(req, operation)
+	attemptKey := routeAttemptKey(req.Attempt, req.ClientPID)
+	s.mu.Lock()
+	s.expireBeforeLocked(now.Add(-routeSnippetTTL))
+	if previous, ok := s.attemptByPIDLocked(req.ClientPID); ok {
+		s.deleteAttemptLocked(previous)
+	}
+	s.attemptSeq++
+	owner := s.attemptSeq
+	s.attempts[attemptKey] = Attempt{
+		Token:     req.Attempt,
+		ClientPID: req.ClientPID,
+		Created:   now,
+	}
+	s.attemptOwners[attemptKey] = owner
+	s.clientAttempt[req.ClientPID] = attemptKey
+	s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+
+	process := InspectProcessContext(ctx, req.ClientPID)
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	operation := process.Operation
+	target, err := s.resolveTarget(ctx, req, process)
 	if err != nil {
 		return err
 	}
@@ -100,7 +120,6 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 
 	keyStore, routes, keys := s.routingSnapshot()
 	if keyStore == nil && len(keys) == 0 {
-		_ = WriteRouteSnippet(s.paths.SSHRouteRuntimeDir(), req.Attempt, nil)
 		return ErrRouteMemoryLocked
 	}
 
@@ -111,7 +130,9 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 	if err := SyncPublicHintFiles(s.paths.SSHManagedKeysDir(), refs, now); err != nil {
 		return fmt.Errorf("Syncing SSH public key hints: %w", err)
 	}
+	s.mu.Lock()
 	_ = CleanupRouteRuntime(s.paths.SSHRouteRuntimeDir(), now.Add(-routeSnippetTTL))
+	s.mu.Unlock()
 
 	plan := PlanCandidatesForRequest(PlanRequest{
 		Target:    target,
@@ -153,10 +174,7 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 		return err
 	}
 
-	s.mu.Lock()
-	s.expireBeforeLocked(now.Add(-routeSnippetTTL))
-	attemptKey := routeAttemptKey(req.Attempt, req.ClientPID)
-	s.attempts[attemptKey] = Attempt{
+	attempt := Attempt{
 		Token:       req.Attempt,
 		ClientPID:   req.ClientPID,
 		Target:      target,
@@ -166,18 +184,48 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 		ProbeProved: probeProved,
 		Created:     now,
 	}
-	s.clientAttempt[req.ClientPID] = attemptKey
-	tokenCandidates := s.candidatesForTokenLocked(req.Attempt)
-	s.mu.Unlock()
 
-	tokenRefs := refsForFingerprints(tokenCandidates, refByFingerprint)
-	if err := WriteRouteSnippet(s.paths.SSHRouteRuntimeDir(), req.Attempt, tokenRefs); err != nil {
+	s.mu.Lock()
+	currentKey, ok := s.clientAttempt[req.ClientPID]
+	if !ok || currentKey != attemptKey || s.attemptOwners[attemptKey] != owner {
+		s.mu.Unlock()
+		return fmt.Errorf("SSH route attempt was superseded")
+	}
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return err
+	}
+	s.attempts[attemptKey] = attempt
+	if err := s.writeRouteSnippetLocked(req.Attempt, refByFingerprint); err != nil {
+		attempt.Candidates = nil
+		attempt.HadExact = false
+		attempt.ProbeProved = false
+		s.attempts[attemptKey] = attempt
+		_ = s.writeRouteSnippetLocked(req.Attempt, refByFingerprint)
+		s.mu.Unlock()
 		return fmt.Errorf("Writing SSH route snippet: %w", err)
 	}
+	if err := ctx.Err(); err != nil {
+		attempt.Candidates = nil
+		attempt.HadExact = false
+		attempt.ProbeProved = false
+		s.attempts[attemptKey] = attempt
+		_ = s.writeRouteSnippetLocked(req.Attempt, refByFingerprint)
+		s.mu.Unlock()
+		return err
+	}
+	s.mu.Unlock()
 	return nil
 }
 
 func (s *Service) Success(attempt string, clientPID int) error {
+	_, _, keys := s.routingSnapshot()
+	refs, err := BuildKeyRefs(keys, s.paths.SSHManagedKeysDir())
+	if err != nil {
+		return fmt.Errorf("Building SSH key refs: %w", err)
+	}
+	refByFingerprint := KeyRefsByFingerprint(refs)
+
 	s.mu.Lock()
 	current, ok := s.attemptBySuccessLocked(attempt, clientPID)
 	if !ok {
@@ -185,21 +233,12 @@ func (s *Service) Success(attempt string, clientPID int) error {
 		return fmt.Errorf("Attempt %q not found", attempt)
 	}
 	s.deleteAttemptLocked(current)
-	remaining := s.candidatesForTokenLocked(current.Token)
-	s.mu.Unlock()
-
-	if len(remaining) == 0 {
-		RemoveRouteSnippet(s.paths.SSHRouteRuntimeDir(), current.Token)
-	} else {
-		keyStore, _, keys := s.routingSnapshot()
-		if keyStore != nil {
-			keys = keyStore.List()
-		}
-		refs, err := BuildKeyRefs(keys, s.paths.SSHManagedKeysDir())
-		if err == nil {
-			_ = WriteRouteSnippet(s.paths.SSHRouteRuntimeDir(), current.Token, refsForFingerprints(remaining, KeyRefsByFingerprint(refs)))
-		}
+	if err := s.writeRouteSnippetLocked(current.Token, refByFingerprint); err != nil {
+		_ = s.writeRouteSnippetLocked(current.Token, refByFingerprint)
+		s.mu.Unlock()
+		return fmt.Errorf("Writing SSH route snippet: %w", err)
 	}
+	s.mu.Unlock()
 
 	keyStore, _, _ := s.routingSnapshot()
 	if current.LastKey == "" || keyStore == nil {
@@ -264,6 +303,7 @@ func (s *Service) attemptBySuccessLocked(token string, clientPID int) (Attempt, 
 		if attempt, ok := s.attemptByPIDLocked(clientPID); ok && attempt.Token == token {
 			return attempt, true
 		}
+		return Attempt{}, false
 	}
 	for _, attempt := range s.attempts {
 		if attempt.Token == token {
@@ -274,38 +314,45 @@ func (s *Service) attemptBySuccessLocked(token string, clientPID int) (Attempt, 
 }
 
 func (s *Service) ExpireBefore(cutoff time.Time) {
-	var expired []Attempt
 	s.mu.Lock()
-	for _, attempt := range s.attempts {
-		if attempt.Created.After(cutoff) {
-			continue
-		}
-		expired = append(expired, attempt)
-		s.deleteAttemptLocked(attempt)
-	}
+	s.expireBeforeLocked(cutoff)
 	s.mu.Unlock()
-
-	for _, attempt := range expired {
-		RemoveRouteSnippet(s.paths.SSHRouteRuntimeDir(), attempt.Token)
-	}
 }
 
 func (s *Service) deleteAttemptLocked(attempt Attempt) {
-	delete(s.attempts, routeAttemptKey(attempt.Token, attempt.ClientPID))
+	attemptKey := routeAttemptKey(attempt.Token, attempt.ClientPID)
+	delete(s.attempts, attemptKey)
+	delete(s.attemptOwners, attemptKey)
 	if legacy, ok := s.attempts[attempt.Token]; ok && legacy.ClientPID == attempt.ClientPID {
 		delete(s.attempts, attempt.Token)
+		delete(s.attemptOwners, attempt.Token)
 	}
 	delete(s.clientAttempt, attempt.ClientPID)
 }
 
 func (s *Service) expireBeforeLocked(cutoff time.Time) {
+	affected := map[string]struct{}{}
 	for _, attempt := range s.attempts {
 		if attempt.Created.After(cutoff) {
 			continue
 		}
 		s.deleteAttemptLocked(attempt)
-		RemoveRouteSnippet(s.paths.SSHRouteRuntimeDir(), attempt.Token)
+		affected[attempt.Token] = struct{}{}
 	}
+	for token := range affected {
+		if len(s.candidatesForTokenLocked(token)) == 0 {
+			RemoveRouteSnippet(s.paths.SSHRouteRuntimeDir(), token)
+		}
+	}
+}
+
+func (s *Service) writeRouteSnippetLocked(token string, refs map[string]KeyRef) error {
+	candidates := s.candidatesForTokenLocked(token)
+	if len(candidates) == 0 {
+		RemoveRouteSnippet(s.paths.SSHRouteRuntimeDir(), token)
+		return nil
+	}
+	return WriteRouteSnippet(s.paths.SSHRouteRuntimeDir(), token, refsForFingerprints(candidates, refs))
 }
 
 func (s *Service) candidatesForTokenLocked(token string) []string {
@@ -407,7 +454,7 @@ func routeAttemptKey(token string, clientPID int) string {
 	return fmt.Sprintf("%s:%d", token, clientPID)
 }
 
-func (s *Service) resolveTarget(req PrepareRequest, operation OperationClass) (Target, error) {
+func (s *Service) resolveTarget(ctx context.Context, req PrepareRequest, process ProcessContext) (Target, error) {
 	if req.Target.Canonical != "" {
 		return req.Target, nil
 	}
@@ -418,12 +465,17 @@ func (s *Service) resolveTarget(req PrepareRequest, operation OperationClass) (T
 		User:         req.User,
 		Port:         req.Port,
 	}
-	if operation != OperationSSHAuth {
-		if target, _, ok := ResolveProcessGitTarget(req.ClientPID, input); ok {
-			return target, nil
+	if process.Operation != OperationSSHAuth {
+		if process.RepoPath != "" {
+			if target, err := targetFromRepoPath(input, process.RepoPath); err == nil {
+				return target, nil
+			}
 		}
-		if resolved, err := ResolveGitTargetForOperation(req.CWD, req.Branch, operation); err == nil {
+		if resolved, err := ResolveGitTargetForOperationContext(ctx, req.CWD, req.Branch, process.Operation); err == nil {
 			return resolved, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return Target{}, err
 		}
 	}
 	resolved, err := ResolveSSHTarget(input)

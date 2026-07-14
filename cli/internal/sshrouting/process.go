@@ -1,6 +1,7 @@
 package sshrouting
 
 import (
+	"context"
 	"fmt"
 	"net/url"
 	"os/exec"
@@ -19,33 +20,40 @@ type ProcessContext struct {
 }
 
 func InspectProcess(clientPID int) ProcessContext {
-	ctx := ProcessContext{ClientPID: clientPID, Operation: OperationUnknown}
-	if clientPID <= 0 {
-		return ctx
+	return InspectProcessContext(context.Background(), clientPID)
+}
+
+func InspectProcessContext(ctx context.Context, clientPID int) ProcessContext {
+	process := ProcessContext{ClientPID: clientPID, Operation: OperationUnknown}
+	if clientPID <= 0 || ctx.Err() != nil {
+		return process
 	}
-	ctx.Command = processCommand(clientPID)
-	ctx.ParentPID = parentPID(clientPID)
-	if ctx.ParentPID > 0 {
-		ctx.ParentCommand = processCommand(ctx.ParentPID)
+	process.Command = processCommand(ctx, clientPID)
+	if ctx.Err() != nil {
+		return process
 	}
-	ctx.Operation = inferOperation(ctx.Command, ctx.ParentCommand)
-	ctx.RepoPath = gitCommandRepoPath(ctx.Command)
-	if ctx.RepoPath == "" {
-		ctx.RepoPath = gitCommandRepoPath(ctx.ParentCommand)
+	process.ParentPID = parentPID(ctx, clientPID)
+	if process.ParentPID > 0 {
+		process.ParentCommand = processCommand(ctx, process.ParentPID)
 	}
-	return ctx
+	process.Operation = inferOperation(process.Command, process.ParentCommand)
+	process.RepoPath = gitCommandRepoPath(process.Command)
+	if process.RepoPath == "" {
+		process.RepoPath = gitCommandRepoPath(process.ParentCommand)
+	}
+	return process
 }
 
 func ResolveProcessGitTarget(clientPID int, input PrepareInput) (Target, OperationClass, bool) {
-	ctx := InspectProcess(clientPID)
-	if ctx.RepoPath == "" {
-		return Target{}, ctx.Operation, false
+	process := InspectProcess(clientPID)
+	if process.RepoPath == "" {
+		return Target{}, process.Operation, false
 	}
-	target, err := targetFromRepoPath(input, ctx.RepoPath)
+	target, err := targetFromRepoPath(input, process.RepoPath)
 	if err != nil {
-		return Target{}, ctx.Operation, false
+		return Target{}, process.Operation, false
 	}
-	return target, ctx.Operation, true
+	return target, process.Operation, true
 }
 
 func inferOperation(commands ...string) OperationClass {
@@ -231,22 +239,22 @@ func shellFields(command string) []string {
 	return fields
 }
 
-func processCommand(pid int) string {
+func processCommand(ctx context.Context, pid int) string {
 	if pid <= 0 || runtime.GOOS == "windows" {
 		return ""
 	}
-	out, err := exec.Command("ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
+	out, err := exec.CommandContext(ctx, "ps", "-o", "command=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return ""
 	}
 	return strings.TrimSpace(string(out))
 }
 
-func parentPID(pid int) int {
+func parentPID(ctx context.Context, pid int) int {
 	if pid <= 0 || runtime.GOOS == "windows" {
 		return 0
 	}
-	out, err := exec.Command("ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
+	out, err := exec.CommandContext(ctx, "ps", "-o", "ppid=", "-p", strconv.Itoa(pid)).Output()
 	if err != nil {
 		return 0
 	}

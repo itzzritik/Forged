@@ -25,7 +25,7 @@ stable: yes
 - Manual sync captures the encrypted blob, KDF parameters, and protected key from one vault snapshot.
 - Manual sync fails closed when the stateful sync bus is unavailable; it never performs a stateless push over unknown remote data.
 - `status` advertises `account_change_protocol`. Account actions repair or restart the managed service until it supports the required protocol, then use versioned replace and clear commands with no direct-write fallback. The commands serialize credential and sync publication state; remote reconciliation runs afterward as bounded background work.
-- Hidden SSH route IPC prepares per-attempt snippets from `%C`, `%h`, `%p`, `%r`, and `%n`; prepare failures are quiet so the managed SSH config fails closed with no default identities.
+- Hidden SSH route IPC prepares per-attempt snippets from `%C`, `%h`, `%p`, `%r`, and `%n`; prepare failures are quiet so the managed SSH config fails closed with no default identities. Authorization and either probe strategy share one 45-second server work context, the hook waits 50 seconds, and the server connection deadline leaves a final response margin.
 - If route prepare finds no public route cache because the daemon is cold, IPC runs external auth once and retries prepare after hydration.
 - TUI diagnostics use SSH route list/clear IPC. Clearing routes must call the route service so vault tombstones and sync mutation handling stay correct.
 - Windows IPC support is still incomplete.

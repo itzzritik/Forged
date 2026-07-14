@@ -2,6 +2,7 @@ package sshrouting
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"net/url"
 	"os"
@@ -10,13 +11,20 @@ import (
 )
 
 func ResolveGitTarget(cwd, branch string) (Target, error) {
-	return ResolveGitTargetForOperation(cwd, branch, OperationUnknown)
+	return ResolveGitTargetForOperationContext(context.Background(), cwd, branch, OperationUnknown)
 }
 
 func ResolveGitTargetForOperation(cwd, branch string, operation OperationClass) (Target, error) {
+	return ResolveGitTargetForOperationContext(context.Background(), cwd, branch, operation)
+}
+
+func ResolveGitTargetForOperationContext(ctx context.Context, cwd, branch string, operation OperationClass) (Target, error) {
+	if err := ctx.Err(); err != nil {
+		return Target{}, err
+	}
 	branch = strings.TrimSpace(branch)
 	if branch == "" {
-		out, err := gitOutput(cwd, "branch", "--show-current")
+		out, err := gitOutputContext(ctx, cwd, "branch", "--show-current")
 		if err != nil {
 			return Target{}, fmt.Errorf("Resolving current branch: %w", err)
 		}
@@ -24,22 +32,25 @@ func ResolveGitTargetForOperation(cwd, branch string, operation OperationClass) 
 	}
 
 	remoteName := firstNonEmpty(
-		mustGitConfig(cwd, "branch."+branch+".pushRemote"),
-		mustGitConfig(cwd, "remote.pushDefault"),
-		mustGitConfig(cwd, "branch."+branch+".remote"),
+		mustGitConfigContext(ctx, cwd, "branch."+branch+".pushRemote"),
+		mustGitConfigContext(ctx, cwd, "remote.pushDefault"),
+		mustGitConfigContext(ctx, cwd, "branch."+branch+".remote"),
 		"origin",
 	)
 	var remoteURL string
 	if operation == OperationWrite {
 		remoteURL = firstNonEmpty(
-			mustGitConfig(cwd, "remote."+remoteName+".pushurl"),
-			mustGitConfig(cwd, "remote."+remoteName+".url"),
+			mustGitConfigContext(ctx, cwd, "remote."+remoteName+".pushurl"),
+			mustGitConfigContext(ctx, cwd, "remote."+remoteName+".url"),
 		)
 	} else {
 		remoteURL = firstNonEmpty(
-			mustGitConfig(cwd, "remote."+remoteName+".url"),
-			mustGitConfig(cwd, "remote."+remoteName+".pushurl"),
+			mustGitConfigContext(ctx, cwd, "remote."+remoteName+".url"),
+			mustGitConfigContext(ctx, cwd, "remote."+remoteName+".pushurl"),
 		)
+	}
+	if err := ctx.Err(); err != nil {
+		return Target{}, err
 	}
 	if remoteURL == "" {
 		return Target{}, fmt.Errorf("No push destination configured")
@@ -166,8 +177,8 @@ func normalizeRepoPath(path string) string {
 	return strings.Trim(trimmed, "/")
 }
 
-func gitOutput(cwd string, args ...string) (string, error) {
-	cmd := exec.Command("git", args...)
+func gitOutputContext(ctx context.Context, cwd string, args ...string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = cwd
 
 	var stdout bytes.Buffer
@@ -176,6 +187,9 @@ func gitOutput(cwd string, args ...string) (string, error) {
 	cmd.Stderr = &stderr
 
 	if err := cmd.Run(); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return "", ctxErr
+		}
 		message := strings.TrimSpace(stderr.String())
 		if message == "" {
 			return "", err
@@ -186,13 +200,8 @@ func gitOutput(cwd string, args ...string) (string, error) {
 	return strings.TrimSpace(stdout.String()), nil
 }
 
-func gitConfig(cwd string, args ...string) (string, error) {
-	cmdArgs := append([]string{"config"}, args...)
-	return gitOutput(cwd, cmdArgs...)
-}
-
-func mustGitConfig(cwd, key string) string {
-	value, err := gitConfig(cwd, "--get", key)
+func mustGitConfigContext(ctx context.Context, cwd, key string) string {
+	value, err := gitOutputContext(ctx, cwd, "config", "--get", key)
 	if err != nil {
 		return ""
 	}

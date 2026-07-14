@@ -5,6 +5,9 @@ import "time"
 const (
 	AccountChangeProtocol = 1
 
+	SSHRoutePrepareWorkTimeout = 45 * time.Second
+	SSHRoutePrepareCallTimeout = SSHRoutePrepareWorkTimeout + 5*time.Second
+
 	CmdList              = "list"
 	CmdAdd               = "add"
 	CmdGenerate          = "generate"

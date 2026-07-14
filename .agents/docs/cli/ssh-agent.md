@@ -18,9 +18,9 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 ## Must know
 
 - OpenSSH routing is primarily config-driven: managed `Match exec` prepares short-lived `%C` public-key slot files and enables them through per-slot `Match exec test -f ...` blocks with `IdentitiesOnly yes`.
-- `%C` is connection-scope, so concurrent same-host routes share the slot directory. The service tracks attempts by client PID and writes the union of active candidates for that `%C`; agent signing still filters by PID.
+- `%C` is connection-scope, so concurrent same-host routes share the slot directory. The service tracks attempts by client PID and updates attempt state plus the active-candidate slot union under one route lock; completion or expiry for one PID cannot remove a live sibling's slots. Agent signing still filters by PID.
 - The routing service keeps an in-memory public route/key cache after vault lock. This lets route prepare emit candidate public-key hints after system lock so OpenSSH reaches the agent and external System Auth can run at signing time.
-- Routed OpenSSH clients are scoped by peer PID as a fallback. If a route exists with zero candidates, the agent exposes zero keys instead of falling back to the full vault.
+- Routed OpenSSH clients are scoped by peer PID as a fallback. Route preparation reserves a zero-candidate PID entry before cancellable work, so a failed or timed-out prepare exposes zero keys instead of falling back to the full vault even when stale `%C` slots exist.
 - GitHub/GitLab repo routes are considered proven only after a provider repo probe. Exact proven repo routes emit only the proven key; same-owner and same-host history only rank candidates.
 - Explicit `ssh` client commands resolve as plain SSH targets even when launched from inside a Git working tree.
 - Cold daemon sessions can hydrate on first agent use if policy allows it.
@@ -28,7 +28,7 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 - External agent use goes through `ActionExternal`, not the TUI-style view path.
 - `forged-sign` now does an auth preflight so Git commit signing can show cleaner auth errors.
 - Raw SSH agent protocol is still limited in how much error detail it can surface back to callers.
-- SSH route preparation and both probe types inherit IPC request cancellation; route-specific end-to-end timeout policy remains separate from this transport behavior.
+- SSH route preparation has one 45-second server work budget covering cold-session auth, retry, and either probe type. Provider and direct-SSH probes keep their 20-second total and 4-second per-key child caps; the hook waits 50 seconds and the server connection 55 seconds so work can return a final response before either transport closes.
 
 ## Decisions
 

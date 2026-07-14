@@ -21,15 +21,11 @@ import (
 )
 
 type SSHRouteHandler interface {
-	Prepare(sshrouting.PrepareRequest) error
+	PrepareContext(context.Context, sshrouting.PrepareRequest) error
 	Success(attempt string, clientPID int) error
 	DebugSnapshot() (sshrouting.DebugSnapshot, error)
 	Clear(target string) error
 	ClearAll() error
-}
-
-type sshRouteContextHandler interface {
-	PrepareContext(context.Context, sshrouting.PrepareRequest) error
 }
 
 type Server struct {
@@ -238,6 +234,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer clear(req.Args)
 
 	switch req.Command {
+	case CmdSSHRoutePrepare:
+		deadline = time.Now().Add(SSHRoutePrepareCallTimeout + 5*time.Second)
+		conn.SetDeadline(deadline)
 	case CmdSensitiveAuth, CmdSensitivePassword:
 		deadline = time.Now().Add(5 * time.Minute)
 		conn.SetDeadline(deadline)
@@ -329,6 +328,8 @@ func (s *Server) handleSSHRoutePrepare(ctx context.Context, raw json.RawMessage)
 	if s.sshRoutes == nil {
 		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
 	}
+	ctx, cancel := context.WithTimeout(ctx, SSHRoutePrepareWorkTimeout)
+	defer cancel()
 
 	var args SSHRoutePrepareArgs
 	if err := json.Unmarshal(raw, &args); err != nil {
@@ -344,12 +345,12 @@ func (s *Server) handleSSHRoutePrepare(ctx context.Context, raw json.RawMessage)
 		User:         args.User,
 		Port:         args.Port,
 	}
-	if err := s.prepareSSHRoute(ctx, req); err != nil {
+	if err := s.sshRoutes.PrepareContext(ctx, req); err != nil {
 		if errors.Is(err, sshrouting.ErrRouteMemoryLocked) {
 			if authErr := s.ensureExternalSession(ctx); authErr != nil {
 				return ErrorResponse(authErr)
 			}
-			err = s.prepareSSHRoute(ctx, req)
+			err = s.sshRoutes.PrepareContext(ctx, req)
 		}
 		if err == nil {
 			return OkResponse(nil)
@@ -358,13 +359,6 @@ func (s *Server) handleSSHRoutePrepare(ctx context.Context, raw json.RawMessage)
 	}
 
 	return OkResponse(nil)
-}
-
-func (s *Server) prepareSSHRoute(ctx context.Context, req sshrouting.PrepareRequest) error {
-	if handler, ok := s.sshRoutes.(sshRouteContextHandler); ok {
-		return handler.PrepareContext(ctx, req)
-	}
-	return s.sshRoutes.Prepare(req)
 }
 
 func (s *Server) ensureExternalSession(ctx context.Context) error {
