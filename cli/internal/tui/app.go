@@ -1338,7 +1338,7 @@ func (m *model) renderBody(contentWidth int, bodyHeight int) string {
 			return m.renderAgentSigningBody(contentWidth)
 		}
 		if m.isLabRoutingRoute() {
-			return m.renderLabRoutingBody(contentWidth)
+			return m.renderLabRoutingBody(contentWidth, bodyHeight)
 		}
 		if m.isDoctorDashboardTab() {
 			return m.renderDoctorDashboardBody(contentWidth, bodyHeight)

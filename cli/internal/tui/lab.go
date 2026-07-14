@@ -27,6 +27,7 @@ type labState struct {
 	notice      string
 	selected    int
 	offset      int
+	pageRows    int
 	clearTarget string
 	clearAll    bool
 	requestID   int
@@ -222,14 +223,14 @@ func (m *model) normalizeLabSelection() {
 	if m.lab.selected >= len(m.lab.routing.Routes) {
 		m.lab.selected = len(m.lab.routing.Routes) - 1
 	}
+	pageRows := m.labPageRows()
+	maxOffset := max(0, len(m.lab.routing.Routes)-pageRows)
+	m.lab.offset = max(0, min(m.lab.offset, maxOffset))
 	if m.lab.offset > m.lab.selected {
 		m.lab.offset = m.lab.selected
 	}
-	if m.lab.selected >= m.lab.offset+labRouteVisibleRows {
-		m.lab.offset = m.lab.selected - labRouteVisibleRows + 1
-	}
-	if m.lab.offset < 0 {
-		m.lab.offset = 0
+	if m.lab.selected >= m.lab.offset+pageRows {
+		m.lab.offset = m.lab.selected - pageRows + 1
 	}
 }
 
@@ -241,10 +242,15 @@ func (m *model) selectedLabRoute() (actions.SSHRouteDebug, bool) {
 	return m.lab.routing.Routes[m.lab.selected], true
 }
 
-func (m *model) renderLabRoutingBody(contentWidth int) string {
+func (m *model) renderLabRoutingBody(contentWidth int, bodyHeight int) string {
+	m.resizeLabPage(bodyHeight)
 	width := max(36, min(contentWidth, theme.HeroMaxWidth+10))
+	summary := m.renderLabRouteSummary(width)
+	if bodyHeight < 7 {
+		return summary
+	}
 	sections := []string{
-		m.renderLabRouteSummary(width),
+		summary,
 		"",
 		m.renderLabRouteBrowser(width),
 	}
@@ -282,7 +288,7 @@ func (m *model) renderLabRouteBrowser(width int) string {
 		NameWidth:        34,
 		TypeWidth:        24,
 		MinDetailWidth:   12,
-		VisibleRows:      labRouteVisibleRows,
+		VisibleRows:      m.labPageRows(),
 		PreserveTypeCase: true,
 		Rows:             m.labRouteBrowserRows(),
 		SelectedIndex:    m.labRouteSelectedIndex(),
@@ -313,7 +319,7 @@ func (m *model) labVisibleRoutes() []actions.SSHRouteDebug {
 	}
 	m.normalizeLabSelection()
 	start := min(max(m.lab.offset, 0), len(routes))
-	end := min(len(routes), start+labRouteVisibleRows)
+	end := min(len(routes), start+m.labPageRows())
 	return routes[start:end]
 }
 
@@ -333,14 +339,27 @@ func (m *model) labRouteCountLabel() string {
 		return "0 routes"
 	}
 	start := min(total, m.lab.offset+1)
-	end := min(total, m.lab.offset+labRouteVisibleRows)
-	if total <= labRouteVisibleRows {
+	pageRows := m.labPageRows()
+	end := min(total, m.lab.offset+pageRows)
+	if total <= pageRows {
 		if total == 1 {
 			return "1 route"
 		}
 		return fmt.Sprintf("%d routes", total)
 	}
 	return fmt.Sprintf("%d-%d of %d routes", start, end, total)
+}
+
+func (m *model) resizeLabPage(bodyHeight int) {
+	m.lab.pageRows = max(1, min(labRouteVisibleRows, bodyHeight-6))
+	m.normalizeLabSelection()
+}
+
+func (m *model) labPageRows() int {
+	if m.lab.pageRows <= 0 {
+		return labRouteVisibleRows
+	}
+	return m.lab.pageRows
 }
 
 func (m *model) labBrowserNotice() string {
