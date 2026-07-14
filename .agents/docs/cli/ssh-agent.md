@@ -24,7 +24,7 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 - GitHub/GitLab repo routes are considered proven only after a provider repo probe. Exact proven repo routes emit only the proven key; same-owner and same-host history only rank candidates.
 - Explicit `ssh` client commands resolve as plain SSH targets even when launched from inside a Git working tree.
 - Cold daemon sessions can hydrate on first agent use if policy allows it.
-- The listener retries temporary accept failures with bounded backoff, exits quietly when closed, and logs terminal failures.
+- The listener retries temporary accept failures with bounded backoff, exits quietly when closed, and logs terminal failures. Shutdown closes every tracked client before waiting, so an idle SSH process cannot pin the daemon.
 - External agent use goes through `ActionExternal`, not the TUI-style view path.
 - `forged-sign` now does an auth preflight so Git commit signing can show cleaner auth errors.
 - Raw SSH agent protocol is still limited in how much error detail it can surface back to callers.

@@ -14,21 +14,25 @@ import (
 )
 
 type Broker struct {
-	paths      config.Paths
-	logger     *slog.Logger
-	helper     *HelperClient
-	password   *PasswordVerifier
-	leases     *leaseState
-	session    SessionController
-	sessionMu  sync.Mutex
-	nativeMu   sync.RWMutex
-	native     CapabilityState
-	systemMu   sync.Mutex
-	systemRun  *systemAuthCall
-	cooldown   systemAuthCooldown
-	pwMu       sync.Mutex
-	pwRunning  bool
-	pwCooldown time.Time
+	paths       config.Paths
+	logger      *slog.Logger
+	helper      *HelperClient
+	password    *PasswordVerifier
+	leases      *leaseState
+	session     SessionController
+	sessionMu   sync.Mutex
+	nativeMu    sync.RWMutex
+	native      CapabilityState
+	systemMu    sync.Mutex
+	systemRun   *systemAuthCall
+	cooldown    systemAuthCooldown
+	pwMu        sync.Mutex
+	pwRunning   bool
+	pwCooldown  time.Time
+	lifecycleMu sync.Mutex
+	stopping    bool
+	stopOnce    sync.Once
+	background  sync.WaitGroup
 }
 
 type systemAuthCall struct {
@@ -83,10 +87,24 @@ func NewBroker(paths config.Paths, helperPath string, logger *slog.Logger, sessi
 	return b
 }
 
+func (b *Broker) BeginStop() {
+	b.stopOnce.Do(func() {
+		b.lifecycleMu.Lock()
+		b.stopping = true
+		b.lifecycleMu.Unlock()
+		if b.helper != nil {
+			_ = b.helper.Close()
+		}
+	})
+}
+
+func (b *Broker) Wait() {
+	b.background.Wait()
+}
+
 func (b *Broker) Close() {
-	if b.helper != nil {
-		_ = b.helper.Close()
-	}
+	b.BeginStop()
+	b.Wait()
 	b.Invalidate("shutdown")
 }
 
@@ -272,10 +290,19 @@ func (b *Broker) promptPasswordUnlock() {
 		b.pwMu.Unlock()
 		return
 	}
+	b.lifecycleMu.Lock()
+	if b.stopping {
+		b.lifecycleMu.Unlock()
+		b.pwMu.Unlock()
+		return
+	}
 	b.pwRunning = true
+	b.background.Add(1)
+	b.lifecycleMu.Unlock()
 	b.pwMu.Unlock()
 
 	go func() {
+		defer b.background.Done()
 		b.runPasswordUnlock()
 		b.pwMu.Lock()
 		b.pwRunning = false

@@ -49,6 +49,8 @@ type Daemon struct {
 	syncRetryDelay time.Duration
 	logger         *slog.Logger
 	stop           chan struct{}
+	stopOnce       sync.Once
+	shutdownOnce   sync.Once
 }
 
 func New(paths config.Paths) *Daemon {
@@ -124,7 +126,9 @@ func (d *Daemon) KeyStore() *vault.KeyStore {
 }
 
 func (d *Daemon) Stop() {
-	close(d.stop)
+	d.stopOnce.Do(func() {
+		close(d.stop)
+	})
 }
 
 func (d *Daemon) helperBinaryPath() string {
@@ -976,20 +980,35 @@ func (d *Daemon) waitForSignal() {
 }
 
 func (d *Daemon) shutdown() {
+	d.shutdownOnce.Do(d.shutdownNow)
+}
+
+func (d *Daemon) shutdownNow() {
 	d.logger.Info("shutting down")
+	d.Stop()
 
 	if d.agentServer != nil {
-		d.agentServer.Stop()
+		d.agentServer.BeginStop()
+	}
+	if d.ipcServer != nil {
+		d.ipcServer.BeginStop()
+	}
+	if d.authBroker != nil {
+		d.authBroker.BeginStop()
 	}
 
+	if d.agentServer != nil {
+		d.agentServer.Wait()
+	}
 	if d.ipcServer != nil {
-		d.ipcServer.Stop()
+		d.ipcServer.Wait()
 	}
 
 	if d.authBroker != nil {
 		d.authBroker.Close()
+	} else {
+		d.clearActiveSession("shutdown")
 	}
-	d.clearActiveSession("shutdown")
 
 	removeOwnedPIDFile(d.paths.PIDFile(), os.Getpid())
 

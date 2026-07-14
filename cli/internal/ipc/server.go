@@ -31,10 +31,13 @@ type SSHRouteHandler interface {
 type Server struct {
 	socketPath     string
 	stateMu        sync.RWMutex
+	lifecycleMu    sync.Mutex
 	vault          *vault.Vault
 	keyStore       *vault.KeyStore
 	activityLog    *activity.ActivityLog
 	listener       net.Listener
+	connections    map[net.Conn]struct{}
+	stopping       bool
 	logger         *slog.Logger
 	wg             sync.WaitGroup
 	syncBus        *forgedsync.Bus
@@ -105,37 +108,72 @@ func NewServer(socketPath string, v *vault.Vault, ks *vault.KeyStore, al *activi
 		keyStore:    ks,
 		activityLog: al,
 		logger:      logger,
+		connections: make(map[net.Conn]struct{}),
 	}
 }
 
 func (s *Server) Start() error {
+	s.lifecycleMu.Lock()
+	if s.stopping {
+		s.lifecycleMu.Unlock()
+		return fmt.Errorf("starting IPC server: already stopping")
+	}
+	if s.listener != nil {
+		s.lifecycleMu.Unlock()
+		return fmt.Errorf("starting IPC server: already started")
+	}
 	ln, err := platform.Listen(s.socketPath)
 	if err != nil {
+		s.lifecycleMu.Unlock()
 		return err
 	}
-
 	s.listener = ln
-
 	s.wg.Add(1)
+	s.lifecycleMu.Unlock()
+
 	go func() {
 		defer s.wg.Done()
-		s.acceptLoop()
+		s.acceptLoop(ln)
 	}()
 
 	return nil
 }
 
-func (s *Server) Stop() {
-	if s.listener != nil {
-		s.listener.Close()
+func (s *Server) BeginStop() {
+	s.lifecycleMu.Lock()
+	if s.stopping {
+		s.lifecycleMu.Unlock()
+		return
 	}
+	s.stopping = true
+	listener := s.listener
+	connections := make([]net.Conn, 0, len(s.connections))
+	for conn := range s.connections {
+		connections = append(connections, conn)
+	}
+	s.lifecycleMu.Unlock()
+
+	if listener != nil {
+		_ = listener.Close()
+	}
+	for _, conn := range connections {
+		_ = conn.Close()
+	}
+}
+
+func (s *Server) Wait() {
 	s.wg.Wait()
 }
 
-func (s *Server) acceptLoop() {
+func (s *Server) Stop() {
+	s.BeginStop()
+	s.Wait()
+}
+
+func (s *Server) acceptLoop(listener net.Listener) {
 	var retryDelay time.Duration
 	for {
-		conn, err := s.listener.Accept()
+		conn, err := listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return
@@ -155,13 +193,34 @@ func (s *Server) acceptLoop() {
 			return
 		}
 		retryDelay = 0
-		s.wg.Add(1)
-		go func() {
+		if !s.admit(conn) {
+			_ = conn.Close()
+			return
+		}
+		go func(conn net.Conn) {
 			defer s.wg.Done()
+			defer s.release(conn)
 			defer conn.Close()
 			s.handleConn(conn)
-		}()
+		}(conn)
 	}
+}
+
+func (s *Server) admit(conn net.Conn) bool {
+	s.lifecycleMu.Lock()
+	defer s.lifecycleMu.Unlock()
+	if s.stopping {
+		return false
+	}
+	s.connections[conn] = struct{}{}
+	s.wg.Add(1)
+	return true
+}
+
+func (s *Server) release(conn net.Conn) {
+	s.lifecycleMu.Lock()
+	delete(s.connections, conn)
+	s.lifecycleMu.Unlock()
 }
 
 func (s *Server) handleConn(conn net.Conn) {
