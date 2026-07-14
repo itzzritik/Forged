@@ -280,12 +280,6 @@ func (s *Service) ExpireBefore(cutoff time.Time) {
 	}
 }
 
-func (s *Service) deleteAttempt(attempt Attempt) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.deleteAttemptLocked(attempt)
-}
-
 func (s *Service) deleteAttemptLocked(attempt Attempt) {
 	delete(s.attempts, routeAttemptKey(attempt.Token, attempt.ClientPID))
 	if legacy, ok := s.attempts[attempt.Token]; ok && legacy.ClientPID == attempt.ClientPID {

@@ -142,10 +142,6 @@ func (ks *KeyStore) ClearSSHRoute(target string, updated time.Time) error {
 	return nil
 }
 
-func ensureSSHRoutes(data *VaultData) {
-	ensureSSHData(data)
-}
-
 func ensureSSHData(data *VaultData) {
 	if data.SSH.Routes == nil {
 		data.SSH.Routes = map[string]SSHRoute{}

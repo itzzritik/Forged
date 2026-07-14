@@ -5,7 +5,6 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
-	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
 func (e *Engine) ensureConfigFile(paths config.Paths) error {
@@ -105,13 +104,4 @@ func serviceNeedsRepair(snapshot Snapshot) bool {
 		return false
 	}
 	return !serviceHealthy(snapshot)
-}
-
-func createEmptyVaultForRestore(paths config.Paths, password []byte) error {
-	v, err := vault.Create(paths.VaultFile(), password)
-	if err != nil {
-		return err
-	}
-	v.Close()
-	return nil
 }

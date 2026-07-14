@@ -260,15 +260,6 @@ func cleanupLegacySSHArtifacts(paths Paths) error {
 	return nil
 }
 
-func cleanupAllSSHArtifacts(paths Paths) error {
-	if err := cleanupLegacySSHArtifacts(paths); err != nil {
-		return err
-	}
-	_ = os.Remove(paths.SSHManagedConfig())
-	_ = os.RemoveAll(paths.SSHManagedDir())
-	return nil
-}
-
 func ensureManagedSSHConfig(paths Paths) error {
 	if _, err := os.Stat(paths.SSHManagedConfig()); err == nil {
 		return nil

@@ -236,41 +236,6 @@ func (e *Engine) RemoteStatus(ctx context.Context, state *SyncState) (StatusResu
 	return StatusResult{}, ErrStatusUnsupported
 }
 
-func (e *Engine) push() error {
-	state := DefaultSyncState("")
-	return e.PushCurrent(context.Background(), &state)
-}
-
-func (e *Engine) retryWithBackoff(fn func() error) {
-	delays := []time.Duration{
-		1 * time.Second,
-		2 * time.Second,
-		4 * time.Second,
-		8 * time.Second,
-		16 * time.Second,
-		30 * time.Second,
-		60 * time.Second,
-		5 * time.Minute,
-	}
-
-	for _, delay := range delays {
-		time.Sleep(delay)
-
-		if err := fn(); err == nil {
-			if e.logger != nil {
-				e.logger.Info("sync retry succeeded")
-			}
-			return
-		}
-		if e.logger != nil {
-			e.logger.Debug("sync retry failed, backing off", "next_delay", delay*2)
-		}
-	}
-	if e.logger != nil {
-		e.logger.Warn("sync retries exhausted, will try again next interval")
-	}
-}
-
 func (e *Engine) decodeBaseBlob(blob []byte) (vault.VaultData, error) {
 	if len(blob) == 0 {
 		return vault.VaultData{}, nil

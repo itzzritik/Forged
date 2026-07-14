@@ -197,11 +197,6 @@ func viewKey(paths config.Paths, name string, full bool) (KeyDetail, error) {
 	return result, nil
 }
 
-func authorizeSensitive(paths config.Paths, action sensitiveauth.Action, password []byte) error {
-	_, err := authorizeSensitiveResult(paths, action, password)
-	return err
-}
-
 func AuthorizeExternalUse(paths config.Paths) error {
 	_, err := authorizeSensitiveResult(paths, sensitiveauth.ActionExternal, nil)
 	return err
