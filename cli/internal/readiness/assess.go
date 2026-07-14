@@ -3,6 +3,7 @@ package readiness
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"strings"
 	"time"
@@ -67,7 +68,6 @@ func (e *Engine) Assess() (Snapshot, error) {
 		ConfigExists:       e.pathExists(e.Paths.ConfigFile()),
 		ManagedConfigReady: e.pathExists(e.Paths.SSHManagedConfig()),
 		AgentDisabled:      config.IsAgentDisabled(e.Paths),
-		SSHEnabled:         e.isSSH(e.Paths),
 		CurrentBuildID:     buildinfo.CurrentID(),
 	}
 	if snapshot.ConfigExists {
@@ -77,6 +77,17 @@ func (e *Engine) Assess() (Snapshot, error) {
 			snapshot.ConfigValid = true
 		}
 	}
+	if loggedIn, err := e.credentials(e.Paths); err == nil {
+		snapshot.LoggedIn = loggedIn
+	}
+
+	if err := e.Paths.ValidateRuntimePaths(); err != nil {
+		snapshot.RuntimePathError = fmt.Sprintf("resolving runtime socket paths: %v", err)
+		snapshot.State = classifyState(snapshot)
+		return snapshot, nil
+	}
+
+	snapshot.SSHEnabled = e.isSSH(e.Paths)
 
 	service, err := e.serviceStatus(e.Paths)
 	if err != nil {
@@ -97,10 +108,6 @@ func (e *Engine) Assess() (Snapshot, error) {
 		snapshot.IdentityAgentOwner = owner
 	}
 
-	if loggedIn, err := e.credentials(e.Paths); err == nil {
-		snapshot.LoggedIn = loggedIn
-	}
-
 	if snapshot.IPCSocketReady {
 		if status, err := e.daemonStatus(e.Paths.CtlSocket()); err == nil {
 			snapshot.KeyCount = status.KeyCount
@@ -113,6 +120,9 @@ func (e *Engine) Assess() (Snapshot, error) {
 }
 
 func classifyState(s Snapshot) State {
+	if strings.TrimSpace(s.RuntimePathError) != "" {
+		return StateBlocked
+	}
 	if s.ConfigExists && !s.ConfigValid {
 		return StateBlocked
 	}

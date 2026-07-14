@@ -12,6 +12,10 @@ import (
 	"time"
 )
 
+func CurrentUserPipeIdentityError() error {
+	return nil
+}
+
 // Listen binds the daemon's agent.sock / ctl.sock as a Unix-domain socket.
 // Stale paths must be removed before this call. The returned listener removes
 // only the socket inode that it originally bound.

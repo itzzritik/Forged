@@ -30,6 +30,9 @@ func DefaultRuntimeSpec() (RuntimeSpec, error) {
 }
 
 func EnsureService(paths config.Paths, runtime RuntimeSpec) error {
+	if err := paths.ValidateRuntimePaths(); err != nil {
+		return err
+	}
 	runtime, err := normalizeRuntimeSpec(runtime)
 	if err != nil {
 		return err

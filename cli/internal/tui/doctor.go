@@ -29,7 +29,7 @@ func (m *model) isDoctorOverviewRoute() bool {
 
 func (m *model) isDoctorDashboardTab() bool {
 	if m.screen != screenDashboard ||
-		!m.snapshot.VaultExists ||
+		(!m.snapshot.VaultExists && strings.TrimSpace(m.snapshot.RuntimePathError) == "") ||
 		m.session.Current().ID != RouteDashboardHome {
 		return false
 	}
@@ -109,11 +109,11 @@ func (m *model) doctorFooterActions(includeTabs bool) []shell.FooterAction {
 	if m.doctorCanFixIssues() && !m.maintenanceBusy {
 		actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Fix"})
 	}
-	actions = append(actions,
-		shell.FooterAction{Key: "C", Label: "Copy"},
-		shell.FooterAction{Key: "R", Label: "Refresh"},
-		shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
-	)
+	actions = append(actions, shell.FooterAction{Key: "C", Label: "Copy"})
+	if strings.TrimSpace(m.snapshot.RuntimePathError) == "" {
+		actions = append(actions, shell.FooterAction{Key: "R", Label: "Refresh"})
+	}
+	actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 	return actions
 }
 
@@ -125,6 +125,9 @@ func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "r", "R":
+		if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+			return m, nil
+		}
 		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd(), m.invalidateSigningStatusCmd())
 	case "up", "k":
 		m.moveDoctorOffset(-1)
@@ -165,6 +168,9 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.moveDoctorOffset(1)
 		return m, nil
 	case "r", "R":
+		if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+			return m, nil
+		}
 		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd(), m.invalidateSigningStatusCmd())
 	case "c", "C":
 		return m, m.copyDoctorReportCmd()
@@ -264,6 +270,9 @@ func (m *model) startDoctorRepair(password []byte) tea.Cmd {
 
 func (m *model) doctorCanFixIssues() bool {
 	s := m.snapshot
+	if strings.TrimSpace(s.RuntimePathError) != "" {
+		return false
+	}
 	if !s.VaultExists {
 		return false
 	}
@@ -314,6 +323,27 @@ func (m *model) doctorRows() []doctorRow {
 	return rows
 }
 
+func (m *model) doctorRepairDetail(detail string) string {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+		return "Resolve the Windows pipe identity before repair"
+	}
+	return detail
+}
+
+func (m *model) doctorRuntimePathUnavailableRow(check string) (doctorRow, bool) {
+	if runtimePathError := strings.TrimSpace(m.snapshot.RuntimePathError); runtimePathError != "" {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  check,
+				Status: theme.Glyphs.Cross + " Unavailable",
+				Detail: runtimePathError,
+				Tone:   doctorscreen.ToneDanger,
+			},
+		}, true
+	}
+	return doctorRow{}, false
+}
+
 func (m *model) doctorVaultRow(paths config.Paths) doctorRow {
 	if m.snapshot.VaultExists {
 		return doctorRow{
@@ -326,9 +356,11 @@ func (m *model) doctorVaultRow(paths config.Paths) doctorRow {
 		}
 	}
 
-	detail := "Set up or restore this device"
-	if m.snapshot.LoggedIn {
+	detail := "Resolve the Windows pipe identity before setup or restore"
+	if strings.TrimSpace(m.snapshot.RuntimePathError) == "" && m.snapshot.LoggedIn {
 		detail = "Fix Issues can restore this device"
+	} else if strings.TrimSpace(m.snapshot.RuntimePathError) == "" {
+		detail = "Set up or restore this device"
 	}
 	return doctorRow{
 		screen: doctorscreen.Row{
@@ -369,13 +401,16 @@ func (m *model) doctorConfigRow(paths config.Paths) doctorRow {
 		screen: doctorscreen.Row{
 			Check:  "Config",
 			Status: theme.Glyphs.Cross + " Missing",
-			Detail: "Run Fix Issues",
+			Detail: m.doctorRepairDetail("Run Fix Issues"),
 			Tone:   doctorscreen.ToneDanger,
 		},
 	}
 }
 
 func (m *model) doctorServiceRow() doctorRow {
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("Service"); unavailable {
+		return row
+	}
 	if m.snapshot.Service.Installed && m.snapshot.Service.ConfigValid {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -396,6 +431,7 @@ func (m *model) doctorServiceRow() doctorRow {
 			detail = "Service configuration is invalid"
 		}
 	}
+	detail = m.doctorRepairDetail(detail)
 
 	return doctorRow{
 		screen: doctorscreen.Row{
@@ -408,6 +444,9 @@ func (m *model) doctorServiceRow() doctorRow {
 }
 
 func (m *model) doctorDaemonRow() doctorRow {
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("Daemon"); unavailable {
+		return row
+	}
 	if m.snapshot.Service.Running {
 		detail := "Running"
 		if m.snapshot.DaemonPID > 0 {
@@ -418,7 +457,7 @@ func (m *model) doctorDaemonRow() doctorRow {
 				screen: doctorscreen.Row{
 					Check:  "Daemon",
 					Status: theme.Glyphs.Cross + " Outdated",
-					Detail: "Run Fix Issues",
+					Detail: m.doctorRepairDetail("Run Fix Issues"),
 					Tone:   doctorscreen.ToneDanger,
 				},
 			}
@@ -436,13 +475,16 @@ func (m *model) doctorDaemonRow() doctorRow {
 		screen: doctorscreen.Row{
 			Check:  "Daemon",
 			Status: theme.Glyphs.Cross + " Not running",
-			Detail: "Run Fix Issues",
+			Detail: m.doctorRepairDetail("Run Fix Issues"),
 			Tone:   doctorscreen.ToneDanger,
 		},
 	}
 }
 
 func (m *model) doctorIPCSocketRow(paths config.Paths) doctorRow {
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("IPC Socket"); unavailable {
+		return row
+	}
 	if m.snapshot.IPCSocketReady {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -464,6 +506,9 @@ func (m *model) doctorIPCSocketRow(paths config.Paths) doctorRow {
 }
 
 func (m *model) doctorAgentSocketRow(paths config.Paths) doctorRow {
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("Agent Socket"); unavailable {
+		return row
+	}
 	if m.snapshot.AgentSocketReady {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -490,10 +535,13 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "SSH Agent",
 				Status: "! Disabled",
-				Detail: "Fix Issues will re-enable it",
+				Detail: m.doctorRepairDetail("Fix Issues will re-enable it"),
 				Tone:   doctorscreen.ToneWarning,
 			},
 		}
+	}
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("SSH Agent"); unavailable {
+		return row
 	}
 	if m.snapshot.SSHEnabled {
 		return doctorRow{
@@ -509,7 +557,7 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 		screen: doctorscreen.Row{
 			Check:  "SSH Agent",
 			Status: theme.Glyphs.Cross + " Not active",
-			Detail: "Run Fix Issues",
+			Detail: m.doctorRepairDetail("Run Fix Issues"),
 			Tone:   doctorscreen.ToneDanger,
 		},
 	}
@@ -521,10 +569,13 @@ func (m *model) doctorSSHConfigRow(paths config.Paths) doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "SSH Config",
 				Status: "! Disabled",
-				Detail: "Fix Issues will re-enable it",
+				Detail: m.doctorRepairDetail("Fix Issues will re-enable it"),
 				Tone:   doctorscreen.ToneWarning,
 			},
 		}
+	}
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("SSH Config"); unavailable {
+		return row
 	}
 	if m.snapshot.ManagedConfigReady {
 		return doctorRow{
@@ -552,10 +603,13 @@ func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "IdentityAgent",
 				Status: "! Disabled",
-				Detail: "Fix Issues will re-enable it",
+				Detail: m.doctorRepairDetail("Fix Issues will re-enable it"),
 				Tone:   doctorscreen.ToneWarning,
 			},
 		}
+	}
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("IdentityAgent"); unavailable {
+		return row
 	}
 	if m.snapshot.IdentityAgentOwner.IsForged() {
 		detail := paths.AgentSocket()
@@ -598,6 +652,9 @@ func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
 }
 
 func (m *model) doctorSyncAccountRow() doctorRow {
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("Sync Account"); unavailable {
+		return row
+	}
 	if !m.snapshot.LoggedIn {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -653,6 +710,9 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 }
 
 func (m *model) doctorSystemAuthRow() doctorRow {
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("System Auth"); unavailable {
+		return row
+	}
 	if !m.securityLoaded {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -722,6 +782,9 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 }
 
 func (m *model) doctorSecureStoreRow() doctorRow {
+	if row, unavailable := m.doctorRuntimePathUnavailableRow("Secure Store"); unavailable {
+		return row
+	}
 	if !m.securityLoaded {
 		return doctorRow{
 			screen: doctorscreen.Row{

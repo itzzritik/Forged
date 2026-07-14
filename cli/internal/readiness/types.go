@@ -47,6 +47,7 @@ type PasswordPrompt func(reason string) ([]byte, error)
 
 type Snapshot struct {
 	State              State
+	RuntimePathError   string
 	KeyCount           int
 	CurrentBuildID     string
 	DaemonBuildID      string

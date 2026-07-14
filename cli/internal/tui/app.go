@@ -555,6 +555,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.snapshot = msg.snapshot
 		m.runtimeLoaded = false
+		if runtimePathError := strings.TrimSpace(msg.snapshot.RuntimePathError); runtimePathError != "" {
+			m.enterRuntimePathRecovery(runtimePathError)
+			return m, nil
+		}
 		if m.screen == screenLogin {
 			return m, m.startLoginFlow()
 		}
@@ -941,7 +945,7 @@ func (m *model) View() string {
 func (m *model) isTabbedDashboardRoot() bool {
 	return m.bootAssessed &&
 		m.screen == screenDashboard &&
-		m.snapshot.VaultExists &&
+		(m.snapshot.VaultExists || strings.TrimSpace(m.snapshot.RuntimePathError) != "") &&
 		!m.isWelcomeState() &&
 		!m.isKeyRoute() &&
 		m.currentDashboardSection() == nil &&
@@ -1031,6 +1035,9 @@ func (m *model) systemHeaderItem() shell.StatusItem {
 }
 
 func (m *model) commitSigningHeaderItem() shell.StatusItem {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+		return shell.StatusItem{Label: "Signing unavailable", Tone: shell.StatusToneDanger}
+	}
 	if !m.signingLoaded {
 		return shell.StatusItem{Label: "Checking signing", Icon: m.spinner.View()}
 	}
@@ -1048,6 +1055,9 @@ func (m *model) commitSigningHeaderItem() shell.StatusItem {
 }
 
 func (m *model) vaultSyncHeaderItem() shell.StatusItem {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+		return shell.StatusItem{Label: "Daemon/IPC unavailable", Tone: shell.StatusToneDanger}
+	}
 	switch m.systemHeader {
 	case systemHeaderChecking:
 		return shell.StatusItem{Label: "Checking vault", Icon: m.spinner.View()}
@@ -1085,7 +1095,7 @@ func (m *model) headerPageTitle() string {
 	if m.isWelcomeState() {
 		return ""
 	}
-	if m.screen == screenDashboard && (m.snapshot.VaultExists || m.isDoctorOverviewRoute()) {
+	if m.screen == screenDashboard && (m.snapshot.VaultExists || m.isDoctorOverviewRoute() || strings.TrimSpace(m.snapshot.RuntimePathError) != "") {
 		if m.isKeyRoute() {
 			return m.keyHeaderTitle()
 		}
@@ -1151,7 +1161,7 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 		return nil
 	}
 
-	if m.screen == screenDashboard && (m.snapshot.VaultExists || m.isDoctorOverviewRoute()) {
+	if m.screen == screenDashboard && (m.snapshot.VaultExists || m.isDoctorOverviewRoute() || strings.TrimSpace(m.snapshot.RuntimePathError) != "") {
 		if m.isKeyRoute() {
 			return m.keyBreadcrumbs()
 		}
@@ -1547,6 +1557,9 @@ func (m *model) footerActions() []shell.FooterAction {
 			}
 		}
 		if m.isAgentHomeRoute() {
+			if strings.TrimSpace(m.snapshot.RuntimePathError) != "" && m.snapshot.AgentDisabled {
+				return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+			}
 			return []shell.FooterAction{
 				{Key: theme.Glyphs.UpDown, Label: "Move"},
 				{Key: "Enter", Label: "Open"},
@@ -1628,6 +1641,14 @@ func (m *model) footerActions() []shell.FooterAction {
 			}
 		}
 		if tabs := m.dashboardTabs(); len(tabs) > 0 {
+			if strings.TrimSpace(m.snapshot.RuntimePathError) != "" &&
+				m.snapshot.AgentDisabled &&
+				tabs[m.dashboardTabIndex].Label == "Agent" {
+				return []shell.FooterAction{
+					{Key: theme.Glyphs.LeftRight, Label: "Tabs"},
+					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+				}
+			}
 			return []shell.FooterAction{
 				{Key: theme.Glyphs.LeftRight, Label: "Tabs"},
 				{Key: theme.Glyphs.UpDown, Label: "Pages"},
@@ -2051,6 +2072,12 @@ func (m *model) dashboardLead() string {
 }
 
 func (m *model) dashboardTabs() []dashboardTab {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+		return []dashboardTab{
+			{Label: "Agent", Pages: m.agentDashboardPages()},
+			{Label: "Doctor"},
+		}
+	}
 	if !m.snapshot.VaultExists {
 		return nil
 	}
@@ -2079,6 +2106,23 @@ func (m *model) dashboardTabs() []dashboardTab {
 		},
 	}
 	return tabs
+}
+
+func (m *model) enterRuntimePathRecovery(runtimePathError string) {
+	m.cancelLoginFlow()
+	m.discardPasswordInput()
+	route := RouteDashboardHome
+	if m.intent.Entry == RouteDoctorOverview || m.session.Current().ID == RouteDoctorOverview {
+		route = RouteDoctorOverview
+	}
+	m.session.Reset(Route{ID: route})
+	m.dashboardTabIndex = 0
+	m.dashboardPageIndices = nil
+	m.agent.selected = 0
+	m.runtimeLoaded = false
+	m.screen = screenDashboard
+	m.systemHeader = systemHeaderUnhealthy
+	m.notice = notice{message: runtimePathError, tone: dashboardscreen.ToneDanger}
 }
 
 func (m *model) normalizeDashboardSelection(tabs []dashboardTab) {
@@ -2183,8 +2227,14 @@ func (m *model) switchDashboardTab(delta int, tabs []dashboardTab) tea.Cmd {
 	case "Manage":
 		return m.loadSecurityStateCmd()
 	case "Agent":
+		if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+			return nil
+		}
 		return tea.Batch(m.refreshSnapshotCmd(), m.loadSigningStatusCmd())
 	case "Doctor":
+		if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+			return nil
+		}
 		return tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd())
 	default:
 		return nil
@@ -2217,7 +2267,7 @@ func (m *model) currentDashboardSection() *dashboardSection {
 }
 
 func (m *model) dashboardOptions() []dashboardscreen.Option {
-	if m.snapshot.VaultExists {
+	if m.snapshot.VaultExists || strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
 		return nil
 	}
 	return []dashboardscreen.Option{
@@ -2876,13 +2926,22 @@ func (m *model) showCurrentRoute() tea.Cmd {
 		m.showPasswordScreenOnRoute(RouteVaultChangePassword, passwordManageChange, "", "", false)
 		return m.passwordInput.Init()
 	case RouteAgentHome:
+		if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+			return nil
+		}
 		return tea.Batch(
 			m.refreshSnapshotCmd(),
 			m.loadSigningStatusCmd(),
 		)
 	case RouteAgentSigning:
+		if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+			return nil
+		}
 		return m.startAgentSigningRoute()
 	case RouteAgentRouting:
+		if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+			return nil
+		}
 		return m.startLabRoutingRoute()
 	case RouteVaultHome, RouteAccountStatus, RouteSyncHome, RouteDoctorOverview:
 		cmds := []tea.Cmd{}
@@ -2893,6 +2952,9 @@ func (m *model) showCurrentRoute() tea.Cmd {
 			m.loadStoredAccountIdentity()
 		}
 		if m.session.Current().ID == RouteDoctorOverview {
+			if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+				return nil
+			}
 			cmds = append(cmds, m.refreshSnapshotCmd(), m.loadSecurityStateCmd())
 		}
 		return tea.Batch(cmds...)
@@ -3063,12 +3125,15 @@ func (m *model) showDashboardNotice(message string, tone dashboardscreen.Tone) {
 func (m *model) isWelcomeState() bool {
 	return m.bootAssessed &&
 		m.screen == screenDashboard &&
+		strings.TrimSpace(m.snapshot.RuntimePathError) == "" &&
 		m.session.Current().ID != RouteDoctorOverview &&
 		len(m.dashboardOptions()) > 0
 }
 
 func (m *model) shouldShowProductRail() bool {
-	return !m.snapshot.VaultExists && !m.isDoctorOverviewRoute()
+	return !m.snapshot.VaultExists &&
+		strings.TrimSpace(m.snapshot.RuntimePathError) == "" &&
+		!m.isDoctorOverviewRoute()
 }
 
 func (m *model) serverURL() string {
@@ -3079,7 +3144,7 @@ func (m *model) serverURL() string {
 }
 
 func (m *model) pollRuntimeStatus(delay time.Duration) tea.Cmd {
-	if !m.snapshot.VaultExists {
+	if !m.snapshot.VaultExists || strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
 		return nil
 	}
 	m.runtimeStatusID++

@@ -3,19 +3,58 @@
 package platform
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"sync"
 	"time"
 
 	"github.com/Microsoft/go-winio"
+	"golang.org/x/sys/windows"
 )
 
-// Pipe paths kept here for callers that still hard-code them. New code should
-// read these from config.Paths instead, but these constants stay as a
-// fallback for parity with the old CtlPipeName / AgentPipeName references.
-const (
-	AgentPipeName = `\\.\pipe\forged-agent`
-	CtlPipeName   = `\\.\pipe\forged-ctl`
-)
+var currentUserPipes struct {
+	once  sync.Once
+	agent string
+	ctl   string
+	err   error
+}
+
+// CurrentUserPipePaths returns opaque, per-user named-pipe paths derived from
+// the current process token. The SID is never exposed in a pipe name.
+func CurrentUserPipePaths() (agent, ctl string, err error) {
+	currentUserPipes.once.Do(func() {
+		token := windows.GetCurrentProcessToken()
+		user, tokenErr := token.GetTokenUser()
+		if tokenErr != nil {
+			currentUserPipes.err = fmt.Errorf("%w: reading process token user: %v", ErrCurrentUserPipeIdentity, tokenErr)
+			return
+		}
+		if user == nil || user.User.Sid == nil {
+			currentUserPipes.err = fmt.Errorf("%w: process token has no user SID", ErrCurrentUserPipeIdentity)
+			return
+		}
+
+		sid := user.User.Sid.String()
+		if sid == "" {
+			currentUserPipes.err = fmt.Errorf("%w: converting process token SID", ErrCurrentUserPipeIdentity)
+			return
+		}
+		currentUserPipes.agent = userPipePath("agent", sid)
+		currentUserPipes.ctl = userPipePath("ctl", sid)
+	})
+	return currentUserPipes.agent, currentUserPipes.ctl, currentUserPipes.err
+}
+
+func CurrentUserPipeIdentityError() error {
+	_, _, err := CurrentUserPipePaths()
+	return err
+}
+
+func userPipePath(kind, sid string) string {
+	digest := sha256.Sum256([]byte("forged/windows-pipe/v1/" + kind + "\x00" + sid))
+	return `\\.\pipe\forged-` + kind + "-v1-" + hex.EncodeToString(digest[:])
+}
 
 func IsSocketAlive(path string) bool {
 	timeout := 500 * time.Millisecond

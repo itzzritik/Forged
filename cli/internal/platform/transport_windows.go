@@ -24,8 +24,11 @@ import (
 const pipeSecurityDescriptor = "D:P(A;;GA;;;OW)(A;;GA;;;SY)"
 
 // Listen binds the daemon's agent / ctl pipe. addr must be a full named-pipe
-// path (e.g. \\.\pipe\forged-agent).
+// path (e.g. \\.\pipe\<name>).
 func Listen(addr string) (net.Listener, error) {
+	if err := CurrentUserPipeIdentityError(); err != nil {
+		return nil, err
+	}
 	cfg := &winio.PipeConfig{
 		SecurityDescriptor: pipeSecurityDescriptor,
 		InputBufferSize:    65536,
@@ -40,6 +43,9 @@ func Listen(addr string) (net.Listener, error) {
 
 // Dial opens a client connection to the daemon over its named pipe.
 func Dial(addr string, timeout time.Duration) (net.Conn, error) {
+	if err := CurrentUserPipeIdentityError(); err != nil {
+		return nil, err
+	}
 	if timeout <= 0 {
 		timeout = 2 * time.Second
 	}
@@ -47,5 +53,8 @@ func Dial(addr string, timeout time.Duration) (net.Conn, error) {
 }
 
 func DialContext(ctx context.Context, addr string) (net.Conn, error) {
+	if err := CurrentUserPipeIdentityError(); err != nil {
+		return nil, err
+	}
 	return winio.DialPipeContext(ctx, addr)
 }

@@ -61,6 +61,9 @@ func New(paths config.Paths) *Daemon {
 }
 
 func (d *Daemon) Run(password []byte) error {
+	if err := d.paths.ValidateRuntimePaths(); err != nil {
+		return fmt.Errorf("resolving runtime socket paths: %w", err)
+	}
 	if err := d.setupLogging(); err != nil {
 		return fmt.Errorf("Setting up logging: %w", err)
 	}
@@ -248,8 +251,8 @@ func (d *Daemon) writePID() error {
 
 func (d *Daemon) startIPC() error {
 	ctlPath := d.paths.CtlSocket()
-	if err := os.MkdirAll(filepath.Dir(ctlPath), 0700); err != nil {
-		return fmt.Errorf("Creating socket directory: %w", err)
+	if err := ensureSocketDirectory(ctlPath); err != nil {
+		return err
 	}
 
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
@@ -283,8 +286,8 @@ func (d *Daemon) startIPC() error {
 
 func (d *Daemon) startAgentLocked() error {
 	agentPath := d.paths.AgentSocket()
-	if err := os.MkdirAll(filepath.Dir(agentPath), 0700); err != nil {
-		return fmt.Errorf("Creating socket directory: %w", err)
+	if err := ensureSocketDirectory(agentPath); err != nil {
+		return err
 	}
 
 	d.agent = forgedagent.New(d.keyStore)
@@ -297,6 +300,16 @@ func (d *Daemon) startAgentLocked() error {
 	}
 
 	d.logger.Info("ssh agent started", "socket", agentPath)
+	return nil
+}
+
+func ensureSocketDirectory(socketPath string) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
+		return fmt.Errorf("creating socket directory: %w", err)
+	}
 	return nil
 }
 

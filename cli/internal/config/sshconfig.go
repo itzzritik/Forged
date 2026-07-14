@@ -21,11 +21,15 @@ func SSHConfigPath() string {
 }
 
 func IsSSHAgentEnabled(paths Paths) bool {
+	if err := paths.ValidateRuntimePaths(); err != nil {
+		return false
+	}
 	data, err := os.ReadFile(paths.SSHUserConfig())
 	if err != nil {
 		return false
 	}
 	includes := forgedIncludeLines(paths)
+	agentSocket := paths.AgentSocket()
 
 	for _, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -37,7 +41,7 @@ func IsSSHAgentEnabled(paths Paths) bool {
 			return true
 		}
 
-		if strings.Contains(trimmed, "IdentityAgent") && strings.Contains(trimmed, paths.AgentSocket()) {
+		if strings.Contains(trimmed, "IdentityAgent") && agentSocket != "" && strings.Contains(trimmed, agentSocket) {
 			return true
 		}
 	}
@@ -46,6 +50,9 @@ func IsSSHAgentEnabled(paths Paths) bool {
 }
 
 func EnableSSHAgent(paths Paths) error {
+	if err := paths.ValidateRuntimePaths(); err != nil {
+		return err
+	}
 	return withSSHConfigLock(paths, func() error {
 		configPath := paths.SSHUserConfig()
 		if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
@@ -269,17 +276,91 @@ func cleanupLegacySSHArtifacts(paths Paths) error {
 }
 
 func ensureManagedSSHConfigLocked(paths Paths) error {
-	if _, err := os.Stat(paths.SSHManagedConfig()); err == nil {
-		return nil
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("Inspecting managed SSH config: %w", err)
+	path := paths.SSHManagedConfig()
+	content, err := readConfigFile(path)
+	if err != nil {
+		return fmt.Errorf("reading managed SSH config: %w", err)
+	}
+	if content == "" {
+		return writeSSHFileAtomic(path, []byte(RenderManagedSSHConfig(paths, "")))
 	}
 
-	baseContent := RenderManagedSSHConfig(paths, "")
-	return writeSSHFileAtomic(paths.SSHManagedConfig(), []byte(baseContent))
+	updated, err := updateManagedSSHIdentityAgent(content, paths.AgentSocket())
+	if err != nil {
+		return fmt.Errorf("updating managed SSH config: %w", err)
+	}
+	if updated == content {
+		return nil
+	}
+	return writeSSHFileAtomic(path, []byte(updated))
+}
+
+func updateManagedSSHIdentityAgent(content, agentSocket string) (string, error) {
+	lines := strings.Split(content, "\n")
+	marker := -1
+	for i, line := range lines {
+		if strings.TrimSpace(line) == sshAgentComment {
+			marker = i
+			break
+		}
+	}
+	if marker < 0 {
+		return "", fmt.Errorf("missing %q marker", sshAgentComment)
+	}
+
+	host := -1
+	for i := marker + 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) > 1 && strings.EqualFold(fields[0], "Host") {
+			for _, pattern := range fields[1:] {
+				if strings.HasPrefix(pattern, "#") {
+					break
+				}
+				if pattern == "*" {
+					host = i
+					break
+				}
+			}
+		}
+		break
+	}
+	if host < 0 {
+		return "", fmt.Errorf("missing Host block for *")
+	}
+
+	end := len(lines)
+	for i := host + 1; i < len(lines); i++ {
+		trimmed := strings.TrimSpace(lines[i])
+		if trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		fields := strings.Fields(trimmed)
+		if len(fields) > 0 && (strings.EqualFold(fields[0], "Host") || strings.EqualFold(fields[0], "Match")) {
+			end = i
+			break
+		}
+	}
+	identity := fmt.Sprintf("    IdentityAgent %q", agentSocket)
+	for i := host + 1; i < end; i++ {
+		fields := strings.Fields(lines[i])
+		if len(fields) > 0 && strings.EqualFold(fields[0], "IdentityAgent") {
+			lines[i] = identity
+			return strings.Join(lines, "\n"), nil
+		}
+	}
+
+	lines = append(lines[:host+1], append([]string{identity}, lines[host+1:]...)...)
+	return strings.Join(lines, "\n"), nil
 }
 
 func WriteManagedSSHConfig(paths Paths, content string) error {
+	if err := paths.ValidateRuntimePaths(); err != nil {
+		return err
+	}
 	return withSSHConfigLock(paths, func() error {
 		if err := os.MkdirAll(paths.SSHManagedDir(), 0o700); err != nil {
 			return fmt.Errorf("Creating managed SSH directory: %w", err)

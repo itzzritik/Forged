@@ -42,6 +42,9 @@ func (c *Client) CallContext(ctx context.Context, command string, args any) (Res
 	conn, err := platform.DialContext(dialCtx, c.socketPath)
 	cancelDial()
 	if err != nil {
+		if errors.Is(err, platform.ErrCurrentUserPipeIdentity) {
+			return Response{}, fmt.Errorf("connecting to daemon: %w", err)
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Response{}, fmt.Errorf("Connecting to daemon: %w", ctxErr)
 		}

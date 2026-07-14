@@ -4,7 +4,7 @@ applies_to:
   - cli/internal/tui/**
 depends_on:
   - cli/ipc.md
-last_verified: 2026-07-14
+last_verified: 2026-07-15
 stable: yes
 ---
 
@@ -26,6 +26,8 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Runtime and snapshot health checks accept only their newest generation; daemon transport loss and recovery each trigger one readiness refresh, including for local-only vaults.
 - Doctor marks a daemon as outdated when its IPC build id does not match the current CLI build; Fix Issues restarts the managed service through readiness.
 - Doctor validates `config.toml`, reports parse errors as blocked user action, and does not overwrite an invalid file during repair.
+- A Windows pipe-identity failure blocks daemon and IPC work without blocking TUI navigation or triggering repair retries; recovery mode exposes only Agent SSH-integration removal and Doctor, where it is non-repairable. Once removed, integration stays disabled until the pipe identity is resolved.
+- Runtime-path recovery preserves a direct `forged doctor` route and labels dependent checks unavailable rather than inferring health from zero, stale, or default values.
 - Doctor distinguishes unsupported System Auth from a prompt that is unavailable in the current environment.
 - Doctor shows explicit Linux headless mode as file-backed trust and labels desktop System Auth detection as terminal-local rather than daemon readiness.
 - Doctor security refreshes accept only their newest response and render inspection failures instead of staying on Checking or showing stale capability rows.

@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-07-14
+last_verified: 2026-07-15
 stable: partial
 ---
 
@@ -35,6 +35,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Linux user-service commands derive `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` when shells omit them, which is common in headless SSH or remote-editor sessions.
 - macOS service start and removal boot out current and legacy launchd labels before deleting legacy plists, so an old KeepAlive job cannot respawn.
 - Persistent Forged state lives under `~/.config/forged` on every OS. Auth/device trust lives under `~/.config/forged/auth`. Linux keeps runtime sockets under `/run/user/<uid>/forged`; macOS and Windows use `~/.config/forged/runtime` for runtime metadata, with Windows sockets using named pipes.
+- Windows pipe names are opaque, domain-separated hashes of the current process token SID; startup fails before binding if that identity cannot be resolved.
 - Windows support is still partial around socket transport and platform helpers.
 - Windows service health reads numeric Task Scheduler state through COM instead of localized command output, and stop/restart/removal propagate control failures. Daemon PID liveness uses native process state; Unix uses signal-zero liveness.
 - Shutdown is idempotent and two-phase: both listeners and their active connections close before any handler wait; native-auth waits are released without clearing the session; the vault closes only after admitted work finishes.

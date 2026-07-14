@@ -59,17 +59,20 @@ func Load(path string) (Config, error) {
 
 func Save(path string, cfg Config) error {
 	return withConfigLock(path, func() error {
-		return saveConfigLocked(path, cfg)
+		return saveConfigLocked(DefaultPaths(), path, cfg, true)
 	})
 }
 
-func saveConfigLocked(path string, cfg Config) error {
+func saveConfigLocked(paths Paths, path string, cfg Config, ensureAgentSocket bool) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("Creating config directory: %w", err)
 	}
 
-	if strings.TrimSpace(cfg.Agent.Socket) == "" {
-		cfg.Agent.Socket = DefaultPaths().AgentSocket()
+	if ensureAgentSocket && (strings.TrimSpace(cfg.Agent.Socket) == "" || isLegacyAgentSocket(cfg.Agent.Socket)) {
+		if err := paths.ValidateRuntimePaths(); err != nil {
+			return err
+		}
+		cfg.Agent.Socket = paths.AgentSocket()
 	}
 	if strings.TrimSpace(cfg.Agent.LogLevel) == "" {
 		cfg.Agent.LogLevel = "info"
@@ -130,14 +133,26 @@ func IsAgentDisabled(paths Paths) bool {
 	return cfg.Agent.Disabled
 }
 
+type agentSocketUpdatePolicy uint8
+
+const (
+	agentSocketPreserve agentSocketUpdatePolicy = iota
+	agentSocketEnsure
+	agentSocketEnsureOnCreate
+)
+
 func SetAgentDisabled(paths Paths, disabled bool) error {
-	return updateConfig(paths, func(cfg *Config) {
+	policy := agentSocketEnsure
+	if disabled {
+		policy = agentSocketPreserve
+	}
+	return updateConfig(paths, policy, func(cfg *Config) {
 		cfg.Agent.Disabled = disabled
 	})
 }
 
 func SetMasterPasswordInterval(paths Paths, interval string) error {
-	return updateConfig(paths, func(cfg *Config) {
+	return updateConfig(paths, agentSocketEnsureOnCreate, func(cfg *Config) {
 		cfg.Security.MasterPasswordInterval = NormalizeMasterPasswordInterval(interval)
 	})
 }
@@ -148,7 +163,7 @@ func HeadlessUnlockEnabled(paths Paths) bool {
 }
 
 func SetHeadlessUnlock(paths Paths, enabled bool) error {
-	return updateConfig(paths, func(cfg *Config) {
+	return updateConfig(paths, agentSocketEnsureOnCreate, func(cfg *Config) {
 		cfg.Security.HeadlessUnlock = enabled
 	})
 }
@@ -161,22 +176,61 @@ func EnsureDefault(paths Paths) error {
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("Inspecting config: %w", err)
 		}
-		return saveConfigLocked(path, Config{Agent: AgentConfig{Socket: paths.AgentSocket()}})
+		return saveConfigLocked(paths, path, Config{}, true)
 	})
 }
 
-func updateConfig(paths Paths, update func(*Config)) error {
+func MigrateLegacyAgentSocket(paths Paths) (bool, error) {
 	path := paths.ConfigFile()
-	return withConfigLock(path, func() error {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return false, nil
+	} else if err != nil {
+		return false, fmt.Errorf("Inspecting config: %w", err)
+	}
+
+	var migrated bool
+	err := withConfigLock(path, func() error {
+		if _, err := os.Stat(path); os.IsNotExist(err) {
+			return nil
+		} else if err != nil {
+			return fmt.Errorf("Inspecting config: %w", err)
+		}
 		cfg, err := Load(path)
 		if err != nil {
 			return err
 		}
-		if strings.TrimSpace(cfg.Agent.Socket) == "" {
-			cfg.Agent.Socket = paths.AgentSocket()
+		if !isLegacyAgentSocket(cfg.Agent.Socket) {
+			return nil
+		}
+		if err := paths.ValidateRuntimePaths(); err != nil {
+			return err
+		}
+		cfg.Agent.Socket = paths.AgentSocket()
+		if err := saveConfigLocked(paths, path, cfg, false); err != nil {
+			return err
+		}
+		migrated = true
+		return nil
+	})
+	return migrated, err
+}
+
+func updateConfig(paths Paths, socketPolicy agentSocketUpdatePolicy, update func(*Config)) error {
+	path := paths.ConfigFile()
+	return withConfigLock(path, func() error {
+		_, err := os.Stat(path)
+		configMissing := os.IsNotExist(err)
+		if err != nil && !configMissing {
+			return fmt.Errorf("Inspecting config: %w", err)
+		}
+		cfg, err := Load(path)
+		if err != nil {
+			return err
 		}
 		update(&cfg)
-		return saveConfigLocked(path, cfg)
+		ensureAgentSocket := socketPolicy == agentSocketEnsure ||
+			(socketPolicy == agentSocketEnsureOnCreate && configMissing)
+		return saveConfigLocked(paths, path, cfg, ensureAgentSocket)
 	})
 }
 

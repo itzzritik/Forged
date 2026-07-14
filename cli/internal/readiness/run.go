@@ -1,6 +1,10 @@
 package readiness
 
-import "errors"
+import (
+	"errors"
+
+	"github.com/itzzritik/forged/cli/internal/config"
+)
 
 type repairState struct {
 	result RunResult
@@ -11,7 +15,7 @@ func (e *Engine) Run(opts RunOptions) (RunResult, error) {
 	if err != nil {
 		return RunResult{}, err
 	}
-	if opts.Mode == ModeAssessOnly {
+	if snapshot.RuntimePathError != "" || opts.Mode == ModeAssessOnly {
 		return RunResult{
 			Snapshot: snapshot,
 			Next:     NextActionNone,
@@ -60,6 +64,18 @@ func (e *Engine) ensureConfigStage(state *repairState) error {
 	if state.result.Snapshot.ConfigExists {
 		if !state.result.Snapshot.ConfigValid {
 			e.markFailed(&state.result.Summary, "config")
+			return nil
+		}
+		migrated, err := config.MigrateLegacyAgentSocket(e.Paths)
+		if err != nil {
+			e.markFailed(&state.result.Summary, "config")
+			return err
+		}
+		if migrated {
+			if err := e.refreshSnapshot(state); err != nil {
+				return err
+			}
+			e.markFixed(&state.result.Summary, "config")
 		}
 		return nil
 	}

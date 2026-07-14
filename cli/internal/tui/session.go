@@ -54,6 +54,17 @@ func (s *Session) ReplaceCurrent(route Route) {
 	}
 }
 
+func (s *Session) Reset(route Route) {
+	if s == nil {
+		return
+	}
+	s.stack = []Route{{
+		ID:     route.ID,
+		Params: cloneParams(route.Params),
+	}}
+	s.boundary = 0
+}
+
 func (s *Session) CanGoBack() bool {
 	if s == nil {
 		return false

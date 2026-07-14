@@ -22,6 +22,7 @@ type agentItemID string
 
 const (
 	agentItemSSHToggle     agentItemID = "ssh-toggle"
+	agentItemSSHDisabled   agentItemID = "ssh-disabled"
 	agentItemCommitSigning agentItemID = "commit-signing"
 	agentItemSSHRouting    agentItemID = "ssh-routing"
 	agentListMinHeight                 = 6
@@ -76,7 +77,9 @@ type agentSigningFinishedMsg struct {
 }
 
 func (m *model) isAgentHomeRoute() bool {
-	return m.screen == screenDashboard && m.snapshot.VaultExists && m.session.Current().ID == RouteAgentHome
+	return m.screen == screenDashboard &&
+		(m.snapshot.VaultExists || strings.TrimSpace(m.snapshot.RuntimePathError) != "") &&
+		m.session.Current().ID == RouteAgentHome
 }
 
 func (m *model) isAgentSigningRoute() bool {
@@ -84,6 +87,9 @@ func (m *model) isAgentSigningRoute() bool {
 }
 
 func (m *model) agentUsesSpinner() bool {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+		return m.agent.sshBusy
+	}
 	if !m.snapshot.VaultExists {
 		return false
 	}
@@ -91,6 +97,21 @@ func (m *model) agentUsesSpinner() bool {
 }
 
 func (m *model) agentItems() []agentItem {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+		if m.snapshot.AgentDisabled {
+			return []agentItem{{
+				ID:      agentItemSSHDisabled,
+				Label:   "Forged SSH Integration Disabled",
+				Summary: "Resolve the Windows pipe identity before re-enabling Forged SSH integration",
+			}}
+		}
+		return []agentItem{{
+			ID:      agentItemSSHToggle,
+			Label:   "Disable Forged SSH Integration",
+			Summary: "Remove Forged SSH integration while the Windows pipe identity is unavailable",
+		}}
+	}
+
 	sshLabel := "Enable SSH Agent"
 	sshSummary := "Use Forged as your active SSH agent on this machine"
 	if m.snapshot.IdentityAgentOwner.IsForged() {
@@ -603,7 +624,7 @@ func (m *model) startAgentSigningRoute() tea.Cmd {
 }
 
 func (m *model) runAgentSSHToggle() tea.Cmd {
-	if m.snapshot.IdentityAgentOwner.IsForged() {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" || m.snapshot.IdentityAgentOwner.IsForged() {
 		return m.disableSSHAgentCmd()
 	}
 	return m.enableSSHAgentCmd()
@@ -682,6 +703,9 @@ func (m *model) runDisableCommitSigning() tea.Cmd {
 }
 
 func (m *model) loadSigningStatusCmd() tea.Cmd {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
+		return nil
+	}
 	if m.signingStatusLoading {
 		return nil
 	}
@@ -730,6 +754,10 @@ func (m *model) handleSnapshotRefreshMsg(msg snapshotRefreshMsg) (tea.Model, tea
 		return m, nil
 	}
 	m.snapshot = msg.snapshot
+	if runtimePathError := strings.TrimSpace(msg.snapshot.RuntimePathError); runtimePathError != "" {
+		m.enterRuntimePathRecovery(runtimePathError)
+		return m, nil
+	}
 	m.systemHeader = m.systemHeaderForSnapshot(msg.snapshot)
 	return m, nil
 }

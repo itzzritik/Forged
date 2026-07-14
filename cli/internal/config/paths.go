@@ -70,19 +70,6 @@ func (p Paths) LegacySSHBaseInclude() string {
 	return filepath.Join(p.LegacySSHManagedDir(), "base.conf")
 }
 
-func (p Paths) AgentSocket() string {
-	if runtime.GOOS == "windows" {
-		return `\\.\pipe\forged-agent`
-	}
-	return filepath.Join(p.RuntimeDir, "agent.sock")
-}
-
-func (p Paths) CtlSocket() string {
-	if runtime.GOOS == "windows" {
-		return `\\.\pipe\forged-ctl`
-	}
-	return filepath.Join(p.RuntimeDir, "ctl.sock")
-}
 func (p Paths) PIDFile() string { return filepath.Join(p.RuntimeDir, "daemon.pid") }
 func (p Paths) LogFile() string { return filepath.Join(p.StateDir, "logs", "forged.log") }
 func (p Paths) TUILogFile() string {

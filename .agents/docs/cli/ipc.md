@@ -2,7 +2,7 @@
 title: Daemon IPC
 applies_to:
   - cli/internal/ipc/**
-last_verified: 2026-07-14
+last_verified: 2026-07-15
 stable: yes
 ---
 
@@ -28,6 +28,7 @@ stable: yes
 - Hidden SSH route IPC prepares per-attempt snippets from `%C`, `%h`, `%p`, `%r`, and `%n`; prepare failures are quiet so the managed SSH config fails closed with no default identities. Authorization and either probe strategy share one 45-second server work context, the hook waits 50 seconds, and the server connection deadline leaves a final response margin.
 - If route prepare finds no public route cache because the daemon is cold, IPC runs external auth once and retries prepare after hydration.
 - TUI diagnostics use SSH route list/clear IPC. Clearing routes must call the route service so vault tombstones and sync mutation handling stay correct.
+- On Windows, a failed current-token pipe identity lookup is returned directly to IPC callers; it is not reported as a stopped daemon.
 - Windows IPC support is still incomplete.
 
 ## Decisions
