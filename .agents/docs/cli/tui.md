@@ -17,7 +17,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - `app.go` owns the single Bubble Tea model. Screen packages only render.
 - Real work goes through launcher-built dependency closures. The TUI layer should not reach directly into daemon or vault packages.
 - Navigation is route-stack based, with boundaries so back behavior can return to dashboard or exit.
-- Body height is fixed. Pages that need more space must scroll or paginate themselves.
+- Body height is fixed. Pages that need more space must scroll or paginate themselves; import review sizes its window to the available body and key feedback stays bottom-docked.
 - Readiness establishes or restores a usable vault before it creates config files or enables the managed SSH include.
 - Vault-backed launch repairs degraded or stale machine state before showing the auth wall, so unlock happens against the daemon that will remain active.
 - Maintenance stays on the current route: dashboard repairs run in the background with header status, while password setup and recovery use the existing busy state.

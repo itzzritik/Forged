@@ -504,7 +504,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 	}
 }
 
-func (m *model) renderKeyBody(contentWidth int) string {
+func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 	switch m.session.Current().ID {
 	case RouteKeysBrowser:
 		rows := m.keyBrowserVisibleRows()
@@ -610,7 +610,9 @@ func (m *model) renderKeyBody(contentWidth int) string {
 				Guidance:    m.keyImportGuidanceLine(),
 				Warning:     m.keyImportDuplicateWarning(),
 				Error:       m.keyImport.err,
-			}, contentWidth)
+				Status:      m.keyImport.status,
+				Busy:        m.keyImport.importing,
+			}, m.spinner.View(), contentWidth, bodyHeight)
 		}
 		options := make([]keyscreen.ImportSourceOption, 0, len(keyImportSources))
 		for index, source := range keyImportSources {

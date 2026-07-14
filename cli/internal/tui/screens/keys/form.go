@@ -7,6 +7,7 @@ import (
 
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
+	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -73,6 +74,8 @@ type ImportReviewScreen struct {
 	Guidance    string
 	Warning     string
 	Error       string
+	Status      string
+	Busy        bool
 }
 
 type ExportScreen struct {
@@ -206,46 +209,158 @@ func RenderImport(screen ImportScreen, spinner string, width int) string {
 	return strings.Join(sections, "\n")
 }
 
-func RenderImportReview(screen ImportReviewScreen, width int) string {
+func RenderImportReview(screen ImportReviewScreen, spinner string, width int, height int) string {
 	contentWidth := max(28, min(width, theme.HeroMaxWidth+10))
-	sections := make([]string, 0, 8)
-	if context := strings.TrimSpace(screen.Context); context != "" {
-		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
-	}
-
-	lines := []string{
-		theme.BodyMuted.Render(screen.SourceLabel),
-		theme.BodyMuted.Render(fmt.Sprintf("%d keys found", screen.Count)),
-		"",
-	}
-	if screen.HasAbove {
-		lines = append(lines, theme.BodyMuted.Render("..."), "")
-	}
-	for _, item := range screen.Items {
-		lines = append(lines, renderImportReviewRow(item), "")
-	}
-	if screen.HasBelow {
-		lines = append(lines, theme.BodyMuted.Render("..."), "")
-	}
-
-	if len(screen.Summary) > 0 {
-		lines = append(lines, theme.SectionTitle.Render("Summary"))
-		for _, line := range screen.Summary {
-			lines = append(lines, theme.BodyMuted.Render(line))
+	items := append([]ImportReviewItem(nil), screen.Items...)
+	active := 0
+	for index, item := range items {
+		if item.Active {
+			active = index
+			break
 		}
 	}
-	if guidance := strings.TrimSpace(screen.Guidance); guidance != "" {
-		lines = append(lines, "", theme.BodyMuted.Width(contentWidth).Render(guidance))
+	hasAbove := screen.HasAbove
+	hasBelow := screen.HasBelow
+	showContext := true
+	showSource := true
+	showMarkers := true
+	compactRows := false
+	showSummaryHeading := true
+	summary := append([]string(nil), screen.Summary...)
+	showGuidance := true
+	compactFeedback := false
+	bottom := renderImportReviewBottom(screen, spinner, contentWidth, showSummaryHeading, summary, showGuidance, compactFeedback)
+	top := renderImportReviewTop(screen, items, hasAbove, hasBelow, contentWidth, showContext, showSource, showMarkers, compactRows)
+	trimFarthestItem := func() {
+		left := active
+		right := len(items) - active - 1
+		if right >= left {
+			items = items[:len(items)-1]
+			hasBelow = true
+		} else {
+			items = items[1:]
+			active--
+			hasAbove = true
+		}
+		top = renderImportReviewTop(screen, items, hasAbove, hasBelow, contentWidth, showContext, showSource, showMarkers, compactRows)
 	}
-	if warning := strings.TrimSpace(screen.Warning); warning != "" {
-		lines = append(lines, "", theme.Warning.Width(contentWidth).Render("! "+displayMessage(warning)))
+	for height > 0 && len(items) > 3 && importReviewBlockHeight(top)+importReviewBlockHeight(bottom) > height {
+		trimFarthestItem()
 	}
-	if err := strings.TrimSpace(screen.Error); err != "" {
-		lines = append(lines, "", theme.Danger.Width(contentWidth).Render("✕ "+displayMessage(err)))
+	for _, compact := range []func(){
+		func() { showContext = false },
+		func() { showSource = false },
+		func() { showGuidance = false },
+		func() { showMarkers = false },
+		func() { compactFeedback = true },
+		func() { showSummaryHeading = false },
+	} {
+		if height <= 0 || importReviewBlockHeight(top)+importReviewBlockHeight(bottom) <= height {
+			break
+		}
+		compact()
+		top = renderImportReviewTop(screen, items, hasAbove, hasBelow, contentWidth, showContext, showSource, showMarkers, compactRows)
+		bottom = renderImportReviewBottom(screen, spinner, contentWidth, showSummaryHeading, summary, showGuidance, compactFeedback)
+	}
+	for height > 0 && len(items) > 1 && importReviewBlockHeight(top)+importReviewBlockHeight(bottom) > height {
+		trimFarthestItem()
+	}
+	for height > 0 && len(summary) > 0 && importReviewBlockHeight(top)+importReviewBlockHeight(bottom) > height {
+		summary = summary[1:]
+		bottom = renderImportReviewBottom(screen, spinner, contentWidth, showSummaryHeading, summary, showGuidance, compactFeedback)
+	}
+	if height > 0 && importReviewBlockHeight(top)+importReviewBlockHeight(bottom) > height {
+		compactRows = true
+		top = renderImportReviewTop(screen, items, hasAbove, hasBelow, contentWidth, showContext, showSource, showMarkers, compactRows)
+	}
+	if height > 0 && !showSummaryHeading && len(summary) > 0 {
+		withHeading := renderImportReviewBottom(screen, spinner, contentWidth, true, summary, showGuidance, compactFeedback)
+		if importReviewBlockHeight(top)+importReviewBlockHeight(withHeading) <= height {
+			bottom = withHeading
+		}
+	}
+	return shell.DockBottom(top, bottom)
+}
+
+func renderImportReviewTop(screen ImportReviewScreen, items []ImportReviewItem, hasAbove bool, hasBelow bool, width int, showContext bool, showSource bool, showMarkers bool, compactRows bool) string {
+	sections := make([]string, 0, 3)
+	if context := strings.TrimSpace(screen.Context); showContext && context != "" {
+		sections = append(sections, theme.Body.Width(width).Render(context))
 	}
 
-	sections = append(sections, "", strings.Join(lines, "\n"))
+	lines := make([]string, 0, len(items)+3)
+	if showSource {
+		lines = append(lines, theme.BodyMuted.Render(fmt.Sprintf("%s · %d keys", screen.SourceLabel, screen.Count)))
+	}
+	if showMarkers && hasAbove {
+		lines = append(lines, theme.BodyMuted.Render("↑ more"))
+	}
+	for _, item := range items {
+		if compactRows {
+			lines = append(lines, renderImportReviewCompactRow(item))
+		} else {
+			lines = append(lines, renderImportReviewRow(item))
+		}
+	}
+	if showMarkers && hasBelow {
+		lines = append(lines, theme.BodyMuted.Render("↓ more"))
+	}
+	if len(sections) > 0 {
+		sections = append(sections, "")
+	}
+	sections = append(sections, strings.Join(lines, "\n"))
 	return strings.Join(sections, "\n")
+}
+
+func renderImportReviewBottom(screen ImportReviewScreen, spinner string, width int, showSummaryHeading bool, summary []string, showGuidance bool, compactFeedback bool) string {
+	lines := make([]string, 0, 7)
+	if showSummaryHeading && len(summary) > 0 {
+		lines = append(lines, theme.SectionTitle.Render("Summary"))
+	}
+	for _, line := range summary {
+		lines = append(lines, theme.BodyMuted.Render(line))
+	}
+	if guidance := strings.TrimSpace(screen.Guidance); showGuidance && guidance != "" {
+		lines = append(lines, theme.BodyMuted.Width(width).Render(guidance))
+	}
+	switch {
+	case strings.TrimSpace(screen.Error) != "":
+		err := strings.TrimSpace(screen.Error)
+		lines = append(lines, renderImportReviewFeedback(theme.Danger, "✕ "+displayMessage(err), width, compactFeedback))
+	case screen.Busy && strings.TrimSpace(screen.Status) != "":
+		lines = append(lines, renderImportReviewFeedback(theme.BodyStrong, spinner+" "+displayMessage(screen.Status), width, compactFeedback))
+	case strings.TrimSpace(screen.Warning) != "":
+		warning := strings.TrimSpace(screen.Warning)
+		lines = append(lines, renderImportReviewFeedback(theme.Warning, "! "+displayMessage(warning), width, compactFeedback))
+	case strings.TrimSpace(screen.Status) != "":
+		lines = append(lines, renderImportReviewFeedback(theme.BodyStrong, displayMessage(screen.Status), width, compactFeedback))
+	}
+	return strings.Join(lines, "\n")
+}
+
+func renderImportReviewFeedback(style lipgloss.Style, message string, width int, compact bool) string {
+	if compact {
+		return style.Render(truncateImportReviewLine(strings.Join(strings.Fields(message), " "), width))
+	}
+	return style.Width(width).Render(message)
+}
+
+func truncateImportReviewLine(value string, width int) string {
+	if width <= 0 || lipgloss.Width(value) <= width {
+		return value
+	}
+	runes := []rune(value)
+	for len(runes) > 0 && lipgloss.Width(string(runes)+"…") > width {
+		runes = runes[:len(runes)-1]
+	}
+	return string(runes) + "…"
+}
+
+func importReviewBlockHeight(block string) int {
+	if block == "" {
+		return 0
+	}
+	return lipgloss.Height(block)
 }
 
 func RenderExport(screen ExportScreen, spinner string, width int) string {
@@ -316,17 +431,18 @@ func renderTextField(view string, focused bool, width int) string {
 }
 
 func renderImportReviewRow(item ImportReviewItem) string {
+	return strings.Join([]string{
+		renderImportReviewCompactRow(item),
+		"    " + renderImportMetadataLine(item),
+	}, "\n")
+}
+
+func renderImportReviewCompactRow(item ImportReviewItem) string {
 	prefix := " "
 	if item.Active {
 		prefix = theme.Kicker.Render("▸")
 	}
-
-	firstLine := fmt.Sprintf("%s %s %s", prefix, renderImportCheckbox(item.Checked), item.Name)
-	lines := []string{
-		firstLine,
-		"    " + renderImportMetadataLine(item),
-	}
-	return strings.Join(lines, "\n")
+	return fmt.Sprintf("%s %s %s", prefix, renderImportCheckbox(item.Checked), item.Name)
 }
 
 func renderImportCheckbox(checked bool) string {

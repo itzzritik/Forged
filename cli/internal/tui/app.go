@@ -839,13 +839,14 @@ func (m *model) View() string {
 		bodyWidth = contentWidth
 	}
 	header := m.renderHeader(contentWidth)
-	body := m.renderBody(bodyWidth)
-	if !m.isWelcomeState() && !m.isCenteredStartupUnlockScreen() {
-		body = shell.IndentBlock(body, shell.ContentLeftInset)
-	}
 	footer := shell.RenderFooter(m.footerActions()...)
 	tightFooter := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isAgentSigningRoute()
 	tightBody := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isTabbedDashboardRoot()
+	bodyHeight := shell.BodyHeight(m.width, m.height, header, footer, tightFooter, tightBody)
+	body := m.renderBody(bodyWidth, bodyHeight)
+	if !m.isWelcomeState() && !m.isCenteredStartupUnlockScreen() {
+		body = shell.IndentBlock(body, shell.ContentLeftInset)
+	}
 	return shell.Render(m.width, m.height, header, body, footer, tightFooter, tightBody)
 }
 
@@ -1194,7 +1195,7 @@ func (m *model) headerPageNote() string {
 	return "Your local vault is ready"
 }
 
-func (m *model) renderBody(contentWidth int) string {
+func (m *model) renderBody(contentWidth int, bodyHeight int) string {
 	switch m.screen {
 	case screenLogin:
 		return accountscreen.Render(m.loginScreen, m.spinner.View(), contentWidth)
@@ -1202,7 +1203,7 @@ func (m *model) renderBody(contentWidth int) string {
 		return m.renderPasswordBody(contentWidth)
 	default:
 		if !m.bootAssessed {
-			return m.renderPendingBody(contentWidth)
+			return m.renderPendingBody(contentWidth, bodyHeight)
 		}
 		if m.isKeyRoute() {
 			if m.session.Current().ID == RouteKeysBrowser && m.keyBrowser.loading && len(m.keyBrowser.all) == 0 {
@@ -1213,11 +1214,11 @@ func (m *model) renderBody(contentWidth int) string {
 			}
 			if !m.keyRouteLoaded() {
 				if m.session.Current().ID == RouteKeysDetail && m.keyDetail.resolving {
-					return m.renderKeyBody(contentWidth)
+					return m.renderKeyBody(contentWidth, bodyHeight)
 				}
 				return ""
 			}
-			return m.renderKeyBody(contentWidth)
+			return m.renderKeyBody(contentWidth, bodyHeight)
 		}
 		if m.isManageHomeRoute() {
 			return m.renderManageBody(contentWidth)
@@ -1265,12 +1266,12 @@ func (m *model) renderBody(contentWidth int) string {
 	}
 }
 
-func (m *model) renderPendingBody(contentWidth int) string {
+func (m *model) renderPendingBody(contentWidth int, bodyHeight int) string {
 	switch m.session.Current().ID {
 	case RouteKeysDetail:
-		return m.renderKeyBody(contentWidth)
+		return m.renderKeyBody(contentWidth, bodyHeight)
 	case RouteKeysBrowser:
-		return m.renderKeyBody(contentWidth)
+		return m.renderKeyBody(contentWidth, bodyHeight)
 	case RouteKeysRename:
 		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
 			Title:       "Loading key",

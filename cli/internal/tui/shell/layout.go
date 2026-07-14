@@ -38,6 +38,14 @@ func BodyWidth(termWidth int) int {
 	return max(16, ContentWidth(termWidth)-ContentLeftInset-ContentRightInset)
 }
 
+func BodyHeight(termWidth int, termHeight int, header string, footer string, tightFooter bool, tightBody bool) int {
+	height := fixedBodyHeight
+	if termHeight <= 0 {
+		return height
+	}
+	return max(0, min(height, availableBodyHeight(termWidth, termHeight, header, footer, tightFooter, tightBody)))
+}
+
 func IndentBlock(block string, spaces int) string {
 	if strings.TrimSpace(block) == "" || spaces <= 0 {
 		return block
@@ -138,15 +146,10 @@ func ClampBlockWidth(termWidth int, preferred int) int {
 }
 
 func fitBodyHeight(termWidth int, termHeight int, header string, body string, footer string, tightFooter bool, tightBody bool) (string, bool) {
-	bodyHeight := fixedBodyHeight
-	if termHeight > 0 {
-		available := availableBodyHeight(termWidth, termHeight, header, footer, tightFooter, tightBody)
-		if available <= 0 {
-			return "", false
-		}
-		bodyHeight = min(bodyHeight, available)
+	bodyHeight := BodyHeight(termWidth, termHeight, header, footer, tightFooter, tightBody)
+	if bodyHeight <= 0 {
+		return "", false
 	}
-
 	return fitBodyBlock(body, bodyHeight), true
 }
 

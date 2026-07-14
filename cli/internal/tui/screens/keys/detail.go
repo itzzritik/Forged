@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
+	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -66,9 +67,7 @@ func RenderDetail(screen DetailScreen, spinner string, width int) string {
 		)
 	}
 
-	sections = append(sections, "", renderDetailStatus(screen.Status, screen.StatusError, screen.Busy, spinner))
-
-	return strings.Join(sections, "\n")
+	return shell.DockBottom(strings.Join(sections, "\n"), renderDetailStatus(screen.Status, screen.StatusError, screen.Busy, spinner))
 }
 
 func renderDetailRow(label, value string) string {
