@@ -44,7 +44,7 @@ type BrowserScreen struct {
 }
 
 func RenderBrowser(screen BrowserScreen, spinner string, width int) string {
-	contentWidth := max(36, width)
+	contentWidth := max(1, width)
 	searchField := renderSearchField(screen.SearchView, screen.SearchActive, screen.SearchNotice, screen.CountLabel, contentWidth)
 
 	if screen.Loading {
@@ -92,7 +92,7 @@ func renderSearchField(view string, active bool, notice string, countLabel strin
 		value = theme.Body.Render(value)
 	}
 
-	fieldWidth := max(20, width+shell.ContentLeftInset+shell.ContentRightInset)
+	fieldWidth := max(1, width+shell.ContentLeftInset+shell.ContentRightInset)
 	lines := []string{renderBrowserMetaRow(notice, width)}
 	lines = append(lines,
 		shell.FullBleed(theme.Divider(fieldWidth)),
@@ -122,9 +122,9 @@ func renderBrowserCountLabel(countLabel string) string {
 }
 
 func renderBrowserTable(screen BrowserScreen, width int) string {
-	tableWidth := max(44, width)
+	tableWidth := max(1, width)
 	visibleRows := browserVisibleRows(screen)
-	selectionWidth := 2
+	selectionWidth := min(2, tableWidth)
 	nameWidth := screen.NameWidth
 	if nameWidth <= 0 {
 		nameWidth = 28
@@ -135,26 +135,31 @@ func renderBrowserTable(screen BrowserScreen, width int) string {
 	}
 	columnGap := 2
 	statusWidth := 0
-	if screen.ShowStatus {
-		statusWidth = 2
+	if screen.ShowStatus && tableWidth > selectionWidth+columnGap {
+		statusWidth = min(2, tableWidth-selectionWidth-columnGap)
 	}
 	minFingerprintWidth := screen.MinDetailWidth
 	if minFingerprintWidth <= 0 {
 		minFingerprintWidth = 16
 	}
-	requiredWidth := selectionWidth + nameWidth + typeWidth + minFingerprintWidth + columnGap + columnGap
-	if screen.ShowStatus {
-		requiredWidth += columnGap + statusWidth
+	fingerprintWidth := minFingerprintWidth
+
+	for browserRowWidth(selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap) > tableWidth && fingerprintWidth > 0 {
+		fingerprintWidth--
 	}
-	if requiredWidth > tableWidth {
-		nameWidth = max(18, tableWidth-selectionWidth-typeWidth-minFingerprintWidth-columnGap-columnGap-statusWidth)
-		if screen.ShowStatus {
-			nameWidth = max(18, nameWidth-columnGap)
+	for browserRowWidth(selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap) > tableWidth && typeWidth > 0 {
+		typeWidth--
+	}
+	for browserRowWidth(selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap) > tableWidth && nameWidth > 0 {
+		nameWidth--
+	}
+	remaining := tableWidth - browserRowWidth(selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap)
+	if remaining > 0 {
+		if fingerprintWidth > 0 {
+			fingerprintWidth += remaining
+		} else {
+			nameWidth += remaining
 		}
-	}
-	fingerprintWidth := max(minFingerprintWidth, tableWidth-selectionWidth-nameWidth-typeWidth-columnGap-columnGap)
-	if screen.ShowStatus {
-		fingerprintWidth = max(minFingerprintWidth, fingerprintWidth-columnGap-statusWidth)
 	}
 
 	lines := []string{}
@@ -190,14 +195,21 @@ func renderBrowserDivider(tableWidth int) string {
 }
 
 func renderBrowserHeader(nameHeader, typeHeader, detailHeader string, selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap int) string {
-	selection := strings.Repeat(" ", selectionWidth)
-	name := padRight(theme.RowLabel.Render(truncateRunes(nameHeader, nameWidth)), nameWidth+columnGap)
-	keyType := padRight(theme.RowLabel.Render(truncateRunes(typeHeader, typeWidth)), typeWidth+columnGap)
-	fingerprint := theme.RowLabel.Render(truncateRunes(detailHeader, fingerprintWidth))
-	if statusWidth == 0 {
-		return selection + name + keyType + fingerprint
+	row := strings.Repeat(" ", selectionWidth)
+	row += theme.RowLabel.Render(truncateRunes(nameHeader, nameWidth))
+	if typeWidth > 0 {
+		row = padRight(row, selectionWidth+nameWidth+columnGap)
+		row += theme.RowLabel.Render(truncateRunes(typeHeader, typeWidth))
 	}
-	return selection + name + keyType + padRight(fingerprint, fingerprintWidth+columnGap) + padRight("", statusWidth)
+	if fingerprintWidth > 0 {
+		row = padRight(row, selectionWidth+nameWidth+browserColumnWidth(typeWidth, columnGap)+columnGap)
+		row += theme.RowLabel.Render(truncateRunes(detailHeader, fingerprintWidth))
+	}
+	if statusWidth > 0 {
+		row = padRight(row, browserRowWidth(selectionWidth, nameWidth, typeWidth, fingerprintWidth, 0, columnGap)+columnGap)
+		row = padRight(row, browserRowWidth(selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap))
+	}
+	return padRight(row, browserRowWidth(selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap))
 }
 
 func renderBrowserRow(key BrowserRow, selected bool, preserveTypeCase bool, selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap int) string {
@@ -218,19 +230,33 @@ func renderBrowserRow(key BrowserRow, selected bool, preserveTypeCase bool, sele
 	keyType := truncateRunes(keyTypeValue, typeWidth)
 	fingerprint := truncateRunes(key.Fingerprint, fingerprintWidth)
 
-	row := padRight(prefix, selectionWidth) +
-		padRight(nameStyle.Render(name), nameWidth+columnGap) +
-		padRight(detailStyle.Render(keyType), typeWidth+columnGap) +
-		detailStyle.Render(fingerprint)
+	row := padRight(prefix, selectionWidth) + nameStyle.Render(name)
+	if typeWidth > 0 {
+		row = padRight(row, selectionWidth+nameWidth+columnGap) + detailStyle.Render(keyType)
+	}
+	if fingerprintWidth > 0 {
+		row = padRight(row, selectionWidth+nameWidth+browserColumnWidth(typeWidth, columnGap)+columnGap) + detailStyle.Render(fingerprint)
+	}
 	if statusWidth == 0 {
-		return row
+		return padRight(row, browserRowWidth(selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap))
 	}
 
 	status := ""
 	if icon := strings.TrimSpace(key.StatusIcon); icon != "" {
 		status = theme.Success.Render(icon)
 	}
-	return row + strings.Repeat(" ", columnGap) + padRight(status, statusWidth)
+	return padRight(row, browserRowWidth(selectionWidth, nameWidth, typeWidth, fingerprintWidth, 0, columnGap)+columnGap) + padRight(status, statusWidth)
+}
+
+func browserRowWidth(selectionWidth, nameWidth, typeWidth, detailWidth, statusWidth, gap int) int {
+	return selectionWidth + nameWidth + browserColumnWidth(typeWidth, gap) + browserColumnWidth(detailWidth, gap) + browserColumnWidth(statusWidth, gap)
+}
+
+func browserColumnWidth(width int, gap int) int {
+	if width <= 0 {
+		return 0
+	}
+	return gap + width
 }
 
 func browserVisibleRows(screen BrowserScreen) int {
@@ -294,6 +320,7 @@ func truncateRunes(value string, width int) string {
 }
 
 func centerRow(value string, width int) string {
+	value = ansi.Truncate(value, width, theme.Glyphs.Ellipsis)
 	visible := lipgloss.Width(value)
 	if visible >= width {
 		return value
