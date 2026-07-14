@@ -33,7 +33,7 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
 - Windows stores those local-unlock device keys as CurrentUser-DPAPI blobs under `config.Paths.AuthDir()` (`local-unlock-a.dpapi` or `local-unlock-b.dpapi`, with the legacy `local-unlock.dpapi` retained for migration). The blobs remain install-ID-bound and protect at rest and across users, not against same-user malware or as a biometric ACL.
 - A canceled Linux `pkexec` prompt remains a cancellation and can never fall through to headless enrollment.
 - Linux `pkexec` authorization is capped at one minute so an unattended desktop prompt cannot hold SSH/signing authorization indefinitely.
-- Export, private-key clipboard views, and change-password are always master-password-only. Export and private-key views each use a scoped short-lived one-use token and do not rely on System Auth or a shared session.
+- Export, private-key clipboard views, and change-password are always master-password-only. Export and private-key views each use a scoped short-lived one-use token and do not rely on System Auth. A successful password authorization also establishes the normal bounded shared session, so the daemon never retains an untracked hydrated vault.
 - Open TUI sessions relock after system lock/sleep and after 4 minutes of idle time.
 - External System Auth prompts are single-flight with a short failure cooldown so parallel SSH/signing requests do not spam prompts.
 - SSH route preparation normally uses public in-memory route data and does not prompt. If a cold daemon has no route cache, it may trigger external auth once to hydrate the vault before writing the route snippet.

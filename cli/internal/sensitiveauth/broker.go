@@ -252,7 +252,7 @@ func (b *Broker) authorizeWithPassword(action Action, password []byte, generatio
 	}
 	now := time.Now()
 	if action == ActionExport {
-		return b.allowExport(now), nil
+		return b.grantLocked(action, now), nil
 	}
 	result := b.grantLocked(action, now)
 	if action == ActionPrivateKey {
@@ -376,13 +376,6 @@ func (b *Broker) allow(action Action, now time.Time) AuthorizeResult {
 		result.ExportToken = b.leases.IssueExportToken(now)
 	}
 	return result
-}
-
-func (b *Broker) allowExport(now time.Time) AuthorizeResult {
-	return AuthorizeResult{
-		Authorized:  true,
-		ExportToken: b.leases.IssueExportToken(now),
-	}
 }
 
 // promptPasswordUnlock opens the master-password popup in the background and

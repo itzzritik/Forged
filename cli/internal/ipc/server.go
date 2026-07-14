@@ -442,6 +442,9 @@ func (s *Server) handleSSHRoutesClearAll() Response {
 }
 
 func (s *Server) handleList(ctx context.Context) Response {
+	if _, err := s.requireKeyStore(); err != nil {
+		return ErrorResponse(err)
+	}
 	s.refreshForRead(ctx, "list_keys")
 
 	keyStore, err := s.requireKeyStore()
@@ -578,6 +581,9 @@ func (s *Server) handleExport(ctx context.Context, raw json.RawMessage) Response
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
+	if _, err := s.requireKeyStore(); err != nil {
+		return ErrorResponse(err)
+	}
 	s.refreshForRead(ctx, "export_key")
 
 	resolvedName, err := s.resolveKeyName(a.Name)
@@ -610,6 +616,9 @@ func (s *Server) handleView(ctx context.Context, raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
+	if _, err := s.requireKeyStore(); err != nil {
+		return ErrorResponse(err)
+	}
 	s.refreshForRead(ctx, "view_key")
 
 	resolvedName, err := s.resolveKeyName(a.Name)
@@ -996,6 +1005,9 @@ func (s *Server) currentSyncError() string {
 }
 
 func (s *Server) requireKeyStore() (*vault.KeyStore, error) {
+	if s.authBroker != nil && !s.authBroker.IsUnlocked() {
+		return nil, fmt.Errorf("Vault is locked; open Forged to unlock")
+	}
 	_, keyStore := s.currentVaultState()
 	if keyStore == nil {
 		return nil, fmt.Errorf("Vault is locked; open Forged to unlock")
@@ -1004,6 +1016,9 @@ func (s *Server) requireKeyStore() (*vault.KeyStore, error) {
 }
 
 func (s *Server) requireVaultAndKeyStore() (*vault.Vault, *vault.KeyStore, error) {
+	if s.authBroker != nil && !s.authBroker.IsUnlocked() {
+		return nil, nil, fmt.Errorf("Vault is locked; open Forged to unlock")
+	}
 	v, keyStore := s.currentVaultState()
 	if v == nil || keyStore == nil {
 		return nil, nil, fmt.Errorf("Vault is locked; open Forged to unlock")

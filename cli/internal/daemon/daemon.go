@@ -91,7 +91,15 @@ func (d *Daemon) Run(password []byte) error {
 	d.authBroker = sensitiveauth.NewBroker(d.paths, d.helperBinaryPath(), d.logger, d)
 
 	if len(password) > 0 {
-		if err := d.hydrateWithPassword(password); err != nil {
+		if _, err := os.Stat(d.paths.VaultFile()); err != nil {
+			if !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("checking vault file: %w", err)
+			}
+			if err := d.hydrateWithPassword(password); err != nil {
+				return err
+			}
+		}
+		if _, err := d.authBroker.AuthorizeWithPassword(sensitiveauth.ActionView, password); err != nil {
 			return err
 		}
 	}
