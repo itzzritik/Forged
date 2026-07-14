@@ -1494,27 +1494,28 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 	}
 
 	if msg.err != nil {
+		errorText := m.reportError("keys.list", msg.err)
 		switch m.session.Current().ID {
 		case RouteKeysBrowser:
 			m.keyBrowser.loading = false
 			m.keyBrowser.refreshing = false
 			if msg.preserve && len(m.keyBrowser.all) > 0 {
-				m.keyBrowser.notice = msg.err.Error()
+				m.keyBrowser.notice = errorText
 				return m, nil
 			}
-			m.keyBrowser.err = msg.err.Error()
+			m.keyBrowser.err = errorText
 		case RouteKeysDetail:
 			m.keyDetail.loading = false
 			m.keyDetail.resolving = false
-			m.keyDetail.err = msg.err.Error()
+			m.keyDetail.err = errorText
 		case RouteKeysRename:
 			m.keyRename.loading = false
 			m.keyRename.resolving = false
-			m.keyRename.err = msg.err.Error()
+			m.keyRename.err = errorText
 		case RouteKeysDelete:
 			m.keyDelete.loading = false
 			m.keyDelete.resolving = false
-			m.keyDelete.err = msg.err.Error()
+			m.keyDelete.err = errorText
 		}
 		return m, nil
 	}
@@ -1595,12 +1596,13 @@ func (m *model) handleKeyDetailMsg(msg keyDetailMsg) (tea.Model, tea.Cmd) {
 	}
 	m.keyDetail.loading = false
 	if msg.err != nil {
+		errorText := m.reportError("keys.detail", msg.err)
 		if strings.TrimSpace(m.keyDetail.key.Name) != "" {
 			m.keyDetail.status = ""
-			m.keyDetail.statusErr = msg.err.Error()
+			m.keyDetail.statusErr = errorText
 			return m, nil
 		}
-		m.keyDetail.err = msg.err.Error()
+		m.keyDetail.err = errorText
 		return m, nil
 	}
 	m.keyDetail.key = msg.detail
@@ -1614,7 +1616,7 @@ func (m *model) handleKeyCopyFinishedMsg(msg keyCopyFinishedMsg) (tea.Model, tea
 	m.keyDetail.busy = false
 	if msg.err != nil {
 		m.keyDetail.status = ""
-		m.keyDetail.statusErr = msg.err.Error()
+		m.keyDetail.statusErr = m.reportError("keys.copy-public", msg.err)
 		return m, nil
 	}
 	m.cancelPrivateClipboard()
@@ -1628,7 +1630,7 @@ func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (
 	if m.screen == screenPassword && m.passwordFlow == passwordKeyView {
 		m.passwordBusy = false
 		if msg.err != nil {
-			m.passwordInput.SetError(msg.err.Error())
+			m.passwordInput.SetError(m.reportError("keys.copy-private", msg.err))
 			return m, nil
 		}
 		m.passwordOverlay = false
@@ -1648,7 +1650,7 @@ func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (
 			return m, m.passwordInput.Init()
 		}
 		m.keyDetail.status = ""
-		m.keyDetail.statusErr = msg.err.Error()
+		m.keyDetail.statusErr = m.reportError("keys.copy-private", msg.err)
 		return m, nil
 	}
 	return m, m.startPrivateClipboard(msg.name, msg.lease)
@@ -1691,10 +1693,11 @@ func (m *model) handleKeyPrivateClipboardClearedMsg(msg keyPrivateClipboardClear
 	}
 	activeDetail := m.privateClipboardDetailActive()
 	if msg.err != nil {
+		errorText := m.reportError("clipboard.clear-private", msg.err)
 		m.privateClip.tries++
 		if activeDetail {
 			m.keyDetail.status = ""
-			m.keyDetail.statusErr = fmt.Sprintf("Couldn't clear private key from clipboard: %v", msg.err)
+			m.keyDetail.statusErr = "Couldn't clear private key from clipboard: " + errorText
 		}
 		delay := 5 * time.Second
 		if m.privateClip.tries >= privateClipboardFastClearTries {
@@ -1760,7 +1763,7 @@ func (m *model) handleKeyRenameFinishedMsg(msg keyRenameFinishedMsg) (tea.Model,
 	}
 	m.keyRename.saving = false
 	if msg.err != nil {
-		m.keyRename.err = msg.err.Error()
+		m.keyRename.err = m.reportError("keys.rename", msg.err)
 		return m, nil
 	}
 	m.renameCachedKey(msg.result.OldName, msg.result.NewName)
@@ -1781,7 +1784,7 @@ func (m *model) handleKeyDeleteFinishedMsg(msg keyDeleteFinishedMsg) (tea.Model,
 	m.keyDelete.deleting = false
 	if msg.err != nil {
 		m.keyDelete.key = actions.KeySummary{}
-		m.keyDelete.err = msg.err.Error()
+		m.keyDelete.err = m.reportError("keys.delete", msg.err)
 		return m, nil
 	}
 	m.removeCachedKey(msg.name)
@@ -1797,7 +1800,7 @@ func (m *model) handleKeyGenerateFinishedMsg(msg keyGenerateFinishedMsg) (tea.Mo
 	m.keyGenerate.generating = false
 	if msg.err != nil {
 		m.keyGenerate.status = ""
-		m.keyGenerate.err = msg.err.Error()
+		m.keyGenerate.err = m.reportError("keys.generate", msg.err)
 		return m, nil
 	}
 	m.upsertCachedKey(actions.KeySummary{
@@ -1823,7 +1826,7 @@ func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model,
 	m.keyImport.importing = false
 	m.keyImport.status = ""
 	if msg.err != nil {
-		m.keyImport.err = msg.err.Error()
+		m.keyImport.err = m.reportError("keys.import", msg.err)
 		m.keyImport.warning = ""
 		return m, nil
 	}
@@ -1861,7 +1864,7 @@ func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, t
 		m.keyImport.duplicates = 0
 		m.keyImport.status = ""
 		m.keyImport.warning = ""
-		m.keyImport.err = msg.err.Error()
+		m.keyImport.err = m.reportError("keys.import-preview", msg.err)
 		if source.NeedsPath {
 			m.keyImport.pathVisible = true
 			m.keyImport.focus = 1
@@ -1905,7 +1908,7 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 	if m.screen == screenPassword && m.passwordFlow == passwordKeyExport {
 		m.passwordBusy = false
 		if msg.err != nil {
-			m.passwordInput.SetError(msg.err.Error())
+			m.passwordInput.SetError(m.reportError("keys.export", msg.err))
 			return m, nil
 		}
 		m.passwordOverlay = false
@@ -1932,7 +1935,7 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 			m.showPasswordScreen(passwordKeyExport, "", "", true)
 			return m, m.passwordInput.Init()
 		}
-		m.keyExport.err = msg.err.Error()
+		m.keyExport.err = m.reportError("keys.export", msg.err)
 		return m, nil
 	}
 	m.keyExport.err = ""
@@ -1951,7 +1954,7 @@ func (m *model) handleKeyExportAuthorizedMsg(msg keyExportAuthorizedMsg) (tea.Mo
 	}
 	m.passwordBusy = false
 	if msg.err != nil {
-		m.passwordInput.SetError(msg.err.Error())
+		m.passwordInput.SetError(m.reportError("keys.export-authorize", msg.err))
 		return m, nil
 	}
 	m.passwordOverlay = false
@@ -1985,10 +1988,12 @@ func (m *model) handleKeyImportPickerMsg(msg keyImportPickerMsg) (tea.Model, tea
 	m.keyImport.pathInput.Focus()
 	switch {
 	case errors.Is(msg.err, picker.ErrUnavailable):
+		m.reportError("picker.import", msg.err)
 		m.keyImport.err = "File picker unavailable. Enter a file path instead"
 	case errors.Is(msg.err, picker.ErrCanceled), msg.err == nil:
 		m.keyImport.err = ""
 	default:
+		m.reportError("picker.import", msg.err)
 		m.keyImport.err = "File picker failed. Enter a file path instead"
 	}
 	m.keyImport.warning = ""
@@ -2013,10 +2018,12 @@ func (m *model) handleKeyExportPickerMsg(msg keyExportPickerMsg) (tea.Model, tea
 	m.keyExport.pathInput.Focus()
 	switch {
 	case errors.Is(msg.err, picker.ErrUnavailable):
+		m.reportError("picker.export", msg.err)
 		m.keyExport.err = "File picker unavailable. Enter an export path instead"
 	case errors.Is(msg.err, picker.ErrCanceled), msg.err == nil:
 		m.keyExport.err = ""
 	default:
+		m.reportError("picker.export", msg.err)
 		m.keyExport.err = "File picker failed. Enter an export path instead"
 	}
 	m.keyExport.status = ""

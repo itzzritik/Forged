@@ -9,15 +9,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"runtime"
 	"strings"
 	"time"
-	"unicode"
 
 	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -234,7 +231,6 @@ func pollLogin(ctx context.Context, server, code, pollURL, codeVerifier string) 
 			UserID string `json:"user_id"`
 			Email  string `json:"email"`
 			Name   string `json:"name"`
-			Error  string `json:"error"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&result)
 		resp.Body.Close()
@@ -253,7 +249,7 @@ func pollLogin(ctx context.Context, server, code, pollURL, codeVerifier string) 
 		case "approved":
 			return exchangeLogin(ctx, server, code, codeVerifier)
 		case "error":
-			return AccountCredentials{}, fmt.Errorf("Authentication failed: %s", result.Error)
+			return AccountCredentials{}, fmt.Errorf("Authentication failed")
 		case "pending":
 			continue
 		}
@@ -281,11 +277,7 @@ func exchangeLogin(ctx context.Context, server, code, codeVerifier string) (Acco
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		body := readLoginErrorBody(resp.Body)
-		if body == "" {
-			body = resp.Status
-		}
-		return AccountCredentials{}, fmt.Errorf("Authentication failed: %s", body)
+		return AccountCredentials{}, fmt.Errorf("Authentication failed (status %d)", resp.StatusCode)
 	}
 
 	var result struct {
@@ -362,21 +354,19 @@ func createAuthSessionWithRetry(server string, payload []byte, progress func(Log
 		resp, err := client.Do(req)
 		if err == nil && resp.StatusCode == http.StatusCreated {
 			if attempt > 1 {
-				logLoginAttempt("auth session created after retry", attempt, server, http.StatusCreated, "", nil)
+				logLoginAttempt("auth session created after retry", attempt, server, http.StatusCreated, nil)
 			}
 			return resp, nil
 		}
 
 		statusCode := 0
-		responseBody := ""
 		if resp != nil {
 			statusCode = resp.StatusCode
-			responseBody = readLoginErrorBody(resp.Body)
 			resp.Body.Close()
 		}
 
-		lastErr = loginAttemptError(err, statusCode, responseBody, attempt)
-		logLoginAttempt("auth session create failed", attempt, server, statusCode, responseBody, err)
+		lastErr = loginAttemptError(err, statusCode, attempt)
+		logLoginAttempt("auth session create failed", attempt, server, statusCode, err)
 
 		if attempt == maxAttempts || !shouldRetryLoginAttempt(err, statusCode) {
 			break
@@ -408,55 +398,24 @@ func shouldRetryLoginAttempt(err error, statusCode int) bool {
 	}
 }
 
-func loginAttemptError(err error, statusCode int, responseBody string, attempt int) error {
+func loginAttemptError(err error, statusCode int, attempt int) error {
 	suffix := fmt.Sprintf(" after %d attempts", attempt)
 	if err != nil {
 		return fmt.Errorf("Could not reach server: %v%s", err, suffix)
 	}
-	if trimmed := strings.TrimSpace(responseBody); trimmed != "" {
-		return fmt.Errorf("%s%s", sentenceCase(trimmed), suffix)
-	}
 	return fmt.Errorf("Could not create auth session (status %d)%s", statusCode, suffix)
 }
 
-func readLoginErrorBody(body io.Reader) string {
-	if body == nil {
-		return ""
-	}
-	data, err := io.ReadAll(io.LimitReader(body, 2048))
-	if err != nil {
-		return ""
-	}
-	text := strings.Join(strings.Fields(string(data)), " ")
-	if len(text) > 300 {
-		return text[:300] + "..."
-	}
-	return text
-}
-
-func logLoginAttempt(event string, attempt int, server string, statusCode int, responseBody string, err error) {
+func logLoginAttempt(event string, attempt int, server string, statusCode int, err error) {
 	paths := config.DefaultPaths()
-	path := paths.LogFile()
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return
-	}
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
-	if err != nil {
-		return
-	}
-	defer file.Close()
-
-	line := fmt.Sprintf("%s login %s attempt=%d server=%s", time.Now().Format(time.RFC3339), event, attempt, server)
+	line := fmt.Sprintf("%s login %s attempt=%d server=%s", time.Now().Format(time.RFC3339), event, attempt, sanitizeDiagnosticError(server))
 	if statusCode > 0 {
 		line += fmt.Sprintf(" status=%d", statusCode)
 	}
 	if err != nil {
-		line += fmt.Sprintf(" error=%q", err.Error())
+		line += fmt.Sprintf(" error=%q", sanitizeDiagnosticError(err.Error()))
 	}
-	if trimmed := strings.TrimSpace(responseBody); trimmed != "" {
-		line += fmt.Sprintf(" body=%q", trimmed)
-	}
-	_, _ = fmt.Fprintln(file, line)
+	_ = appendTUILogLine(paths, line+"\n")
 }
 
 func humanizeDuration(delay time.Duration) string {
@@ -472,19 +431,6 @@ func humanizeDuration(delay time.Duration) string {
 		return "1 minute"
 	}
 	return fmt.Sprintf("%d minutes", minutes)
-}
-
-func sentenceCase(value string) string {
-	trimmed := strings.TrimSpace(value)
-	if trimmed == "" {
-		return ""
-	}
-	runes := []rune(trimmed)
-	if len(runes) == 0 || !unicode.IsLower(runes[0]) {
-		return trimmed
-	}
-	runes[0] = unicode.ToUpper(runes[0])
-	return string(runes)
 }
 
 func randomHex(n int) (string, error) {

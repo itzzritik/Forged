@@ -95,7 +95,7 @@ func (m *model) handleLabRoutingLoadedMsg(msg labRoutingLoadedMsg) (tea.Model, t
 	m.lab.refreshing = false
 	m.lab.busy = false
 	if msg.err != nil {
-		m.lab.err = msg.err.Error()
+		m.lab.err = m.reportError("routing.load", msg.err)
 		return m, m.scheduleLabRoutingPoll()
 	}
 	m.lab.routing = msg.routing
@@ -112,7 +112,7 @@ func (m *model) handleLabRoutingClearedMsg(msg labRoutingClearedMsg) (tea.Model,
 	m.lab.clearTarget = ""
 	m.lab.clearAll = false
 	if msg.err != nil {
-		m.lab.err = msg.err.Error()
+		m.lab.err = m.reportError("routing.clear", msg.err)
 		return m, m.scheduleLabRoutingPoll()
 	}
 	m.lab.notice = "Route memory cleared"

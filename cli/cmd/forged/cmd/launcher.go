@@ -92,8 +92,11 @@ func runInteractiveIntent(intent tui.Intent) error {
 		CopySensitiveText: clipboard.CopySensitiveText,
 		CloseClipboard:    clipboard.Close,
 		OpenLink:          openLinkInBrowser,
-		DefaultServer:     ipc.DefaultAPIServer,
-		AppVersion:        version,
+		LogError: func(event actions.DiagnosticErrorEvent) {
+			_ = actions.AppendDiagnosticError(paths, event)
+		},
+		DefaultServer: ipc.DefaultAPIServer,
+		AppVersion:    version,
 	})
 	return err
 }

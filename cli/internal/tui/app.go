@@ -58,6 +58,7 @@ type Dependencies struct {
 	CopySensitiveText         func(string) (SensitiveClipboardLease, error)
 	CloseClipboard            func() error
 	OpenLink                  func(string) error
+	LogError                  func(actions.DiagnosticErrorEvent)
 	DefaultServer             string
 	AppVersion                string
 }
@@ -92,6 +93,7 @@ func (d Dependencies) validate() error {
 		{name: "sensitive-copy", missing: d.CopySensitiveText == nil},
 		{name: "close-clipboard", missing: d.CloseClipboard == nil},
 		{name: "open-link", missing: d.OpenLink == nil},
+		{name: "log-error", missing: d.LogError == nil},
 	}
 	for _, dependency := range required {
 		if dependency.missing {
@@ -309,10 +311,11 @@ type openFinishedMsg struct {
 }
 
 type model struct {
-	intent        Intent
-	session       *Session
-	deps          Dependencies
-	clipboardBusy bool
+	intent         Intent
+	session        *Session
+	deps           Dependencies
+	clipboardBusy  bool
+	reportedErrors map[string]reportedError
 
 	signingStatus        actions.CommitSigningStatus
 	signingLoaded        bool
@@ -410,6 +413,8 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 	initial.clearRestorePassword()
 	initial.discardPasswordInput()
 	closeErr := deps.CloseClipboard()
+	initial.reportError("tui.run", err)
+	initial.reportError("clipboard.close", closeErr)
 	if err != nil {
 		return Result{}, errors.Join(err, closeErr)
 	}
@@ -419,9 +424,12 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 
 	rendered, ok := final.(*model)
 	if !ok {
-		return Result{}, fmt.Errorf("Unexpected TUI model type %T", final)
+		err := fmt.Errorf("Unexpected TUI model type %T", final)
+		initial.reportError("tui.result", err)
+		return Result{}, err
 	}
 	if rendered.fatalErr != nil {
+		rendered.reportError("tui.fatal", rendered.fatalErr)
 		return Result{}, rendered.fatalErr
 	}
 
@@ -508,14 +516,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.startupUnlockPending = false
 		m.startupUnlockNeedsRepair = false
 		if msg.err != nil {
+			errorText := m.reportError("startup.assess", msg.err)
 			if m.screen == screenLogin {
 				m.loginScreen.Waiting = false
-				m.loginScreen.Error = msg.err.Error()
+				m.loginScreen.Error = errorText
 				m.loginScreen.Status = ""
 				return m, nil
 			}
 			m.systemHeader = systemHeaderUnhealthy
-			m.notice = notice{message: msg.err.Error(), tone: dashboardscreen.ToneDanger}
+			m.notice = notice{message: errorText, tone: dashboardscreen.ToneDanger}
 			return m, nil
 		}
 		m.snapshot = msg.snapshot
@@ -556,8 +565,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loginProgress = nil
 		if msg.err != nil {
+			errorText := m.reportError("login.start", msg.err)
 			m.loginScreen.Waiting = false
-			m.loginScreen.Error = msg.err.Error()
+			m.loginScreen.Error = errorText
 			m.loginScreen.Status = ""
 			return m, nil
 		}
@@ -610,8 +620,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if msg.err != nil {
+			errorText := m.reportError("login.finish", msg.err)
 			m.loginScreen.Waiting = false
-			m.loginScreen.Error = msg.err.Error()
+			m.loginScreen.Error = errorText
 			m.loginScreen.Status = ""
 			return m, nil
 		}
@@ -648,6 +659,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.passwordBusy = false
 		if msg.err != nil {
+			errorText := m.reportError("vault.restore", msg.err)
 			msg.password.clear()
 			switch {
 			case errors.Is(msg.err, readiness.ErrInvalidRestorePassword):
@@ -655,7 +667,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			case errors.Is(msg.err, readiness.ErrNoRemoteLinkedVault):
 				m.passwordInput.SetError("No linked vault was found for this account.")
 			default:
-				m.passwordInput.SetError(msg.err.Error())
+				m.passwordInput.SetError(errorText)
 			}
 			return m, nil
 		}
@@ -671,7 +683,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotRefreshMsg:
 		return m.handleSnapshotRefreshMsg(msg)
 	case securityStateMsg:
-		if msg.err == nil {
+		if msg.err != nil {
+			m.reportError("security.load", msg.err)
+		} else {
 			m.securityState = msg.state
 			m.securityLoaded = true
 		}
@@ -690,10 +704,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			m.runtimeStatus = msg.status
 			m.runtimeLoaded = true
+			m.reportErrorText("sync.status", msg.status.Error)
 		} else {
+			errorText := m.reportError("runtime.status", msg.err)
 			m.runtimeStatus.Syncing = false
 			if m.snapshot.LoggedIn && m.snapshot.IPCSocketReady {
-				m.runtimeStatus.Error = msg.err.Error()
+				m.runtimeStatus.Error = errorText
 				m.runtimeLoaded = true
 			}
 		}
@@ -734,8 +750,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.idleLockInFlight = false
 		if msg.err != nil {
+			errorText := m.reportError("vault.idle-lock", msg.err)
 			if m.screen == screenDashboard {
-				m.notice = notice{message: msg.err.Error(), tone: dashboardscreen.ToneDanger}
+				m.notice = notice{message: errorText, tone: dashboardscreen.ToneDanger}
 			}
 			return m, m.resetIdleLockCmd()
 		}
@@ -803,14 +820,17 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleLabRoutingClearedMsg(msg)
 	case labRoutingPollMsg:
 		return m.handleLabRoutingPollMsg(msg)
+	case doctorReportCopiedMsg:
+		return m.handleDoctorReportCopiedMsg(msg)
 	case copyFinishedMsg:
 		m.clipboardBusy = false
 		if msg.err != nil {
+			errorText := m.reportError("clipboard.copy", msg.err)
 			if m.screen == screenLogin {
-				m.loginScreen.Error = msg.err.Error()
+				m.loginScreen.Error = errorText
 				return m, nil
 			}
-			m.notice = notice{message: msg.err.Error(), tone: dashboardscreen.ToneDanger}
+			m.notice = notice{message: errorText, tone: dashboardscreen.ToneDanger}
 			return m, nil
 		}
 		m.cancelPrivateClipboard()
@@ -818,11 +838,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case openFinishedMsg:
 		if msg.err != nil {
+			errorText := m.reportError("browser.open", msg.err)
 			if m.screen == screenLogin {
-				m.loginScreen.Error = msg.err.Error()
+				m.loginScreen.Error = errorText
 				return m, nil
 			}
-			m.notice = notice{message: msg.err.Error(), tone: dashboardscreen.ToneDanger}
+			m.notice = notice{message: errorText, tone: dashboardscreen.ToneDanger}
 		}
 		return m, nil
 	case tea.KeyMsg:
@@ -2392,6 +2413,9 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 }
 
 func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error, unlocked bool, unlockErr error) tea.Cmd {
+	action := "maintenance." + string(m.maintenanceTrigger)
+	errorText := m.reportError(action, err)
+	m.reportError(action+".unlock", unlockErr)
 	m.snapshot = result.Snapshot
 	m.summary = result.Summary
 	m.systemHeader = m.systemHeaderForSnapshot(result.Snapshot)
@@ -2417,13 +2441,13 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 		m.systemHeader = systemHeaderUnhealthy
 		switch {
 		case m.screen == screenPassword && m.maintenanceTrigger == maintenanceTriggerSetup:
-			m.passwordInput.SetError(err.Error())
+			m.passwordInput.SetError(errorText)
 			return m.passwordInput.Init()
 		case m.screen == screenPassword && m.maintenanceUsedPassword:
-			m.passwordInput.SetError(err.Error())
+			m.passwordInput.SetError(errorText)
 			return nil
 		default:
-			m.showDashboardNotice(err.Error(), dashboardscreen.ToneDanger)
+			m.showDashboardNotice(errorText, dashboardscreen.ToneDanger)
 			if m.snapshot.VaultExists {
 				return m.pollRuntimeStatus(time.Second)
 			}
@@ -2577,7 +2601,7 @@ func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea
 	m.passwordBusyMessage = ""
 	if msg.err != nil {
 		m.passwordHideInput = false
-		m.passwordInput.SetError(msg.err.Error())
+		m.passwordInput.SetError(m.reportError("vault.unlock", msg.err))
 		return nil
 	}
 

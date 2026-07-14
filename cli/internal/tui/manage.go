@@ -514,6 +514,7 @@ func (m *model) returnFromManageFlow() tea.Cmd {
 func (m *model) loadStoredAccountIdentity() {
 	creds, err := actions.LoadCredentials(config.DefaultPaths())
 	if err != nil {
+		m.reportError("account.identity", err)
 		return
 	}
 	m.accountEmail = strings.TrimSpace(creds.Email)
@@ -581,6 +582,7 @@ func fallbackAccountNameFromEmail(email string) string {
 
 func (m *model) handleManageSyncFinishedMsg(msg manageSyncFinishedMsg) (tea.Model, tea.Cmd) {
 	m.manage.syncBusy = false
+	m.reportError("sync.trigger", msg.err)
 	return m, m.pollRuntimeStatus(0)
 }
 
@@ -588,7 +590,7 @@ func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.
 	m.manage.logoutBusy = false
 	if msg.err != nil {
 		m.manage.settingItem = manageItemLogout
-		m.manage.settingErr = msg.err.Error()
+		m.manage.settingErr = m.reportError("account.logout", msg.err)
 		return m, nil
 	}
 
@@ -616,7 +618,7 @@ func (m *model) handleManageChangePasswordFinishedMsg(msg manageChangePasswordFi
 	m.passwordBusyMessage = ""
 	m.passwordHideInput = false
 	if msg.err != nil {
-		m.passwordInput.SetError(msg.err.Error())
+		m.passwordInput.SetError(m.reportError("vault.change-password", msg.err))
 		return m, nil
 	}
 
@@ -749,7 +751,7 @@ func (m *model) saveManageSecuritySettingCmd(item manageItemID, value string) te
 func (m *model) handleManageSecuritySavedMsg(msg manageSecuritySavedMsg) (tea.Model, tea.Cmd) {
 	m.manage.settingItem = msg.item
 	if msg.err != nil {
-		m.manage.settingErr = msg.err.Error()
+		m.manage.settingErr = m.reportError("security.save", msg.err)
 		return m, nil
 	}
 	m.manage.settingErr = ""

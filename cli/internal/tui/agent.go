@@ -690,6 +690,7 @@ func (m *model) refreshSnapshotCmd() tea.Cmd {
 
 func (m *model) handleSnapshotRefreshMsg(msg snapshotRefreshMsg) (tea.Model, tea.Cmd) {
 	if msg.err != nil {
+		m.reportError("snapshot.refresh", msg.err)
 		return m, nil
 	}
 	m.snapshot = msg.snapshot
@@ -709,7 +710,7 @@ func (m *model) handleSigningStatusMsg(msg signingStatusMsg) (tea.Model, tea.Cmd
 	if msg.err != nil {
 		m.signingStatus = msg.status
 		m.signingLoaded = true
-		m.signingError = msg.err.Error()
+		m.signingError = m.reportError("signing.status", msg.err)
 		m.agent.signing.disableArmed = false
 		return m, nil
 	}
@@ -731,8 +732,9 @@ func (m *model) handleAgentSSHFinishedMsg(msg agentSSHFinishedMsg) (tea.Model, t
 	}
 	m.agent.sshBusy = false
 	if msg.err != nil {
-		m.agent.statusErr = msg.err.Error()
-		m.notice = notice{message: msg.err.Error(), tone: dashboardscreen.ToneDanger}
+		errorText := m.reportError("agent.ssh", msg.err)
+		m.agent.statusErr = errorText
+		m.notice = notice{message: errorText, tone: dashboardscreen.ToneDanger}
 		return m, nil
 	}
 
@@ -747,7 +749,7 @@ func (m *model) handleAgentSigningKeysMsg(msg agentSigningKeysMsg) (tea.Model, t
 	}
 	m.agent.signing.loading = false
 	if msg.err != nil {
-		m.agent.signing.err = msg.err.Error()
+		m.agent.signing.err = m.reportError("signing.keys", msg.err)
 		m.agent.signing.all = nil
 		m.agent.signing.rows = nil
 		return m, nil
@@ -782,7 +784,7 @@ func (m *model) handleAgentSigningFinishedMsg(msg agentSigningFinishedMsg) (tea.
 		m.agent.signing.err = ""
 		m.signingStatus = msg.status
 		m.signingLoaded = true
-		m.signingError = msg.err.Error()
+		m.signingError = m.reportError("signing.configure", msg.err)
 		return m, nil
 	}
 

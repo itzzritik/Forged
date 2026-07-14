@@ -21,16 +21,30 @@ const (
 )
 
 var logsCmd = &cobra.Command{
-	Use:   "logs",
-	Short: "Follow daemon logs",
-	RunE:  runLogsCommand,
+	Use:       "logs [daemon|tui]",
+	Short:     "Follow daemon or TUI logs",
+	Args:      cobra.MaximumNArgs(1),
+	ValidArgs: []string{"daemon", "tui"},
+	RunE:      runLogsCommand,
 }
 
-func runLogsCommand(cmd *cobra.Command, _ []string) error {
+func runLogsCommand(cmd *cobra.Command, args []string) error {
 	ctx, stop := signal.NotifyContext(cmd.Context(), os.Interrupt)
 	defer stop()
 
-	return followLog(ctx, cmd.OutOrStdout(), config.DefaultPaths().LogFile())
+	paths := config.DefaultPaths()
+	path := paths.LogFile()
+	if len(args) > 0 {
+		switch args[0] {
+		case "daemon":
+		case "tui":
+			path = paths.TUILogFile()
+		default:
+			return fmt.Errorf("Unknown log source %q (use daemon or tui)", args[0])
+		}
+	}
+
+	return followLog(ctx, cmd.OutOrStdout(), path)
 }
 
 func followLog(ctx context.Context, dst io.Writer, path string) error {
@@ -41,16 +55,16 @@ func followLog(ctx context.Context, dst io.Writer, path string) error {
 		return fmt.Errorf("No log file found at %s", path)
 	}
 	if err != nil {
-		return fmt.Errorf("opening daemon log: %w", err)
+		return fmt.Errorf("opening log: %w", err)
 	}
 	defer func() { _ = file.Close() }()
 
 	contents, err := io.ReadAll(file)
 	if err != nil {
-		return fmt.Errorf("reading daemon log: %w", err)
+		return fmt.Errorf("reading log: %w", err)
 	}
 	if _, err := io.Copy(dst, bytes.NewReader(lastLogLines(contents, logTailLineCount))); err != nil {
-		return fmt.Errorf("writing daemon log: %w", err)
+		return fmt.Errorf("writing log: %w", err)
 	}
 
 	ticker := time.NewTicker(logFollowInterval)
@@ -62,16 +76,16 @@ func followLog(ctx context.Context, dst io.Writer, path string) error {
 			if errors.Is(ctx.Err(), context.Canceled) {
 				return nil
 			}
-			return fmt.Errorf("following daemon log: %w", ctx.Err())
+			return fmt.Errorf("following log: %w", ctx.Err())
 		case <-ticker.C:
 		}
 
 		if _, err := io.Copy(dst, file); err != nil {
-			return fmt.Errorf("following daemon log: %w", err)
+			return fmt.Errorf("following log: %w", err)
 		}
 		offset, err := file.Seek(0, io.SeekCurrent)
 		if err != nil {
-			return fmt.Errorf("reading daemon log position: %w", err)
+			return fmt.Errorf("reading log position: %w", err)
 		}
 
 		pathFile, err := os.OpenInRoot(dir, name)
@@ -79,27 +93,27 @@ func followLog(ctx context.Context, dst io.Writer, path string) error {
 			continue
 		}
 		if err != nil {
-			return fmt.Errorf("checking daemon log: %w", err)
+			return fmt.Errorf("checking log: %w", err)
 		}
 		pathInfo, err := pathFile.Stat()
 		if err != nil {
 			_ = pathFile.Close()
-			return fmt.Errorf("checking daemon log: %w", err)
+			return fmt.Errorf("checking log: %w", err)
 		}
 		fileInfo, err := file.Stat()
 		if err != nil {
 			_ = pathFile.Close()
-			return fmt.Errorf("checking open daemon log: %w", err)
+			return fmt.Errorf("checking open log: %w", err)
 		}
 
 		if os.SameFile(fileInfo, pathInfo) {
 			_ = pathFile.Close()
 			if pathInfo.Size() < offset {
 				if _, err := file.Seek(0, io.SeekStart); err != nil {
-					return fmt.Errorf("resetting truncated daemon log: %w", err)
+					return fmt.Errorf("resetting truncated log: %w", err)
 				}
 				if _, err := io.Copy(dst, file); err != nil {
-					return fmt.Errorf("following truncated daemon log: %w", err)
+					return fmt.Errorf("following truncated log: %w", err)
 				}
 			}
 			continue
@@ -107,12 +121,12 @@ func followLog(ctx context.Context, dst io.Writer, path string) error {
 
 		if _, err := io.Copy(dst, file); err != nil {
 			_ = pathFile.Close()
-			return fmt.Errorf("finishing rotated daemon log: %w", err)
+			return fmt.Errorf("finishing rotated log: %w", err)
 		}
 		_ = file.Close()
 		file = pathFile
 		if _, err := io.Copy(dst, file); err != nil {
-			return fmt.Errorf("following rotated daemon log: %w", err)
+			return fmt.Errorf("following rotated log: %w", err)
 		}
 	}
 }

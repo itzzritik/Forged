@@ -5,6 +5,7 @@ import (
 	"runtime"
 	"sort"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -24,6 +25,10 @@ type doctorRow struct {
 	screen   doctorscreen.Row
 	severity int
 	order    int
+}
+
+type doctorReportCopiedMsg struct {
+	err error
 }
 
 func (m *model) isDoctorOverviewRoute() bool {
@@ -51,7 +56,16 @@ func (m *model) renderDoctorBody(contentWidth int) string {
 	for _, row := range rows {
 		screenRows = append(screenRows, row.screen)
 	}
-	return shell.IndentBlock(doctorscreen.Render(doctorscreen.Screen{Rows: screenRows}, contentWidth), 2)
+	sections := make([]string, 0, 2)
+	if !m.isDoctorDashboardTab() {
+		if status := dashboardscreen.Render(dashboardscreen.Screen{
+			Notice: dashboardscreen.Notice{Message: m.notice.message, Tone: m.notice.tone},
+		}, contentWidth); strings.TrimSpace(status) != "" {
+			sections = append(sections, status)
+		}
+	}
+	sections = append(sections, doctorscreen.Render(doctorscreen.Screen{Rows: screenRows}, contentWidth))
+	return shell.IndentBlock(strings.Join(sections, "\n\n"), 2)
 }
 
 func (m *model) renderDoctorDashboardBody(contentWidth int) string {
@@ -76,14 +90,15 @@ func (m *model) renderDoctorDashboardBody(contentWidth int) string {
 }
 
 func (m *model) doctorFooterActions(includeTabs bool) []shell.FooterAction {
-	actions := make([]shell.FooterAction, 0, 4)
+	actions := make([]shell.FooterAction, 0, 5)
 	if includeTabs {
 		actions = append(actions, shell.FooterAction{Key: theme.Glyphs.LeftRight, Label: "Tabs"})
 	}
 	if m.doctorCanFixIssues() && !m.maintenanceBusy {
-		actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Fix Issues"})
+		actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Fix"})
 	}
 	actions = append(actions,
+		shell.FooterAction{Key: "C", Label: "Copy"},
 		shell.FooterAction{Key: "R", Label: "Refresh"},
 		shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 	)
@@ -99,6 +114,8 @@ func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "r", "R":
 		return m, m.refreshSnapshotCmd()
+	case "c", "C":
+		return m, m.copyDoctorReportCmd()
 	case "enter":
 		if !m.doctorCanFixIssues() || m.maintenanceBusy {
 			return m, nil
@@ -125,6 +142,8 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.switchDashboardTab(1, tabs)
 	case "r", "R":
 		return m, m.refreshSnapshotCmd()
+	case "c", "C":
+		return m, m.copyDoctorReportCmd()
 	case "enter":
 		if !m.doctorCanFixIssues() || m.maintenanceBusy {
 			return m, nil
@@ -133,6 +152,80 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		return m, nil
 	}
+}
+
+func (m *model) copyDoctorReportCmd() tea.Cmd {
+	m.clipboardBusy = true
+	m.notice = notice{}
+	report := m.doctorReport()
+	copyText := m.deps.CopyText
+	return func() tea.Msg {
+		return doctorReportCopiedMsg{err: copyText(report)}
+	}
+}
+
+func (m *model) handleDoctorReportCopiedMsg(msg doctorReportCopiedMsg) (tea.Model, tea.Cmd) {
+	m.clipboardBusy = false
+	if msg.err != nil {
+		message := m.reportError("doctor.copy-report", msg.err)
+		m.notice = notice{message: "Couldn't copy doctor report: " + message, tone: dashboardscreen.ToneDanger}
+		return m, nil
+	}
+	m.cancelPrivateClipboard()
+	m.notice = notice{message: "Doctor report copied", tone: dashboardscreen.ToneSuccess}
+	return m, nil
+}
+
+func (m *model) doctorReport() string {
+	lines := []string{
+		"Forged diagnostic report",
+		"Generated: " + time.Now().UTC().Format(time.RFC3339),
+		"Version: " + doctorReportValue(m.deps.AppVersion),
+		"Platform: " + runtime.GOOS + "/" + runtime.GOARCH,
+		"Readiness: " + doctorReportValue(string(m.snapshot.State)),
+		"CLI build: " + doctorReportValue(m.snapshot.CurrentBuildID),
+		"Daemon build: " + doctorReportValue(m.snapshot.DaemonBuildID),
+		"",
+		"Checks:",
+	}
+	for _, row := range m.doctorRows() {
+		lines = append(lines, fmt.Sprintf(
+			"- [%s] %s: %s",
+			doctorReportTone(row.screen.Tone),
+			strings.TrimSpace(row.screen.Check),
+			doctorReportStatus(row.screen.Status),
+		))
+	}
+	return strings.Join(lines, "\n") + "\n"
+}
+
+func doctorReportTone(tone doctorscreen.Tone) string {
+	switch tone {
+	case doctorscreen.ToneSuccess:
+		return "ok"
+	case doctorscreen.ToneWarning:
+		return "warning"
+	default:
+		return "error"
+	}
+}
+
+func doctorReportStatus(status string) string {
+	status = strings.TrimSpace(status)
+	for _, prefix := range []string{theme.Glyphs.Check, theme.Glyphs.Cross, theme.Glyphs.Pending, "!"} {
+		if strings.HasPrefix(status, prefix) {
+			return strings.TrimSpace(strings.TrimPrefix(status, prefix))
+		}
+	}
+	return status
+}
+
+func doctorReportValue(value string) string {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "unknown"
+	}
+	return value
 }
 
 func (m *model) startDoctorRepair(password []byte) tea.Cmd {

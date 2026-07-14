@@ -85,6 +85,9 @@ func (p Paths) CtlSocket() string {
 }
 func (p Paths) PIDFile() string { return filepath.Join(p.RuntimeDir, "daemon.pid") }
 func (p Paths) LogFile() string { return filepath.Join(p.StateDir, "logs", "forged.log") }
+func (p Paths) TUILogFile() string {
+	return filepath.Join(p.StateDir, "logs", "forged-tui.log")
+}
 
 func DefaultPaths() Paths {
 	home, _ := os.UserHomeDir()
