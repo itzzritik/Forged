@@ -130,6 +130,11 @@ type loginProgressMsg struct {
 	progress actions.LoginProgress
 }
 
+type loginApprovedMsg struct {
+	id    int
+	creds actions.AccountCredentials
+}
+
 type loginFinishedMsg struct {
 	id       int
 	creds    actions.AccountCredentials
@@ -339,10 +344,11 @@ type model struct {
 	passwordOverlay      bool
 	repairScreen         repairscreen.TaskScreen
 
-	loginID       int
-	loginProgress <-chan actions.LoginProgress
-	loginCancel   context.CancelFunc
-	restoreID     int
+	loginID         int
+	loginProgress   <-chan actions.LoginProgress
+	loginCancel     context.CancelFunc
+	loginCommitting bool
+	restoreID       int
 
 	maintenanceID           int
 	maintenanceProgress     <-chan readiness.ProgressStage
@@ -646,10 +652,21 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loginScreen.Error = ""
 		}
 		return m, m.waitForLoginStartProgress(msg.id, m.loginProgress)
+	case loginApprovedMsg:
+		if msg.id != m.loginID || m.screen != screenLogin {
+			return m, nil
+		}
+		m.loginCancel = nil
+		m.loginCommitting = true
+		m.loginScreen.Waiting = true
+		m.loginScreen.Status = "Saving account securely"
+		m.loginScreen.Error = ""
+		return m, m.commitLogin(msg.id, msg.creds)
 	case loginFinishedMsg:
 		if msg.id != m.loginID {
 			return m, nil
 		}
+		m.loginCommitting = false
 		if m.loginCancel != nil {
 			m.loginCancel = nil
 		}
@@ -1439,6 +1456,9 @@ func (m *model) renderDashboardSection(contentWidth int, section dashboardSectio
 func (m *model) footerActions() []shell.FooterAction {
 	switch m.screen {
 	case screenLogin:
+		if m.loginCommitting {
+			return nil
+		}
 		actions := []shell.FooterAction{}
 		if m.loginScreen.Error != "" {
 			actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Retry"})
@@ -1819,6 +1839,9 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.loginCommitting {
+		return m, nil
+	}
 	switch msg.String() {
 	case "esc":
 		m.loginID++
@@ -2257,6 +2280,7 @@ func (m *model) assessCurrentState() tea.Cmd {
 func (m *model) startLoginFlow() tea.Cmd {
 	m.screen = screenLogin
 	m.notice = notice{}
+	m.loginCommitting = false
 	m.loginScreen = accountscreen.LoginScreen{
 		Title:   "Log In to Sync Vault",
 		Context: "Preparing secure browser approval.",
@@ -2299,16 +2323,22 @@ func (m *model) waitForLoginStartProgress(id int, ch <-chan actions.LoginProgres
 }
 
 func (m *model) waitForLogin(ctx context.Context, id int, session actions.LoginSession) tea.Cmd {
-	save := m.saveCredentials
 	return func() tea.Msg {
 		creds, err := session.Wait(ctx)
 		if errors.Is(err, context.Canceled) {
 			return loginFinishedMsg{id: id, canceled: true}
 		}
-		if err == nil {
-			err = save(creds)
+		if err != nil {
+			return loginFinishedMsg{id: id, err: err}
 		}
-		return loginFinishedMsg{id: id, creds: creds, err: err}
+		return loginApprovedMsg{id: id, creds: creds}
+	}
+}
+
+func (m *model) commitLogin(id int, creds actions.AccountCredentials) tea.Cmd {
+	save := m.saveCredentials
+	return func() tea.Msg {
+		return loginFinishedMsg{id: id, creds: creds, err: save(creds)}
 	}
 }
 

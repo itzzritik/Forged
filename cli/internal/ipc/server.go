@@ -29,24 +29,29 @@ type SSHRouteHandler interface {
 }
 
 type Server struct {
-	socketPath  string
-	stateMu     sync.RWMutex
-	vault       *vault.Vault
-	keyStore    *vault.KeyStore
-	activityLog *activity.ActivityLog
-	listener    net.Listener
-	logger      *slog.Logger
-	wg          sync.WaitGroup
-	syncBus     *forgedsync.Bus
-	syncLink    func(SyncLinkArgs) error
-	syncUnlink  func() error
-	authBroker  *sensitiveauth.Broker
-	onKeyChange func()
-	onReadSync  func()
-	sshRoutes   SSHRouteHandler
+	socketPath     string
+	stateMu        sync.RWMutex
+	vault          *vault.Vault
+	keyStore       *vault.KeyStore
+	activityLog    *activity.ActivityLog
+	listener       net.Listener
+	logger         *slog.Logger
+	wg             sync.WaitGroup
+	syncBus        *forgedsync.Bus
+	syncLink       func(SyncLinkArgs) error
+	syncUnlink     func() error
+	accountReplace func(AccountCredentialsArgs) error
+	accountClear   func() error
+	authBroker     *sensitiveauth.Broker
+	onKeyChange    func()
+	onVaultChange  func(string)
+	onReadSync     func()
+	sshRoutes      SSHRouteHandler
 }
 
 func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
 	s.syncBus = bus
 }
 
@@ -56,6 +61,14 @@ func (s *Server) SetSyncLinkHandler(handler func(SyncLinkArgs) error) {
 
 func (s *Server) SetSyncUnlinkHandler(handler func() error) {
 	s.syncUnlink = handler
+}
+
+func (s *Server) SetAccountReplaceHandler(handler func(AccountCredentialsArgs) error) {
+	s.accountReplace = handler
+}
+
+func (s *Server) SetAccountClearHandler(handler func() error) {
+	s.accountClear = handler
 }
 
 func (s *Server) SetSensitiveAuthBroker(broker *sensitiveauth.Broker) {
@@ -71,6 +84,10 @@ func (s *Server) SetVaultState(v *vault.Vault, ks *vault.KeyStore) {
 
 func (s *Server) SetOnKeyChange(fn func()) {
 	s.onKeyChange = fn
+}
+
+func (s *Server) SetOnVaultChange(fn func(string)) {
+	s.onVaultChange = fn
 }
 
 func (s *Server) SetOnReadSync(fn func()) {
@@ -175,6 +192,10 @@ func (s *Server) dispatch(req Request) Response {
 		return s.handleSyncLink(req.Args)
 	case CmdSyncUnlink:
 		return s.handleSyncUnlink()
+	case CmdAccountReplace:
+		return s.handleAccountReplace(req.Args)
+	case CmdAccountClear:
+		return s.handleAccountClear()
 	case CmdSSHRoutePrepare:
 		return s.handleSSHRoutePrepare(req.Args)
 	case CmdSSHRouteSuccess:
@@ -626,14 +647,15 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 
-	if s.syncBus == nil {
+	bus := s.currentSyncBus()
+	if bus == nil {
 		return ErrorResponse(fmt.Errorf("Sync is unavailable; restart Forged and try again"))
 	}
 
-	if err := s.syncBus.ForceSync(context.Background(), "manual_sync"); err != nil {
+	if err := bus.ForceSync(context.Background(), "manual_sync"); err != nil {
 		return ErrorResponse(fmt.Errorf("Sync failed: %w", err))
 	}
-	state := s.syncBus.SnapshotState()
+	state := bus.SnapshotState()
 	return OkResponse(map[string]any{"version": state.LastKnownServerVersion})
 }
 
@@ -659,6 +681,30 @@ func (s *Server) handleSyncUnlink() Response {
 		return ErrorResponse(fmt.Errorf("Sync unlink handler unavailable"))
 	}
 	if err := s.syncUnlink(); err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(nil)
+}
+
+func (s *Server) handleAccountReplace(raw json.RawMessage) Response {
+	var args AccountCredentialsArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
+	}
+	if s.accountReplace == nil {
+		return ErrorResponse(fmt.Errorf("Account replace handler unavailable"))
+	}
+	if err := s.accountReplace(args); err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(nil)
+}
+
+func (s *Server) handleAccountClear() Response {
+	if s.accountClear == nil {
+		return ErrorResponse(fmt.Errorf("Account clear handler unavailable"))
+	}
+	if err := s.accountClear(); err != nil {
 		return ErrorResponse(err)
 	}
 	return OkResponse(nil)
@@ -740,9 +786,10 @@ func (s *Server) handleSensitiveLock() Response {
 func (s *Server) handleStatus() Response {
 	buildID := buildinfo.CurrentID()
 	status := map[string]any{
-		"pid":       os.Getpid(),
-		"key_count": s.keyCount(),
-		"build_id":  buildID,
+		"pid":                     os.Getpid(),
+		"key_count":               s.keyCount(),
+		"build_id":                buildID,
+		"account_change_protocol": AccountChangeProtocol,
 		"build": map[string]any{
 			"id": buildID,
 		},
@@ -755,8 +802,8 @@ func (s *Server) handleStatus() Response {
 		}
 	}
 
-	if s.syncBus != nil {
-		syncState := s.syncBus.SnapshotState()
+	if bus := s.currentSyncBus(); bus != nil {
+		syncState := bus.SnapshotState()
 		status["sync"] = map[string]any{
 			"device_id":                 syncState.DeviceID,
 			"dirty":                     syncState.Dirty,
@@ -776,14 +823,15 @@ func (s *Server) handleStatus() Response {
 }
 
 func (s *Server) refreshForRead(reason string) {
-	if s.syncBus == nil {
+	bus := s.currentSyncBus()
+	if bus == nil {
 		return
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	if err := s.syncBus.ForegroundRead(ctx, reason); err != nil {
+	if err := bus.ForegroundRead(ctx, reason); err != nil {
 		s.logger.Debug("foreground sync refresh failed", "reason", reason, "error", err)
 	}
 	if s.onReadSync != nil {
@@ -799,8 +847,12 @@ func (s *Server) afterKeyMutation(reason string) {
 }
 
 func (s *Server) afterVaultMutation(reason string) {
-	if s.syncBus != nil {
-		s.syncBus.LocalMutation(reason)
+	if s.onVaultChange != nil {
+		s.onVaultChange(reason)
+		return
+	}
+	if bus := s.currentSyncBus(); bus != nil {
+		bus.LocalMutation(reason)
 	}
 }
 
@@ -808,6 +860,12 @@ func (s *Server) currentVaultState() (*vault.Vault, *vault.KeyStore) {
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
 	return s.vault, s.keyStore
+}
+
+func (s *Server) currentSyncBus() *forgedsync.Bus {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.syncBus
 }
 
 func (s *Server) requireKeyStore() (*vault.KeyStore, error) {

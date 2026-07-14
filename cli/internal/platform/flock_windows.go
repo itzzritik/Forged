@@ -9,21 +9,29 @@ import (
 )
 
 var (
-	modkernel32   = syscall.NewLazyDLL("kernel32.dll")
+	modkernel32      = syscall.NewLazyDLL("kernel32.dll")
 	procLockFileEx   = modkernel32.NewProc("LockFileEx")
 	procUnlockFileEx = modkernel32.NewProc("UnlockFileEx")
 )
 
 const (
-	lockfileExclusiveLock = 0x00000002
+	lockfileExclusiveLock   = 0x00000002
 	lockfileFailImmediately = 0x00000001
 )
 
 func LockFile(f *os.File) error {
+	return lockFile(f, lockfileExclusiveLock|lockfileFailImmediately)
+}
+
+func LockFileWait(f *os.File) error {
+	return lockFile(f, lockfileExclusiveLock)
+}
+
+func lockFile(f *os.File, flags uintptr) error {
 	var overlapped syscall.Overlapped
 	ret, _, err := procLockFileEx.Call(
 		f.Fd(),
-		lockfileExclusiveLock|lockfileFailImmediately,
+		flags,
 		0,
 		1, 0,
 		uintptr(unsafe.Pointer(&overlapped)),

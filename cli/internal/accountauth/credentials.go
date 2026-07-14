@@ -21,6 +21,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 var ErrLoginRequired = errors.New("log-in required")
@@ -38,7 +39,13 @@ var refreshMu sync.Mutex
 // already-rotated disk token. The cache lives for the lifetime of the daemon
 // process; on restart we fall back to disk, accepting one possible re-login
 // in the very rare crash-during-save case.
-var memCreds atomic.Pointer[Credentials]
+type cachedCredentials struct {
+	Path        string
+	Credentials Credentials
+	UpdatedAt   time.Time
+}
+
+var memCreds atomic.Pointer[cachedCredentials]
 
 // refresh401RetryDelay is the pause before retrying a 401 once. Pairs with
 // the server-side RefreshGracePeriod: if the first call's response was lost
@@ -46,6 +53,12 @@ var memCreds atomic.Pointer[Credentials]
 // our presented secret; the retry hits the cache and we get the new tokens
 // back instead of being family-revoked.
 const refresh401RetryDelay = 350 * time.Millisecond
+
+const (
+	accountIdentityVersion = 2
+	credentialSlotA        = "-v2-a"
+	credentialSlotB        = "-v2-b"
+)
 
 type Credentials struct {
 	ServerURL        string    `json:"server_url"`
@@ -57,6 +70,7 @@ type Credentials struct {
 	UserID           string    `json:"user_id"`
 	Email            string    `json:"email"`
 	Name             string    `json:"name,omitempty"`
+	ChangeID         string    `json:"-"`
 }
 
 type accountMetadata struct {
@@ -69,6 +83,7 @@ type accountMetadata struct {
 	UserID            string    `json:"user_id"`
 	Email             string    `json:"email"`
 	Name              string    `json:"name,omitempty"`
+	ChangeID          string    `json:"change_id,omitempty"`
 	UpdatedAt         time.Time `json:"updated_at"`
 }
 
@@ -76,6 +91,8 @@ type credentialSecret struct {
 	Version      int    `json:"version"`
 	AccessToken  string `json:"access_token,omitempty"`
 	RefreshToken string `json:"refresh_token,omitempty"`
+	ServerURL    string `json:"server_url,omitempty"`
+	UserID       string `json:"user_id,omitempty"`
 }
 
 func CredentialsPath(paths config.Paths) string {
@@ -83,13 +100,31 @@ func CredentialsPath(paths config.Paths) string {
 }
 
 func Load(paths config.Paths) (Credentials, error) {
-	if cached := memCreds.Load(); cached != nil && credsAreFresher(*cached, paths) {
-		return *cached, nil
-	}
+	var creds Credentials
+	err := WithCredentialsLock(paths, func() error {
+		var err error
+		creds, err = loadCredentials(paths)
+		return err
+	})
+	return creds, err
+}
 
+func loadCredentials(paths config.Paths) (Credentials, error) {
 	metadata, err := readMetadata(CredentialsPath(paths))
 	if err != nil {
 		return Credentials{}, err
+	}
+	requireIdentity := metadata.Version >= accountIdentityVersion
+	if _, err := os.Stat(accountIdentityMarkerPath(paths)); err == nil {
+		requireIdentity = true
+	} else if !os.IsNotExist(err) {
+		return Credentials{}, fmt.Errorf("Reading account identity marker: %w", err)
+	}
+	if requireIdentity && metadata.Version < accountIdentityVersion {
+		return Credentials{}, fmt.Errorf("Account credentials use an outdated identity format: %w", ErrCredentialStoreBroken)
+	}
+	if cached := memCreds.Load(); cached != nil && cached.Path == CredentialsPath(paths) && credsAreFresher(*cached, metadata) {
+		return cached.Credentials, nil
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -102,6 +137,17 @@ func Load(paths config.Paths) (Credentials, error) {
 	if err != nil {
 		return Credentials{}, fmt.Errorf("Loading account secret: %w", err)
 	}
+	if requireIdentity {
+		if secret.Version < accountIdentityVersion || secret.ServerURL == "" || secret.UserID == "" {
+			return Credentials{}, fmt.Errorf("Account credentials use an outdated identity format: %w", ErrCredentialStoreBroken)
+		}
+	}
+	if secret.ServerURL != "" && strings.TrimRight(strings.TrimSpace(secret.ServerURL), "/") != strings.TrimRight(metadata.ServerURL, "/") {
+		return Credentials{}, fmt.Errorf("Account secret does not match account metadata: %w", ErrCredentialStoreBroken)
+	}
+	if secret.UserID != "" && strings.TrimSpace(secret.UserID) != metadata.UserID {
+		return Credentials{}, fmt.Errorf("Account secret does not match account metadata: %w", ErrCredentialStoreBroken)
+	}
 
 	creds := Credentials{
 		ServerURL:        metadata.ServerURL,
@@ -113,6 +159,7 @@ func Load(paths config.Paths) (Credentials, error) {
 		UserID:           metadata.UserID,
 		Email:            metadata.Email,
 		Name:             metadata.Name,
+		ChangeID:         metadata.ChangeID,
 	}
 	normalizeCredentials(&creds)
 	return creds, nil
@@ -121,24 +168,36 @@ func Load(paths config.Paths) (Credentials, error) {
 // credsAreFresher reports whether the in-memory cache's refresh token is
 // newer than what's on disk. Used to ensure a save-failed cache entry isn't
 // discarded by a stale disk read.
-func credsAreFresher(cached Credentials, paths config.Paths) bool {
-	if strings.TrimSpace(cached.RefreshToken) == "" {
+func credsAreFresher(cached cachedCredentials, metadata accountMetadata) bool {
+	creds := cached.Credentials
+	if strings.TrimSpace(creds.RefreshToken) == "" {
 		return false
 	}
-	metadata, err := readMetadata(CredentialsPath(paths))
-	if err != nil {
-		// Disk unreadable — cache is all we have.
-		return true
+	if strings.TrimRight(creds.ServerURL, "/") != strings.TrimRight(metadata.ServerURL, "/") || creds.UserID != metadata.UserID {
+		return false
 	}
-	if metadata.UpdatedAt.IsZero() {
-		return true
+	if creds.ChangeID != metadata.ChangeID {
+		return false
 	}
-	// If disk is at or ahead of cache, prefer disk (someone else wrote it).
-	return cached.RefreshExpiresAt.After(metadata.RefreshExpiresAt)
+	return cached.UpdatedAt.After(metadata.UpdatedAt) || creds.RefreshExpiresAt.After(metadata.RefreshExpiresAt)
 }
 
 func Save(paths config.Paths, creds Credentials) error {
+	return WithCredentialsLock(paths, func() error {
+		return saveCredentials(paths, creds)
+	})
+}
+
+func ValidateCredentials(creds Credentials) error {
 	normalizeCredentials(&creds)
+	return validateCredentialsForSave(creds)
+}
+
+func saveCredentials(paths config.Paths, creds Credentials) error {
+	normalizeCredentials(&creds)
+	if err := validateCredentialsForSave(creds); err != nil {
+		return err
+	}
 
 	credentialID, oldMetadata, err := credentialIDForSave(paths)
 	if err != nil {
@@ -146,9 +205,11 @@ func Save(paths config.Paths, creds Credentials) error {
 	}
 
 	secret := credentialSecret{
-		Version:      1,
+		Version:      accountIdentityVersion,
 		AccessToken:  creds.AccessToken,
 		RefreshToken: creds.RefreshToken,
+		ServerURL:    creds.ServerURL,
+		UserID:       creds.UserID,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -165,7 +226,7 @@ func Save(paths config.Paths, creds Credentials) error {
 	}
 
 	metadata := accountMetadata{
-		Version:           1,
+		Version:           accountIdentityVersion,
 		ServerURL:         creds.ServerURL,
 		CredentialID:      credentialID,
 		CredentialBackend: store.Backend(),
@@ -174,43 +235,79 @@ func Save(paths config.Paths, creds Credentials) error {
 		UserID:            creds.UserID,
 		Email:             creds.Email,
 		Name:              creds.Name,
+		ChangeID:          creds.ChangeID,
 		UpdatedAt:         time.Now().UTC(),
 	}
+	_, markerErr := os.Stat(accountIdentityMarkerPath(paths))
+	markerExisted := markerErr == nil
+	if markerErr != nil && !os.IsNotExist(markerErr) {
+		return fmt.Errorf("Reading account identity marker: %w", markerErr)
+	}
+	if err := writePrivateFile(accountIdentityMarkerPath(paths), []byte("2\n")); err != nil {
+		return fmt.Errorf("Writing account identity marker: %w", err)
+	}
 	if err := writeMetadata(CredentialsPath(paths), metadata); err != nil {
+		if !markerExisted {
+			_ = os.Remove(accountIdentityMarkerPath(paths))
+		}
 		return err
 	}
 
 	if oldMetadata != nil && (oldMetadata.CredentialID != metadata.CredentialID || oldMetadata.CredentialBackend != metadata.CredentialBackend) {
 		_ = storeForBackend(paths, oldMetadata.CredentialBackend).Delete(ctx, oldMetadata.CredentialID)
 	}
+	cacheCredentials(paths, creds, metadata.UpdatedAt)
 	_ = os.Remove(paths.LegacyCredentialsFile())
 	return nil
 }
 
 func Delete(paths config.Paths) error {
-	memCreds.Store(nil)
-	metadata, err := readMetadata(CredentialsPath(paths))
-	if err == nil {
-		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := storeForBackend(paths, metadata.CredentialBackend).Delete(ctx, metadata.CredentialID); err != nil &&
-			!errors.Is(err, ErrCredentialSecretNotFound) &&
-			!errors.Is(err, ErrCredentialStoreUnavailable) {
-			return fmt.Errorf("Deleting account secret: %w", err)
-		}
-		if metadata.CredentialBackend != backendEncryptedFile {
-			_ = newFileCredentialStore(paths).Delete(ctx, metadata.CredentialID)
-		}
-	} else if os.IsNotExist(err) {
-		_ = newFileCredentialStore(paths).Delete(context.Background(), "")
-	} else {
-		return err
+	return WithCredentialsLock(paths, func() error {
+		return deleteCredentials(paths)
+	})
+}
+
+func deleteCredentials(paths config.Paths) error {
+	var metadata *accountMetadata
+	if current, err := readMetadata(CredentialsPath(paths)); err == nil {
+		metadata = &current
+	} else if !os.IsNotExist(err) && !errors.Is(err, ErrLoginRequired) {
+		slog.Warn("account metadata is unreadable; removing it and known credential slots", "error", err)
 	}
 
-	for _, path := range []string{CredentialsPath(paths), paths.LegacyCredentialsFile()} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
+	if err := os.Remove(CredentialsPath(paths)); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	clearCachedCredentials(paths)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	ids := credentialIDsForDelete(paths, metadata)
+	stores := []credentialStore{newFileCredentialStore(paths)}
+	if metadata != nil {
+		stores = append(stores, storeForBackend(paths, metadata.CredentialBackend))
+	}
+	if platformStore := newPlatformCredentialStore(paths); platformStore != nil && platformStore.Available(ctx) {
+		stores = append(stores, platformStore)
+	}
+	var cleanupErr error
+	for _, store := range stores {
+		for _, id := range ids {
+			if err := store.Delete(ctx, id); err != nil &&
+				!errors.Is(err, ErrCredentialSecretNotFound) &&
+				!errors.Is(err, ErrCredentialStoreUnavailable) {
+				cleanupErr = errors.Join(cleanupErr, err)
+			}
 		}
+	}
+
+	for _, path := range []string{paths.LegacyCredentialsFile(), paths.AccountSecretKeyFile()} {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			cleanupErr = errors.Join(cleanupErr, err)
+		}
+	}
+	if cleanupErr != nil {
+		slog.Error("deleting retired account secrets failed", "error", cleanupErr)
 	}
 	return nil
 }
@@ -219,7 +316,18 @@ func EnsureFresh(ctx context.Context, paths config.Paths) (Credentials, error) {
 	refreshMu.Lock()
 	defer refreshMu.Unlock()
 
-	creds, err := Load(paths)
+	var refreshed Credentials
+	err := WithCredentialsLock(paths, func() error {
+		var err error
+		refreshed, err = ensureFreshLocked(ctx, paths)
+		return err
+	})
+	return refreshed, err
+}
+
+func ensureFreshLocked(ctx context.Context, paths config.Paths) (Credentials, error) {
+
+	creds, err := loadCredentials(paths)
 	if err != nil {
 		return Credentials{}, err
 	}
@@ -248,9 +356,9 @@ func EnsureFresh(ctx context.Context, paths config.Paths) (Credentials, error) {
 	// leave the next caller presenting the now-revoked refresh token. The
 	// server has already committed the rotation by this point; the new
 	// tokens are the only ones that work.
-	memCreds.Store(&refreshed)
+	cacheCredentials(paths, refreshed, time.Now().UTC())
 
-	if err := Save(paths, refreshed); err != nil {
+	if err := saveCredentials(paths, refreshed); err != nil {
 		// Don't return the error — we have the new tokens in memory.
 		// Returning here would make the caller treat this as a failure
 		// even though sync can proceed. Log loudly so the issue is
@@ -278,6 +386,32 @@ func CurrentToken(creds Credentials) string {
 	return strings.TrimSpace(creds.Token)
 }
 
+func RevokeRemoteSession(ctx context.Context, creds Credentials) error {
+	if strings.TrimSpace(creds.ServerURL) == "" || strings.TrimSpace(creds.RefreshToken) == "" {
+		return nil
+	}
+	body, err := json.Marshal(map[string]string{"refresh_token": creds.RefreshToken})
+	if err != nil {
+		return fmt.Errorf("Encoding logout request: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, strings.TrimRight(creds.ServerURL, "/")+"/api/v1/auth/logout", bytes.NewReader(body))
+	if err != nil {
+		return fmt.Errorf("Creating logout request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("Revoking remote session: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("Revoking remote session failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
 func normalizeCredentials(creds *Credentials) {
 	if creds == nil {
 		return
@@ -287,6 +421,7 @@ func normalizeCredentials(creds *Credentials) {
 	creds.UserID = strings.TrimSpace(creds.UserID)
 	creds.Name = strings.TrimSpace(creds.Name)
 	creds.RefreshToken = strings.TrimSpace(creds.RefreshToken)
+	creds.ChangeID = strings.TrimSpace(creds.ChangeID)
 
 	if token := strings.TrimSpace(creds.AccessToken); token != "" {
 		creds.AccessToken = token
@@ -302,6 +437,34 @@ func normalizeCredentials(creds *Credentials) {
 		} else {
 			creds.Name = fallbackAccountName(creds.Email)
 		}
+	}
+}
+
+func validateCredentialsForSave(creds Credentials) error {
+	if creds.ServerURL == "" {
+		return fmt.Errorf("Saving account credentials: server URL is required")
+	}
+	if creds.UserID == "" {
+		return fmt.Errorf("Saving account credentials: user ID is required")
+	}
+	if CurrentToken(creds) == "" {
+		return fmt.Errorf("Saving account credentials: access token is required")
+	}
+	return nil
+}
+
+func cacheCredentials(paths config.Paths, creds Credentials, updatedAt time.Time) {
+	memCreds.Store(&cachedCredentials{
+		Path:        CredentialsPath(paths),
+		Credentials: creds,
+		UpdatedAt:   updatedAt,
+	})
+}
+
+func clearCachedCredentials(paths config.Paths) {
+	cached := memCreds.Load()
+	if cached != nil && cached.Path == CredentialsPath(paths) {
+		memCreds.CompareAndSwap(cached, nil)
 	}
 }
 
@@ -321,7 +484,8 @@ func readMetadata(path string) (accountMetadata, error) {
 	metadata.UserID = strings.TrimSpace(metadata.UserID)
 	metadata.Email = strings.TrimSpace(metadata.Email)
 	metadata.Name = strings.TrimSpace(metadata.Name)
-	if metadata.ServerURL == "" || metadata.CredentialID == "" {
+	metadata.ChangeID = strings.TrimSpace(metadata.ChangeID)
+	if metadata.ServerURL == "" || metadata.CredentialID == "" || metadata.UserID == "" {
 		return accountMetadata{}, ErrLoginRequired
 	}
 	return metadata, nil
@@ -340,9 +504,10 @@ func writeMetadata(path string, metadata accountMetadata) error {
 }
 
 func credentialIDForSave(paths config.Paths) (string, *accountMetadata, error) {
-	if metadata, err := readMetadata(CredentialsPath(paths)); err == nil && metadata.CredentialID != "" {
-		return metadata.CredentialID, &metadata, nil
-	} else if err != nil && !os.IsNotExist(err) && !errors.Is(err, ErrLoginRequired) {
+	var oldMetadata *accountMetadata
+	if metadata, err := readMetadata(CredentialsPath(paths)); err == nil {
+		oldMetadata = &metadata
+	} else if !os.IsNotExist(err) && !errors.Is(err, ErrLoginRequired) {
 		return "", nil, err
 	}
 
@@ -350,7 +515,86 @@ func credentialIDForSave(paths config.Paths) (string, *accountMetadata, error) {
 	if err != nil {
 		return "", nil, err
 	}
-	return "account-" + installID, nil, nil
+	baseID := "account-" + installID
+	nextID := baseID + credentialSlotA
+	if oldMetadata != nil && oldMetadata.CredentialID == nextID {
+		nextID = baseID + credentialSlotB
+	}
+	return nextID, oldMetadata, nil
+}
+
+func accountIdentityMarkerPath(paths config.Paths) string {
+	return CredentialsPath(paths) + ".identity-v2"
+}
+
+func WithCredentialsLock(paths config.Paths, fn func() error) error {
+	if err := os.MkdirAll(paths.AuthDir(), 0o700); err != nil {
+		return fmt.Errorf("Creating account directory: %w", err)
+	}
+	f, err := os.OpenFile(CredentialsPath(paths)+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("Opening account lock: %w", err)
+	}
+	defer f.Close()
+	if err := platform.LockFileWait(f); err != nil {
+		return fmt.Errorf("Locking account credentials: %w", err)
+	}
+	defer platform.UnlockFile(f)
+	return fn()
+}
+
+func WithCredentials(paths config.Paths, fn func(Credentials) error) error {
+	return WithCredentialsLock(paths, func() error {
+		creds, err := loadCredentials(paths)
+		if err != nil {
+			return err
+		}
+		return fn(creds)
+	})
+}
+
+func credentialIDsForDelete(paths config.Paths, metadata *accountMetadata) []string {
+	baseID := ""
+	ids := make([]string, 0, 4)
+	if metadata != nil {
+		ids = append(ids, metadata.CredentialID)
+		baseID = strings.TrimSuffix(strings.TrimSuffix(metadata.CredentialID, credentialSlotA), credentialSlotB)
+	}
+	if data, err := os.ReadFile(paths.InstallIDFile()); err == nil {
+		if installID := strings.TrimSpace(string(data)); installID != "" {
+			baseID = "account-" + installID
+		}
+	}
+	if baseID == "" {
+		return ids
+	}
+	for _, id := range []string{baseID, baseID + credentialSlotA, baseID + credentialSlotB} {
+		seen := false
+		for _, existing := range ids {
+			if existing == id {
+				seen = true
+				break
+			}
+		}
+		if !seen {
+			ids = append(ids, id)
+		}
+	}
+	return ids
+}
+
+func credentialSecretPath(legacyPath, credentialID string) string {
+	slot := ""
+	switch {
+	case strings.HasSuffix(credentialID, credentialSlotA):
+		slot = "-a"
+	case strings.HasSuffix(credentialID, credentialSlotB):
+		slot = "-b"
+	default:
+		return legacyPath
+	}
+	ext := filepath.Ext(legacyPath)
+	return strings.TrimSuffix(legacyPath, ext) + slot + ext
 }
 
 func loadOrCreateInstallID(path string) (string, error) {
@@ -459,8 +703,15 @@ func refresh(ctx context.Context, creds Credentials) (Credentials, error) {
 		UserID:           result.UserID,
 		Email:            result.Email,
 		Name:             result.Name,
+		ChangeID:         creds.ChangeID,
 	}
 	normalizeCredentials(&refreshed)
+	if refreshed.UserID == "" || refreshed.UserID != creds.UserID {
+		return Credentials{}, fmt.Errorf("Refreshing credentials returned a different account identity")
+	}
+	if CurrentToken(refreshed) == "" || refreshed.RefreshToken == "" {
+		return Credentials{}, fmt.Errorf("Refreshing credentials returned incomplete tokens")
+	}
 	return refreshed, nil
 }
 

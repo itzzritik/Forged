@@ -1,6 +1,10 @@
 package ipc
 
+import "time"
+
 const (
+	AccountChangeProtocol = 1
+
 	CmdList              = "list"
 	CmdAdd               = "add"
 	CmdGenerate          = "generate"
@@ -16,6 +20,8 @@ const (
 	CmdSyncTrigger       = "sync-trigger"
 	CmdSyncLink          = "sync-link"
 	CmdSyncUnlink        = "sync-unlink"
+	CmdAccountReplace    = "account-replace-v2"
+	CmdAccountClear      = "account-clear-v2"
 	CmdStatus            = "status"
 	CmdSSHRoutePrepare   = "ssh-route-prepare"
 	CmdSSHRouteSuccess   = "ssh-route-success"
@@ -26,6 +32,19 @@ const (
 	DefaultAPIServer = "https://forged-api.ritik.me"
 	DefaultWebApp    = "https://forged.ritik.me"
 )
+
+type AccountCredentialsArgs struct {
+	ServerURL        string    `json:"server_url"`
+	Token            string    `json:"token,omitempty"`
+	AccessToken      string    `json:"access_token,omitempty"`
+	AccessExpiresAt  time.Time `json:"access_expires_at,omitempty"`
+	RefreshToken     string    `json:"refresh_token,omitempty"`
+	RefreshExpiresAt time.Time `json:"refresh_expires_at,omitempty"`
+	UserID           string    `json:"user_id"`
+	Email            string    `json:"email"`
+	Name             string    `json:"name,omitempty"`
+	ChangeID         string    `json:"change_id"`
+}
 
 type SyncLinkArgs struct {
 	ServerURL string `json:"server_url"`

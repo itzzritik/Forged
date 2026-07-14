@@ -28,6 +28,7 @@ Forged is zero-knowledge. The server stores the encrypted vault blob, KDF params
 - The daemon now starts cold. It does not need a stored plaintext master password to boot.
 - Active auth creates a shared session. The session can be cleared by expiry, system lock/sleep, or TUI idle lock.
 - Account login metadata lives at `~/.config/forged/auth/account.json`. Account access and refresh tokens use the OS credential store when available: macOS Keychain, Linux Secret Service, or Windows DPAPI. Headless/no-store fallback uses `~/.config/forged/auth/account-secret.enc` plus a `0600` local key file.
+- Stored account secrets carry their server and user identity. Saves write an inactive credential slot before atomically switching metadata; mismatches and post-migration downgrades fail closed.
 - Private keys are now decrypted on demand. They are not kept plaintext for the whole session anymore.
 - Local vault files and remote restore metadata are rejected before Argon2id derivation when their KDF costs are invalid or resource-exhausting.
 - SSH auto-routing writes public hint files and short-lived route snippets only. Learned route proofs and route tombstones stay inside the encrypted vault. Provider probes use strict host-key checking and never treat `ssh -T` account auth as repo proof.

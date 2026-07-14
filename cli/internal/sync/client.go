@@ -83,6 +83,10 @@ func kdfToJSON(kdf vault.KDFParams) kdfParamsJSON {
 }
 
 func (c *Client) Push(blob []byte, kdf vault.KDFParams, protectedKey string, expectedVersion int64) (PushResult, error) {
+	return c.PushContext(context.Background(), blob, kdf, protectedKey, expectedVersion)
+}
+
+func (c *Client) PushContext(ctx context.Context, blob []byte, kdf vault.KDFParams, protectedKey string, expectedVersion int64) (PushResult, error) {
 	body, _ := json.Marshal(map[string]any{
 		"blob":                    base64.StdEncoding.EncodeToString(blob),
 		"kdf_params":              kdfToJSON(kdf),
@@ -91,7 +95,7 @@ func (c *Client) Push(blob []byte, kdf vault.KDFParams, protectedKey string, exp
 		"device_id":               c.DeviceID,
 	})
 
-	req, err := http.NewRequest("POST", c.ServerURL+"/api/v1/sync/push", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.ServerURL+"/api/v1/sync/push", bytes.NewReader(body))
 	if err != nil {
 		return PushResult{}, err
 	}
@@ -161,7 +165,11 @@ type PullResult struct {
 }
 
 func (c *Client) Pull() (PullResult, error) {
-	req, err := http.NewRequest("GET", c.ServerURL+"/api/v1/sync/pull", nil)
+	return c.PullContext(context.Background())
+}
+
+func (c *Client) PullContext(ctx context.Context) (PullResult, error) {
+	req, err := http.NewRequestWithContext(ctx, "GET", c.ServerURL+"/api/v1/sync/pull", nil)
 	if err != nil {
 		return PullResult{}, err
 	}

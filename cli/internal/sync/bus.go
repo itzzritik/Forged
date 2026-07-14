@@ -59,6 +59,8 @@ type Bus struct {
 	stopped          bool
 	stopOnce         sync.Once
 	stopCh           chan struct{}
+	stopCtx          context.Context
+	cancelStop       context.CancelFunc
 	active           sync.WaitGroup
 }
 
@@ -110,12 +112,15 @@ func NewBus(engine EngineRuntime, state *SyncState, logger *slog.Logger, cfg Bus
 		state = &defaultState
 	}
 
+	stopCtx, cancelStop := context.WithCancel(context.Background())
 	bus := &Bus{
-		engine: engine,
-		state:  state,
-		logger: logger,
-		cfg:    cfg,
-		stopCh: make(chan struct{}),
+		engine:     engine,
+		state:      state,
+		logger:     logger,
+		cfg:        cfg,
+		stopCh:     make(chan struct{}),
+		stopCtx:    stopCtx,
+		cancelStop: cancelStop,
 	}
 	bus.startBackgroundRefresh()
 	return bus
@@ -417,6 +422,8 @@ func (b *Bus) enqueueRefresh(reason string, timeout time.Duration) {
 }
 
 func (b *Bus) executePush(ctx context.Context, reason string) error {
+	ctx, cancel := b.withStopContext(ctx)
+	defer cancel()
 	state, mutationVersion := b.engineStateSnapshot()
 	err := b.engine.PushCurrent(ctx, &state)
 	if err == nil {
@@ -441,6 +448,8 @@ func (b *Bus) executePush(ctx context.Context, reason string) error {
 }
 
 func (b *Bus) executePull(ctx context.Context, reason string) error {
+	ctx, cancel := b.withStopContext(ctx)
+	defer cancel()
 	state, mutationVersion := b.engineStateSnapshot()
 	_, _, err := b.engine.PullLatest(ctx, &state)
 	b.applyEngineState(state, mutationVersion)
@@ -451,6 +460,8 @@ func (b *Bus) executePull(ctx context.Context, reason string) error {
 }
 
 func (b *Bus) executeRefresh(ctx context.Context, reason string) error {
+	ctx, cancel := b.withStopContext(ctx)
+	defer cancel()
 	checker, ok := b.engine.(remoteStatusRuntime)
 	if !ok {
 		return b.executePull(ctx, reason)
@@ -616,12 +627,22 @@ func (b *Bus) Stop() {
 		b.queuedPush = false
 		b.queuedRefresh = false
 		b.mu.Unlock()
+		b.cancelStop()
 		close(b.stopCh)
 		b.active.Wait()
 		b.mu.Lock()
 		b.persistLocked()
 		b.mu.Unlock()
 	})
+}
+
+func (b *Bus) withStopContext(parent context.Context) (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithCancel(parent)
+	stop := context.AfterFunc(b.stopCtx, cancel)
+	return ctx, func() {
+		stop()
+		cancel()
+	}
 }
 
 func (b *Bus) nextRetryDelayLocked() time.Duration {

@@ -27,6 +27,14 @@ type statusContextAPI interface {
 	StatusContext(ctx context.Context) (StatusResult, error)
 }
 
+type pushContextAPI interface {
+	PushContext(ctx context.Context, blob []byte, kdf vault.KDFParams, protectedKey string, expectedVersion int64) (PushResult, error)
+}
+
+type pullContextAPI interface {
+	PullContext(ctx context.Context) (PullResult, error)
+}
+
 type Engine struct {
 	vault  *vault.Vault
 	client API
@@ -46,15 +54,18 @@ func (e *Engine) PushCurrent(ctx context.Context, state *SyncState) error {
 		return fmt.Errorf("Sync state required")
 	}
 
-	_ = ctx
-
 	blob, kdf, protectedKeyBytes, err := e.vault.ExportForSync()
 	if err != nil {
 		return err
 	}
 
 	protectedKey := base64.StdEncoding.EncodeToString(protectedKeyBytes)
-	result, err := e.client.Push(blob, kdf, protectedKey, state.LastKnownServerVersion)
+	var result PushResult
+	if client, ok := e.client.(pushContextAPI); ok {
+		result, err = client.PushContext(ctx, blob, kdf, protectedKey, state.LastKnownServerVersion)
+	} else {
+		result, err = e.client.Push(blob, kdf, protectedKey, state.LastKnownServerVersion)
+	}
 	if err != nil {
 		return err
 	}
@@ -68,9 +79,13 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 		return vault.VaultData{}, PullResult{}, fmt.Errorf("Sync state required")
 	}
 
-	_ = ctx
-
-	result, err := e.client.Pull()
+	var result PullResult
+	var err error
+	if client, ok := e.client.(pullContextAPI); ok {
+		result, err = client.PullContext(ctx)
+	} else {
+		result, err = e.client.Pull()
+	}
 	if err != nil {
 		return vault.VaultData{}, PullResult{}, err
 	}
@@ -279,9 +294,13 @@ func hashBlob(blob []byte) string {
 }
 
 func (e *Engine) fetchRemote(ctx context.Context) (vault.VaultData, PullResult, bool, error) {
-	_ = ctx
-
-	result, err := e.client.Pull()
+	var result PullResult
+	var err error
+	if client, ok := e.client.(pullContextAPI); ok {
+		result, err = client.PullContext(ctx)
+	} else {
+		result, err = e.client.Pull()
+	}
 	if errors.Is(err, ErrNoRemoteVault) {
 		return vault.VaultData{}, PullResult{}, false, nil
 	}

@@ -31,7 +31,7 @@ func (s windowsCredentialStore) Available(context.Context) bool {
 	return powershellPath() != ""
 }
 
-func (s windowsCredentialStore) Save(ctx context.Context, _ string, secret credentialSecret) error {
+func (s windowsCredentialStore) Save(ctx context.Context, credentialID string, secret credentialSecret) error {
 	body, err := json.Marshal(secret)
 	if err != nil {
 		return err
@@ -40,14 +40,14 @@ func (s windowsCredentialStore) Save(ctx context.Context, _ string, secret crede
 	if err != nil {
 		return err
 	}
-	if err := writePrivateFile(s.secretPath(), encrypted); err != nil {
+	if err := writePrivateFile(s.secretPath(credentialID), encrypted); err != nil {
 		return fmt.Errorf("Writing DPAPI account secret: %w", err)
 	}
 	return nil
 }
 
-func (s windowsCredentialStore) Load(ctx context.Context, _ string) (credentialSecret, error) {
-	encrypted, err := os.ReadFile(s.secretPath())
+func (s windowsCredentialStore) Load(ctx context.Context, credentialID string) (credentialSecret, error) {
+	encrypted, err := os.ReadFile(s.secretPath(credentialID))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return credentialSecret{}, ErrCredentialSecretNotFound
@@ -65,15 +65,15 @@ func (s windowsCredentialStore) Load(ctx context.Context, _ string) (credentialS
 	return secret, nil
 }
 
-func (s windowsCredentialStore) Delete(context.Context, string) error {
-	if err := os.Remove(s.secretPath()); err != nil && !os.IsNotExist(err) {
+func (s windowsCredentialStore) Delete(_ context.Context, credentialID string) error {
+	if err := os.Remove(s.secretPath(credentialID)); err != nil && !os.IsNotExist(err) {
 		return err
 	}
 	return nil
 }
 
-func (s windowsCredentialStore) secretPath() string {
-	return filepath.Join(s.paths.AuthDir(), "account-secret.dpapi")
+func (s windowsCredentialStore) secretPath(credentialID string) string {
+	return credentialSecretPath(filepath.Join(s.paths.AuthDir(), "account-secret.dpapi"), credentialID)
 }
 
 func runDPAPI(ctx context.Context, mode string, input []byte) ([]byte, error) {

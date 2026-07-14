@@ -68,14 +68,14 @@ func (s fileCredentialStore) Save(_ context.Context, credentialID string, secret
 	if err != nil {
 		return fmt.Errorf("Serializing encrypted account secret: %w", err)
 	}
-	if err := writePrivateFile(s.paths.AccountSecretFile(), body); err != nil {
+	if err := writePrivateFile(credentialSecretPath(s.paths.AccountSecretFile(), credentialID), body); err != nil {
 		return fmt.Errorf("Writing encrypted account secret: %w", err)
 	}
 	return nil
 }
 
 func (s fileCredentialStore) Load(_ context.Context, credentialID string) (credentialSecret, error) {
-	data, err := os.ReadFile(s.paths.AccountSecretFile())
+	data, err := os.ReadFile(credentialSecretPath(s.paths.AccountSecretFile(), credentialID))
 	if err != nil {
 		if os.IsNotExist(err) {
 			return credentialSecret{}, ErrCredentialSecretNotFound
@@ -123,11 +123,9 @@ func (s fileCredentialStore) Load(_ context.Context, credentialID string) (crede
 	return secret, nil
 }
 
-func (s fileCredentialStore) Delete(context.Context, string) error {
-	for _, path := range []string{s.paths.AccountSecretFile(), s.paths.AccountSecretKeyFile()} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
+func (s fileCredentialStore) Delete(_ context.Context, credentialID string) error {
+	if err := os.Remove(credentialSecretPath(s.paths.AccountSecretFile(), credentialID)); err != nil && !os.IsNotExist(err) {
+		return err
 	}
 	return nil
 }

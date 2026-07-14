@@ -71,88 +71,93 @@ func LoadFreshCredentials(ctx context.Context, paths config.Paths) (AccountCrede
 }
 
 func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
-	if err := accountauth.Save(paths, creds); err != nil {
+	if err := accountauth.ValidateCredentials(creds); err != nil {
 		return err
 	}
-
-	if _, running := daemon.IsRunning(paths); !running {
-		return nil
-	}
-	if !daemonHasActiveVaultSession(paths) {
-		return nil
-	}
-
-	_, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSyncLink, ipc.SyncLinkArgs{
-		ServerURL: creds.ServerURL,
-		Token:     accountauth.CurrentToken(creds),
-		UserID:    creds.UserID,
-	})
+	changeID, err := randomHex(16)
 	if err != nil {
-		return fmt.Errorf("Linking running daemon: %w", err)
+		return fmt.Errorf("Preparing account change: %w", err)
 	}
-	return nil
+	creds.ChangeID = changeID
+	args := accountCredentialsArgs(creds)
+	resp, err := callDaemonAccountCommand(paths, ipc.CmdAccountReplace, args)
+	if err != nil && resp.Status == "" {
+		if saved, loadErr := accountauth.Load(paths); loadErr == nil && saved.ChangeID == creds.ChangeID {
+			return nil
+		}
+	}
+	return err
 }
 
-func daemonHasActiveVaultSession(paths config.Paths) bool {
-	resp, err := ipc.NewClient(paths.CtlSocket()).CallWithTimeout(ipc.CmdStatus, nil, 3*time.Second)
-	if err != nil {
-		return false
+func accountCredentialsArgs(creds AccountCredentials) ipc.AccountCredentialsArgs {
+	return ipc.AccountCredentialsArgs{
+		ServerURL:        creds.ServerURL,
+		Token:            creds.Token,
+		AccessToken:      creds.AccessToken,
+		AccessExpiresAt:  creds.AccessExpiresAt,
+		RefreshToken:     creds.RefreshToken,
+		RefreshExpiresAt: creds.RefreshExpiresAt,
+		UserID:           creds.UserID,
+		Email:            creds.Email,
+		Name:             creds.Name,
+		ChangeID:         creds.ChangeID,
 	}
-	var status struct {
-		Sensitive *struct {
-			Active bool `json:"active"`
-		} `json:"sensitive"`
-	}
-	if err := json.Unmarshal(resp.Data, &status); err != nil || status.Sensitive == nil {
-		return false
-	}
-	return status.Sensitive.Active
 }
 
 func ClearCredentials(paths config.Paths) error {
-	if creds, err := accountauth.Load(paths); err == nil {
-		revokeRemoteSession(creds)
-	}
-
-	if _, running := daemon.IsRunning(paths); running {
-		if _, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSyncUnlink, nil); err != nil {
-			return fmt.Errorf("Unlinking running daemon: %w", err)
+	resp, err := callDaemonAccountCommand(paths, ipc.CmdAccountClear, nil)
+	if err != nil && resp.Status == "" {
+		if _, loadErr := accountauth.Load(paths); errors.Is(loadErr, os.ErrNotExist) || errors.Is(loadErr, accountauth.ErrLoginRequired) {
+			return nil
 		}
 	}
-
-	if err := accountauth.Delete(paths); err != nil {
-		return err
-	}
-	for _, path := range []string{paths.SyncStateFile(), paths.SyncDirtyFile()} {
-		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
-		}
-	}
-	return nil
+	return err
 }
 
-func revokeRemoteSession(creds AccountCredentials) {
-	if strings.TrimSpace(creds.ServerURL) == "" || strings.TrimSpace(creds.RefreshToken) == "" {
-		return
+func callDaemonAccountCommand(paths config.Paths, command string, args any) (ipc.Response, error) {
+	if err := ensureAccountDaemon(paths); err != nil {
+		return ipc.Response{}, err
 	}
-
-	body, _ := json.Marshal(map[string]string{
-		"refresh_token": creds.RefreshToken,
-	})
-
-	req, err := http.NewRequest(http.MethodPost, strings.TrimRight(creds.ServerURL, "/")+"/api/v1/auth/logout", bytes.NewReader(body))
+	resp, err := ipc.NewClient(paths.CtlSocket()).CallWithTimeout(command, args, time.Minute)
 	if err != nil {
-		return
+		return resp, fmt.Errorf("Changing daemon account: %w", err)
 	}
-	req.Header.Set("Content-Type", "application/json")
+	return resp, nil
+}
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
-	if err != nil {
-		return
+func ensureAccountDaemon(paths config.Paths) error {
+	if protocol, err := runningAccountProtocol(paths); err == nil && protocol >= ipc.AccountChangeProtocol {
+		return nil
 	}
-	io.Copy(io.Discard, resp.Body)
-	resp.Body.Close()
+	runtimeSpec, err := daemon.DefaultRuntimeSpec()
+	if err != nil {
+		return fmt.Errorf("Finding current daemon: %w", err)
+	}
+	if err := daemon.EnsureService(paths, runtimeSpec); err != nil {
+		return fmt.Errorf("Starting current daemon: %w", err)
+	}
+	deadline := time.Now().Add(10 * time.Second)
+	for time.Now().Before(deadline) {
+		if protocol, err := runningAccountProtocol(paths); err == nil && protocol >= ipc.AccountChangeProtocol {
+			return nil
+		}
+		time.Sleep(150 * time.Millisecond)
+	}
+	return fmt.Errorf("Current daemon did not become ready; run `forged doctor` and try again")
+}
+
+func runningAccountProtocol(paths config.Paths) (int, error) {
+	resp, err := ipc.NewClient(paths.CtlSocket()).CallWithTimeout(ipc.CmdStatus, nil, 3*time.Second)
+	if err != nil {
+		return 0, err
+	}
+	var status struct {
+		Protocol int `json:"account_change_protocol"`
+	}
+	if err := json.Unmarshal(resp.Data, &status); err != nil {
+		return 0, err
+	}
+	return status.Protocol, nil
 }
 
 func BeginLogin(server string, openBrowser func(string)) (LoginSession, error) {

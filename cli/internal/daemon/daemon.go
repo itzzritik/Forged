@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -13,6 +14,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 
 	"github.com/google/uuid"
 	"github.com/itzzritik/forged/cli/internal/accountauth"
@@ -29,20 +31,24 @@ import (
 )
 
 type Daemon struct {
-	sessionMu    sync.Mutex
-	paths        config.Paths
-	vault        *vault.Vault
-	keyStore     *vault.KeyStore
-	activityLog  *activity.ActivityLog
-	agent        *forgedagent.ForgedAgent
-	agentServer  *forgedagent.Server
-	ipcServer    *ipc.Server
-	syncBus      *forgedsync.Bus
-	authBroker   *sensitiveauth.Broker
-	sshRouting   *sshrouting.Manager
-	routeService *sshrouting.Service
-	logger       *slog.Logger
-	stop         chan struct{}
+	sessionMu      sync.Mutex
+	paths          config.Paths
+	vault          *vault.Vault
+	keyStore       *vault.KeyStore
+	activityLog    *activity.ActivityLog
+	agent          *forgedagent.ForgedAgent
+	agentServer    *forgedagent.Server
+	ipcServer      *ipc.Server
+	syncBus        *forgedsync.Bus
+	authBroker     *sensitiveauth.Broker
+	sshRouting     *sshrouting.Manager
+	routeService   *sshrouting.Service
+	syncGeneration uint64
+	syncPending    bool
+	syncSuppressed bool
+	syncRetryDelay time.Duration
+	logger         *slog.Logger
+	stop           chan struct{}
 }
 
 func New(paths config.Paths) *Daemon {
@@ -77,16 +83,18 @@ func (d *Daemon) Run(password []byte) error {
 	}
 
 	d.activityLog = activity.NewActivityLog(1000)
-
-	if err := d.startIPC(); err != nil {
+	d.sessionMu.Lock()
+	d.initSyncLocked()
+	err := d.startIPC()
+	if err == nil {
+		err = d.startAgentLocked()
+	}
+	d.sessionMu.Unlock()
+	if err != nil {
 		return err
 	}
 
 	if err := d.refreshSSHRouting(); err != nil {
-		return err
-	}
-
-	if err := d.startAgent(); err != nil {
 		return err
 	}
 
@@ -134,6 +142,12 @@ func helperBinaryName() string {
 }
 
 func (d *Daemon) refreshSSHRouting() error {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	return d.refreshSSHRoutingLocked()
+}
+
+func (d *Daemon) refreshSSHRoutingLocked() error {
 	if d.sshRouting == nil {
 		return nil
 	}
@@ -229,6 +243,8 @@ func (d *Daemon) startIPC() error {
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
 	d.ipcServer.SetSyncLinkHandler(d.handleSyncLink)
 	d.ipcServer.SetSyncUnlinkHandler(d.handleSyncUnlink)
+	d.ipcServer.SetAccountReplaceHandler(d.handleAccountReplace)
+	d.ipcServer.SetAccountClearHandler(d.handleAccountClear)
 	d.ipcServer.SetSensitiveAuthBroker(d.authBroker)
 	if d.syncBus != nil {
 		d.ipcServer.SetSyncBus(d.syncBus)
@@ -238,6 +254,7 @@ func (d *Daemon) startIPC() error {
 			d.logger.Warn("refreshing ssh routing after key change failed", "error", err)
 		}
 	})
+	d.ipcServer.SetOnVaultChange(d.handleRouteMutation)
 	d.ipcServer.SetOnReadSync(func() {
 		if err := d.refreshSSHRouting(); err != nil {
 			d.logger.Warn("refreshing ssh routing after sync failed", "error", err)
@@ -252,7 +269,7 @@ func (d *Daemon) startIPC() error {
 	return nil
 }
 
-func (d *Daemon) startAgent() error {
+func (d *Daemon) startAgentLocked() error {
 	agentPath := d.paths.AgentSocket()
 	if err := os.MkdirAll(filepath.Dir(agentPath), 0700); err != nil {
 		return fmt.Errorf("Creating socket directory: %w", err)
@@ -274,10 +291,23 @@ func (d *Daemon) startAgent() error {
 type syncCredentials struct {
 	ServerURL string `json:"server_url"`
 	UserID    string `json:"user_id"`
+	Token     string `json:"-"`
 }
 
-func (d *Daemon) initSync() {
-	if d.vault == nil {
+type syncCandidate struct {
+	vault      *vault.Vault
+	generation uint64
+	serverURL  string
+	userID     string
+	state      *forgedsync.SyncState
+	stateStore *forgedsync.StateStore
+	engine     *forgedsync.Engine
+}
+
+const syncLinkTimeout = 25 * time.Second
+
+func (d *Daemon) initSyncLocked() {
+	if d.vault == nil || d.syncSuppressed || d.syncPending {
 		return
 	}
 	if d.syncBus != nil {
@@ -288,29 +318,51 @@ func (d *Daemon) initSync() {
 	if err != nil || creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
 		return
 	}
+	if err := d.recoverSyncStateLocked(creds); err != nil {
+		d.logger.Warn("recovering sync state transaction failed", "error", err)
+		d.scheduleSyncRetryLocked(d.syncGeneration)
+		return
+	}
 
-	state, err := d.configureSync(syncCredentials{
+	candidate, err := d.prepareSyncCandidate(syncCredentials{
 		ServerURL: creds.ServerURL,
 		UserID:    creds.UserID,
+		Token:     accountauth.CurrentToken(creds),
 	})
 	if err != nil {
 		d.logger.Warn("initializing sync failed", "error", err)
 		return
 	}
+	d.syncGeneration++
+	candidate.generation = d.syncGeneration
 
-	if creds.UserID != "" && (state.LinkedUserID != creds.UserID || (state.LastKnownServerVersion == 0 && len(state.LastSyncedBaseBlob) == 0)) {
-		go func() {
-			if err := d.syncBus.AuthLinked(context.Background(), creds.UserID, creds.ServerURL); err != nil {
-				d.logger.Warn("link reconcile failed", "error", err)
-			}
-		}()
+	if creds.UserID != "" && (candidate.state.LinkedUserID != creds.UserID || (candidate.state.LastKnownServerVersion == 0 && len(candidate.state.LastSyncedBaseBlob) == 0)) {
+		if err := d.markSyncDirtyLocked(); err != nil {
+			d.logger.Warn("initializing sync failed", "error", err)
+			return
+		}
+		d.syncPending = true
+		go d.finishInitialSync(candidate, creds.UserID)
 		return
 	}
 
-	go d.syncBus.LifecycleRefresh("daemon_start")
+	var bus *forgedsync.Bus
+	err = accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
+		if err := validateSyncIdentity(stored, candidate.serverURL, candidate.userID); err != nil {
+			return err
+		}
+		var err error
+		bus, err = d.activateSyncCandidateLocked(candidate)
+		return err
+	})
+	if err != nil {
+		d.logger.Warn("initializing sync failed", "error", err)
+		return
+	}
+	go bus.LifecycleRefresh("daemon_start")
 }
 
-func (d *Daemon) configureSync(creds syncCredentials) (*forgedsync.SyncState, error) {
+func (d *Daemon) prepareSyncCandidate(creds syncCredentials) (*syncCandidate, error) {
 	if d.vault == nil {
 		return nil, fmt.Errorf("Vault is locked; open Forged to unlock")
 	}
@@ -327,79 +379,242 @@ func (d *Daemon) configureSync(creds syncCredentials) (*forgedsync.SyncState, er
 	if state.DeviceID == "" {
 		state.DeviceID = uuid.NewString()
 	}
+	hasSyncHistory := state.LinkedUserID != "" || state.LastKnownServerVersion != 0 || len(state.LastSyncedBaseBlob) != 0
+	if hasSyncHistory && state.ServerURL != "" && !sameSyncServer(state.ServerURL, creds.ServerURL) {
+		return nil, fmt.Errorf("Local sync state belongs to another server; unlink it before linking this account")
+	}
+	if state.LinkedUserID != "" && creds.UserID != "" && state.LinkedUserID != creds.UserID {
+		return nil, fmt.Errorf("Local vault is linked to a different account; unlink it first")
+	}
 	state.ServerURL = creds.ServerURL
 
-	client := forgedsync.NewClientWithTokenSource(creds.ServerURL, state.DeviceID, func() (string, error) {
-		creds, err := accountauth.EnsureFresh(context.Background(), d.paths)
-		if err != nil {
-			return "", fmt.Errorf("Refreshing account credentials: %w", err)
-		}
-		return accountauth.CurrentToken(creds), nil
-	})
+	client := forgedsync.NewClientWithTokenSource(creds.ServerURL, state.DeviceID, d.syncTokenSource(creds.ServerURL, state.LinkedUserID))
+	if creds.Token != "" {
+		client = forgedsync.NewClient(creds.ServerURL, creds.Token, state.DeviceID)
+	}
 	engine := forgedsync.NewEngine(d.vault, client, d.logger)
-	bus := forgedsync.NewBus(engine, state, d.logger, forgedsync.BusConfig{
-		DirtyFlagPath: d.paths.SyncDirtyFile(),
-		StateStore:    stateStore,
-	})
-
-	if d.syncBus != nil {
-		d.syncBus.Stop()
-	}
-	d.syncBus = bus
-	if d.ipcServer != nil {
-		d.ipcServer.SetSyncBus(bus)
-	}
-	if d.agent != nil {
-		d.agent.SetSyncCoordinator(bus)
-	}
-
-	bus.CheckDirtyFlag()
-
-	d.logger.Info("sync initialized", "server", creds.ServerURL, "device_id", state.DeviceID)
-	return state, nil
+	return &syncCandidate{
+		vault:      d.vault,
+		serverURL:  creds.ServerURL,
+		userID:     creds.UserID,
+		state:      state,
+		stateStore: stateStore,
+		engine:     engine,
+	}, nil
 }
 
 func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
-	if !d.HasActiveSession() {
-		return fmt.Errorf("Vault is locked; open Forged to unlock")
-	}
-	if _, err := d.configureSync(syncCredentials{
-		ServerURL: args.ServerURL,
-		UserID:    args.UserID,
-	}); err != nil {
+	if _, err := d.requireSyncIdentity(args.ServerURL, args.UserID); err != nil {
 		return err
 	}
-	if d.syncBus == nil {
-		return fmt.Errorf("Sync bus unavailable")
-	}
-	if args.UserID == "" {
-		return nil
-	}
-	if err := d.syncBus.AuthLinked(context.Background(), args.UserID, args.ServerURL); err != nil {
+
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	if err := d.beginAccountChangeLocked(); err != nil {
 		return err
 	}
-	d.logger.Info("sync link refreshed", "user_id", args.UserID)
+	if _, err := d.requireSyncIdentity(args.ServerURL, args.UserID); err != nil {
+		d.syncSuppressed = false
+		d.initSyncLocked()
+		return err
+	}
+	d.syncSuppressed = false
+	d.initSyncLocked()
+	d.logger.Info("sync link scheduled", "user_id", args.UserID)
 	return nil
 }
 
+func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
+	creds := accountauth.Credentials{
+		ServerURL:        args.ServerURL,
+		Token:            args.Token,
+		AccessToken:      args.AccessToken,
+		AccessExpiresAt:  args.AccessExpiresAt,
+		RefreshToken:     args.RefreshToken,
+		RefreshExpiresAt: args.RefreshExpiresAt,
+		UserID:           args.UserID,
+		Email:            args.Email,
+		Name:             args.Name,
+		ChangeID:         args.ChangeID,
+	}
+	if err := accountauth.ValidateCredentials(creds); err != nil {
+		return err
+	}
+	if strings.TrimSpace(creds.ChangeID) == "" {
+		return fmt.Errorf("Account change ID is required")
+	}
+
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	if err := d.beginAccountChangeLocked(); err != nil {
+		return err
+	}
+	if current, err := accountauth.Load(d.paths); err == nil {
+		if err := d.recoverSyncStateLocked(current); err != nil {
+			d.syncSuppressed = false
+			d.initSyncLocked()
+			return err
+		}
+	}
+	staged, err := d.stageSyncStateLocked()
+	if err != nil {
+		d.syncSuppressed = false
+		d.initSyncLocked()
+		return err
+	}
+	if err := accountauth.Save(d.paths, creds); err != nil {
+		if restoreErr := d.restoreSyncStateLocked(staged); restoreErr != nil {
+			err = errors.Join(err, restoreErr)
+		}
+		d.syncSuppressed = false
+		d.initSyncLocked()
+		return err
+	}
+	if err := d.removeSyncStateBackupLocked(); err != nil {
+		d.logger.Warn("removing staged sync state after account replacement failed", "error", err)
+	}
+	d.syncSuppressed = false
+	d.initSyncLocked()
+	d.logger.Info("account replacement committed", "user_id", args.UserID)
+	return nil
+}
+
+func (d *Daemon) handleAccountClear() error {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	if err := d.beginAccountChangeLocked(); err != nil {
+		return err
+	}
+	creds, _ := accountauth.Load(d.paths)
+	if err := accountauth.Delete(d.paths); err != nil {
+		d.syncSuppressed = false
+		d.initSyncLocked()
+		return err
+	}
+	if err := d.removeSyncStateLocked(); err != nil {
+		d.logger.Warn("removing sync state after logout failed", "error", err)
+	}
+	_ = os.Remove(d.paths.SyncDirtyFile())
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	if err := accountauth.RevokeRemoteSession(ctx, creds); err != nil {
+		d.logger.Warn("revoking remote session after logout failed", "error", err)
+	}
+	d.logger.Info("account cleared")
+	return nil
+}
+
+func (d *Daemon) beginAccountChangeLocked() error {
+	if d.vault != nil && d.keyStore != nil {
+		if err := d.markSyncDirtyLocked(); err != nil {
+			return err
+		}
+		if d.syncBus != nil {
+			d.syncBus.LocalMutation("account_link_transition")
+		}
+	}
+	d.syncGeneration++
+	d.syncPending = false
+	d.syncSuppressed = true
+	d.syncRetryDelay = 0
+	d.replaceSyncBusLocked(nil)
+	return nil
+}
+
+func (d *Daemon) removeSyncStateLocked() error {
+	var removeErr error
+	if err := os.Remove(d.paths.SyncStateFile()); err != nil && !os.IsNotExist(err) {
+		removeErr = errors.Join(removeErr, fmt.Errorf("Removing stale sync state: %w", err))
+	}
+	return errors.Join(removeErr, d.removeSyncStateBackupLocked())
+}
+
+func (d *Daemon) syncStateBackupPath() string {
+	return d.paths.SyncStateFile() + ".account-change"
+}
+
+func (d *Daemon) removeSyncStateBackupLocked() error {
+	if err := os.Remove(d.syncStateBackupPath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("Removing staged sync state: %w", err)
+	}
+	return nil
+}
+
+func (d *Daemon) stageSyncStateLocked() (bool, error) {
+	_, stateErr := os.Stat(d.paths.SyncStateFile())
+	stateExists := stateErr == nil
+	if stateErr != nil && !os.IsNotExist(stateErr) {
+		return false, fmt.Errorf("Reading sync state: %w", stateErr)
+	}
+	_, backupErr := os.Stat(d.syncStateBackupPath())
+	backupExists := backupErr == nil
+	if backupErr != nil && !os.IsNotExist(backupErr) {
+		return false, fmt.Errorf("Reading staged sync state: %w", backupErr)
+	}
+	if backupExists {
+		if stateExists {
+			return false, fmt.Errorf("Active and staged sync state both exist")
+		}
+		return true, nil
+	}
+	if !stateExists {
+		return false, nil
+	}
+	if err := os.Rename(d.paths.SyncStateFile(), d.syncStateBackupPath()); err != nil {
+		return false, fmt.Errorf("Staging sync state: %w", err)
+	}
+	return true, nil
+}
+
+func (d *Daemon) restoreSyncStateLocked(staged bool) error {
+	if !staged {
+		return nil
+	}
+	_ = os.Remove(d.paths.SyncStateFile())
+	if err := os.Rename(d.syncStateBackupPath(), d.paths.SyncStateFile()); err != nil {
+		return fmt.Errorf("Restoring sync state: %w", err)
+	}
+	return nil
+}
+
+func (d *Daemon) recoverSyncStateLocked(creds accountauth.Credentials) error {
+	backup := d.syncStateBackupPath()
+	state, err := forgedsync.NewStateStore(backup).Load()
+	if err != nil {
+		return err
+	}
+	if state == nil {
+		return nil
+	}
+	matches := (state.LinkedUserID == "" || state.LinkedUserID == creds.UserID) &&
+		(state.ServerURL == "" || sameSyncServer(state.ServerURL, creds.ServerURL))
+	if !matches {
+		if err := os.Remove(backup); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("Removing staged sync state for another account: %w", err)
+		}
+		return nil
+	}
+	_ = os.Remove(d.paths.SyncStateFile())
+	return os.Rename(backup, d.paths.SyncStateFile())
+}
+
 func (d *Daemon) handleSyncUnlink() error {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	d.syncGeneration++
+	d.syncPending = false
+	d.syncSuppressed = true
+	d.syncRetryDelay = 0
+
 	if d.syncBus != nil {
 		if err := d.syncBus.AuthUnlinked(context.Background()); err != nil {
 			return err
 		}
-		d.syncBus.Stop()
 	}
+	d.replaceSyncBusLocked(nil)
 
-	d.syncBus = nil
-	if d.ipcServer != nil {
-		d.ipcServer.SetSyncBus(nil)
-	}
-	if d.agent != nil {
-		d.agent.SetSyncCoordinator(nil)
-	}
-
-	if err := os.Remove(d.paths.SyncStateFile()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("Removing sync state: %w", err)
+	if err := d.removeSyncStateLocked(); err != nil {
+		return err
 	}
 	if err := os.Remove(d.paths.SyncDirtyFile()); err != nil && !os.IsNotExist(err) {
 		return fmt.Errorf("Removing sync dirty flag: %w", err)
@@ -407,6 +622,164 @@ func (d *Daemon) handleSyncUnlink() error {
 
 	d.logger.Info("sync unlinked")
 	return nil
+}
+
+func (d *Daemon) finishInitialSync(candidate *syncCandidate, userID string) {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+
+	if candidate.generation != d.syncGeneration || d.syncSuppressed {
+		return
+	}
+	d.syncPending = false
+	if d.vault == nil || d.vault != candidate.vault || d.syncBus != nil {
+		return
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), syncLinkTimeout)
+	defer cancel()
+	refreshed, err := accountauth.EnsureFresh(ctx, d.paths)
+	if err == nil {
+		err = validateSyncIdentity(refreshed, candidate.serverURL, userID)
+	}
+	var bus *forgedsync.Bus
+	if err == nil {
+		err = accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
+			if err := validateSyncIdentity(stored, candidate.serverURL, userID); err != nil {
+				return err
+			}
+			client := forgedsync.NewClient(candidate.serverURL, accountauth.CurrentToken(stored), candidate.state.DeviceID)
+			candidate.engine = forgedsync.NewEngine(candidate.vault, client, d.logger)
+			if err := candidate.engine.ReconcileOnLink(ctx, candidate.state, userID, candidate.serverURL); err != nil {
+				return err
+			}
+			var err error
+			bus, err = d.activateSyncCandidateLocked(candidate)
+			return err
+		})
+	}
+	if err != nil {
+		d.logger.Warn("link reconcile failed", "error", err)
+		d.scheduleSyncRetryLocked(candidate.generation)
+		return
+	}
+	if bus != nil {
+		d.syncRetryDelay = 0
+		go bus.LifecycleRefresh("link_complete")
+	}
+}
+
+func (d *Daemon) scheduleSyncRetryLocked(generation uint64) {
+	if generation != d.syncGeneration || d.syncSuppressed || d.vault == nil {
+		return
+	}
+	delay := d.syncRetryDelay
+	if delay == 0 {
+		delay = 5 * time.Second
+	} else {
+		delay = min(delay*2, 5*time.Minute)
+	}
+	d.syncRetryDelay = delay
+	d.syncPending = true
+	go func() {
+		timer := time.NewTimer(delay)
+		defer timer.Stop()
+		select {
+		case <-timer.C:
+		case <-d.stop:
+			return
+		}
+		d.sessionMu.Lock()
+		defer d.sessionMu.Unlock()
+		if generation != d.syncGeneration || d.syncSuppressed || d.syncBus != nil {
+			return
+		}
+		d.syncPending = false
+		d.initSyncLocked()
+	}()
+}
+
+func (d *Daemon) activateSyncCandidateLocked(candidate *syncCandidate) (*forgedsync.Bus, error) {
+	if candidate.generation != d.syncGeneration || d.syncSuppressed {
+		return nil, fmt.Errorf("Sync link was superseded")
+	}
+	if d.vault == nil || d.vault != candidate.vault {
+		return nil, fmt.Errorf("Vault session changed while linking sync")
+	}
+	if _, err := os.Stat(d.paths.SyncDirtyFile()); err == nil {
+		candidate.state.MarkDirty("", time.Time{})
+	} else if !os.IsNotExist(err) {
+		return nil, fmt.Errorf("Reading sync dirty marker: %w", err)
+	}
+	if err := candidate.stateStore.Save(candidate.state); err != nil {
+		return nil, fmt.Errorf("Saving sync state: %w", err)
+	}
+
+	client := forgedsync.NewClientWithTokenSource(candidate.serverURL, candidate.state.DeviceID, d.syncTokenSource(candidate.serverURL, candidate.state.LinkedUserID))
+	engine := forgedsync.NewEngine(candidate.vault, client, d.logger)
+	bus := forgedsync.NewBus(engine, candidate.state, d.logger, forgedsync.BusConfig{
+		DirtyFlagPath: d.paths.SyncDirtyFile(),
+		StateStore:    candidate.stateStore,
+	})
+	d.replaceSyncBusLocked(bus)
+	d.logger.Info("sync initialized", "server", candidate.serverURL, "device_id", candidate.state.DeviceID)
+	return bus, nil
+}
+
+func (d *Daemon) replaceSyncBusLocked(next *forgedsync.Bus) {
+	previous := d.syncBus
+	if previous != nil && previous != next {
+		d.syncBus = nil
+		if d.ipcServer != nil {
+			d.ipcServer.SetSyncBus(nil)
+		}
+		if d.agent != nil {
+			d.agent.SetSyncCoordinator(nil)
+		}
+		previous.Stop()
+	}
+	d.syncBus = next
+	if d.ipcServer != nil {
+		d.ipcServer.SetSyncBus(next)
+	}
+	if d.agent != nil {
+		d.agent.SetSyncCoordinator(next)
+	}
+}
+
+func (d *Daemon) syncTokenSource(serverURL, userID string) func() (string, error) {
+	return func() (string, error) {
+		creds, err := accountauth.EnsureFresh(context.Background(), d.paths)
+		if err != nil {
+			return "", fmt.Errorf("Refreshing account credentials: %w", err)
+		}
+		if !sameSyncServer(creds.ServerURL, serverURL) || (userID != "" && creds.UserID != userID) {
+			return "", fmt.Errorf("Saved account changed while sync was active")
+		}
+		return accountauth.CurrentToken(creds), nil
+	}
+}
+
+func (d *Daemon) requireSyncIdentity(serverURL, userID string) (accountauth.Credentials, error) {
+	creds, err := accountauth.Load(d.paths)
+	if err != nil {
+		return accountauth.Credentials{}, fmt.Errorf("Loading linked account credentials: %w", err)
+	}
+	if err := validateSyncIdentity(creds, serverURL, userID); err != nil {
+		return accountauth.Credentials{}, err
+	}
+	return creds, nil
+}
+
+func validateSyncIdentity(creds accountauth.Credentials, serverURL, userID string) error {
+	if !sameSyncServer(creds.ServerURL, serverURL) || (userID != "" && creds.UserID != userID) {
+		return fmt.Errorf("Saved account changed while sync was linking")
+	}
+	return nil
+}
+
+func sameSyncServer(a, b string) bool {
+	return strings.TrimRight(strings.TrimSpace(a), "/") == strings.TrimRight(strings.TrimSpace(b), "/")
 }
 
 func (d *Daemon) HasActiveSession() bool {
@@ -483,6 +856,9 @@ func (d *Daemon) activateVaultLocked(v *vault.Vault, source string) error {
 
 	d.vault = v
 	d.keyStore = keyStore
+	if d.ipcServer != nil {
+		d.initSyncLocked()
+	}
 
 	if d.routeService != nil {
 		d.routeService.SetKeyStore(keyStore)
@@ -494,8 +870,7 @@ func (d *Daemon) activateVaultLocked(v *vault.Vault, source string) error {
 		d.agent.SetKeyStore(keyStore)
 	}
 
-	d.initSync()
-	if err := d.refreshSSHRouting(); err != nil && d.logger != nil {
+	if err := d.refreshSSHRoutingLocked(); err != nil && d.logger != nil {
 		d.logger.Warn("refreshing ssh routing after hydrate failed", "error", err, "source", source)
 	}
 	if d.logger != nil {
@@ -508,16 +883,10 @@ func (d *Daemon) clearActiveSession(reason string) {
 	d.sessionMu.Lock()
 	defer d.sessionMu.Unlock()
 
-	if d.syncBus != nil {
-		d.syncBus.Stop()
-		d.syncBus = nil
-		if d.ipcServer != nil {
-			d.ipcServer.SetSyncBus(nil)
-		}
-		if d.agent != nil {
-			d.agent.SetSyncCoordinator(nil)
-		}
-	}
+	d.syncGeneration++
+	d.syncPending = false
+	d.syncRetryDelay = 0
+	d.replaceSyncBusLocked(nil)
 
 	if d.routeService != nil {
 		d.routeService.SetKeyStore(nil)
@@ -542,12 +911,28 @@ func (d *Daemon) clearActiveSession(reason string) {
 
 func (d *Daemon) handleRouteMutation(reason string) {
 	d.sessionMu.Lock()
-	bus := d.syncBus
-	d.sessionMu.Unlock()
+	defer d.sessionMu.Unlock()
 
-	if bus != nil {
-		bus.LocalMutation(reason)
+	if d.syncBus != nil {
+		d.syncBus.LocalMutation(reason)
+		return
 	}
+	if d.vault == nil {
+		return
+	}
+	if err := d.markSyncDirtyLocked(); err != nil {
+		d.logger.Warn("persisting sync dirty marker failed", "error", err)
+	}
+}
+
+func (d *Daemon) markSyncDirtyLocked() error {
+	if err := os.MkdirAll(filepath.Dir(d.paths.SyncDirtyFile()), 0o700); err != nil {
+		return fmt.Errorf("Creating sync dirty directory: %w", err)
+	}
+	if err := os.WriteFile(d.paths.SyncDirtyFile(), []byte("1"), 0o600); err != nil {
+		return fmt.Errorf("Writing sync dirty marker: %w", err)
+	}
+	return nil
 }
 
 func (d *Daemon) activeKeyCount() int {

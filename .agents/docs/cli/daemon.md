@@ -27,6 +27,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - When the shared session is cleared, the daemon drops back to cold state.
 - Session clear waits for admitted sync work to finish before zeroing and closing the vault.
 - Sync only exists while account credentials are present and a live vault session is available.
+- Account actions require the daemon's account-change protocol, repairing or restarting the managed service before sending versioned replace and clear commands. They never write credentials directly. Credential commit is quick; reconciliation continues as bounded, generation-checked background work.
 - While sync is active, learned SSH route proofs mark the vault dirty and the sync bus also runs low-frequency status checks.
 - Service repair replaces any unmanaged `forged daemon` that still owns the runtime sockets before launchd/system service restart, and health checks only trust service sockets when the managed service PID matches the daemon PID file on platforms that expose it.
 - Daemon status exposes a build id. Readiness treats a running daemon with a different or missing build id as degraded and repairs it by reinstalling/restarting the managed service.
