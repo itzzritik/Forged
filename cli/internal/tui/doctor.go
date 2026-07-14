@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/config"
 	dashboardscreen "github.com/itzzritik/forged/cli/internal/tui/screens/dashboard"
 	doctorscreen "github.com/itzzritik/forged/cli/internal/tui/screens/doctor"
@@ -41,25 +42,27 @@ func (m *model) isDoctorDashboardTab() bool {
 	return tabs[m.dashboardTabIndex].Label == "Doctor"
 }
 
-func (m *model) renderDoctorBody(contentWidth int) string {
+func (m *model) renderDoctorBody(contentWidth int, bodyHeight int) string {
 	rows := m.doctorRows()
-	screenRows := make([]doctorscreen.Row, 0, len(rows))
-	for _, row := range rows {
-		screenRows = append(screenRows, row.screen)
-	}
 	sections := make([]string, 0, 2)
 	if !m.isDoctorDashboardTab() {
 		if status := dashboardscreen.Render(dashboardscreen.Screen{
 			Notice: dashboardscreen.Notice{Message: m.notice.message, Tone: m.notice.tone},
 		}, contentWidth); strings.TrimSpace(status) != "" {
 			sections = append(sections, status)
+			bodyHeight -= lipgloss.Height(status) + 1
 		}
+	}
+	rows = m.visibleDoctorRows(rows, bodyHeight)
+	screenRows := make([]doctorscreen.Row, 0, len(rows))
+	for _, row := range rows {
+		screenRows = append(screenRows, row.screen)
 	}
 	sections = append(sections, doctorscreen.Render(doctorscreen.Screen{Rows: screenRows}, contentWidth))
 	return shell.IndentBlock(strings.Join(sections, "\n\n"), 2)
 }
 
-func (m *model) renderDoctorDashboardBody(contentWidth int) string {
+func (m *model) renderDoctorDashboardBody(contentWidth int, bodyHeight int) string {
 	tabs, _, _ := m.dashboardRootScreen()
 	tabBar := dashboardscreen.Render(dashboardscreen.Screen{
 		Tabs: tabs,
@@ -68,7 +71,10 @@ func (m *model) renderDoctorDashboardBody(contentWidth int) string {
 			Tone:    m.notice.tone,
 		},
 	}, contentWidth)
-	body := m.renderDoctorBody(contentWidth)
+	if strings.TrimSpace(tabBar) != "" {
+		bodyHeight -= lipgloss.Height(tabBar) + 1
+	}
+	body := m.renderDoctorBody(contentWidth, bodyHeight)
 
 	switch {
 	case strings.TrimSpace(tabBar) == "":
@@ -80,11 +86,26 @@ func (m *model) renderDoctorDashboardBody(contentWidth int) string {
 	}
 }
 
+func (m *model) visibleDoctorRows(rows []doctorRow, bodyHeight int) []doctorRow {
+	pageRows := max(1, min(len(rows), bodyHeight))
+	m.doctorPageRows = pageRows
+	maxOffset := max(0, len(rows)-pageRows)
+	m.doctorOffset = max(0, min(m.doctorOffset, maxOffset))
+	return rows[m.doctorOffset:min(len(rows), m.doctorOffset+pageRows)]
+}
+
+func (m *model) moveDoctorOffset(delta int) {
+	pageRows := max(1, m.doctorPageRows)
+	maxOffset := max(0, len(m.doctorRows())-pageRows)
+	m.doctorOffset = max(0, min(m.doctorOffset+delta, maxOffset))
+}
+
 func (m *model) doctorFooterActions(includeTabs bool) []shell.FooterAction {
 	actions := make([]shell.FooterAction, 0, 5)
 	if includeTabs {
 		actions = append(actions, shell.FooterAction{Key: theme.Glyphs.LeftRight, Label: "Tabs"})
 	}
+	actions = append(actions, shell.FooterAction{Key: theme.Glyphs.UpDown, Label: "Scroll"})
 	if m.doctorCanFixIssues() && !m.maintenanceBusy {
 		actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Fix"})
 	}
@@ -105,6 +126,12 @@ func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Quit
 	case "r", "R":
 		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd(), m.invalidateSigningStatusCmd())
+	case "up", "k":
+		m.moveDoctorOffset(-1)
+		return m, nil
+	case "down", "j":
+		m.moveDoctorOffset(1)
+		return m, nil
 	case "c", "C":
 		return m, m.copyDoctorReportCmd()
 	case "enter":
@@ -131,6 +158,12 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, m.switchDashboardTab(-1, tabs)
 	case "right", "l":
 		return m, m.switchDashboardTab(1, tabs)
+	case "up", "k":
+		m.moveDoctorOffset(-1)
+		return m, nil
+	case "down", "j":
+		m.moveDoctorOffset(1)
+		return m, nil
 	case "r", "R":
 		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd(), m.invalidateSigningStatusCmd())
 	case "c", "C":

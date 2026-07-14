@@ -387,6 +387,8 @@ type model struct {
 	securityLoaded           bool
 	securityLoadID           int
 	securityLoadErr          string
+	doctorOffset             int
+	doctorPageRows           int
 	idleLockID               int
 	idleLockDeadline         time.Time
 	idleLockTimerArmed       bool
@@ -1339,10 +1341,10 @@ func (m *model) renderBody(contentWidth int, bodyHeight int) string {
 			return m.renderLabRoutingBody(contentWidth)
 		}
 		if m.isDoctorDashboardTab() {
-			return m.renderDoctorDashboardBody(contentWidth)
+			return m.renderDoctorDashboardBody(contentWidth, bodyHeight)
 		}
 		if m.isDoctorOverviewRoute() {
-			return m.renderDoctorBody(contentWidth)
+			return m.renderDoctorBody(contentWidth, bodyHeight)
 		}
 		if section := m.currentDashboardSection(); section != nil {
 			return m.renderDashboardSection(contentWidth, *section)
