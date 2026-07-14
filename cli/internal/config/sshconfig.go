@@ -5,6 +5,8 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 const (
@@ -23,6 +25,7 @@ func IsSSHAgentEnabled(paths Paths) bool {
 	if err != nil {
 		return false
 	}
+	includes := forgedIncludeLines(paths)
 
 	for _, line := range strings.Split(string(data), "\n") {
 		trimmed := strings.TrimSpace(line)
@@ -30,11 +33,7 @@ func IsSSHAgentEnabled(paths Paths) bool {
 			continue
 		}
 
-		switch trimmed {
-		case includeLine(paths.SSHManagedConfig()),
-			includeLine(paths.LegacySSHBaseInclude()),
-			fmt.Sprintf("Include %q", paths.SSHManagedConfig()),
-			fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()):
+		if _, ok := includes[trimmed]; ok {
 			return true
 		}
 
@@ -47,74 +46,74 @@ func IsSSHAgentEnabled(paths Paths) bool {
 }
 
 func EnableSSHAgent(paths Paths) error {
-	configPath := paths.SSHUserConfig()
-	if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
-		return err
-	}
-	if err := os.MkdirAll(paths.SSHManagedDir(), 0o700); err != nil {
-		return err
-	}
+	return withSSHConfigLock(paths, func() error {
+		configPath := paths.SSHUserConfig()
+		if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
+			return fmt.Errorf("Creating SSH config directory: %w", err)
+		}
+		if err := os.MkdirAll(paths.SSHManagedDir(), 0o700); err != nil {
+			return fmt.Errorf("Creating managed SSH directory: %w", err)
+		}
 
-	if err := cleanupLegacySSHArtifacts(paths); err != nil {
-		return err
-	}
-	if err := ensureManagedSSHConfig(paths); err != nil {
-		return err
-	}
+		if err := cleanupLegacySSHArtifacts(paths); err != nil {
+			return err
+		}
+		if err := ensureManagedSSHConfigLocked(paths); err != nil {
+			return err
+		}
 
-	content, err := readConfigFile(configPath)
-	if err != nil {
-		return err
-	}
+		content, err := readConfigFile(configPath)
+		if err != nil {
+			return fmt.Errorf("Reading SSH config: %w", err)
+		}
+		content = removeForgedIncludes(content, paths)
+		content = removeLegacyForgedBlock(content)
 
-	content = removeForgedIncludes(content, paths)
-	content = removeLegacyForgedBlock(content)
-
-	block := strings.Join([]string{
-		sshIncludeComment,
-		includeLine(paths.SSHManagedConfig()),
-	}, "\n")
-
-	body := insertForgedInclude(content, block)
-	if err := os.WriteFile(configPath, []byte(body), 0o600); err != nil {
-		return err
-	}
-	return SetAgentDisabled(paths, false)
+		block := strings.Join([]string{
+			sshIncludeComment,
+			includeLine(paths.SSHManagedConfig()),
+		}, "\n")
+		if err := writeSSHFileAtomic(configPath, []byte(insertForgedInclude(content, block))); err != nil {
+			return fmt.Errorf("Writing SSH config: %w", err)
+		}
+		return SetAgentDisabled(paths, false)
+	})
 }
 
 func DisableSSHAgent(paths Paths) error {
-	if err := cleanupLegacySSHArtifacts(paths); err != nil {
-		return err
-	}
-
-	configPath := paths.SSHUserConfig()
-	content, err := readConfigFile(configPath)
-	if err != nil {
-		return err
-	}
-	if content == "" {
-		if _, err := os.Stat(paths.SSHManagedConfig()); os.IsNotExist(err) {
-			return SetAgentDisabled(paths, true)
+	return withSSHConfigLock(paths, func() error {
+		if err := cleanupLegacySSHArtifacts(paths); err != nil {
+			return err
 		}
-	}
 
-	cleaned := removeForgedIncludes(content, paths)
-	cleaned = removeLegacyForgedBlock(cleaned)
-	block := strings.Join([]string{
-		sshIncludeComment,
-		"# " + includeLine(paths.SSHManagedConfig()),
-	}, "\n")
-	cleaned = insertForgedInclude(cleaned, block)
+		configPath := paths.SSHUserConfig()
+		content, err := readConfigFile(configPath)
+		if err != nil {
+			return fmt.Errorf("Reading SSH config: %w", err)
+		}
+		if content == "" {
+			if _, err := os.Stat(paths.SSHManagedConfig()); os.IsNotExist(err) {
+				return SetAgentDisabled(paths, true)
+			}
+		}
 
-	if err := os.WriteFile(configPath, []byte(cleaned), 0o600); err != nil {
-		return err
-	}
-
-	return SetAgentDisabled(paths, true)
+		cleaned := removeForgedIncludes(content, paths)
+		cleaned = removeLegacyForgedBlock(cleaned)
+		block := strings.Join([]string{
+			sshIncludeComment,
+			"# " + includeLine(paths.SSHManagedConfig()),
+		}, "\n")
+		if err := writeSSHFileAtomic(configPath, []byte(insertForgedInclude(cleaned, block))); err != nil {
+			return fmt.Errorf("Writing SSH config: %w", err)
+		}
+		return SetAgentDisabled(paths, true)
+	})
 }
 
 func includeLine(path string) string {
-	return "Include " + path
+	path = filepath.ToSlash(path)
+	path = strings.ReplaceAll(path, "%", "%%")
+	return fmt.Sprintf("Include %q", path)
 }
 
 func readConfigFile(path string) (string, error) {
@@ -130,16 +129,7 @@ func readConfigFile(path string) (string, error) {
 
 func removeForgedIncludes(content string, paths Paths) string {
 	lines := strings.Split(content, "\n")
-	includes := map[string]struct{}{
-		includeLine(paths.SSHManagedConfig()):                          {},
-		includeLine(paths.LegacySSHBaseInclude()):                      {},
-		fmt.Sprintf("Include %q", paths.SSHManagedConfig()):            {},
-		fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()):        {},
-		"# " + includeLine(paths.SSHManagedConfig()):                   {},
-		"# " + includeLine(paths.LegacySSHBaseInclude()):               {},
-		"# " + fmt.Sprintf("Include %q", paths.SSHManagedConfig()):     {},
-		"# " + fmt.Sprintf("Include %q", paths.LegacySSHBaseInclude()): {},
-	}
+	includes := forgedIncludeLines(paths)
 
 	result := make([]string, 0, len(lines))
 	for _, line := range lines {
@@ -154,6 +144,24 @@ func removeForgedIncludes(content string, paths Paths) string {
 	}
 
 	return trimTrailingBlankLines(strings.Join(result, "\n"))
+}
+
+func forgedIncludeLines(paths Paths) map[string]struct{} {
+	includes := make(map[string]struct{})
+	for _, path := range []string{paths.SSHManagedConfig(), paths.LegacySSHBaseInclude()} {
+		forward := filepath.ToSlash(path)
+		for _, line := range []string{
+			"Include " + path,
+			fmt.Sprintf("Include %q", path),
+			"Include " + forward,
+			fmt.Sprintf("Include %q", forward),
+			includeLine(path),
+		} {
+			includes[line] = struct{}{}
+			includes["# "+line] = struct{}{}
+		}
+	}
+	return includes
 }
 
 func removeLegacyForgedBlock(content string) string {
@@ -260,11 +268,95 @@ func cleanupLegacySSHArtifacts(paths Paths) error {
 	return nil
 }
 
-func ensureManagedSSHConfig(paths Paths) error {
+func ensureManagedSSHConfigLocked(paths Paths) error {
 	if _, err := os.Stat(paths.SSHManagedConfig()); err == nil {
 		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("Inspecting managed SSH config: %w", err)
 	}
 
 	baseContent := RenderManagedSSHConfig(paths, "")
-	return os.WriteFile(paths.SSHManagedConfig(), []byte(baseContent), 0o600)
+	return writeSSHFileAtomic(paths.SSHManagedConfig(), []byte(baseContent))
+}
+
+func WriteManagedSSHConfig(paths Paths, content string) error {
+	return withSSHConfigLock(paths, func() error {
+		if err := os.MkdirAll(paths.SSHManagedDir(), 0o700); err != nil {
+			return fmt.Errorf("Creating managed SSH directory: %w", err)
+		}
+		return writeSSHFileAtomic(paths.SSHManagedConfig(), []byte(content))
+	})
+}
+
+func withSSHConfigLock(paths Paths, fn func() error) error {
+	if err := os.MkdirAll(paths.ConfigDir, 0o700); err != nil {
+		return fmt.Errorf("Creating config directory: %w", err)
+	}
+	lock, err := os.OpenFile(filepath.Join(paths.ConfigDir, ".ssh-config.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("Opening SSH config lock: %w", err)
+	}
+	defer lock.Close()
+	if err := platform.LockFileWait(lock); err != nil {
+		return fmt.Errorf("Locking SSH config: %w", err)
+	}
+	defer platform.UnlockFile(lock)
+	return fn()
+}
+
+func writeSSHFileAtomic(path string, data []byte) error {
+	target, err := resolveSSHWritePath(path)
+	if err != nil {
+		return err
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("Creating temporary file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpPath)
+	}()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("Setting temporary file permissions: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("Writing temporary file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("Syncing temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("Closing temporary file: %w", err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return fmt.Errorf("Replacing %s: %w", target, err)
+	}
+	return nil
+}
+
+func resolveSSHWritePath(path string) (string, error) {
+	for range 32 {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("Inspecting %s: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return path, nil
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", fmt.Errorf("Reading symlink %s: %w", path, err)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = filepath.Clean(target)
+	}
+	return "", fmt.Errorf("Too many SSH config symlinks")
 }

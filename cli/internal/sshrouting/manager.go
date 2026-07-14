@@ -47,7 +47,7 @@ func (m *Manager) Refresh(keys []vault.Key) error {
 
 	routes := renderRouteHooks(m.paths, m.selfPath)
 	content := config.RenderManagedSSHConfig(m.paths, routes)
-	return os.WriteFile(m.paths.SSHManagedConfig(), []byte(content), 0o600)
+	return config.WriteManagedSSHConfig(m.paths, content)
 }
 
 func renderRouteHooks(paths config.Paths, selfPath string) string {
