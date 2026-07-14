@@ -370,11 +370,11 @@ func renderAreaGrid(areas []Area, width int, columns int) string {
 }
 
 func renderAreaCard(area Area, cardWidth int) string {
-	borderColor := lipgloss.Color(theme.ColorBorder)
+	borderColor := theme.ColorBorder
 	titleStyle := theme.BodyStrong
 
 	if area.Selected {
-		borderColor = lipgloss.Color(theme.ColorAccent)
+		borderColor = theme.ColorAccent
 		titleStyle = theme.Kicker
 	}
 
@@ -535,12 +535,12 @@ func renderWelcomeSeparator(height int) string {
 
 func renderWelcomeCard(option Option, cardWidth int, bodyHeight int) string {
 	padding := []int{1, 2}
-	borderColor := lipgloss.Color(theme.ColorBorder)
+	borderColor := theme.ColorBorder
 	titleStyle := theme.BodyStrong
 	descriptionStyle := theme.Body
 
 	if option.Selected {
-		borderColor = lipgloss.Color(theme.ColorAccent)
+		borderColor = theme.ColorAccent
 		titleStyle = theme.Kicker
 		descriptionStyle = theme.Body
 	}

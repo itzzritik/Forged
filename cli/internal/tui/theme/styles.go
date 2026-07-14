@@ -18,160 +18,160 @@ const (
 
 var (
 	AppBackground = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	Kicker = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color(ColorAccent))
+		Foreground(ColorAccent)
 
 	Wordmark = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	Subtitle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorMuted))
+			Foreground(ColorMuted)
 
 	Context = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorSubtle))
+		Foreground(ColorSubtle)
 
 	BrandBanner = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorAccent))
+			Foreground(ColorAccent)
 
 	HeaderFrame = lipgloss.NewStyle().
 			BorderStyle(NormalBorder()).
-			BorderForeground(lipgloss.Color(ColorBorder)).
+			BorderForeground(ColorBorder).
 			Padding(1, 2)
 
 	Breadcrumb = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	BreadcrumbCurrent = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color(ColorAccent))
+				Foreground(ColorAccent)
 
 	BreadcrumbSeparator = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(ColorSubtle))
+				Foreground(ColorSubtle)
 
 	HeaderSidebar = lipgloss.NewStyle().
 			PaddingLeft(1)
 
 	HeaderSeparator = lipgloss.NewStyle().
 			Faint(true).
-			Foreground(lipgloss.Color(ColorBorder))
+			Foreground(ColorBorder)
 
 	HeaderVersionLabel = lipgloss.NewStyle().
-				Foreground(lipgloss.Color(ColorSubtle))
+				Foreground(ColorSubtle)
 
 	HeaderVersionValue = lipgloss.NewStyle().
 				Bold(true).
-				Foreground(lipgloss.Color(ColorText))
+				Foreground(ColorText)
 
 	HeroTitle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	HeroMeta = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorAccent))
+			Foreground(ColorAccent)
 
 	SectionTitle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	Body = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorMuted))
+		Foreground(ColorMuted)
 
 	BodyMuted = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorSubtle))
+			Foreground(ColorSubtle)
 
 	BodyStrong = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	RowLabel = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorSubtle))
+			Foreground(ColorSubtle)
 
 	RowValue = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	Bullet = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorAccent))
+		Foreground(ColorAccent)
 
 	Spinner = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color(ColorAccent))
+		Foreground(ColorAccent)
 
 	FooterKey = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorAccent))
+			Foreground(ColorAccent)
 
 	FooterLabel = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorMuted))
+			Foreground(ColorMuted)
 
 	DividerStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorBorder))
+			Foreground(ColorBorder)
 
 	Link = lipgloss.NewStyle().
-		Foreground(lipgloss.Color(ColorText))
+		Foreground(ColorText)
 
 	LinkHost = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	LinkPath = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorMuted))
+			Foreground(ColorMuted)
 
 	Success = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color(ColorSuccess))
+		Foreground(ColorSuccess)
 
 	Warning = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color(ColorWarning))
+		Foreground(ColorWarning)
 
 	Danger = lipgloss.NewStyle().
 		Bold(true).
-		Foreground(lipgloss.Color(ColorDanger))
+		Foreground(ColorDanger)
 
 	CodeFrame = lipgloss.NewStyle().
 			BorderStyle(RoundedBorder()).
-			BorderForeground(lipgloss.Color(ColorBorder)).
+			BorderForeground(ColorBorder).
 			Padding(0, 1)
 
 	CodeLabel = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorSubtle))
+			Foreground(ColorSubtle)
 
 	CodeValue = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	AsideRail = lipgloss.NewStyle().
 			BorderStyle(NormalBorder()).
 			BorderLeft(true).
-			BorderForeground(lipgloss.Color(ColorBorder)).
+			BorderForeground(ColorBorder).
 			PaddingLeft(2)
 
 	AlertRail = lipgloss.NewStyle().
 			BorderStyle(NormalBorder()).
 			BorderLeft(true).
-			BorderForeground(lipgloss.Color(ColorDanger)).
+			BorderForeground(ColorDanger).
 			PaddingLeft(2)
 
 	FieldLabel = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorSubtle))
+			Foreground(ColorSubtle)
 
 	FieldHint = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorMuted))
+			Foreground(ColorMuted)
 
 	FieldValue = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorText))
+			Foreground(ColorText)
 
 	FieldLineIdle = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorBorder))
+			Foreground(ColorBorder)
 
 	FieldLineActive = lipgloss.NewStyle().
-			Foreground(lipgloss.Color(ColorAccent))
+			Foreground(ColorAccent)
 )
 
 func Chip(label string, tone Tone) string {
@@ -179,15 +179,15 @@ func Chip(label string, tone Tone) string {
 
 	switch tone {
 	case ToneAccent:
-		style = style.Foreground(lipgloss.Color(ColorAccent))
+		style = style.Foreground(ColorAccent)
 	case ToneSuccess:
-		style = style.Foreground(lipgloss.Color(ColorSuccess))
+		style = style.Foreground(ColorSuccess)
 	case ToneWarning:
-		style = style.Foreground(lipgloss.Color(ColorWarning))
+		style = style.Foreground(ColorWarning)
 	case ToneDanger:
-		style = style.Foreground(lipgloss.Color(ColorDanger))
+		style = style.Foreground(ColorDanger)
 	default:
-		style = style.Foreground(lipgloss.Color(ColorMuted))
+		style = style.Foreground(ColorMuted)
 	}
 
 	return style.Render(label)

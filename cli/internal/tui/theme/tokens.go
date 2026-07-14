@@ -1,25 +1,31 @@
 package theme
 
-const (
-	ColorBackground = "#000000"
-	ColorShell      = "#09090b"
-	ColorSurface    = "#050505"
-	ColorInset      = "#0a0a0a"
-	ColorBorder     = "#27272a"
+import (
+	"os"
+	"strings"
 
-	ColorText   = "#fafafa"
-	ColorMuted  = "#a1a1aa"
-	ColorSubtle = "#52525b"
-
-	ColorAccent        = "#ea580c"
-	ColorAccentBright  = "#f97316"
-	ColorAccentInk     = "#000000"
-	ColorSuccess       = "#22c55e"
-	ColorWarning       = "#f59e0b"
-	ColorDanger        = "#ef4444"
-	ColorInfo          = "#7dd3fc"
-	ColorSelectionGlow = "#3b1a0f"
+	"github.com/charmbracelet/lipgloss"
 )
+
+var (
+	ColorText    = lipgloss.AdaptiveColor{Light: "#18181b", Dark: "#fafafa"}
+	ColorMuted   = lipgloss.AdaptiveColor{Light: "#52525b", Dark: "#a1a1aa"}
+	ColorSubtle  = lipgloss.AdaptiveColor{Light: "#6f6f78", Dark: "#8a8a94"}
+	ColorBorder  = lipgloss.AdaptiveColor{Light: "#8b8b95", Dark: "#666670"}
+	ColorAccent  = lipgloss.AdaptiveColor{Light: "#c2410c", Dark: "#f97316"}
+	ColorSuccess = lipgloss.AdaptiveColor{Light: "#15803d", Dark: "#22c55e"}
+	ColorWarning = lipgloss.AdaptiveColor{Light: "#a16207", Dark: "#f59e0b"}
+	ColorDanger  = lipgloss.AdaptiveColor{Light: "#b91c1c", Dark: "#ef4444"}
+)
+
+func init() {
+	switch strings.ToLower(strings.TrimSpace(os.Getenv("FORGED_COLOR_SCHEME"))) {
+	case "light":
+		lipgloss.SetHasDarkBackground(false)
+	case "dark":
+		lipgloss.SetHasDarkBackground(true)
+	}
+}
 
 const (
 	ShellMinContentWidth = 64
