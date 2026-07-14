@@ -418,11 +418,13 @@ func labRouteKeyLabel(route actions.SSHRouteDebug) string {
 }
 
 func labRouteSummaryTitle(route actions.SSHRouteDebug, width int) string {
-	targetWidth := max(18, (width*3)/5)
-	keyWidth := max(14, width-targetWidth-3)
+	separator := theme.BodyMuted.Render("  " + theme.Glyphs.Separator + "  ")
+	separatorWidth := ansi.StringWidth(separator)
+	targetWidth := max(1, min((width*3)/5, width-separatorWidth-1))
+	keyWidth := max(1, width-targetWidth-separatorWidth)
 	target := theme.Success.Render(labTruncate(routeLabel(route), targetWidth))
 	key := theme.BodyStrong.Render(labTruncate(labRouteKeyLabel(route), keyWidth))
-	return target + theme.BodyMuted.Render("  "+theme.Glyphs.Separator+"  ") + key
+	return target + separator + key
 }
 
 func labRouteSummaryMeta(route actions.SSHRouteDebug) string {
