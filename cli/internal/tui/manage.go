@@ -641,7 +641,7 @@ func (m *model) handleManageChangePasswordFinishedMsg(msg manageChangePasswordFi
 }
 
 func (m *model) handleManageAutoReturnMsg(msg manageAutoReturnMsg) (tea.Model, tea.Cmd) {
-	if m.manage.success == nil || m.manage.success.autoReturnID != msg.id || m.session.Current().ID != RouteVaultChangePassword {
+	if !m.isManageSuccessRoute() || m.manage.success.autoReturnID != msg.id {
 		return m, nil
 	}
 	m.manage.success = nil
