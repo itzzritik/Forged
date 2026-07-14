@@ -305,58 +305,5 @@ func withSSHConfigLock(paths Paths, fn func() error) error {
 }
 
 func writeSSHFileAtomic(path string, data []byte) error {
-	target, err := resolveSSHWritePath(path)
-	if err != nil {
-		return err
-	}
-	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
-	if err != nil {
-		return fmt.Errorf("Creating temporary file: %w", err)
-	}
-	tmpPath := tmp.Name()
-	defer func() {
-		tmp.Close()
-		os.Remove(tmpPath)
-	}()
-
-	if err := tmp.Chmod(0o600); err != nil {
-		return fmt.Errorf("Setting temporary file permissions: %w", err)
-	}
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("Writing temporary file: %w", err)
-	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("Syncing temporary file: %w", err)
-	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("Closing temporary file: %w", err)
-	}
-	if err := os.Rename(tmpPath, target); err != nil {
-		return fmt.Errorf("Replacing %s: %w", target, err)
-	}
-	return nil
-}
-
-func resolveSSHWritePath(path string) (string, error) {
-	for range 32 {
-		info, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			return path, nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("Inspecting %s: %w", path, err)
-		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			return path, nil
-		}
-		target, err := os.Readlink(path)
-		if err != nil {
-			return "", fmt.Errorf("Reading symlink %s: %w", path, err)
-		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
-		}
-		path = filepath.Clean(target)
-	}
-	return "", fmt.Errorf("Too many SSH config symlinks")
+	return writePrivateFileAtomic(path, data)
 }

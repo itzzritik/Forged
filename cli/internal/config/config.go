@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 type Config struct {
@@ -57,8 +58,14 @@ func Load(path string) (Config, error) {
 }
 
 func Save(path string, cfg Config) error {
+	return withConfigLock(path, func() error {
+		return saveConfigLocked(path, cfg)
+	})
+}
+
+func saveConfigLocked(path string, cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("Creating config directory: %w", err)
 	}
 
 	if strings.TrimSpace(cfg.Agent.Socket) == "" {
@@ -86,7 +93,7 @@ func Save(path string, cfg Config) error {
 	body.WriteString(fmt.Sprintf("master_password_interval = %q\n", cfg.Security.MasterPasswordInterval))
 	body.WriteString(fmt.Sprintf("headless_unlock = %t\n", cfg.Security.HeadlessUnlock))
 
-	return os.WriteFile(path, []byte(body.String()), 0o600)
+	return writePrivateFileAtomic(path, []byte(body.String()))
 }
 
 func MasterPasswordIntervalDuration(value string) time.Duration {
@@ -124,27 +131,15 @@ func IsAgentDisabled(paths Paths) bool {
 }
 
 func SetAgentDisabled(paths Paths, disabled bool) error {
-	cfg, err := Load(paths.ConfigFile())
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(cfg.Agent.Socket) == "" {
-		cfg.Agent.Socket = paths.AgentSocket()
-	}
-	cfg.Agent.Disabled = disabled
-	return Save(paths.ConfigFile(), cfg)
+	return updateConfig(paths, func(cfg *Config) {
+		cfg.Agent.Disabled = disabled
+	})
 }
 
 func SetMasterPasswordInterval(paths Paths, interval string) error {
-	cfg, err := Load(paths.ConfigFile())
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(cfg.Agent.Socket) == "" {
-		cfg.Agent.Socket = paths.AgentSocket()
-	}
-	cfg.Security.MasterPasswordInterval = NormalizeMasterPasswordInterval(interval)
-	return Save(paths.ConfigFile(), cfg)
+	return updateConfig(paths, func(cfg *Config) {
+		cfg.Security.MasterPasswordInterval = NormalizeMasterPasswordInterval(interval)
+	})
 }
 
 func HeadlessUnlockEnabled(paths Paths) bool {
@@ -153,13 +148,107 @@ func HeadlessUnlockEnabled(paths Paths) bool {
 }
 
 func SetHeadlessUnlock(paths Paths, enabled bool) error {
-	cfg, err := Load(paths.ConfigFile())
+	return updateConfig(paths, func(cfg *Config) {
+		cfg.Security.HeadlessUnlock = enabled
+	})
+}
+
+func EnsureDefault(paths Paths) error {
+	path := paths.ConfigFile()
+	return withConfigLock(path, func() error {
+		if _, err := os.Stat(path); err == nil {
+			return nil
+		} else if !os.IsNotExist(err) {
+			return fmt.Errorf("Inspecting config: %w", err)
+		}
+		return saveConfigLocked(path, Config{Agent: AgentConfig{Socket: paths.AgentSocket()}})
+	})
+}
+
+func updateConfig(paths Paths, update func(*Config)) error {
+	path := paths.ConfigFile()
+	return withConfigLock(path, func() error {
+		cfg, err := Load(path)
+		if err != nil {
+			return err
+		}
+		if strings.TrimSpace(cfg.Agent.Socket) == "" {
+			cfg.Agent.Socket = paths.AgentSocket()
+		}
+		update(&cfg)
+		return saveConfigLocked(path, cfg)
+	})
+}
+
+func withConfigLock(path string, fn func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("Creating config directory: %w", err)
+	}
+	lock, err := os.OpenFile(path+".lock", os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return fmt.Errorf("Opening config lock: %w", err)
+	}
+	defer lock.Close()
+	if err := platform.LockFileWait(lock); err != nil {
+		return fmt.Errorf("Locking config: %w", err)
+	}
+	defer platform.UnlockFile(lock)
+	return fn()
+}
+
+func writePrivateFileAtomic(path string, data []byte) error {
+	target, err := resolveWritePath(path)
 	if err != nil {
 		return err
 	}
-	if strings.TrimSpace(cfg.Agent.Socket) == "" {
-		cfg.Agent.Socket = paths.AgentSocket()
+	tmp, err := os.CreateTemp(filepath.Dir(target), "."+filepath.Base(target)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("Creating temporary file: %w", err)
 	}
-	cfg.Security.HeadlessUnlock = enabled
-	return Save(paths.ConfigFile(), cfg)
+	tmpPath := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpPath)
+	}()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("Setting temporary file permissions: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("Writing temporary file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("Syncing temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("Closing temporary file: %w", err)
+	}
+	if err := os.Rename(tmpPath, target); err != nil {
+		return fmt.Errorf("Replacing %s: %w", target, err)
+	}
+	return nil
+}
+
+func resolveWritePath(path string) (string, error) {
+	for range 32 {
+		info, err := os.Lstat(path)
+		if os.IsNotExist(err) {
+			return path, nil
+		}
+		if err != nil {
+			return "", fmt.Errorf("Inspecting %s: %w", path, err)
+		}
+		if info.Mode()&os.ModeSymlink == 0 {
+			return path, nil
+		}
+		target, err := os.Readlink(path)
+		if err != nil {
+			return "", fmt.Errorf("Reading symlink %s: %w", path, err)
+		}
+		if !filepath.IsAbs(target) {
+			target = filepath.Join(filepath.Dir(path), target)
+		}
+		path = filepath.Clean(target)
+	}
+	return "", fmt.Errorf("Too many config symlinks")
 }

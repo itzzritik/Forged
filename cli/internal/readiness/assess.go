@@ -3,9 +3,7 @@ package readiness
 import (
 	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -258,25 +256,5 @@ func defaultDaemonRuntimeStatus(socketPath string) (DaemonRuntimeStatus, error) 
 }
 
 func ensureDefaultConfigFile(paths config.Paths) error {
-	if err := os.MkdirAll(filepath.Dir(paths.ConfigFile()), 0o700); err != nil {
-		return err
-	}
-	if _, err := os.Stat(paths.ConfigFile()); err == nil {
-		return nil
-	}
-
-	content := fmt.Sprintf(`[agent]
-socket = %q
-log_level = "info"
-disabled = false
-
-[sync]
-enabled = false
-
-[security]
-master_password_interval = "7d"
-headless_unlock = false
-`, paths.AgentSocket())
-
-	return os.WriteFile(paths.ConfigFile(), []byte(content), 0o600)
+	return config.EnsureDefault(paths)
 }
