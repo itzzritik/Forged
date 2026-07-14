@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/itzzritik/forged/cli/internal/tui/components"
 	agentscreen "github.com/itzzritik/forged/cli/internal/tui/screens/agent"
 	dashboardscreen "github.com/itzzritik/forged/cli/internal/tui/screens/dashboard"
@@ -582,7 +583,7 @@ func (m *model) runAgentSSHToggle() tea.Cmd {
 }
 
 func (m *model) enableSSHAgentCmd() tea.Cmd {
-	enable := m.enableSSHAgent
+	enable := m.deps.EnableSSHAgent
 	m.agent.sshActionID++
 	actionID := m.agent.sshActionID
 	m.agent.sshBusy = true
@@ -595,7 +596,7 @@ func (m *model) enableSSHAgentCmd() tea.Cmd {
 }
 
 func (m *model) disableSSHAgentCmd() tea.Cmd {
-	disable := m.disableSSHAgent
+	disable := m.deps.DisableSSHAgent
 	m.agent.sshActionID++
 	actionID := m.agent.sshActionID
 	m.agent.sshBusy = true
@@ -617,7 +618,7 @@ func (m *model) listAgentSigningKeysCmd() tea.Cmd {
 }
 
 func (m *model) runEnableCommitSigning(name string) tea.Cmd {
-	enable := m.enableCommitSigning
+	enable := m.deps.EnableCommitSigning
 	m.signingLoadID++
 	m.signingStatusLoading = false
 	m.signingStatusPending = false
@@ -635,7 +636,7 @@ func (m *model) runEnableCommitSigning(name string) tea.Cmd {
 }
 
 func (m *model) runDisableCommitSigning() tea.Cmd {
-	disable := m.disableCommitSigning
+	disable := m.deps.DisableCommitSigning
 	m.agent.signing.disableArmed = false
 	m.signingLoadID++
 	m.signingStatusLoading = false
@@ -654,12 +655,12 @@ func (m *model) runDisableCommitSigning() tea.Cmd {
 }
 
 func (m *model) loadSigningStatusCmd() tea.Cmd {
-	if m.loadSigningStatus == nil || m.signingStatusLoading {
+	if m.signingStatusLoading {
 		return nil
 	}
 	m.signingStatusPending = false
 	m.signingStatusLoading = true
-	load := m.loadSigningStatus
+	load := m.deps.LoadSigningStatus
 	m.signingLoadID++
 	loadID := m.signingLoadID
 	return func() tea.Msg {
@@ -680,13 +681,10 @@ func (m *model) invalidateSigningStatusCmd() tea.Cmd {
 }
 
 func (m *model) refreshSnapshotCmd() tea.Cmd {
-	if m.loadSnapshot == nil {
-		return nil
-	}
-	load := m.loadSnapshot
+	repair := m.deps.Repair
 	return func() tea.Msg {
-		snapshot, err := load()
-		return snapshotRefreshMsg{snapshot: snapshot, err: err}
+		result, err := repair(readiness.RunOptions{Mode: readiness.ModeAssessOnly})
+		return snapshotRefreshMsg{snapshot: result.Snapshot, err: err}
 	}
 }
 

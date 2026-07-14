@@ -430,7 +430,7 @@ func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) runManageSync() tea.Cmd {
-	triggerSync := m.triggerSync
+	triggerSync := m.deps.TriggerSync
 	m.manage.syncBusy = true
 	return tea.Batch(
 		m.spinner.Tick,
@@ -448,7 +448,7 @@ func (m *model) runManageLogout() tea.Cmd {
 }
 
 func (m *model) changePasswordCmd(id int, currentPassword []byte, newPassword []byte) tea.Cmd {
-	changePassword := m.changePassword
+	changePassword := m.deps.ChangePassword
 	currentCopy := append([]byte(nil), currentPassword...)
 	newCopy := append([]byte(nil), newPassword...)
 	clear(currentPassword)
@@ -728,8 +728,8 @@ func (m *model) currentMasterPasswordIntervalIndex() int {
 }
 
 func (m *model) saveManageSecuritySettingCmd(item manageItemID, value string) tea.Cmd {
-	setInterval := m.setMasterPasswordInterval
-	loadSecurity := m.loadSecurityState
+	setInterval := m.deps.SetMasterPasswordInterval
+	loadSecurity := m.deps.LoadSecurityState
 	return func() tea.Msg {
 		var err error
 		switch item {

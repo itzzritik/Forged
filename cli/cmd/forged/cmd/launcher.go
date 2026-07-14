@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
-	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
@@ -53,53 +52,11 @@ func runInteractiveIntent(intent tui.Intent) error {
 		SaveCredentials: func(creds actions.AccountCredentials) error { return actions.SaveCredentials(paths, creds) },
 		TriggerSync:     func() error { return actions.TriggerSync(paths) },
 		LockSensitive:   func() error { return actions.LockSensitive(paths) },
-		LoadSnapshot:    engine.Assess,
 		LoadStatus: func() (tui.RuntimeStatus, error) {
-			resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdStatus, nil)
-			if err != nil {
-				return tui.RuntimeStatus{}, err
-			}
-			var status struct {
-				Sensitive *struct {
-					Unlocked *bool `json:"unlocked"`
-				} `json:"sensitive"`
-				Sync struct {
-					Dirty                bool      `json:"dirty"`
-					LastErr              string    `json:"last_error"`
-					Linked               bool      `json:"linked"`
-					Syncing              bool      `json:"syncing"`
-					LastSuccessfulPullAt time.Time `json:"last_successful_pull_at"`
-					LastSuccessfulPushAt time.Time `json:"last_successful_push_at"`
-				} `json:"sync"`
-			}
-			if err := json.Unmarshal(resp.Data, &status); err != nil {
-				return tui.RuntimeStatus{}, err
-			}
-			runtimeStatus := tui.RuntimeStatus{
-				Syncing:              status.Sync.Syncing,
-				Dirty:                status.Sync.Dirty,
-				Linked:               status.Sync.Linked,
-				LastSuccessfulPullAt: status.Sync.LastSuccessfulPullAt,
-				LastSuccessfulPushAt: status.Sync.LastSuccessfulPushAt,
-				Error:                status.Sync.LastErr,
-				SensitiveReported:    status.Sensitive != nil && status.Sensitive.Unlocked != nil,
-			}
-			if status.Sensitive != nil && status.Sensitive.Unlocked != nil {
-				runtimeStatus.Unlocked = *status.Sensitive.Unlocked
-				runtimeStatus.SensitiveKnown = true
-			}
-			return runtimeStatus, nil
+			return actions.LoadRuntimeStatus(paths)
 		},
 		LoadSecurityState: func() (tui.SecurityState, error) {
-			state, err := actions.LoadSecurityState(paths)
-			if err != nil {
-				return tui.SecurityState{}, err
-			}
-			return tui.SecurityState{
-				MasterPasswordInterval: state.MasterPasswordInterval,
-				SystemAuthCapability:   state.SystemAuthCapability,
-				SecureStoreCapability:  state.SecureStoreCapability,
-			}, nil
+			return actions.LoadSecurityState(paths)
 		},
 		SetMasterPasswordInterval: func(value string) error {
 			return actions.SetMasterPasswordInterval(paths, value)

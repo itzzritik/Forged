@@ -66,7 +66,7 @@ func (m *model) startLabRoutingRoute() tea.Cmd {
 }
 
 func (m *model) loadLabRoutingCmd(id int) tea.Cmd {
-	load := m.loadSSHRoutingDebug
+	load := m.deps.LoadSSHRoutingDebug
 	return func() tea.Msg {
 		routing, err := load()
 		return labRoutingLoadedMsg{id: id, routing: routing, err: err}
@@ -74,8 +74,8 @@ func (m *model) loadLabRoutingCmd(id int) tea.Cmd {
 }
 
 func (m *model) clearLabRoutingCmd(id int, target string, all bool) tea.Cmd {
-	clearOne := m.clearSSHRoute
-	clearAll := m.clearAllSSHRoutes
+	clearOne := m.deps.ClearSSHRoute
+	clearAll := m.deps.ClearAllSSHRoutes
 	return func() tea.Msg {
 		var err error
 		if all {

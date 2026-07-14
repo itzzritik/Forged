@@ -1333,7 +1333,7 @@ func (m *model) refreshKeyDetail(name string) tea.Cmd {
 
 func (m *model) copyKeyText(value string, status string) tea.Cmd {
 	m.clipboardBusy = true
-	copyText := m.copyText
+	copyText := m.deps.CopyText
 	return func() tea.Msg {
 		if strings.TrimSpace(value) == "" {
 			return keyCopyFinishedMsg{err: fmt.Errorf("Nothing to copy")}
@@ -1347,7 +1347,7 @@ func (m *model) copyKeyText(value string, status string) tea.Cmd {
 
 func (m *model) copyPrivateKey(password []byte) tea.Cmd {
 	m.clipboardBusy = true
-	copySensitiveText := m.copySensitiveText
+	copySensitiveText := m.deps.CopySensitiveText
 	name := strings.TrimSpace(m.keyDetail.key.Name)
 	paths := config.DefaultPaths()
 	passwordCopy := append([]byte(nil), password...)

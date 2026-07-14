@@ -40,7 +40,6 @@ type Dependencies struct {
 	SaveCredentials           func(actions.AccountCredentials) error
 	TriggerSync               func() error
 	LockSensitive             func() error
-	LoadSnapshot              func() (readiness.Snapshot, error)
 	LoadStatus                func() (RuntimeStatus, error)
 	LoadSecurityState         func() (SecurityState, error)
 	SetMasterPasswordInterval func(string) error
@@ -61,6 +60,45 @@ type Dependencies struct {
 	OpenLink                  func(string) error
 	DefaultServer             string
 	AppVersion                string
+}
+
+func (d Dependencies) validate() error {
+	required := []struct {
+		name    string
+		missing bool
+	}{
+		{name: "repair", missing: d.Repair == nil},
+		{name: "create-vault", missing: d.CreateVault == nil},
+		{name: "restore-vault", missing: d.RestoreVault == nil},
+		{name: "log-in", missing: d.StartLogin == nil},
+		{name: "save-credentials", missing: d.SaveCredentials == nil},
+		{name: "trigger-sync", missing: d.TriggerSync == nil},
+		{name: "lock-sensitive", missing: d.LockSensitive == nil},
+		{name: "load-status", missing: d.LoadStatus == nil},
+		{name: "load-security-state", missing: d.LoadSecurityState == nil},
+		{name: "set-master-password-interval", missing: d.SetMasterPasswordInterval == nil},
+		{name: "local-unlock-trust", missing: d.HasLocalUnlockTrust == nil},
+		{name: "launch-unlock", missing: d.UnlockSensitiveLaunch == nil},
+		{name: "change-password", missing: d.ChangePassword == nil},
+		{name: "load-signing-status", missing: d.LoadSigningStatus == nil},
+		{name: "enable-SSH-agent", missing: d.EnableSSHAgent == nil},
+		{name: "disable-SSH-agent", missing: d.DisableSSHAgent == nil},
+		{name: "enable-commit-signing", missing: d.EnableCommitSigning == nil},
+		{name: "disable-commit-signing", missing: d.DisableCommitSigning == nil},
+		{name: "SSH routing debug", missing: d.LoadSSHRoutingDebug == nil},
+		{name: "SSH route clear", missing: d.ClearSSHRoute == nil},
+		{name: "SSH routes clear-all", missing: d.ClearAllSSHRoutes == nil},
+		{name: "copy-text", missing: d.CopyText == nil},
+		{name: "sensitive-copy", missing: d.CopySensitiveText == nil},
+		{name: "close-clipboard", missing: d.CloseClipboard == nil},
+		{name: "open-link", missing: d.OpenLink == nil},
+	}
+	for _, dependency := range required {
+		if dependency.missing {
+			return fmt.Errorf("TUI %s dependency is required", dependency.name)
+		}
+	}
+	return nil
 }
 
 type SensitiveClipboardLease interface {
@@ -226,23 +264,9 @@ type signingStatusMsg struct {
 	err    error
 }
 
-type RuntimeStatus struct {
-	Syncing              bool
-	Dirty                bool
-	Linked               bool
-	LastSuccessfulPullAt time.Time
-	LastSuccessfulPushAt time.Time
-	Unlocked             bool
-	SensitiveKnown       bool
-	SensitiveReported    bool
-	Error                string
-}
+type RuntimeStatus = actions.RuntimeStatus
 
-type SecurityState struct {
-	MasterPasswordInterval string
-	SystemAuthCapability   string
-	SecureStoreCapability  string
-}
+type SecurityState = actions.SecurityState
 
 const (
 	securityCapabilityAvailable             = "available"
@@ -285,42 +309,17 @@ type openFinishedMsg struct {
 }
 
 type model struct {
-	intent                    Intent
-	session                   *Session
-	repair                    func(readiness.RunOptions) (readiness.RunResult, error)
-	createVault               func([]byte) error
-	restoreVault              func([]byte) error
-	startLogin                func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
-	saveCredentials           func(actions.AccountCredentials) error
-	triggerSync               func() error
-	lockSensitive             func() error
-	loadSnapshot              func() (readiness.Snapshot, error)
-	loadStatus                func() (RuntimeStatus, error)
-	loadSecurityState         func() (SecurityState, error)
-	setMasterPasswordInterval func(string) error
-	hasLocalUnlockTrust       func() bool
-	unlockSensitiveLaunch     func([]byte) (actions.UnlockResult, error)
-	changePassword            func([]byte, []byte) (actions.ChangePasswordResult, error)
-	loadSigningStatus         func() (actions.CommitSigningStatus, error)
-	enableSSHAgent            func() error
-	disableSSHAgent           func() error
-	enableCommitSigning       func(string) (actions.CommitSigningStatus, error)
-	disableCommitSigning      func() (actions.CommitSigningStatus, error)
-	loadSSHRoutingDebug       func() (actions.SSHRoutingDebug, error)
-	clearSSHRoute             func(string) error
-	clearAllSSHRoutes         func() error
-	copyText                  func(string) error
-	copySensitiveText         func(string) (SensitiveClipboardLease, error)
-	clipboardBusy             bool
-	openLink                  func(string) error
-	defaultServer             string
-	appVersion                string
-	signingStatus             actions.CommitSigningStatus
-	signingLoaded             bool
-	signingStatusLoading      bool
-	signingStatusPending      bool
-	signingError              string
-	signingLoadID             int
+	intent        Intent
+	session       *Session
+	deps          Dependencies
+	clipboardBusy bool
+
+	signingStatus        actions.CommitSigningStatus
+	signingLoaded        bool
+	signingStatusLoading bool
+	signingStatusPending bool
+	signingError         string
+	signingLoadID        int
 
 	spinner spinner.Model
 	width   int
@@ -402,59 +401,8 @@ type model struct {
 }
 
 func Run(intent Intent, deps Dependencies) (Result, error) {
-	switch {
-	case deps.Repair == nil:
-		return Result{}, fmt.Errorf("TUI repair dependency is required")
-	case deps.CreateVault == nil:
-		return Result{}, fmt.Errorf("TUI create-vault dependency is required")
-	case deps.RestoreVault == nil:
-		return Result{}, fmt.Errorf("TUI restore-vault dependency is required")
-	case deps.StartLogin == nil:
-		return Result{}, fmt.Errorf("TUI log-in dependency is required")
-	case deps.SaveCredentials == nil:
-		return Result{}, fmt.Errorf("TUI save-credentials dependency is required")
-	case deps.TriggerSync == nil:
-		return Result{}, fmt.Errorf("TUI trigger-sync dependency is required")
-	case deps.LockSensitive == nil:
-		return Result{}, fmt.Errorf("TUI lock-sensitive dependency is required")
-	case deps.LoadSnapshot == nil:
-		return Result{}, fmt.Errorf("TUI load-snapshot dependency is required")
-	case deps.LoadStatus == nil:
-		return Result{}, fmt.Errorf("TUI load-status dependency is required")
-	case deps.LoadSecurityState == nil:
-		return Result{}, fmt.Errorf("TUI load-security-state dependency is required")
-	case deps.SetMasterPasswordInterval == nil:
-		return Result{}, fmt.Errorf("TUI set-master-password-interval dependency is required")
-	case deps.HasLocalUnlockTrust == nil:
-		return Result{}, fmt.Errorf("TUI local-unlock-trust dependency is required")
-	case deps.UnlockSensitiveLaunch == nil:
-		return Result{}, fmt.Errorf("TUI launch-unlock dependency is required")
-	case deps.ChangePassword == nil:
-		return Result{}, fmt.Errorf("TUI change-password dependency is required")
-	case deps.LoadSigningStatus == nil:
-		return Result{}, fmt.Errorf("TUI load-signing-status dependency is required")
-	case deps.EnableSSHAgent == nil:
-		return Result{}, fmt.Errorf("TUI enable-SSH-agent dependency is required")
-	case deps.DisableSSHAgent == nil:
-		return Result{}, fmt.Errorf("TUI disable-SSH-agent dependency is required")
-	case deps.EnableCommitSigning == nil:
-		return Result{}, fmt.Errorf("TUI enable-commit-signing dependency is required")
-	case deps.DisableCommitSigning == nil:
-		return Result{}, fmt.Errorf("TUI disable-commit-signing dependency is required")
-	case deps.LoadSSHRoutingDebug == nil:
-		return Result{}, fmt.Errorf("TUI SSH routing debug dependency is required")
-	case deps.ClearSSHRoute == nil:
-		return Result{}, fmt.Errorf("TUI SSH route clear dependency is required")
-	case deps.ClearAllSSHRoutes == nil:
-		return Result{}, fmt.Errorf("TUI SSH routes clear-all dependency is required")
-	case deps.CopyText == nil:
-		return Result{}, fmt.Errorf("TUI copy-text dependency is required")
-	case deps.CopySensitiveText == nil:
-		return Result{}, fmt.Errorf("TUI sensitive-copy dependency is required")
-	case deps.CloseClipboard == nil:
-		return Result{}, fmt.Errorf("TUI close-clipboard dependency is required")
-	case deps.OpenLink == nil:
-		return Result{}, fmt.Errorf("TUI open-link dependency is required")
+	if err := deps.validate(); err != nil {
+		return Result{}, err
 	}
 
 	initial := newModel(intent, deps, components.NewSpinner())
@@ -482,36 +430,10 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 
 func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 	model := &model{
-		intent:                    intent,
-		session:                   NewSession(intent),
-		repair:                    deps.Repair,
-		createVault:               deps.CreateVault,
-		restoreVault:              deps.RestoreVault,
-		startLogin:                deps.StartLogin,
-		saveCredentials:           deps.SaveCredentials,
-		triggerSync:               deps.TriggerSync,
-		lockSensitive:             deps.LockSensitive,
-		loadSnapshot:              deps.LoadSnapshot,
-		loadStatus:                deps.LoadStatus,
-		loadSecurityState:         deps.LoadSecurityState,
-		setMasterPasswordInterval: deps.SetMasterPasswordInterval,
-		hasLocalUnlockTrust:       deps.HasLocalUnlockTrust,
-		unlockSensitiveLaunch:     deps.UnlockSensitiveLaunch,
-		changePassword:            deps.ChangePassword,
-		loadSigningStatus:         deps.LoadSigningStatus,
-		enableSSHAgent:            deps.EnableSSHAgent,
-		disableSSHAgent:           deps.DisableSSHAgent,
-		enableCommitSigning:       deps.EnableCommitSigning,
-		disableCommitSigning:      deps.DisableCommitSigning,
-		loadSSHRoutingDebug:       deps.LoadSSHRoutingDebug,
-		clearSSHRoute:             deps.ClearSSHRoute,
-		clearAllSSHRoutes:         deps.ClearAllSSHRoutes,
-		copyText:                  deps.CopyText,
-		copySensitiveText:         deps.CopySensitiveText,
-		openLink:                  deps.OpenLink,
-		defaultServer:             deps.DefaultServer,
-		appVersion:                deps.AppVersion,
-		spinner:                   spin,
+		intent:  intent,
+		session: NewSession(intent),
+		deps:    deps,
+		spinner: spin,
 	}
 	model.initializePendingRouteState()
 	return model
@@ -961,7 +883,7 @@ func (m *model) renderHeader(width int) string {
 		PageTitle:   m.headerPageTitle(),
 		Breadcrumbs: m.headerBreadcrumbs(),
 		PageNote:    m.headerPageNote(),
-		Version:     m.appVersion,
+		Version:     m.deps.AppVersion,
 		StatusItems: m.headerStatusItems(),
 	}
 	return shell.RenderHeader(width, data)
@@ -985,7 +907,7 @@ func (m *model) canRetryStartupSystemAuth() bool {
 		!m.passwordHideInput &&
 		m.passwordInput != nil &&
 		m.passwordInput.IsEmpty() &&
-		m.hasLocalUnlockTrust()
+		m.deps.HasLocalUnlockTrust()
 }
 
 func (m *model) productRailItems() []shell.StatusItem {
@@ -2312,7 +2234,7 @@ func (m *model) armIdleLockCmd() tea.Cmd {
 }
 
 func (m *model) assessCurrentState() tea.Cmd {
-	repair := m.repair
+	repair := m.deps.Repair
 	return func() tea.Msg {
 		result, err := repair(readiness.RunOptions{Mode: readiness.ModeAssessOnly})
 		return assessmentMsg{snapshot: result.Snapshot, err: err}
@@ -2332,7 +2254,7 @@ func (m *model) startLoginFlow() tea.Cmd {
 	}
 	m.loginID++
 	id := m.loginID
-	startLogin := m.startLogin
+	startLogin := m.deps.StartLogin
 	server := m.serverURL()
 	progressCh := make(chan actions.LoginProgress, 8)
 	m.loginProgress = progressCh
@@ -2379,14 +2301,14 @@ func (m *model) waitForLogin(ctx context.Context, id int, session actions.LoginS
 }
 
 func (m *model) commitLogin(id int, creds actions.AccountCredentials) tea.Cmd {
-	save := m.saveCredentials
+	save := m.deps.SaveCredentials
 	return func() tea.Msg {
 		return loginFinishedMsg{id: id, creds: creds, err: save(creds)}
 	}
 }
 
 func (m *model) restoreLinkedVault(id int, password []byte) tea.Cmd {
-	restore := m.restoreVault
+	restore := m.deps.RestoreVault
 	m.clearRestorePassword()
 	passwordBuffer := newPasswordBuffer(password)
 	m.restorePassword = passwordBuffer
@@ -2418,9 +2340,9 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 
 	m.maintenanceID++
 	id := m.maintenanceID
-	repairFn := m.repair
-	createVault := m.createVault
-	unlock := m.unlockSensitiveLaunch
+	repairFn := m.deps.Repair
+	createVault := m.deps.CreateVault
+	unlock := m.deps.UnlockSensitiveLaunch
 	passwordCopy := append([]byte(nil), password...)
 	clear(password)
 
@@ -2565,7 +2487,7 @@ func (m *model) systemHeaderForSnapshot(snapshot readiness.Snapshot) systemHeade
 }
 
 func (m *model) unlockSensitiveLaunchCmd(password []byte) tea.Cmd {
-	unlock := m.unlockSensitiveLaunch
+	unlock := m.deps.UnlockSensitiveLaunch
 	passwordCopy := append([]byte(nil), password...)
 	clear(password)
 	return func() tea.Msg {
@@ -2593,7 +2515,7 @@ func (m *model) handleSensitiveSessionLoss(wasUnlocked bool) tea.Cmd {
 	if m.runtimeStatus.Unlocked || !m.runtimeStatus.SensitiveKnown {
 		return nil
 	}
-	if !m.hasLocalUnlockTrust() {
+	if !m.deps.HasLocalUnlockTrust() {
 		m.showPasswordScreen(passwordStartupUnlock, "", "", true)
 		m.passwordContext = "Enter your master password to continue using Forged."
 		return m.passwordInput.Init()
@@ -3021,27 +2943,28 @@ func (m *model) serverURL() string {
 	if server := strings.TrimSpace(m.intent.Param("server")); server != "" {
 		return server
 	}
-	return m.defaultServer
+	return m.deps.DefaultServer
 }
 
 func (m *model) pollRuntimeStatus(delay time.Duration) tea.Cmd {
-	if m.loadStatus == nil || !m.snapshot.VaultExists {
+	if !m.snapshot.VaultExists {
 		return nil
 	}
 	if delay <= 0 {
 		delay = 50 * time.Millisecond
 	}
+	loadStatus := m.deps.LoadStatus
 	return tea.Tick(delay, func(time.Time) tea.Msg {
-		status, err := m.loadStatus()
+		status, err := loadStatus()
 		return runtimeStatusMsg{status: status, err: err}
 	})
 }
 
 func (m *model) loadSecurityStateCmd() tea.Cmd {
-	if m.loadSecurityState == nil || !m.snapshot.VaultExists {
+	if !m.snapshot.VaultExists {
 		return nil
 	}
-	loadSecurityState := m.loadSecurityState
+	loadSecurityState := m.deps.LoadSecurityState
 	return func() tea.Msg {
 		state, err := loadSecurityState()
 		return securityStateMsg{state: state, err: err}
@@ -3049,7 +2972,7 @@ func (m *model) loadSecurityStateCmd() tea.Cmd {
 }
 
 func (m *model) lockSensitiveCmd(id int) tea.Cmd {
-	lockSensitive := m.lockSensitive
+	lockSensitive := m.deps.LockSensitive
 	return func() tea.Msg {
 		return idleLockFinishedMsg{id: id, err: lockSensitive()}
 	}
@@ -3057,7 +2980,7 @@ func (m *model) lockSensitiveCmd(id int) tea.Cmd {
 
 func (m *model) copyToClipboard(value string) tea.Cmd {
 	m.clipboardBusy = true
-	copyText := m.copyText
+	copyText := m.deps.CopyText
 	return func() tea.Msg {
 		return copyFinishedMsg{err: copyText(value)}
 	}
@@ -3065,7 +2988,7 @@ func (m *model) copyToClipboard(value string) tea.Cmd {
 
 func (m *model) openCurrentLoginURL() tea.Cmd {
 	url := strings.TrimSpace(m.loginScreen.URL)
-	openLink := m.openLink
+	openLink := m.deps.OpenLink
 	return func() tea.Msg {
 		if url == "" {
 			return openFinishedMsg{}
