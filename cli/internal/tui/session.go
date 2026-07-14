@@ -8,9 +8,8 @@ type Route struct {
 type EscMode string
 
 const (
-	EscAuto        EscMode = "auto"
-	EscCancel      EscMode = "cancel"
-	EscCloseSearch EscMode = "close-search"
+	EscAuto   EscMode = "auto"
+	EscCancel EscMode = "cancel"
 )
 
 type Session struct {
@@ -74,8 +73,6 @@ func (s *Session) EscLabel(mode EscMode) string {
 	switch mode {
 	case EscCancel:
 		return "Cancel"
-	case EscCloseSearch:
-		return "Close Search"
 	default:
 		if s.CanGoBack() {
 			return "Back"

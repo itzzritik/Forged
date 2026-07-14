@@ -38,21 +38,6 @@ func DefaultExportPath() string {
 	return filepath.Join(home, "Desktop", fmt.Sprintf("forged-export-%s.json", time.Now().Format("2006-01-02")))
 }
 
-func ExportVault(paths config.Paths, outPath string, password []byte) (ExportResult, error) {
-	outPath = strings.TrimSpace(outPath)
-	if outPath == "" {
-		return ExportResult{}, fmt.Errorf("Enter an export path")
-	}
-	outPath = expandUserPath(outPath)
-
-	token, err := AuthorizeExport(paths, password)
-	if err != nil {
-		return ExportResult{}, err
-	}
-
-	return ExportVaultWithToken(paths, outPath, token)
-}
-
 func AuthorizeExport(paths config.Paths, password []byte) (string, error) {
 	authResult, err := authorizeSensitiveResult(paths, sensitiveauth.ActionExport, password)
 	if err != nil {

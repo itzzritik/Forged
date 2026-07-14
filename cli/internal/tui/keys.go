@@ -114,9 +114,8 @@ type keyExportPickerMsg struct {
 	err  error
 }
 
-type keyTransferAutoReturnMsg struct {
-	id    int
-	route RouteID
+type keyImportAutoReturnMsg struct {
+	id int
 }
 
 type keyBrowserState struct {
@@ -1146,7 +1145,7 @@ func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyExport.err = ""
 		m.keyExport.status = "Exporting vault"
 		m.keyExport.exporting = true
-		return m, tea.Batch(m.spinner.Tick, m.exportVault(nil))
+		return m, tea.Batch(m.spinner.Tick, m.exportVault())
 	default:
 		var cmd tea.Cmd
 		m.keyExport.pathInput, cmd = m.keyExport.pathInput.Update(msg)
@@ -1412,16 +1411,6 @@ func (m *model) generateKeyCmd(name, comment string) tea.Cmd {
 	}
 }
 
-func (m *model) importKeysCmd(source, file string) tea.Cmd {
-	m.keyImportID++
-	id := m.keyImportID
-	paths := config.DefaultPaths()
-	return func() tea.Msg {
-		result, err := actions.ImportFromSource(paths, source, file)
-		return keyImportFinishedMsg{id: id, result: result, err: err}
-	}
-}
-
 func (m *model) previewImportCmd(source, file string) tea.Cmd {
 	m.keyImportPreviewID++
 	id := m.keyImportPreviewID
@@ -1443,25 +1432,14 @@ func (m *model) importSelectedPreviewsCmd(source string, discovered int, preview
 	}
 }
 
-func (m *model) exportVault(password []byte) tea.Cmd {
+func (m *model) exportVault() tea.Cmd {
 	m.keyExportID++
 	id := m.keyExportID
 	paths := config.DefaultPaths()
 	outPath := strings.TrimSpace(m.keyExport.pathInput.Value())
 	token := strings.TrimSpace(m.keyExport.token)
-	passwordCopy := append([]byte(nil), password...)
-	clear(password)
 	return func() tea.Msg {
-		defer clear(passwordCopy)
-		var (
-			result actions.ExportResult
-			err    error
-		)
-		if len(passwordCopy) > 0 {
-			result, err = actions.ExportVault(paths, outPath, passwordCopy)
-		} else {
-			result, err = actions.ExportVaultWithToken(paths, outPath, token)
-		}
+		result, err := actions.ExportVaultWithToken(paths, outPath, token)
 		return keyExportFinishedMsg{id: id, result: result, err: err}
 	}
 }
@@ -1859,7 +1837,7 @@ func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model,
 		"Returning to dashboard...",
 	)
 	return m, tea.Batch(
-		m.scheduleKeyTransferAutoReturn(RouteKeysImport, m.keyImport.success.autoReturnID),
+		m.scheduleKeyImportAutoReturn(m.keyImport.success.autoReturnID),
 		m.invalidateSigningStatusCmd(),
 	)
 }
@@ -1916,29 +1894,6 @@ func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, t
 
 func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model, tea.Cmd) {
 	if msg.id != m.keyExportID {
-		return m, nil
-	}
-	if m.screen == screenPassword && m.passwordFlow == passwordKeyExport {
-		if !m.passwordBusy || m.session.Current().ID != RouteKeysExport {
-			return m, nil
-		}
-		m.passwordBusy = false
-		if msg.err != nil {
-			m.passwordInput.SetError(m.reportError("keys.export", msg.err))
-			return m, nil
-		}
-		m.passwordOverlay = false
-		m.passwordAuth = ""
-		m.discardPasswordInput()
-		m.screen = screenDashboard
-		m.keyExport.exporting = false
-		m.keyExport.err = ""
-		m.keyExport.status = ""
-		m.keyExport.success = m.newKeyTransferSuccessState(
-			"Export saved",
-			exportSuccessMessage(msg.result),
-			exportPlaintextSuccessWarning,
-		)
 		return m, nil
 	}
 	if m.screen != screenDashboard || m.session.Current().ID != RouteKeysExport || !m.keyExport.exporting {
@@ -2038,7 +1993,7 @@ func (m *model) handleKeyExportPickerMsg(msg keyExportPickerMsg) (tea.Model, tea
 		m.keyExport.err = ""
 		m.keyExport.status = "Exporting vault"
 		m.keyExport.exporting = true
-		return m, tea.Batch(m.spinner.Tick, m.exportVault(nil))
+		return m, tea.Batch(m.spinner.Tick, m.exportVault())
 	}
 	m.keyExport.pathVisible = true
 	m.keyExport.pathInput.Focus()
@@ -2609,9 +2564,9 @@ func (m *model) newKeyTransferSuccessState(title, message, detail string) *keyTr
 	}
 }
 
-func (m *model) scheduleKeyTransferAutoReturn(route RouteID, id int) tea.Cmd {
+func (m *model) scheduleKeyImportAutoReturn(id int) tea.Cmd {
 	return tea.Tick(2*time.Second, func(time.Time) tea.Msg {
-		return keyTransferAutoReturnMsg{id: id, route: route}
+		return keyImportAutoReturnMsg{id: id}
 	})
 }
 
@@ -2623,17 +2578,15 @@ func (m *model) returnToDashboardRoute() tea.Cmd {
 	return m.showCurrentRoute()
 }
 
-func (m *model) handleKeyTransferAutoReturnMsg(msg keyTransferAutoReturnMsg) (tea.Model, tea.Cmd) {
-	switch msg.route {
-	case RouteKeysImport:
-		if m.keyImport.success == nil || m.keyImport.success.autoReturnID != msg.id || m.session.Current().ID != RouteKeysImport {
-			return m, nil
-		}
-		m.keyImport.success = nil
-		return m, m.returnToDashboardRoute()
-	default:
+func (m *model) handleKeyImportAutoReturnMsg(msg keyImportAutoReturnMsg) (tea.Model, tea.Cmd) {
+	if m.keyImport.success == nil ||
+		m.keyImport.success.autoReturnID != msg.id ||
+		m.screen != screenDashboard ||
+		m.session.Current().ID != RouteKeysImport {
 		return m, nil
 	}
+	m.keyImport.success = nil
+	return m, m.returnToDashboardRoute()
 }
 
 func footerImportLabel(selected int) string {

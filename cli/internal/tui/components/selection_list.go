@@ -36,10 +36,3 @@ func renderSelectionListItem(item SelectionListItem, width int) string {
 	}
 	return lipgloss.NewStyle().Width(width).Render(prefix + labelStyle.Render(item.Label))
 }
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

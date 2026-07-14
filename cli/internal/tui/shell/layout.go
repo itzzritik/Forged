@@ -248,10 +248,3 @@ func blockFromLines(lines []string) string {
 	}
 	return strings.Join(lines, "\n")
 }
-
-func min(a int, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

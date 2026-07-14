@@ -90,13 +90,6 @@ type ExportScreen struct {
 	Busy        bool
 }
 
-type TransferSuccessScreen struct {
-	Context string
-	Title   string
-	Message string
-	Detail  string
-}
-
 func RenderRename(screen RenameScreen, spinner string, width int) string {
 	contentWidth := max(28, min(width, theme.HeroMaxWidth))
 	fieldWidth := inputFieldWidth(contentWidth)
@@ -395,34 +388,6 @@ func RenderExport(screen ExportScreen, spinner string, width int) string {
 	} else {
 		sections = append(sections, "")
 	}
-	return strings.Join(sections, "\n")
-}
-
-func RenderTransferSuccess(screen TransferSuccessScreen, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth))
-	sections := make([]string, 0, 8)
-	if context := strings.TrimSpace(screen.Context); context != "" {
-		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
-	}
-
-	confetti := strings.Join([]string{
-		theme.Kicker.Render(theme.Glyphs.Sparkle),
-		theme.Success.Render(theme.Glyphs.Check),
-		theme.Kicker.Render(theme.Glyphs.Sparkle),
-	}, "   ")
-	sections = append(sections,
-		"",
-		confetti,
-		"",
-		theme.HeroTitle.Width(contentWidth).Render(screen.Title),
-	)
-	if message := strings.TrimSpace(screen.Message); message != "" {
-		sections = append(sections, theme.Success.Width(contentWidth).Render(screen.Message))
-	}
-	if detail := strings.TrimSpace(screen.Detail); detail != "" {
-		sections = append(sections, "", theme.BodyMuted.Width(contentWidth).Render(detail))
-	}
-
 	return strings.Join(sections, "\n")
 }
 

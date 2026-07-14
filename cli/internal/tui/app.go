@@ -798,8 +798,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyImportPickerMsg(msg)
 	case keyExportPickerMsg:
 		return m.handleKeyExportPickerMsg(msg)
-	case keyTransferAutoReturnMsg:
-		return m.handleKeyTransferAutoReturnMsg(msg)
+	case keyImportAutoReturnMsg:
+		return m.handleKeyImportAutoReturnMsg(msg)
 	case manageSyncFinishedMsg:
 		return m.handleManageSyncFinishedMsg(msg)
 	case manageChangePasswordFinishedMsg:
@@ -2151,61 +2151,6 @@ func (m *model) dashboardOptions() []dashboardscreen.Option {
 			Selected:    m.onboardingCursor == 1,
 		},
 	}
-}
-
-func (m *model) dashboardAreas() []dashboardscreen.Area {
-	if !m.snapshot.VaultExists {
-		return nil
-	}
-
-	areas := []dashboardscreen.Area{
-		{
-			Label:   "Key",
-			Summary: "Browse, create, import, and export keys",
-		},
-		{
-			Label:   "Agent",
-			Summary: "Control SSH routing and signing",
-		},
-		{
-			Label:   "Manage",
-			Summary: "Profile, sync, security, and account actions",
-		},
-		{
-			Label:   "Doctor",
-			Summary: "Inspect health and fix issues",
-		},
-	}
-	if m.snapshot.KeyCount == 0 {
-		areas[0].Summary = "Browse, create, import, and export keys"
-	} else if m.snapshot.KeyCount == 1 {
-		areas[0].Summary = "1 key ready to view, export, or manage"
-	} else {
-		areas[0].Summary = fmt.Sprintf("%d keys ready to view, export, or manage", m.snapshot.KeyCount)
-	}
-
-	if m.snapshot.LoggedIn {
-		areas[2].Summary = "Profile, sync, vault access, and account actions"
-	}
-
-	for index := range areas {
-		areas[index].Selected = index == m.onboardingCursor
-	}
-	return areas
-}
-
-func (m *model) selectedDashboardArea() *dashboardscreen.Area {
-	areas := m.dashboardAreas()
-	if len(areas) == 0 {
-		return nil
-	}
-	if m.onboardingCursor < 0 {
-		m.onboardingCursor = 0
-	}
-	if m.onboardingCursor >= len(areas) {
-		m.onboardingCursor = len(areas) - 1
-	}
-	return &areas[m.onboardingCursor]
 }
 
 func (m *model) usesSpinner() bool {

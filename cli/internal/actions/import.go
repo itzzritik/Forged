@@ -55,19 +55,6 @@ func ImportSourceLabel(source string) string {
 	}
 }
 
-func ImportFromSource(paths config.Paths, source string, file string) (ImportResult, error) {
-	source = strings.TrimSpace(strings.ToLower(source))
-	keys, err := loadImportedKeys(source, file)
-	if err != nil {
-		return ImportResult{}, err
-	}
-
-	return importKeys(paths, ImportResult{
-		Source:     source,
-		Discovered: len(keys),
-	}, keys)
-}
-
 func PreviewImportSource(paths config.Paths, source string, file string) (ImportPreviewResult, error) {
 	source = strings.TrimSpace(strings.ToLower(source))
 	keys, err := loadImportedKeys(source, file)

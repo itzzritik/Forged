@@ -36,17 +36,3 @@ func RenderFullPageLoader(screen FullPageLoaderScreen, spinner string, width int
 	lines = append(lines, "", "")
 	return strings.Join(lines, "\n")
 }
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}
-
-func min(a, b int) int {
-	if a < b {
-		return a
-	}
-	return b
-}

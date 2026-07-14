@@ -82,10 +82,3 @@ func truncateRunes(value string, width int) string {
 	runes := []rune(value)
 	return string(runes[:width-1]) + theme.Glyphs.Ellipsis
 }
-
-func max(a, b int) int {
-	if a > b {
-		return a
-	}
-	return b
-}

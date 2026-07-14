@@ -12,8 +12,6 @@ import (
 type Tone string
 
 const (
-	ToneNone    Tone = "none"
-	ToneAccent  Tone = "accent"
 	ToneSuccess Tone = "success"
 	ToneWarning Tone = "warning"
 	ToneDanger  Tone = "danger"
@@ -38,15 +36,7 @@ type Tab struct {
 
 type Page struct {
 	Label    string
-	Summary  string
 	Selected bool
-}
-
-type Area struct {
-	Label       string
-	Summary     string
-	Description string
-	Selected    bool
 }
 
 type Screen struct {
@@ -57,21 +47,15 @@ type Screen struct {
 	Tabs    []Tab
 	Pages   []Page
 	Summary string
-	Areas   []Area
 }
 
 const (
-	stackedLeftInset   = 2
-	stackedRightInset  = 4
-	dashboardRightPad  = 2
-	gridColumnGap      = 3
-	gridMinWidth       = 74
-	gridCardMinWidth   = 24
-	gridCardBodyHeight = 3
-	tabGap             = 1
-	tabPageGap         = 2
-	pageListMinHeight  = 6
-	flexTabMinWidth    = 10
+	stackedLeftInset  = 2
+	stackedRightInset = 4
+	tabGap            = 1
+	tabPageGap        = 2
+	pageListMinHeight = 6
+	flexTabMinWidth   = 10
 )
 
 func Render(screen Screen, width int) string {
@@ -81,10 +65,6 @@ func Render(screen Screen, width int) string {
 	if len(screen.Tabs) > 0 {
 		return renderTabbedDashboard(screen, width)
 	}
-	if len(screen.Areas) > 0 {
-		return renderDashboard(screen, width)
-	}
-
 	sections := make([]string, 0, 2)
 	if notice := renderNotice(screen.Notice); notice != "" {
 		sections = append(sections, notice)
@@ -119,18 +99,6 @@ func renderTabbedDashboard(screen Screen, width int) string {
 		top += "\n"
 	}
 	return shell.DockBottom(top, bottom)
-}
-
-func renderDashboard(screen Screen, width int) string {
-	safeWidth := max(20, width-dashboardRightPad)
-	sections := make([]string, 0, 3)
-	if notice := renderNotice(screen.Notice); notice != "" {
-		sections = append(sections, notice, "")
-	}
-
-	sections = append(sections, renderAreas(screen.Areas, safeWidth))
-
-	return strings.Join(sections, "\n")
 }
 
 func renderTabs(tabs []Tab, width int) string {
@@ -302,111 +270,6 @@ func renderPages(pages []Page, width int) string {
 		})
 	}
 	return components.RenderSelectionList(items, width, pageListMinHeight)
-}
-
-func renderSelectedAreaDescription(areas []Area, width int) string {
-	area := selectedArea(areas)
-	if area == nil || strings.TrimSpace(area.Description) == "" {
-		return ""
-	}
-	lineWidth := min(width, theme.HeroMaxWidth+6)
-	return theme.BodyMuted.Width(max(24, lineWidth)).Render(area.Description)
-}
-
-func renderAreas(areas []Area, width int) string {
-	if len(areas) == 0 {
-		return ""
-	}
-
-	columns := AreaColumns(width, len(areas))
-	if columns == 1 {
-		return renderAreaStack(areas, width)
-	}
-	return renderAreaGrid(areas, width, columns)
-}
-
-func AreaColumns(width int, count int) int {
-	if count < 2 || width < gridMinWidth {
-		return 1
-	}
-	return 2
-}
-
-func renderAreaStack(areas []Area, width int) string {
-	cardWidth := max(gridCardMinWidth, width)
-	blocks := make([]string, 0, len(areas)*2)
-	for index, area := range areas {
-		blocks = append(blocks, renderAreaCard(area, cardWidth))
-		if index < len(areas)-1 {
-			blocks = append(blocks, "")
-		}
-	}
-	return strings.Join(blocks, "\n")
-}
-
-func renderAreaGrid(areas []Area, width int, columns int) string {
-	cardWidth := max(gridCardMinWidth, (width-gridColumnGap)/columns)
-	rows := make([]string, 0, (len(areas)+columns-1)/columns)
-	for start := 0; start < len(areas); start += columns {
-		rowCards := make([]string, 0, columns)
-		for offset := 0; offset < columns; offset++ {
-			index := start + offset
-			if index >= len(areas) {
-				rowCards = append(rowCards, strings.Repeat(" ", cardWidth))
-				continue
-			}
-			rowCards = append(rowCards, renderAreaCard(areas[index], cardWidth))
-		}
-		parts := make([]string, 0, len(rowCards)*2)
-		for index, card := range rowCards {
-			if index > 0 {
-				parts = append(parts, strings.Repeat(" ", gridColumnGap))
-			}
-			parts = append(parts, card)
-		}
-		rows = append(rows, lipgloss.JoinHorizontal(lipgloss.Top, parts...))
-	}
-	return strings.Join(rows, "\n\n")
-}
-
-func renderAreaCard(area Area, cardWidth int) string {
-	borderColor := theme.ColorBorder
-	titleStyle := theme.BodyStrong
-
-	if area.Selected {
-		borderColor = theme.ColorAccent
-		titleStyle = theme.Kicker
-	}
-
-	frame := lipgloss.NewStyle().
-		BorderStyle(theme.RoundedBorder()).
-		BorderForeground(borderColor).
-		Padding(1, 2).
-		Width(cardWidth)
-
-	innerWidth := max(16, cardWidth-4)
-	lines := []string{titleStyle.Render(area.Label)}
-	if strings.TrimSpace(area.Summary) != "" {
-		lines = append(lines, "")
-	}
-	if strings.TrimSpace(area.Summary) != "" {
-		lines = append(lines, theme.BodyMuted.Width(innerWidth).Render(area.Summary))
-	}
-	body := strings.Join(lines, "\n")
-	body = lipgloss.Place(innerWidth, gridCardBodyHeight, lipgloss.Left, lipgloss.Top, body)
-	return frame.Render(body)
-}
-
-func selectedArea(areas []Area) *Area {
-	for index := range areas {
-		if areas[index].Selected {
-			return &areas[index]
-		}
-	}
-	if len(areas) == 0 {
-		return nil
-	}
-	return &areas[0]
 }
 
 func renderNotice(notice Notice) string {
