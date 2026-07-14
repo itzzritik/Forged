@@ -688,11 +688,15 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 			order:    9,
 		}
 	case securityCapabilityUnavailableByPlatform, securityCapabilityUnavailableByEnv:
+		status := "! Not available"
+		if m.securityState.SystemAuthCapability == securityCapabilityUnavailableByEnv {
+			status = "! Unavailable here"
+		}
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "System Auth",
-				Status: "! Unavailable",
-				Detail: systemAuthUnavailableHint(),
+				Status: status,
+				Detail: systemAuthUnavailableHint(m.securityState.SystemAuthCapability),
 				Tone:   doctorscreen.ToneWarning,
 			},
 			severity: doctorSeverityWarning,
@@ -762,16 +766,29 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 	}
 }
 
-func systemAuthUnavailableHint() string {
+func systemAuthUnavailableHint(capability string) string {
+	if capability == securityCapabilityUnavailableByEnv {
+		switch runtime.GOOS {
+		case "windows":
+			return "Windows Hello can't prompt here"
+		case "linux":
+			return "Needs desktop session and pkexec"
+		case "darwin":
+			return "No desktop prompt (often SSH)"
+		default:
+			return "System Auth can't prompt here"
+		}
+	}
+
 	switch runtime.GOOS {
 	case "windows":
-		return "Windows Hello is not enrolled " + theme.Glyphs.Empty + " set up a Hello PIN/face/fingerprint to enable"
+		return "Check Windows Hello setup/policy"
 	case "linux":
-		return "No graphical session detected; biometric prompts are disabled"
+		return "Unsupported on this platform"
 	case "darwin":
-		return "Touch ID is not enrolled on this device"
+		return "Touch ID/device auth unavailable"
 	default:
-		return "External use follows your configured policy on this machine"
+		return "Unsupported on this platform"
 	}
 }
 
