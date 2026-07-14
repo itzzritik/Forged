@@ -488,21 +488,11 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
 }
 
 func (d *Daemon) handleAccountClear() error {
-	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
-	if err := d.beginAccountChangeLocked(); err != nil {
+	creds, err := d.commitAccountClear()
+	if err != nil {
 		return err
 	}
-	creds, _ := accountauth.Load(d.paths)
-	if err := accountauth.Delete(d.paths); err != nil {
-		d.syncSuppressed = false
-		d.initSyncLocked()
-		return err
-	}
-	if err := d.removeSyncStateLocked(); err != nil {
-		d.logger.Warn("removing sync state after logout failed", "error", err)
-	}
-	_ = os.Remove(d.paths.SyncDirtyFile())
+
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
 	if err := accountauth.RevokeRemoteSession(ctx, creds); err != nil {
@@ -510,6 +500,27 @@ func (d *Daemon) handleAccountClear() error {
 	}
 	d.logger.Info("account cleared")
 	return nil
+}
+
+func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	if err := d.beginAccountChangeLocked(); err != nil {
+		return accountauth.Credentials{}, err
+	}
+	creds, _ := accountauth.Load(d.paths)
+	if err := accountauth.Delete(d.paths); err != nil {
+		d.syncSuppressed = false
+		d.initSyncLocked()
+		return accountauth.Credentials{}, err
+	}
+	if err := d.removeSyncStateLocked(); err != nil {
+		d.logger.Warn("removing sync state after logout failed", "error", err)
+	}
+	if err := os.Remove(d.paths.SyncDirtyFile()); err != nil && !os.IsNotExist(err) {
+		d.logger.Warn("removing sync dirty marker after logout failed", "error", err)
+	}
+	return creds, nil
 }
 
 func (d *Daemon) beginAccountChangeLocked() error {
