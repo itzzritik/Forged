@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -73,12 +74,5 @@ func padRight(value string, width int) string {
 }
 
 func truncateRunes(value string, width int) string {
-	if width <= 0 || len([]rune(value)) <= width {
-		return value
-	}
-	if width == 1 {
-		return theme.Glyphs.Ellipsis
-	}
-	runes := []rune(value)
-	return string(runes[:width-1]) + theme.Glyphs.Ellipsis
+	return ansi.Truncate(value, width, theme.Glyphs.Ellipsis)
 }

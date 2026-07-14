@@ -6,6 +6,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	keyscreen "github.com/itzzritik/forged/cli/internal/tui/screens/keys"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
@@ -509,14 +510,7 @@ func labShortFingerprint(value string) string {
 }
 
 func labTruncate(value string, width int) string {
-	runes := []rune(strings.TrimSpace(value))
-	if width <= 0 || len(runes) <= width {
-		return string(runes)
-	}
-	if width == 1 {
-		return theme.Glyphs.Ellipsis
-	}
-	return string(runes[:width-1]) + theme.Glyphs.Ellipsis
+	return ansi.Truncate(strings.TrimSpace(value), width, theme.Glyphs.Ellipsis)
 }
 
 func labFirstNonEmpty(values ...string) string {

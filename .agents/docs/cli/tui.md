@@ -31,6 +31,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - The standalone `forged doctor` route remains available when no vault exists; it reports device-level health instead of replacing diagnostics with onboarding.
 - Doctor checks stay in dependency order while their status icon and tone show changing health.
 - Doctor check rows page within the available body height and remain reachable with Up/Down on short terminals.
+- Table and route labels truncate by terminal display cells so wide Unicode names cannot overflow their columns.
 - The Agent tab includes SSH Routing diagnostics. The page reads and clears route memory through daemon IPC and keeps route memory current with background polling while the page is open.
 - SSH Routing diagnostics reuse the Commit Signing browser-table pattern: selected item summary on top, a compact table below, and no manual refresh footer action.
 - Key deletion and commit-signing disable use an explicit review-and-confirm step. Once submitted, their non-cancelable work hides route navigation until it finishes.
