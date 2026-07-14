@@ -141,7 +141,8 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 	}
 
 	now := time.Now()
-	if !force && b.hasActiveSession(now) {
+	activeSession := b.hasActiveSession(now)
+	if !force && activeSession {
 		return b.allow(action, now), nil
 	}
 	if headlessModePreemptsSystemAuth(b.paths) {

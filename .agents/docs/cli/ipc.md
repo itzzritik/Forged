@@ -18,7 +18,7 @@ stable: yes
 - The listener retries temporary accept failures with bounded backoff, exits quietly when closed, and logs terminal failures. Shutdown first closes admission and every tracked connection, then waits for admitted handlers.
 - Client calls have a context-aware API. Closing or timing out the one-request connection cancels the matching server request; dispatch stays synchronous so shutdown still waits for admitted work.
 - `proto/ipc.md` is not current. Code is the source of truth for the command set.
-- `sensitive-auth` takes an `action` and optional `force`. `force=true` bypasses the active shared-session fast path; normal TUI launch sends `false` and reuses a valid shared session.
+- `sensitive-auth` takes an `action` and optional `force`. Its non-export requests expire stale shared state first; `force=true` then skips the initial active-session fast path and follows normal reauthorization policy. Normal TUI launch sends `false` and reuses a valid shared session.
 - `status` exposes sensitive session state and daemon build id so the TUI/readiness layer can detect cold, active, and stale daemon states.
 - Key list/view/export handlers ask the sync bus for a lightweight foreground refresh before reading local vault data.
 - Key removal uses the exact reviewed name and can bind the request to its reviewed fingerprint so a stale confirmation cannot remove a different key.
