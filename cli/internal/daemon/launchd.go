@@ -137,10 +137,10 @@ func StartService() error {
 	if err := migrateLegacyLaunchdService(paths); err != nil {
 		return err
 	}
-	if err := launchctlIgnore(
-		[]string{"bootout", launchdServiceTarget()},
-		[]string{"could not find service", "service is disabled", "not found", "no such process"},
-	); err != nil {
+	if err := StopService(); err != nil {
+		return err
+	}
+	if err := removeLegacyLaunchdPlists(); err != nil {
 		return err
 	}
 	if err := stopExistingDaemon(paths); err != nil {
@@ -161,8 +161,6 @@ func StartService() error {
 	); err != nil {
 		return err
 	}
-
-	_ = removeLegacyLaunchdPlists()
 	return nil
 }
 
@@ -186,13 +184,14 @@ func bootstrapLaunchdService() error {
 func StopService() error {
 	var firstErr error
 
-	for _, service := range existingLaunchdServiceFiles() {
-		ignorable := []string{"could not find service", "not found", "no such process"}
-		if service.Legacy {
+	labels := append([]string{launchdLabel}, legacyLaunchdLabels...)
+	for _, label := range labels {
+		ignorable := []string{"could not find service", "service is disabled", "not found", "no such process"}
+		if label != launchdLabel {
 			ignorable = append(ignorable, "input/output error")
 		}
 		if err := launchctlIgnore(
-			[]string{"bootout", launchdServiceTargetForLabel(service.Label)},
+			[]string{"bootout", launchdServiceTargetForLabel(label)},
 			ignorable,
 		); err != nil && firstErr == nil {
 			firstErr = err
@@ -203,15 +202,17 @@ func StopService() error {
 }
 
 func RestartService() error {
-	StopService()
 	return StartService()
 }
 
 func UninstallService() error {
-	StopService()
-	for _, service := range existingLaunchdServiceFiles() {
-		if err := os.Remove(service.Path); err != nil && !os.IsNotExist(err) {
-			return err
+	if err := StopService(); err != nil {
+		return err
+	}
+	paths := append([]string{plistPath()}, legacyPlistPaths()...)
+	for _, path := range paths {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("Removing launchd service %s: %w", path, err)
 		}
 	}
 	return nil
@@ -447,7 +448,7 @@ func migrateLegacyLaunchdService(paths config.Paths) error {
 func removeLegacyLaunchdPlists() error {
 	for _, path := range legacyPlistPaths() {
 		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
-			return err
+			return fmt.Errorf("Removing legacy launchd service %s: %w", path, err)
 		}
 	}
 	return nil
