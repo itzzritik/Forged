@@ -34,6 +34,7 @@ var retiredCommandHints = map[string]string{
 	"import":   "Run `forged` and use the Key tab.",
 	"export":   "Run `forged` and use the Key tab.",
 	"add":      "Run `forged` and use the Key tab.",
+	"sign":     "Run `forged` and use Agent > Commit Signing.",
 	"version":  "Run `forged version` or `forged --version`.",
 }
 
@@ -80,7 +81,6 @@ func installRootSubcommands(cmd *cobra.Command) {
 
 	for _, hiddenCmd := range []*cobra.Command{
 		daemonCmd,
-		signCmd,
 		daemonFreshenCmd,
 		sshRoutePrepareCmd,
 		sshRouteSuccessCmd,
@@ -92,7 +92,6 @@ func installRootSubcommands(cmd *cobra.Command) {
 		daemonCmd,
 		versionCmd,
 		logsCmd,
-		signCmd,
 		doctorCmd,
 		daemonFreshenCmd,
 		sshRoutePrepareCmd,
@@ -129,10 +128,4 @@ func rewriteCLIError(err error) error {
 func printVersion(cmd *cobra.Command) error {
 	fmt.Fprintf(cmd.OutOrStdout(), "forged %s (%s)\n", version, commit)
 	return nil
-}
-
-func notImplemented(name string) func(*cobra.Command, []string) error {
-	return func(cmd *cobra.Command, args []string) error {
-		return fmt.Errorf("%s: not yet implemented", name)
-	}
 }
