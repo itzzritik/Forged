@@ -681,16 +681,25 @@ func (m *model) invalidateSigningStatusCmd() tea.Cmd {
 }
 
 func (m *model) refreshSnapshotCmd() tea.Cmd {
+	m.snapshotRefreshID++
+	id := m.snapshotRefreshID
 	repair := m.deps.Repair
 	return func() tea.Msg {
 		result, err := repair(readiness.RunOptions{Mode: readiness.ModeAssessOnly})
-		return snapshotRefreshMsg{snapshot: result.Snapshot, err: err}
+		return snapshotRefreshMsg{id: id, snapshot: result.Snapshot, err: err}
 	}
 }
 
 func (m *model) handleSnapshotRefreshMsg(msg snapshotRefreshMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.snapshotRefreshID {
+		return m, nil
+	}
 	if msg.err != nil {
-		m.reportError("snapshot.refresh", msg.err)
+		errorText := m.reportError("snapshot.refresh", msg.err)
+		m.systemHeader = systemHeaderUnhealthy
+		if m.screen == screenDashboard {
+			m.notice = notice{message: "Health check failed: " + errorText, tone: dashboardscreen.ToneDanger}
+		}
 		return m, nil
 	}
 	m.snapshot = msg.snapshot

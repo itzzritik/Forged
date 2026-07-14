@@ -23,6 +23,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Maintenance stays on the current route: dashboard repairs run in the background with header status, while password setup and recovery use the existing busy state.
 - First setup or restore reuses the verified master password to hydrate the launch session and skips the duplicate startup auth wall when that succeeds.
 - Header status must settle from explicit model messages; startup unlock finalizes health from the current snapshot, runtime sync polls daemon status, and signing load errors render as an issue instead of an endless spinner.
+- Runtime and snapshot health checks accept only their newest generation; daemon transport loss and recovery each trigger one readiness refresh, including for local-only vaults.
 - Doctor marks a daemon as outdated when its IPC build id does not match the current CLI build; Fix Issues restarts the managed service through readiness.
 - Doctor distinguishes unsupported System Auth from a prompt that is unavailable in the current environment.
 - Doctor checks stay in dependency order while their status icon and tone show changing health.

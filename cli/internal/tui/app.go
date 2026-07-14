@@ -30,7 +30,10 @@ type Result struct {
 	Action ExitAction
 }
 
-const tuiIdleLockTimeout = 4 * time.Minute
+const (
+	tuiIdleLockTimeout            = 4 * time.Minute
+	runtimeStatusFailureThreshold = 2
+)
 
 type Dependencies struct {
 	Repair                    func(readiness.RunOptions) (readiness.RunResult, error)
@@ -234,6 +237,7 @@ type maintenanceFinishedMsg struct {
 }
 
 type runtimeStatusMsg struct {
+	id     int
 	status RuntimeStatus
 	err    error
 }
@@ -246,6 +250,7 @@ type idleLockFinishedMsg struct {
 }
 
 type snapshotRefreshMsg struct {
+	id       int
 	snapshot readiness.Snapshot
 	err      error
 }
@@ -373,6 +378,10 @@ type model struct {
 	systemHeader             systemHeaderState
 	runtimeStatus            RuntimeStatus
 	runtimeLoaded            bool
+	runtimeStatusID          int
+	runtimeStatusFailures    int
+	runtimeUnavailable       bool
+	snapshotRefreshID        int
 	securityState            SecurityState
 	securityLoaded           bool
 	idleLockID               int
@@ -693,13 +702,20 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case runtimeStatusMsg:
+		if msg.id != m.runtimeStatusID {
+			return m, nil
+		}
 		wasUsingSpinner := m.usesSpinner()
 		wasUnlocked := m.runtimeStatus.SensitiveKnown && m.runtimeStatus.Unlocked
 		wasSyncPending := m.runtimeSyncPending()
 		hadRuntimeStatus := m.runtimeLoaded
 		lastSuccessfulPullAt := m.runtimeStatus.LastSuccessfulPullAt
 		lastSuccessfulPushAt := m.runtimeStatus.LastSuccessfulPushAt
+		refreshHealth := false
 		if msg.err == nil {
+			refreshHealth = m.runtimeUnavailable
+			m.runtimeStatusFailures = 0
+			m.runtimeUnavailable = false
 			if !msg.status.SensitiveReported {
 				msg.status.Unlocked = m.runtimeStatus.Unlocked
 				msg.status.SensitiveKnown = m.runtimeStatus.SensitiveKnown
@@ -708,18 +724,29 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.runtimeLoaded = true
 			m.reportErrorText("sync.status", msg.status.Error)
 		} else {
-			errorText := m.reportError("runtime.status", msg.err)
-			m.runtimeStatus.Syncing = false
-			if m.snapshot.LoggedIn && m.snapshot.IPCSocketReady {
-				m.runtimeStatus.Error = errorText
-				m.runtimeLoaded = true
+			m.reportError("runtime.status", msg.err)
+			m.runtimeStatusFailures++
+			if m.runtimeStatusFailures >= runtimeStatusFailureThreshold {
+				refreshHealth = !m.runtimeUnavailable
+				m.runtimeUnavailable = true
 			}
+			m.runtimeStatus.Syncing = false
+		}
+		var healthCmd tea.Cmd
+		if refreshHealth {
+			if m.systemHeader != systemHeaderFixing {
+				m.systemHeader = systemHeaderChecking
+			}
+			healthCmd = m.refreshSnapshotCmd()
 		}
 		if cmd := m.handleSensitiveSessionLoss(wasUnlocked); cmd != nil {
-			return m, cmd
+			return m, tea.Batch(cmd, healthCmd)
 		}
 		if m.snapshot.VaultExists {
 			cmds := []tea.Cmd{m.pollRuntimeStatus(time.Second)}
+			if healthCmd != nil {
+				cmds = append(cmds, healthCmd)
+			}
 			syncCompleted := msg.err == nil && hadRuntimeStatus && (m.runtimeStatus.LastSuccessfulPullAt.After(lastSuccessfulPullAt) ||
 				m.runtimeStatus.LastSuccessfulPushAt.After(lastSuccessfulPushAt))
 			if msg.err == nil && (syncCompleted || wasSyncPending && !m.runtimeSyncPending()) {
@@ -730,7 +757,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, tea.Batch(cmds...)
 		}
-		return m, nil
+		return m, healthCmd
 	case idleLockMsg:
 		m.idleLockTimerArmed = false
 		if !m.shouldTrackIdleLock() || m.idleLockDeadline.IsZero() {
@@ -759,6 +786,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.resetIdleLockCmd()
 		}
 		m.idleLockDeadline = time.Time{}
+		m.runtimeStatusID++
 		wasUnlocked := m.runtimeStatus.SensitiveKnown && m.runtimeStatus.Unlocked
 		m.runtimeStatus.Unlocked = false
 		m.runtimeStatus.SensitiveKnown = true
@@ -1000,10 +1028,22 @@ func (m *model) commitSigningHeaderItem() shell.StatusItem {
 }
 
 func (m *model) vaultSyncHeaderItem() shell.StatusItem {
+	switch m.systemHeader {
+	case systemHeaderChecking:
+		return shell.StatusItem{Label: "Checking vault", Icon: m.spinner.View()}
+	case systemHeaderFixing:
+		return shell.StatusItem{Label: "Repairing vault", Icon: m.spinner.View()}
+	}
+	if m.runtimeUnavailable {
+		if !m.snapshot.LoggedIn {
+			return shell.StatusItem{Label: "Local vault unavailable", Tone: shell.StatusToneDanger}
+		}
+		return shell.StatusItem{Label: "Vault unavailable", Tone: shell.StatusToneDanger}
+	}
 	if !m.snapshot.LoggedIn {
 		return shell.StatusItem{Label: "Local vault healthy", Tone: shell.StatusToneSuccess}
 	}
-	if m.runtimeSyncPending() || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing {
+	if m.runtimeSyncPending() {
 		return shell.StatusItem{Label: "Vault syncing", Icon: m.spinner.View()}
 	}
 	if m.runtimeLoaded && strings.TrimSpace(m.runtimeStatus.Error) != "" {
@@ -1869,9 +1909,14 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		if m.session.Back() {
+			restartRuntimePoll := m.passwordFlow == passwordDoctorRepair
 			m.discardPasswordInput()
 			m.passwordAuth = ""
-			return m, m.showCurrentRoute()
+			cmd := m.showCurrentRoute()
+			if restartRuntimePoll {
+				return m, tea.Batch(cmd, m.pollRuntimeStatus(0))
+			}
+			return m, cmd
 		}
 		if m.passwordInput != nil {
 			m.passwordInput.Clear()
@@ -2302,6 +2347,10 @@ func (m *model) restoreLinkedVault(id int, password []byte) tea.Cmd {
 
 func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, createVaultFirst bool, title string, authEmail string) tea.Cmd {
 	m.notice = notice{}
+	m.runtimeStatusID++
+	m.snapshotRefreshID++
+	m.runtimeStatusFailures = 0
+	m.runtimeUnavailable = false
 	m.systemHeader = systemHeaderFixing
 	m.passwordAuth = authEmail
 	m.maintenanceTrigger = trigger
@@ -2949,13 +2998,15 @@ func (m *model) pollRuntimeStatus(delay time.Duration) tea.Cmd {
 	if !m.snapshot.VaultExists {
 		return nil
 	}
+	m.runtimeStatusID++
+	id := m.runtimeStatusID
 	if delay <= 0 {
 		delay = 50 * time.Millisecond
 	}
 	loadStatus := m.deps.LoadStatus
 	return tea.Tick(delay, func(time.Time) tea.Msg {
 		status, err := loadStatus()
-		return runtimeStatusMsg{status: status, err: err}
+		return runtimeStatusMsg{id: id, status: status, err: err}
 	})
 }
 
