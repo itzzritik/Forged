@@ -185,7 +185,7 @@ func (b *Bus) ForegroundRead(ctx context.Context, reason string) error {
 		b.mu.Unlock()
 
 		err := b.executeRefresh(ctx, reason)
-		b.finishPull(err)
+		b.finishPull(err, errors.Is(ctx.Err(), context.Canceled))
 		return err
 	}
 }
@@ -233,7 +233,7 @@ func (b *Bus) RefreshMissingKey(ctx context.Context, reason string) error {
 		b.mu.Unlock()
 
 		err := b.executePull(ctx, reason)
-		b.finishPull(err)
+		b.finishPull(err, errors.Is(ctx.Err(), context.Canceled))
 		return err
 	}
 }
@@ -281,13 +281,13 @@ func (b *Bus) AuthLinked(ctx context.Context, userID, serverURL string) error {
 		b.state.ServerURL = serverURL
 		b.persistLocked()
 		b.mu.Unlock()
-		b.finishPull(nil)
+		b.finishPull(nil, false)
 		return nil
 	}
 	state, mutationVersion := b.engineStateSnapshot()
 	err := linker.ReconcileOnLink(ctx, &state, userID, serverURL)
 	b.applyEngineState(state, mutationVersion)
-	b.finishPull(err)
+	b.finishPull(err, errors.Is(ctx.Err(), context.Canceled))
 	return err
 }
 
@@ -337,7 +337,7 @@ func (b *Bus) ForceSync(ctx context.Context, reason string) error {
 		}
 
 		err := b.executePull(ctx, reason)
-		b.finishPull(err)
+		b.finishPull(err, errors.Is(ctx.Err(), context.Canceled))
 		return err
 	}
 }
@@ -420,7 +420,7 @@ func (b *Bus) enqueueRefresh(reason string, timeout time.Duration) {
 			defer cancel()
 		}
 		err := b.executeRefresh(ctx, reason)
-		b.finishPull(err)
+		b.finishPull(err, errors.Is(ctx.Err(), context.Canceled))
 	}()
 }
 
@@ -556,7 +556,7 @@ func (b *Bus) finishPush(err error) {
 	}
 }
 
-func (b *Bus) finishPull(err error) {
+func (b *Bus) finishPull(err error, callerCanceled bool) {
 	b.mu.Lock()
 	done := b.syncDone
 	b.syncDone = nil
@@ -569,6 +569,27 @@ func (b *Bus) finishPull(err error) {
 	}
 	b.queuedPush = false
 	b.queuedRefresh = false
+	retry := err != nil && !b.stopped && (!callerCanceled || b.state.Dirty || queuedRefresh)
+	if retry {
+		delay := b.nextRetryDelayLocked()
+		if !callerCanceled || b.state.LastError == "" {
+			b.state.LastError = err.Error()
+		}
+		b.state.NextRetryAt = time.Now().UTC().Add(delay)
+		b.persistLocked()
+		if !queuedPush {
+			b.scheduleRetryLocked(delay)
+		}
+	} else if err == nil {
+		b.retryIndex = 0
+		if b.retryTimer != nil {
+			b.retryTimer.Stop()
+			b.retryTimer = nil
+		}
+		b.state.LastError = ""
+		b.state.NextRetryAt = time.Time{}
+		b.persistLocked()
+	}
 	b.mu.Unlock()
 
 	close(done)
@@ -671,7 +692,14 @@ func (b *Bus) scheduleRetryLocked(delay time.Duration) {
 		b.retryTimer.Stop()
 	}
 	b.retryTimer = time.AfterFunc(delay, func() {
-		b.enqueuePush("retry")
+		b.mu.Lock()
+		dirty := !b.stopped && b.state.Dirty
+		b.mu.Unlock()
+		if dirty {
+			b.enqueuePush("retry")
+			return
+		}
+		b.enqueueRefresh("retry", b.cfg.RemoteCheckTimeout)
 	})
 }
 

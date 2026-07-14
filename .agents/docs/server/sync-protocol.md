@@ -28,6 +28,7 @@ Sync is encrypted-blob push/pull with optimistic locking. The server stores blob
 - Pull and link merges apply to the latest local vault state inside one transaction; network calls stay outside that lock.
 - First link treats keys, key tombstones, SSH routes, SSH route tombstones, and version-vector entries as sync content. If either side has that history it bootstrap-merges; a local push to an existing empty remote starts from that remote version instead of forcing a conflict.
 - Sync engines work on state snapshots. If a local mutation arrives during network work, the completed server metadata is kept while the newer mutation stays dirty and queues another push.
+- A non-canceled failed clean pull records its error and retry time without marking local data dirty. Retry chooses a push only when local state is dirty; otherwise it refreshes remote state, so a read failure cannot overwrite remote data.
 - Stopping a sync bus drains work admitted before the stop before the vault can close.
 
 ## Decisions
