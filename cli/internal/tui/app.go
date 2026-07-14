@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"math/rand"
 	"strings"
 	"time"
 
@@ -18,7 +17,6 @@ import (
 	accountscreen "github.com/itzzritik/forged/cli/internal/tui/screens/account"
 	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
 	dashboardscreen "github.com/itzzritik/forged/cli/internal/tui/screens/dashboard"
-	repairscreen "github.com/itzzritik/forged/cli/internal/tui/screens/repair"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
@@ -45,7 +43,6 @@ type Dependencies struct {
 	LoadStatus                func() (RuntimeStatus, error)
 	LoadSecurityState         func() (SecurityState, error)
 	SetMasterPasswordInterval func(string) error
-	ProbeSensitive            func() (SensitiveState, error)
 	HasLocalUnlockTrust       func() bool
 	UnlockSensitiveLaunch     func([]byte) (actions.UnlockResult, error)
 	ChangePassword            func([]byte, []byte) (actions.ChangePasswordResult, error)
@@ -101,14 +98,6 @@ const (
 	maintenancePolicyDoctor  maintenancePolicy = "doctor"
 )
 
-type setupVariant string
-
-const (
-	setupVariantNone    setupVariant = ""
-	setupVariantLocal   setupVariant = "local"
-	setupVariantRestore setupVariant = "restore"
-)
-
 type notice struct {
 	message string
 	tone    dashboardscreen.Tone
@@ -148,26 +137,12 @@ type restoreFinishedMsg struct {
 	err      error
 }
 
-type maintenanceProgressMsg struct {
-	id    int
-	stage readiness.ProgressStage
-}
-
 type maintenanceFinishedMsg struct {
 	id        int
 	result    readiness.RunResult
 	err       error
 	unlocked  bool
 	unlockErr error
-}
-
-type setupTaskDoneMsg struct {
-	sequence int
-	index    int
-}
-
-type setupFinalizeMsg struct {
-	sequence int
 }
 
 type runtimeStatusMsg struct {
@@ -191,11 +166,6 @@ type snapshotRefreshMsg struct {
 
 type securityStateMsg struct {
 	state SecurityState
-	err   error
-}
-
-type sensitiveStateMsg struct {
-	state SensitiveState
 	err   error
 }
 
@@ -235,11 +205,6 @@ const (
 	securityCapabilityBroken                = "broken"
 )
 
-type SensitiveState struct {
-	Unlocked bool
-	Known    bool
-}
-
 type dashboardPage struct {
 	Label   string
 	Summary string
@@ -265,13 +230,6 @@ const (
 	systemHeaderUnhealthy systemHeaderState = "unhealthy"
 )
 
-type pendingSetupResult struct {
-	result    readiness.RunResult
-	err       error
-	unlocked  bool
-	unlockErr error
-}
-
 type copyFinishedMsg struct {
 	err error
 }
@@ -294,7 +252,6 @@ type model struct {
 	loadStatus                func() (RuntimeStatus, error)
 	loadSecurityState         func() (SecurityState, error)
 	setMasterPasswordInterval func(string) error
-	probeSensitive            func() (SensitiveState, error)
 	hasLocalUnlockTrust       func() bool
 	unlockSensitiveLaunch     func([]byte) (actions.UnlockResult, error)
 	changePassword            func([]byte, []byte) (actions.ChangePasswordResult, error)
@@ -342,7 +299,6 @@ type model struct {
 	passwordHideInput    bool
 	passwordBusyMessage  string
 	passwordOverlay      bool
-	repairScreen         repairscreen.TaskScreen
 
 	loginID         int
 	loginProgress   <-chan actions.LoginProgress
@@ -351,11 +307,10 @@ type model struct {
 	restoreID       int
 
 	maintenanceID           int
-	maintenanceProgress     <-chan readiness.ProgressStage
+	maintenanceBusy         bool
 	maintenanceTrigger      maintenanceTrigger
 	maintenanceUsedPassword bool
 	maintenanceAuthEmail    string
-	setupVariant            setupVariant
 
 	bootAssessed             bool
 	startupUnlockPending     bool
@@ -365,11 +320,6 @@ type model struct {
 	runtimeLoaded            bool
 	securityState            SecurityState
 	securityLoaded           bool
-	setupStageIndex          int
-	setupSequenceID          int
-	setupPending             *pendingSetupResult
-	setupFinalizing          bool
-	random                   *rand.Rand
 	idleLockID               int
 
 	keyListID            int
@@ -420,8 +370,6 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("TUI load-security-state dependency is required")
 	case deps.SetMasterPasswordInterval == nil:
 		return Result{}, fmt.Errorf("TUI set-master-password-interval dependency is required")
-	case deps.ProbeSensitive == nil:
-		return Result{}, fmt.Errorf("TUI probe-sensitive dependency is required")
 	case deps.HasLocalUnlockTrust == nil:
 		return Result{}, fmt.Errorf("TUI local-unlock-trust dependency is required")
 	case deps.UnlockSensitiveLaunch == nil:
@@ -481,7 +429,6 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		loadStatus:                deps.LoadStatus,
 		loadSecurityState:         deps.LoadSecurityState,
 		setMasterPasswordInterval: deps.SetMasterPasswordInterval,
-		probeSensitive:            deps.ProbeSensitive,
 		hasLocalUnlockTrust:       deps.HasLocalUnlockTrust,
 		unlockSensitiveLaunch:     deps.UnlockSensitiveLaunch,
 		changePassword:            deps.ChangePassword,
@@ -498,7 +445,6 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		defaultServer:             deps.DefaultServer,
 		appVersion:                deps.AppVersion,
 		spinner:                   spin,
-		random:                    rand.New(rand.NewSource(time.Now().UnixNano())),
 	}
 	model.initializePendingRouteState()
 	return model
@@ -593,7 +539,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.summary = readiness.RepairSummary{}
 			m.maintenanceAuthEmail = ""
 			m.maintenanceUsedPassword = false
-			m.setupVariant = setupVariantNone
 			m.screen = screenDashboard
 			m.systemHeader = systemHeaderHealthy
 			return m, nil
@@ -700,7 +645,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.passwordInput.Init()
 		}
 
-		return m, m.startMaintenance(maintenanceTriggerPostLogin, nil, false, "Finishing account setup", "Linking the logged-in account to the local daemon and refreshing machine state.", msg.creds.Email)
+		return m, m.startMaintenance(maintenanceTriggerPostLogin, nil, false, "Finishing account setup", msg.creds.Email)
 	case restoreFinishedMsg:
 		if msg.id != m.restoreID {
 			for i := range msg.password {
@@ -723,48 +668,16 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		cmd := m.startMaintenance(maintenanceTriggerUnlock, msg.password, false, "Setting up Forged", "Restoring your vault and preparing secure access on this machine.", m.passwordAuth)
+		cmd := m.startMaintenance(maintenanceTriggerUnlock, msg.password, false, "Setting up Forged", m.passwordAuth)
 		for i := range msg.password {
 			msg.password[i] = 0
 		}
 		return m, cmd
-	case maintenanceProgressMsg:
-		if msg.id != m.maintenanceID {
-			return m, nil
-		}
-		m.applyMaintenanceProgress(msg.stage)
-		return m, m.waitForMaintenanceProgress(msg.id, m.maintenanceProgress)
 	case maintenanceFinishedMsg:
 		if msg.id != m.maintenanceID {
 			return m, nil
 		}
 		return m, m.handleMaintenanceFinished(msg.result, msg.err, msg.unlocked, msg.unlockErr)
-	case setupTaskDoneMsg:
-		if m.setupFinalizing || !m.isSetupSequence() || msg.sequence != m.setupSequenceID {
-			return m, nil
-		}
-		if msg.index < 0 || msg.index >= len(m.repairScreen.Tasks) {
-			return m, nil
-		}
-		if msg.index >= len(m.repairScreen.Tasks)-1 {
-			return m, nil
-		}
-		if m.repairScreen.Tasks[msg.index].State == repairscreen.TaskActive {
-			m.repairScreen.Tasks[msg.index].State = repairscreen.TaskDone
-			m.advanceSetupStatus()
-		}
-		return m, nil
-	case setupFinalizeMsg:
-		if msg.sequence != m.setupSequenceID {
-			return m, nil
-		}
-		if !m.setupFinalizing || m.setupPending == nil {
-			return m, nil
-		}
-		pending := m.setupPending
-		m.setupPending = nil
-		m.setupFinalizing = false
-		return m, m.handleMaintenanceFinished(pending.result, pending.err, pending.unlocked, pending.unlockErr)
 	case snapshotRefreshMsg:
 		return m.handleSnapshotRefreshMsg(msg)
 	case securityStateMsg:
@@ -819,16 +732,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		wasUnlocked := m.runtimeStatus.SensitiveKnown && m.runtimeStatus.Unlocked
 		m.runtimeStatus.Unlocked = false
 		m.runtimeStatus.SensitiveKnown = true
-		if cmd := m.handleSensitiveSessionLoss(wasUnlocked); cmd != nil {
-			return m, cmd
-		}
-		return m, nil
-	case sensitiveStateMsg:
-		wasUnlocked := m.runtimeStatus.SensitiveKnown && m.runtimeStatus.Unlocked
-		if msg.err == nil && msg.state.Known {
-			m.runtimeStatus.Unlocked = msg.state.Unlocked
-			m.runtimeStatus.SensitiveKnown = true
-		}
 		if cmd := m.handleSensitiveSessionLoss(wasUnlocked); cmd != nil {
 			return m, cmd
 		}
@@ -1915,7 +1818,7 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.passwordInput.SetError(err.Error())
 				return m, nil
 			}
-			return m, m.startMaintenance(maintenanceTriggerSetup, password, true, "Setting up Forged", "Creating the local vault and preparing background services for this machine.", "")
+			return m, m.startMaintenance(maintenanceTriggerSetup, password, true, "Setting up Forged", "")
 		case passwordRestore:
 			if err != nil {
 				m.passwordInput.SetError(err.Error())
@@ -1960,7 +1863,7 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.passwordInput.SetError(err.Error())
 				return m, nil
 			}
-			return m, m.startMaintenance(maintenanceTriggerUnlock, password, false, "Unlocking Forged", "Verifying the vault and repairing the background service.", "")
+			return m, m.startMaintenance(maintenanceTriggerUnlock, password, false, "Unlocking Forged", "")
 		}
 	default:
 		return m, m.passwordInput.Update(msg)
@@ -2357,23 +2260,14 @@ func (m *model) restoreLinkedVault(id int, password []byte) tea.Cmd {
 	}
 }
 
-func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, createVaultFirst bool, title string, contextLine string, authEmail string) tea.Cmd {
+func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, createVaultFirst bool, title string, authEmail string) tea.Cmd {
 	m.notice = notice{}
 	m.systemHeader = systemHeaderFixing
 	m.passwordAuth = authEmail
 	m.maintenanceTrigger = trigger
 	m.maintenanceUsedPassword = len(password) > 0
 	m.maintenanceAuthEmail = authEmail
-	m.setupVariant = m.setupVariantForMaintenance(trigger, createVaultFirst, authEmail)
-	m.setupPending = nil
-	m.setupStageIndex = 0
-	m.repairScreen = repairscreen.TaskScreen{
-		Kind:       m.repairScreenKind(),
-		Title:      title,
-		Context:    contextLine,
-		Tasks:      m.newRepairTasks(authEmail),
-		StatusRows: m.repairStatusRows(),
-	}
+	m.maintenanceBusy = true
 	if m.screen == screenPassword {
 		m.passwordBusy = true
 		m.passwordHideInput = false
@@ -2383,26 +2277,16 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 		}
 	}
 
-	progressCh := make(chan readiness.ProgressStage, 16)
-	m.maintenanceProgress = progressCh
 	m.maintenanceID++
 	id := m.maintenanceID
 	repairFn := m.repair
 	createVault := m.createVault
 	unlock := m.unlockSensitiveLaunch
 	passwordCopy := append([]byte(nil), password...)
-	progress := func(stage readiness.ProgressStage) {
-		select {
-		case progressCh <- stage:
-		default:
-		}
-	}
 
 	return tea.Batch(
 		m.spinner.Tick,
-		m.waitForMaintenanceProgress(id, progressCh),
 		func() tea.Msg {
-			defer close(progressCh)
 			defer func() {
 				for i := range passwordCopy {
 					passwordCopy[i] = 0
@@ -2410,20 +2294,12 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 			}()
 
 			if createVaultFirst {
-				progress(readiness.ProgressVault)
 				if err := createVault(passwordCopy); err != nil {
 					return maintenanceFinishedMsg{id: id, err: err}
 				}
 			}
 
-			opts := readiness.RunOptions{
-				Mode: m.maintenanceModeForTrigger(trigger),
-				Progress: func(stage readiness.ProgressStage) {
-					if !(createVaultFirst && stage == readiness.ProgressVault) {
-						progress(stage)
-					}
-				},
-			}
+			opts := readiness.RunOptions{Mode: m.maintenanceModeForTrigger(trigger)}
 			if len(passwordCopy) > 0 {
 				opts.PromptPassword = func(string) ([]byte, error) {
 					return append([]byte(nil), passwordCopy...), nil
@@ -2453,24 +2329,11 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 	)
 }
 
-func (m *model) waitForMaintenanceProgress(id int, ch <-chan readiness.ProgressStage) tea.Cmd {
-	if ch == nil {
-		return nil
-	}
-	return func() tea.Msg {
-		stage, ok := <-ch
-		if !ok {
-			return nil
-		}
-		return maintenanceProgressMsg{id: id, stage: stage}
-	}
-}
-
 func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error, unlocked bool, unlockErr error) tea.Cmd {
 	m.snapshot = result.Snapshot
 	m.summary = result.Summary
 	m.systemHeader = m.systemHeaderForSnapshot(result.Snapshot)
-	m.maintenanceProgress = nil
+	m.maintenanceBusy = false
 	if unlocked {
 		m.runtimeStatus.Unlocked = true
 		m.runtimeStatus.SensitiveKnown = true
@@ -2488,8 +2351,6 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 		m.accountName = ""
 		m.accountEmail = ""
 	}
-	m.finishMaintenanceTasks(result)
-
 	if err != nil {
 		m.systemHeader = systemHeaderUnhealthy
 		switch {
@@ -2535,7 +2396,6 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 			if unlocked {
 				m.startupUnlockPending = false
 				m.startupUnlockNeedsRepair = false
-				m.setupVariant = setupVariantNone
 				m.maintenanceUsedPassword = false
 				m.maintenanceAuthEmail = ""
 				return m.finishVaultBoot()
@@ -2550,7 +2410,6 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 			return m.startStartupUnlockFlow()
 		}
 		m.popWizardRoutes()
-		m.setupVariant = setupVariantNone
 		return m.finishVaultBoot()
 	}
 }
@@ -2693,7 +2552,6 @@ func (m *model) startStartupRepair() tea.Cmd {
 		nil,
 		false,
 		"Checking local health",
-		"Reviewing the current state and applying safe fixes where needed.",
 		"",
 	)
 }
@@ -2721,11 +2579,9 @@ func (m *model) restartAfterVaultReady() tea.Cmd {
 	}
 	m.bootAssessed = false
 	m.systemHeader = systemHeaderChecking
-	m.setupVariant = setupVariantNone
 	m.maintenanceTrigger = maintenanceTriggerBoot
 	m.maintenanceUsedPassword = false
 	m.maintenanceAuthEmail = ""
-	m.setupPending = nil
 	m.runtimeLoaded = false
 	m.signingLoaded = false
 	m.signingError = ""
@@ -2995,42 +2851,6 @@ func (m *model) shouldShowProductRail() bool {
 	return !m.snapshot.VaultExists
 }
 
-func (m *model) isSetupSequence() bool {
-	return m.setupVariant != setupVariantNone
-}
-
-func (m *model) repairScreenKind() repairscreen.ScreenKind {
-	if m.isSetupSequence() {
-		return repairscreen.ScreenKindSetup
-	}
-	return repairscreen.ScreenKindRepair
-}
-
-func (m *model) setupVariantForMaintenance(trigger maintenanceTrigger, createVaultFirst bool, authEmail string) setupVariant {
-	switch trigger {
-	case maintenanceTriggerSetup:
-		if createVaultFirst {
-			return setupVariantLocal
-		}
-	case maintenanceTriggerUnlock:
-		if authEmail != "" || m.passwordFlow == passwordRestore || (!m.snapshot.VaultExists && m.snapshot.LoggedIn) {
-			return setupVariantRestore
-		}
-	case maintenanceTriggerBoot:
-		return m.setupVariant
-	}
-	return setupVariantNone
-}
-
-func (m *model) setupContextLine() string {
-	switch m.setupVariant {
-	case setupVariantRestore:
-		return "Restoring your vault and preparing secure access on this machine."
-	default:
-		return "Creating the local vault and preparing background services for this machine."
-	}
-}
-
 func (m *model) serverURL() string {
 	if server := strings.TrimSpace(m.intent.Param("server")); server != "" {
 		return server
@@ -3069,17 +2889,6 @@ func (m *model) lockSensitiveCmd(id int) tea.Cmd {
 	}
 }
 
-func (m *model) probeSensitiveStateCmd() tea.Cmd {
-	if m.probeSensitive == nil || !m.snapshot.VaultExists || m.runtimeStatus.SensitiveReported {
-		return nil
-	}
-	probe := m.probeSensitive
-	return func() tea.Msg {
-		state, err := probe()
-		return sensitiveStateMsg{state: state, err: err}
-	}
-}
-
 func (m *model) copyToClipboard(value string) tea.Cmd {
 	copyText := m.copyText
 	return func() tea.Msg {
@@ -3096,211 +2905,6 @@ func (m *model) openCurrentLoginURL() tea.Cmd {
 		}
 		return openFinishedMsg{err: openLink(url)}
 	}
-}
-
-func (m *model) newRepairTasks(authEmail string) []repairscreen.Task {
-	if m.isSetupSequence() {
-		switch m.setupVariant {
-		case setupVariantRestore:
-			return []repairscreen.Task{
-				{Label: "Account", State: repairscreen.TaskPending},
-				{Label: "Vault", State: repairscreen.TaskPending},
-				{Label: "SSH", State: repairscreen.TaskPending},
-				{Label: "Agent", State: repairscreen.TaskPending},
-				{Label: "Service", State: repairscreen.TaskPending},
-			}
-		default:
-			return []repairscreen.Task{
-				{Label: "Password", State: repairscreen.TaskPending},
-				{Label: "Vault", State: repairscreen.TaskPending},
-				{Label: "SSH", State: repairscreen.TaskPending},
-				{Label: "Agent", State: repairscreen.TaskPending},
-				{Label: "Service", State: repairscreen.TaskPending},
-			}
-		}
-	}
-
-	accountState := repairscreen.TaskPending
-	if authEmail != "" || m.snapshot.LoggedIn {
-		accountState = repairscreen.TaskDone
-	}
-
-	return []repairscreen.Task{
-		{Label: "Vault", State: repairscreen.TaskPending},
-		{Label: "Service", State: repairscreen.TaskPending},
-		{Label: "SSH", State: repairscreen.TaskPending},
-		{Label: "Agent", State: repairscreen.TaskPending},
-		{Label: "Account", State: accountState},
-	}
-}
-
-func (m *model) applyMaintenanceProgress(stage readiness.ProgressStage) {
-	target := ""
-	switch stage {
-	case readiness.ProgressVault:
-		target = "Vault"
-	case readiness.ProgressService:
-		target = "Service"
-	case readiness.ProgressSSH:
-		target = "SSH"
-	case readiness.ProgressSockets:
-		target = "Agent"
-	}
-	if target == "" {
-		return
-	}
-
-	for index := range m.repairScreen.Tasks {
-		task := &m.repairScreen.Tasks[index]
-		if task.State == repairscreen.TaskActive {
-			task.State = repairscreen.TaskDone
-		}
-		if task.Label == target {
-			task.State = repairscreen.TaskActive
-		}
-	}
-}
-
-func (m *model) initializeSetupSequence() {
-	m.setupStageIndex = 0
-	m.setupSequenceID++
-	m.setupFinalizing = false
-	m.setupPending = nil
-	for index := range m.repairScreen.Tasks {
-		m.repairScreen.Tasks[index].State = repairscreen.TaskActive
-	}
-	m.setSetupStatusForStage()
-}
-
-func (m *model) startSetupSequence() tea.Cmd {
-	if !m.isSetupSequence() || len(m.repairScreen.Tasks) == 0 {
-		return nil
-	}
-	sequence := m.setupSequenceID
-	lastIndex := len(m.repairScreen.Tasks) - 1
-	cmds := make([]tea.Cmd, 0, lastIndex)
-	for index := 0; index < lastIndex; index++ {
-		cmds = append(cmds, m.completeSetupTaskAfter(sequence, index, m.setupStageDelay()))
-	}
-	return tea.Batch(cmds...)
-}
-
-func (m *model) completeSetupTaskAfter(sequence int, index int, delay time.Duration) tea.Cmd {
-	if delay <= 0 {
-		delay = 3 * time.Second
-	}
-	return tea.Tick(delay, func(time.Time) tea.Msg {
-		return setupTaskDoneMsg{sequence: sequence, index: index}
-	})
-}
-
-func (m *model) setupStageDelay() time.Duration {
-	if m.random == nil {
-		return 5 * time.Second
-	}
-	return time.Duration(3+m.random.Intn(6)) * time.Second
-}
-
-func (m *model) finalizeSetupAfter(delay time.Duration) tea.Cmd {
-	if delay <= 0 {
-		delay = time.Second
-	}
-	return tea.Tick(delay, func(time.Time) tea.Msg {
-		return setupFinalizeMsg{sequence: m.setupSequenceID}
-	})
-}
-
-func (m *model) completeSetupTasks() {
-	for index := range m.repairScreen.Tasks {
-		m.repairScreen.Tasks[index].State = repairscreen.TaskDone
-	}
-	m.setupStageIndex = len(m.repairScreen.Tasks) - 1
-	m.setSetupStatusForStage()
-}
-
-func (m *model) advanceSetupStatus() {
-	if len(m.repairScreen.Tasks) == 0 {
-		return
-	}
-	lastIndex := len(m.repairScreen.Tasks) - 1
-	if m.setupStageIndex < lastIndex {
-		m.setupStageIndex++
-	}
-	m.setSetupStatusForStage()
-}
-
-func (m *model) setSetupStatusForStage() {
-	if len(m.repairScreen.Tasks) == 0 {
-		m.repairScreen.SetupStatus = ""
-		return
-	}
-	lastIndex := len(m.repairScreen.Tasks) - 1
-	stageIndex := m.setupStageIndex
-	if stageIndex < 0 {
-		stageIndex = 0
-	}
-	if stageIndex > lastIndex {
-		stageIndex = lastIndex
-	}
-	status := repairscreen.SetupStatusLabel(m.repairScreen.Tasks[stageIndex].Label)
-	if strings.TrimSpace(status) == "" {
-		status = "Preparing secure access"
-	}
-	m.repairScreen.SetupStatus = status
-}
-
-func (m *model) finishMaintenanceTasks(result readiness.RunResult) {
-	if m.isSetupSequence() {
-		for index := range m.repairScreen.Tasks {
-			task := &m.repairScreen.Tasks[index]
-			if result.Snapshot.Service.Running {
-				task.State = repairscreen.TaskDone
-				continue
-			}
-			if task.Label == "Service" {
-				task.State = repairscreen.TaskActive
-			} else {
-				task.State = repairscreen.TaskDone
-			}
-		}
-		return
-	}
-	for index := range m.repairScreen.Tasks {
-		task := &m.repairScreen.Tasks[index]
-		switch task.Label {
-		case "Password":
-			task.State = repairscreen.TaskDone
-		case "Account":
-			if result.Snapshot.LoggedIn || m.maintenanceAuthEmail != "" {
-				task.State = repairscreen.TaskDone
-			}
-		case "Vault":
-			if result.Snapshot.VaultExists {
-				task.State = repairscreen.TaskDone
-			}
-		case "Service":
-			if result.Snapshot.Service.Running {
-				task.State = repairscreen.TaskDone
-			}
-		case "SSH":
-			if result.Snapshot.AgentDisabled || (result.Snapshot.SSHEnabled && result.Snapshot.ManagedConfigReady) {
-				task.State = repairscreen.TaskDone
-			}
-		case "Agent":
-			if result.Snapshot.IPCSocketReady && result.Snapshot.AgentSocketReady {
-				task.State = repairscreen.TaskDone
-			}
-		}
-	}
-}
-
-func (m *model) repairStatusRows() []repairscreen.StatusRow {
-	rows := NewState(m.snapshot).SummaryRows()
-	out := make([]repairscreen.StatusRow, 0, len(rows))
-	for _, row := range rows {
-		out = append(out, repairscreen.StatusRow{Label: row.Label, Value: row.Value})
-	}
-	return out
 }
 
 func (m *model) passwordFlowForSnapshot(snapshot readiness.Snapshot) passwordFlow {

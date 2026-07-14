@@ -100,54 +100,6 @@ func runInteractiveIntent(intent tui.Intent) error {
 		SetMasterPasswordInterval: func(value string) error {
 			return actions.SetMasterPasswordInterval(paths, value)
 		},
-		ProbeSensitive: func() (tui.SensitiveState, error) {
-			client := ipc.NewClient(paths.CtlSocket())
-
-			resp, err := client.Call(ipc.CmdStatus, nil)
-			if err != nil {
-				return tui.SensitiveState{}, err
-			}
-			var status struct {
-				Sensitive *struct {
-					Unlocked *bool `json:"unlocked"`
-				} `json:"sensitive"`
-			}
-			if err := json.Unmarshal(resp.Data, &status); err != nil {
-				return tui.SensitiveState{}, err
-			}
-			if status.Sensitive != nil && status.Sensitive.Unlocked != nil {
-				return tui.SensitiveState{Unlocked: *status.Sensitive.Unlocked, Known: true}, nil
-			}
-
-			listResp, err := client.Call(ipc.CmdList, nil)
-			if err != nil {
-				return tui.SensitiveState{}, err
-			}
-			var list struct {
-				Keys []struct {
-					Name string `json:"name"`
-				} `json:"keys"`
-			}
-			if err := json.Unmarshal(listResp.Data, &list); err != nil {
-				return tui.SensitiveState{}, err
-			}
-			if len(list.Keys) == 0 {
-				return tui.SensitiveState{}, nil
-			}
-
-			_, err = client.Call(ipc.CmdView, map[string]any{
-				"name": list.Keys[0].Name,
-				"full": true,
-			})
-			switch {
-			case err == nil:
-				return tui.SensitiveState{Unlocked: true, Known: true}, nil
-			case strings.Contains(err.Error(), "sensitive private-key access requires authentication"):
-				return tui.SensitiveState{Unlocked: false, Known: true}, nil
-			default:
-				return tui.SensitiveState{}, err
-			}
-		},
 		HasLocalUnlockTrust: func() bool {
 			return sensitiveauth.HasLocalEnrollment(paths)
 		},

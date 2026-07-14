@@ -28,7 +28,6 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 		},
 	}
 
-	e.emitProgress(opts, ProgressVault)
 	if err := e.ensureVaultAndCredentialsStage(state, opts); err != nil {
 		return state.result, err
 	}
@@ -36,32 +35,21 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 		state.result.Snapshot.State = classifyState(state.result.Snapshot)
 		return state.result, nil
 	}
-	e.emitProgress(opts, ProgressConfig)
 	if err := e.ensureConfigStage(state); err != nil {
 		return state.result, err
 	}
-	e.emitProgress(opts, ProgressSSH)
 	if err := e.ensureSSHStage(state, opts); err != nil {
 		return state.result, err
 	}
-	e.emitProgress(opts, ProgressService)
 	if err := e.ensureServiceStage(state, opts); err != nil {
 		return state.result, err
 	}
-	e.emitProgress(opts, ProgressSockets)
 	if err := e.ensureSocketStage(state); err != nil {
 		return state.result, err
 	}
 
 	state.result.Snapshot.State = classifyState(state.result.Snapshot)
 	return state.result, nil
-}
-
-func (e *Engine) emitProgress(opts RunOptions, stage ProgressStage) {
-	if opts.Progress == nil {
-		return
-	}
-	opts.Progress(stage)
 }
 
 func (e *Engine) ensureConfigStage(state *repairState) error {
