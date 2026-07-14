@@ -256,6 +256,7 @@ type securityStateMsg struct {
 }
 
 type startupUnlockFinishedMsg struct {
+	id     int
 	result actions.UnlockResult
 	err    error
 }
@@ -368,6 +369,7 @@ type model struct {
 	bootAssessed             bool
 	startupUnlockPending     bool
 	startupUnlockNeedsRepair bool
+	startupUnlockID          int
 	systemHeader             systemHeaderState
 	runtimeStatus            RuntimeStatus
 	runtimeLoaded            bool
@@ -1417,6 +1419,9 @@ func (m *model) footerActions() []shell.FooterAction {
 		return actions
 	case screenPassword:
 		if m.passwordBusy {
+			if m.passwordFlow == passwordStartupUnlock && m.passwordHideInput {
+				return []shell.FooterAction{{Key: "Esc", Label: "Use Master Password"}}
+			}
 			return nil
 		}
 		enterLabel := "Continue"
@@ -1841,6 +1846,9 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.passwordBusy {
+		if msg.String() == "esc" && m.passwordFlow == passwordStartupUnlock && m.passwordHideInput {
+			return m, m.useStartupMasterPassword()
+		}
 		return m, nil
 	}
 
@@ -2516,22 +2524,35 @@ func (m *model) systemHeaderForSnapshot(snapshot readiness.Snapshot) systemHeade
 }
 
 func (m *model) unlockSensitiveLaunchCmd(password []byte) tea.Cmd {
+	m.startupUnlockID++
+	id := m.startupUnlockID
 	unlock := m.deps.UnlockSensitiveLaunch
 	passwordCopy := append([]byte(nil), password...)
 	clear(password)
 	return func() tea.Msg {
 		defer clear(passwordCopy)
 		result, err := unlock(passwordCopy)
-		return startupUnlockFinishedMsg{result: result, err: err}
+		return startupUnlockFinishedMsg{id: id, result: result, err: err}
 	}
 }
 
 func (m *model) startStartupUnlockFlow() tea.Cmd {
 	m.showPasswordScreen(passwordStartupUnlock, "", "", true)
+	m.passwordContext = "Approve the System Auth prompt to open Forged."
 	m.passwordBusy = true
 	m.passwordHideInput = true
-	m.passwordBusyMessage = "Waiting for authentication"
+	m.passwordBusyMessage = "Waiting for System Auth"
 	return tea.Batch(m.spinner.Tick, m.unlockSensitiveLaunchCmd(nil))
+}
+
+func (m *model) useStartupMasterPassword() tea.Cmd {
+	m.startupUnlockID++
+	m.passwordBusy = false
+	m.passwordHideInput = false
+	m.passwordBusyMessage = ""
+	m.passwordContext = "Enter your master password to open Forged."
+	m.passwordInput.ClearStatus()
+	return m.passwordInput.Init()
 }
 
 func (m *model) handleSensitiveSessionLoss(wasUnlocked bool) tea.Cmd {
@@ -2598,7 +2619,10 @@ func (m *model) finishVaultBoot() tea.Cmd {
 }
 
 func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea.Cmd {
-	if m.passwordFlow != passwordStartupUnlock {
+	if msg.id != m.startupUnlockID ||
+		m.screen != screenPassword ||
+		m.passwordFlow != passwordStartupUnlock ||
+		!m.passwordBusy {
 		return nil
 	}
 
@@ -2606,6 +2630,7 @@ func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea
 	m.passwordBusyMessage = ""
 	if msg.err != nil {
 		m.passwordHideInput = false
+		m.passwordContext = "Enter your master password to open Forged."
 		m.passwordInput.SetError(m.reportError("vault.unlock", msg.err))
 		return nil
 	}
