@@ -443,7 +443,10 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
 	case RouteKeysRename:
-		if m.keyRename.loading || m.keyRename.saving {
+		if m.keyRename.saving {
+			return nil
+		}
+		if m.keyRename.loading {
 			return []shell.FooterAction{
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
@@ -476,14 +479,17 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 		}
 	case RouteKeysGenerate:
 		if m.keyGenerate.generating {
-			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+			return nil
 		}
 		return []shell.FooterAction{
 			{Key: "Enter", Label: "Generate"},
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
 	case RouteKeysImport:
-		if m.keyImport.loading || m.keyImport.importing || m.keyImport.pickerOpening {
+		if m.keyImport.importing {
+			return nil
+		}
+		if m.keyImport.loading || m.keyImport.pickerOpening {
 			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 		}
 		if m.keyImport.success != nil {
@@ -861,7 +867,10 @@ func (m *model) updateKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateKeyRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.keyRename.loading || m.keyRename.saving {
+	if m.keyRename.saving {
+		return m, nil
+	}
+	if m.keyRename.loading {
 		if msg.String() == "esc" {
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
@@ -932,12 +941,6 @@ func (m *model) updateKeyDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) updateKeyGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.keyGenerate.generating {
-		if msg.String() == "esc" {
-			if m.session.Back() {
-				return m, m.showCurrentRoute()
-			}
-			return m, tea.Quit
-		}
 		return m, nil
 	}
 
@@ -964,7 +967,10 @@ func (m *model) updateKeyGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.keyImport.loading || m.keyImport.importing || m.keyImport.pickerOpening {
+	if m.keyImport.importing {
+		return m, nil
+	}
+	if m.keyImport.loading || m.keyImport.pickerOpening {
 		if msg.String() == "esc" {
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
@@ -1747,46 +1753,69 @@ func (m *model) handleKeyRenameFinishedMsg(msg keyRenameFinishedMsg) (tea.Model,
 	if msg.id != m.keyRenameID {
 		return m, nil
 	}
+	current := m.session.Current().ID == RouteKeysRename && m.keyRename.saving
+	visible := current && m.isKeyRoute()
 	m.keyRename.saving = false
 	if msg.err != nil {
-		m.keyRename.err = m.reportError("keys.rename", msg.err)
+		errorText := m.reportError("keys.rename", msg.err)
+		if current {
+			m.keyRename.err = errorText
+		}
 		return m, nil
 	}
 	m.renameCachedKey(msg.result.OldName, msg.result.NewName)
-
-	m.session.ReplaceCurrent(Route{
-		ID: RouteKeysBrowser,
-		Params: map[string]string{
-			"query": msg.result.NewName,
-		},
-	})
-	return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
+	if current {
+		m.session.ReplaceCurrent(Route{
+			ID: RouteKeysBrowser,
+			Params: map[string]string{
+				"query": msg.result.NewName,
+			},
+		})
+	}
+	if visible {
+		return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
+	}
+	return m, m.invalidateSigningStatusCmd()
 }
 
 func (m *model) handleKeyDeleteFinishedMsg(msg keyDeleteFinishedMsg) (tea.Model, tea.Cmd) {
 	if msg.id != m.keyDeleteID {
 		return m, nil
 	}
+	current := m.session.Current().ID == RouteKeysDelete && m.keyDelete.deleting
+	visible := current && m.isKeyRoute()
 	m.keyDelete.deleting = false
 	if msg.err != nil {
-		m.keyDelete.key = actions.KeySummary{}
-		m.keyDelete.err = m.reportError("keys.delete", msg.err)
+		errorText := m.reportError("keys.delete", msg.err)
+		if current {
+			m.keyDelete.key = actions.KeySummary{}
+			m.keyDelete.err = errorText
+		}
 		return m, nil
 	}
 	m.removeCachedKey(msg.name)
-
-	m.session.ReplaceCurrent(Route{ID: RouteKeysBrowser})
-	return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
+	if current {
+		m.session.ReplaceCurrent(Route{ID: RouteKeysBrowser})
+	}
+	if visible {
+		return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
+	}
+	return m, m.invalidateSigningStatusCmd()
 }
 
 func (m *model) handleKeyGenerateFinishedMsg(msg keyGenerateFinishedMsg) (tea.Model, tea.Cmd) {
 	if msg.id != m.keyGenerateID {
 		return m, nil
 	}
+	current := m.session.Current().ID == RouteKeysGenerate && m.keyGenerate.generating
+	visible := current && m.isKeyRoute()
 	m.keyGenerate.generating = false
 	if msg.err != nil {
-		m.keyGenerate.status = ""
-		m.keyGenerate.err = m.reportError("keys.generate", msg.err)
+		errorText := m.reportError("keys.generate", msg.err)
+		if current {
+			m.keyGenerate.status = ""
+			m.keyGenerate.err = errorText
+		}
 		return m, nil
 	}
 	m.upsertCachedKey(actions.KeySummary{
@@ -1795,14 +1824,19 @@ func (m *model) handleKeyGenerateFinishedMsg(msg keyGenerateFinishedMsg) (tea.Mo
 		Fingerprint: msg.result.Fingerprint,
 		Comment:     msg.result.Comment,
 	})
-	m.session.ReplaceCurrent(Route{
-		ID: RouteKeysDetail,
-		Params: map[string]string{
-			"name":   msg.result.Name,
-			"source": "browser",
-		},
-	})
-	return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
+	if current {
+		m.session.ReplaceCurrent(Route{
+			ID: RouteKeysDetail,
+			Params: map[string]string{
+				"name":   msg.result.Name,
+				"source": "browser",
+			},
+		})
+	}
+	if visible {
+		return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
+	}
+	return m, m.invalidateSigningStatusCmd()
 }
 
 func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model, tea.Cmd) {
