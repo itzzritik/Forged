@@ -1,11 +1,13 @@
 package actions
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
 	"strings"
+	"time"
 	"unicode"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -207,6 +209,13 @@ func authorizeSensitiveResult(paths config.Paths, action sensitiveauth.Action, p
 }
 
 func authorizeSensitiveResultWithOptions(paths config.Paths, action sensitiveauth.Action, password []byte, force bool) (sensitiveauth.AuthorizeResult, error) {
+	return authorizeSensitiveResultWithContext(context.Background(), paths, action, password, force)
+}
+
+func authorizeSensitiveResultWithContext(ctx context.Context, paths config.Paths, action sensitiveauth.Action, password []byte, force bool) (sensitiveauth.AuthorizeResult, error) {
+	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
+	defer cancel()
+
 	client := ipc.NewClient(paths.CtlSocket())
 	parseResult := func(raw json.RawMessage) (sensitiveauth.AuthorizeResult, error) {
 		defer clear(raw)
@@ -218,10 +227,10 @@ func authorizeSensitiveResultWithOptions(paths config.Paths, action sensitiveaut
 	}
 
 	if len(password) == 0 {
-		resp, err := client.CallWithTimeout(ipc.CmdSensitiveAuth, map[string]any{
+		resp, err := client.CallContext(ctx, ipc.CmdSensitiveAuth, map[string]any{
 			"action": string(action),
 			"force":  force,
-		}, 5*60*1e9)
+		})
 		if err != nil {
 			return sensitiveauth.AuthorizeResult{}, err
 		}
@@ -235,10 +244,10 @@ func authorizeSensitiveResultWithOptions(paths config.Paths, action sensitiveaut
 		return result, nil
 	}
 
-	resp, err := client.CallWithTimeout(ipc.CmdSensitivePassword, map[string]string{
+	resp, err := client.CallContext(ctx, ipc.CmdSensitivePassword, map[string]string{
 		"action":   string(action),
 		"password": string(password),
-	}, 5*60*1e9)
+	})
 	if err != nil {
 		return sensitiveauth.AuthorizeResult{}, err
 	}

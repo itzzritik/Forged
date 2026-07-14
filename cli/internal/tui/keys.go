@@ -1636,7 +1636,9 @@ func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (
 	m.keyDetail.busy = false
 	if msg.err != nil {
 		if actions.IsSensitiveAuthRequired(msg.err) {
-			m.keyDetail.busy = false
+			if m.isLockedAuthScreen() {
+				return m, nil
+			}
 			m.showPasswordScreen(passwordStartupUnlock, "", "", true)
 			m.passwordContext = "Please authenticate to continue using Forged."
 			return m, m.passwordInput.Init()

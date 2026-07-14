@@ -47,7 +47,7 @@ type Dependencies struct {
 	LoadSecurityState         func() (SecurityState, error)
 	SetMasterPasswordInterval func(string) error
 	HasLocalUnlockTrust       func() bool
-	UnlockSensitiveLaunch     func([]byte) (actions.UnlockResult, error)
+	UnlockSensitiveLaunch     func(context.Context, []byte) (actions.UnlockResult, error)
 	ChangePassword            func([]byte, []byte) (actions.ChangePasswordResult, error)
 	LoadSigningStatus         func() (actions.CommitSigningStatus, error)
 	EnableSSHAgent            func() error
@@ -322,6 +322,8 @@ type model struct {
 	intent         Intent
 	session        *Session
 	deps           Dependencies
+	lifetimeCtx    context.Context
+	lifetimeCancel context.CancelFunc
 	clipboardBusy  bool
 	reportedErrors map[string]reportedError
 
@@ -377,6 +379,7 @@ type model struct {
 	startupUnlockPending     bool
 	startupUnlockNeedsRepair bool
 	startupUnlockID          int
+	startupUnlockCancel      context.CancelFunc
 	systemHeader             systemHeaderState
 	runtimeStatus            RuntimeStatus
 	runtimeLoaded            bool
@@ -427,7 +430,9 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 
 	initial := newModel(intent, deps, components.NewSpinner())
 	final, err := tea.NewProgram(initial, tea.WithAltScreen()).Run()
+	initial.stopLifetime()
 	initial.cancelLoginFlow()
+	initial.invalidateStartupUnlock()
 	initial.clearRestorePassword()
 	initial.discardPasswordInput()
 	closeErr := deps.CloseClipboard()
@@ -455,11 +460,14 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 }
 
 func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
+	lifetimeCtx, lifetimeCancel := context.WithCancel(context.Background())
 	model := &model{
-		intent:  intent,
-		session: NewSession(intent),
-		deps:    deps,
-		spinner: spin,
+		intent:         intent,
+		session:        NewSession(intent),
+		deps:           deps,
+		lifetimeCtx:    lifetimeCtx,
+		lifetimeCancel: lifetimeCancel,
+		spinner:        spin,
 	}
 	model.initializePendingRouteState()
 	return model
@@ -1643,6 +1651,8 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.passwordInput != nil {
 			m.passwordInput.Clear()
 		}
+		m.invalidateStartupUnlock()
+		m.stopLifetime()
 		return m, tea.Quit
 	}
 	if m.idleLockInFlight {
@@ -2409,6 +2419,7 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 	repairFn := m.deps.Repair
 	createVault := m.deps.CreateVault
 	unlock := m.deps.UnlockSensitiveLaunch
+	lifetimeCtx := m.lifetimeCtx
 	passwordCopy := append([]byte(nil), password...)
 	clear(password)
 
@@ -2442,7 +2453,7 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 				result.Snapshot.VaultExists &&
 				result.Next != readiness.NextActionNeedsPassword &&
 				(trigger == maintenanceTriggerSetup || trigger == maintenanceTriggerUnlock) {
-				unlockResult, err := unlock(passwordCopy)
+				unlockResult, err := unlock(lifetimeCtx, passwordCopy)
 				switch {
 				case err != nil:
 					unlockErr = err
@@ -2561,14 +2572,17 @@ func (m *model) systemHeaderForSnapshot(snapshot readiness.Snapshot) systemHeade
 }
 
 func (m *model) unlockSensitiveLaunchCmd(password []byte) tea.Cmd {
-	m.startupUnlockID++
+	m.invalidateStartupUnlock()
 	id := m.startupUnlockID
 	unlock := m.deps.UnlockSensitiveLaunch
+	ctx, cancel := context.WithCancel(m.lifetimeCtx)
+	m.startupUnlockCancel = cancel
 	passwordCopy := append([]byte(nil), password...)
 	clear(password)
 	return func() tea.Msg {
+		defer cancel()
 		defer clear(passwordCopy)
-		result, err := unlock(passwordCopy)
+		result, err := unlock(ctx, passwordCopy)
 		return startupUnlockFinishedMsg{id: id, result: result, err: err}
 	}
 }
@@ -2583,7 +2597,7 @@ func (m *model) startStartupUnlockFlow() tea.Cmd {
 }
 
 func (m *model) useStartupMasterPassword() tea.Cmd {
-	m.startupUnlockID++
+	m.invalidateStartupUnlock()
 	m.passwordBusy = false
 	m.passwordHideInput = false
 	m.passwordBusyMessage = ""
@@ -2656,8 +2670,11 @@ func (m *model) finishVaultBoot() tea.Cmd {
 }
 
 func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea.Cmd {
-	if msg.id != m.startupUnlockID ||
-		m.screen != screenPassword ||
+	if msg.id != m.startupUnlockID {
+		return nil
+	}
+	m.cancelStartupUnlock()
+	if m.screen != screenPassword ||
 		m.passwordFlow != passwordStartupUnlock ||
 		!m.passwordBusy {
 		return nil
@@ -2700,6 +2717,27 @@ func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea
 	}
 
 	return m.finishVaultBoot()
+}
+
+func (m *model) cancelStartupUnlock() {
+	if m.startupUnlockCancel == nil {
+		return
+	}
+	m.startupUnlockCancel()
+	m.startupUnlockCancel = nil
+}
+
+func (m *model) invalidateStartupUnlock() {
+	m.startupUnlockID++
+	m.cancelStartupUnlock()
+}
+
+func (m *model) stopLifetime() {
+	if m.lifetimeCancel == nil {
+		return
+	}
+	m.lifetimeCancel()
+	m.lifetimeCancel = nil
 }
 
 func (m *model) startStartupRepair() tea.Cmd {

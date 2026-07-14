@@ -64,8 +64,8 @@ func runInteractiveIntent(intent tui.Intent) error {
 		HasLocalUnlockTrust: func() bool {
 			return sensitiveauth.HasLocalEnrollment(paths)
 		},
-		UnlockSensitiveLaunch: func(password []byte) (actions.UnlockResult, error) {
-			return actions.UnlockSensitiveLaunch(paths, password)
+		UnlockSensitiveLaunch: func(ctx context.Context, password []byte) (actions.UnlockResult, error) {
+			return actions.UnlockSensitiveLaunch(ctx, paths, password)
 		},
 		ChangePassword: func(currentPassword []byte, newPassword []byte) (actions.ChangePasswordResult, error) {
 			return actions.ChangePassword(paths, currentPassword, newPassword)
