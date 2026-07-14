@@ -37,6 +37,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Windows daemon health uses bounded named-pipe probes plus the native process exit status; Unix continues to use signal-zero liveness.
 - A daemon publishes its PID only after both servers start and removes the PID file only while it still owns that record.
 - Unix listeners never unlink a path before binding and remove it on close only while it is still the inode they created; stale cleanup refuses non-socket paths and inode replacements.
+- Unix startup holds a persistent `daemon.lock` sidecar through shutdown and checks a live legacy PID before probing or removing socket paths; the lock file is never unlinked.
 
 ## Decisions
 

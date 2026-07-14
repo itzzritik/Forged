@@ -65,6 +65,12 @@ func (d *Daemon) Run(password []byte) error {
 
 	d.logger.Info("starting forged daemon")
 
+	runtimeLock, lockErr := acquireRuntimeLock(d.paths)
+	if lockErr != nil {
+		return lockErr
+	}
+	defer runtimeLock.Close()
+
 	if err := d.cleanStaleState(); err != nil {
 		return fmt.Errorf("Cleaning stale state: %w", err)
 	}
@@ -186,13 +192,33 @@ func (d *Daemon) setupLogging() error {
 }
 
 func (d *Daemon) cleanStaleState() error {
+	pidPath := d.paths.PIDFile()
+	if runtime.GOOS != "windows" {
+		if data, err := os.ReadFile(pidPath); err == nil {
+			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
+				if platform.ProcessAlive(pid) {
+					if command, inspectErr := processCommandLine(pid); inspectErr == nil {
+						if isForgedDaemonCommand(command) {
+							return fmt.Errorf("Daemon already running (PID %d)", pid)
+						}
+						if d.logger != nil {
+							d.logger.Warn("ignoring stale daemon pid file because pid belongs to another process", "pid", pid, "command", command)
+						}
+					} else {
+						return fmt.Errorf("Daemon already running (PID %d)", pid)
+					}
+				}
+			}
+			os.Remove(pidPath)
+		}
+	}
+
 	for _, sock := range []string{d.paths.AgentSocket(), d.paths.CtlSocket()} {
 		if err := platform.CleanStaleSocket(sock); err != nil {
 			return fmt.Errorf("Socket %s: %w", sock, err)
 		}
 	}
 
-	pidPath := d.paths.PIDFile()
 	if runtime.GOOS == "windows" {
 		// PID reuse cannot be disambiguated without command-line inspection.
 		// Recheck the authoritative named pipes before removing stale metadata.
@@ -203,24 +229,6 @@ func (d *Daemon) cleanStaleState() error {
 		}
 		os.Remove(pidPath)
 		return nil
-	}
-
-	if data, err := os.ReadFile(pidPath); err == nil {
-		if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-			if platform.ProcessAlive(pid) {
-				if command, inspectErr := processCommandLine(pid); inspectErr == nil {
-					if isForgedDaemonCommand(command) {
-						return fmt.Errorf("Daemon already running (PID %d)", pid)
-					}
-					if d.logger != nil {
-						d.logger.Warn("ignoring stale daemon pid file because pid belongs to another process", "pid", pid, "command", command)
-					}
-				} else {
-					return fmt.Errorf("Daemon already running (PID %d)", pid)
-				}
-			}
-		}
-		os.Remove(pidPath)
 	}
 
 	return nil
