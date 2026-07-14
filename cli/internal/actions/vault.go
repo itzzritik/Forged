@@ -28,7 +28,7 @@ type ChangePasswordResult struct {
 
 func LockSensitive(paths config.Paths) error {
 	_, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSensitiveLock, nil)
-	if err != nil && strings.Contains(err.Error(), "daemon is not running") {
+	if errors.Is(err, ipc.ErrDaemonNotRunning) {
 		return nil
 	}
 	return err
@@ -97,7 +97,7 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 
 	v, err := vault.Open(paths.VaultFile(), currentPassword)
 	if err != nil {
-		if strings.Contains(err.Error(), "vault is locked by another process") {
+		if errors.Is(err, vault.ErrVaultLocked) {
 			return ChangePasswordResult{}, fmt.Errorf("Vault is busy. Try again.")
 		}
 		return ChangePasswordResult{}, fmt.Errorf("Wrong password or corrupted vault")

@@ -2,11 +2,14 @@ package ipc
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/platform"
 )
+
+var ErrDaemonNotRunning = errors.New("Daemon is not running")
 
 type Client struct {
 	socketPath string
@@ -23,7 +26,7 @@ func (c *Client) Call(command string, args any) (Response, error) {
 func (c *Client) CallWithTimeout(command string, args any, timeout time.Duration) (Response, error) {
 	conn, err := platform.Dial(c.socketPath, 2*time.Second)
 	if err != nil {
-		return Response{}, fmt.Errorf("Daemon is not running. Open Forged to start it")
+		return Response{}, fmt.Errorf("%w. Open Forged to start it", ErrDaemonNotRunning)
 	}
 	defer conn.Close()
 

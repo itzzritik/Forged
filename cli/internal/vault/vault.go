@@ -3,6 +3,7 @@ package vault
 import (
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -11,6 +12,8 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/platform"
 )
+
+var ErrVaultLocked = errors.New("Vault is locked by another process")
 
 type Vault struct {
 	mu           sync.RWMutex
@@ -587,7 +590,7 @@ func acquireVaultLock(path string) (*os.File, error) {
 
 	if err := platform.LockFile(f); err != nil {
 		f.Close()
-		return nil, fmt.Errorf("Vault is locked by another process")
+		return nil, ErrVaultLocked
 	}
 
 	return f, nil
