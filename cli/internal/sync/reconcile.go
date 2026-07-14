@@ -25,8 +25,8 @@ func DecideFirstLinkAction(state SyncState, linkedUserID string, local, remote v
 		return local, FirstLinkNoop, nil
 	}
 
-	localEmpty := len(local.Keys) == 0
-	remoteEmpty := !remoteExists || len(remote.Keys) == 0
+	localEmpty := !hasFirstLinkContent(local)
+	remoteEmpty := !remoteExists || !hasFirstLinkContent(remote)
 
 	switch {
 	case localEmpty && remoteEmpty:
@@ -39,4 +39,12 @@ func DecideFirstLinkAction(state SyncState, linkedUserID string, local, remote v
 		merged := BootstrapMerge(local, remote, state.DeviceID, remote.Metadata.DeviceID)
 		return merged, FirstLinkMergeAndPush, nil
 	}
+}
+
+func hasFirstLinkContent(data vault.VaultData) bool {
+	return len(data.Keys) > 0 ||
+		len(data.Tombstones) > 0 ||
+		len(data.VersionVector) > 0 ||
+		len(data.SSH.Routes) > 0 ||
+		len(data.SSH.Tombstones) > 0
 }

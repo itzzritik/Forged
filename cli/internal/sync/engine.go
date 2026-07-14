@@ -198,6 +198,9 @@ func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, 
 		return nil
 	case FirstLinkPushLocal:
 		state.LastKnownServerVersion = 0
+		if remoteExists {
+			state.LastKnownServerVersion = result.Version
+		}
 		state.MarkDirty("", time.Time{})
 		return e.PushCurrent(ctx, state)
 	case FirstLinkMergeAndPush:
