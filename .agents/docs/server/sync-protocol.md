@@ -6,7 +6,7 @@ applies_to:
 depends_on:
   - server/db-schema.md
   - cli/vault.md
-last_verified: 2026-07-14
+last_verified: 2026-07-15
 stable: yes
 ---
 
@@ -22,7 +22,8 @@ Sync is encrypted-blob push/pull with optimistic locking. The server stores blob
 - First-link bootstrap merge is separate from normal three-way merge.
 - Key deletes and SSH-route deletes use tombstones.
 - Local sync state keeps the last synced base blob and last known server version.
-- Sync state is replaced atomically; the dirty marker remains until a clean state save succeeds, so a failed write cannot lose pending work on restart.
+- Sync state is replaced atomically and its parent directory is synced where supported; the dirty marker remains until a clean state save succeeds, so a failed write cannot lose pending work on restart.
+- Sync state history is integrity-sensitive. A malformed, incomplete, or hash-mismatched state is quarantined behind a recovery marker; clients must not reset, relink, or bootstrap over it automatically.
 - The daemon checks `/sync/status` before background or foreground refresh pulls. It pulls the encrypted blob only when the server version changed.
 - Pull and link merges apply to the latest local vault state inside one transaction; network calls stay outside that lock.
 - Sync engines work on state snapshots. If a local mutation arrives during network work, the completed server metadata is kept while the newer mutation stays dirty and queues another push.

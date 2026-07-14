@@ -1074,14 +1074,14 @@ func (m *model) vaultSyncHeaderItem() shell.StatusItem {
 		}
 		return shell.StatusItem{Label: "Vault unavailable", Tone: shell.StatusToneDanger}
 	}
+	if m.runtimeLoaded && strings.TrimSpace(m.runtimeStatus.Error) != "" {
+		return shell.StatusItem{Label: "Sync issue", Tone: shell.StatusToneDanger}
+	}
 	if !m.snapshot.LoggedIn {
 		return shell.StatusItem{Label: "Local vault healthy", Tone: shell.StatusToneSuccess}
 	}
 	if m.runtimeSyncPending() {
 		return shell.StatusItem{Label: "Vault syncing", Icon: m.spinner.View()}
-	}
-	if m.runtimeLoaded && strings.TrimSpace(m.runtimeStatus.Error) != "" {
-		return shell.StatusItem{Label: "Sync issue", Tone: shell.StatusToneDanger}
 	}
 	return shell.StatusItem{Label: "Vault up to date", Tone: shell.StatusToneSuccess}
 }

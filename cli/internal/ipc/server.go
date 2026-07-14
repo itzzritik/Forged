@@ -41,6 +41,7 @@ type Server struct {
 	logger         *slog.Logger
 	wg             sync.WaitGroup
 	syncBus        *forgedsync.Bus
+	syncError      string
 	syncLink       func(SyncLinkArgs) error
 	syncUnlink     func() error
 	accountReplace func(AccountCredentialsArgs) error
@@ -56,6 +57,12 @@ func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	s.syncBus = bus
+}
+
+func (s *Server) SetSyncError(err string) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.syncError = err
 }
 
 func (s *Server) SetSyncLinkHandler(handler func(SyncLinkArgs) error) {
@@ -753,6 +760,9 @@ func (s *Server) handleSyncTrigger(ctx context.Context, raw json.RawMessage) Res
 
 	bus := s.currentSyncBus()
 	if bus == nil {
+		if syncErr := s.currentSyncError(); syncErr != "" {
+			return ErrorResponse(errors.New(syncErr))
+		}
 		return ErrorResponse(fmt.Errorf("Sync is unavailable; restart Forged and try again"))
 	}
 
@@ -905,10 +915,14 @@ func (s *Server) handleStatus() Response {
 
 	if bus := s.currentSyncBus(); bus != nil {
 		syncState := bus.SnapshotState()
+		lastErr := syncState.LastError
+		if recoveryErr := s.currentSyncError(); recoveryErr != "" {
+			lastErr = recoveryErr
+		}
 		status["sync"] = map[string]any{
 			"device_id":                 syncState.DeviceID,
 			"dirty":                     syncState.Dirty,
-			"last_error":                syncState.LastError,
+			"last_error":                lastErr,
 			"last_known_server_version": syncState.LastKnownServerVersion,
 			"last_remote_check_at":      syncState.LastRemoteCheckAt,
 			"last_successful_pull_at":   syncState.LastSuccessfulPullAt,
@@ -918,6 +932,8 @@ func (s *Server) handleStatus() Response {
 			"server_url":                syncState.ServerURL,
 			"syncing":                   syncState.Syncing,
 		}
+	} else if syncErr := s.currentSyncError(); syncErr != "" {
+		status["sync"] = map[string]any{"last_error": syncErr}
 	}
 
 	return OkResponse(status)
@@ -970,6 +986,12 @@ func (s *Server) currentSyncBus() *forgedsync.Bus {
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
 	return s.syncBus
+}
+
+func (s *Server) currentSyncError() string {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.syncError
 }
 
 func (s *Server) requireKeyStore() (*vault.KeyStore, error) {

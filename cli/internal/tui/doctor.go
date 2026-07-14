@@ -660,17 +660,6 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 	if row, unavailable := m.doctorRuntimePathUnavailableRow("Sync Account"); unavailable {
 		return row
 	}
-	if !m.snapshot.LoggedIn {
-		return doctorRow{
-			screen: doctorscreen.Row{
-				Check:  "Sync Account",
-				Status: "! Not logged in",
-				Detail: "Multi-device sync unavailable",
-				Tone:   doctorscreen.ToneWarning,
-			},
-		}
-	}
-
 	if m.runtimeLoaded {
 		if syncErr := strings.TrimSpace(m.runtimeStatus.Error); syncErr != "" {
 			return doctorRow{
@@ -701,6 +690,17 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 					Tone:   doctorscreen.ToneWarning,
 				},
 			}
+		}
+	}
+
+	if !m.snapshot.LoggedIn {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Sync Account",
+				Status: "! Not logged in",
+				Detail: "Multi-device sync unavailable",
+				Tone:   doctorscreen.ToneWarning,
+			},
 		}
 	}
 

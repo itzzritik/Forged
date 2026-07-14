@@ -685,20 +685,20 @@ func (m *model) handleManageAutoReturnMsg(msg manageAutoReturnMsg) (tea.Model, t
 }
 
 func (m *model) manageSyncSummary() string {
-	if !m.snapshot.LoggedIn {
-		return "Keep your encrypted vault in sync across the devices you trust"
-	}
 	if !m.runtimeLoaded {
 		return "Loading sync state"
+	}
+	if errText := strings.TrimSpace(m.runtimeStatus.Error); errText != "" {
+		return errText
+	}
+	if !m.snapshot.LoggedIn {
+		return "Keep your encrypted vault in sync across the devices you trust"
 	}
 	if !m.runtimeStatus.Linked {
 		return "Sync is not linked on this machine yet"
 	}
 	if m.manage.syncBusy || m.runtimeStatus.Syncing {
 		return m.spinner.View() + " Syncing vault"
-	}
-	if errText := strings.TrimSpace(m.runtimeStatus.Error); errText != "" {
-		return errText
 	}
 	if syncedAt := latestSyncTime(m.runtimeStatus); !syncedAt.IsZero() {
 		return "Last synced " + syncedAt.In(time.Local).Format("02 Jan 2006, 3:04 PM MST")
