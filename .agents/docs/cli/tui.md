@@ -30,7 +30,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Doctor security refreshes accept only their newest response and render inspection failures instead of staying on Checking or showing stale capability rows.
 - The standalone `forged doctor` route remains available when no vault exists; it reports device-level health instead of replacing diagnostics with onboarding.
 - Doctor checks stay in dependency order while their status icon and tone show changing health.
-- Doctor check rows page within the available body height and remain reachable with Up/Down on short terminals.
+- Doctor check rows page within the available body height and remain reachable with Up/Down; narrow layouts stack each check so its status stays readable.
 - Tables size against the real body width, collapse secondary columns before names or status, and truncate by terminal display cells so wide Unicode values cannot overflow.
 - The Agent tab includes SSH Routing diagnostics. The page reads and clears route memory through daemon IPC and keeps route memory current with background polling while the page is open.
 - SSH Routing diagnostics reuse the Commit Signing browser-table pattern: selected item summary on top, a compact table below, and no manual refresh footer action.

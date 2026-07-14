@@ -53,7 +53,7 @@ func (m *model) renderDoctorBody(contentWidth int, bodyHeight int) string {
 			bodyHeight -= lipgloss.Height(status) + 1
 		}
 	}
-	rows = m.visibleDoctorRows(rows, bodyHeight)
+	rows = m.visibleDoctorRows(rows, bodyHeight, contentWidth)
 	screenRows := make([]doctorscreen.Row, 0, len(rows))
 	for _, row := range rows {
 		screenRows = append(screenRows, row.screen)
@@ -86,8 +86,8 @@ func (m *model) renderDoctorDashboardBody(contentWidth int, bodyHeight int) stri
 	}
 }
 
-func (m *model) visibleDoctorRows(rows []doctorRow, bodyHeight int) []doctorRow {
-	pageRows := max(1, min(len(rows), bodyHeight))
+func (m *model) visibleDoctorRows(rows []doctorRow, bodyHeight int, contentWidth int) []doctorRow {
+	pageRows := max(1, min(len(rows), bodyHeight/doctorscreen.RowHeight(contentWidth)))
 	m.doctorPageRows = pageRows
 	maxOffset := max(0, len(rows)-pageRows)
 	m.doctorOffset = max(0, min(m.doctorOffset, maxOffset))
