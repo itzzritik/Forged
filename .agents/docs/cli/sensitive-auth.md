@@ -37,8 +37,8 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
 - `broken` and `unavailable` are separate states. Unavailable means no System Auth path, usually headless; broken means the desktop System Auth path exists but failed unexpectedly.
 - `Master Password Interval` is a local device policy because device unlock enrollment is per-device. It now bounds *inactivity*, not time-since-password: each successful biometric unlock slides the window forward (throttled), so an actively-used device never expires. A 90-day hard cap since the last master-password entry (`localEnrollmentHardCap`) still forces one periodic re-verification regardless of activity.
 - Successful master-password fallback refreshes device unlock best-effort; successful biometric unlock slides the existing enrollment's expiry forward without a master password.
-- Daemon shutdown stops new background password prompts and closes the helper before waiting, but retains the shared vault session until admitted agent and IPC work has finished.
-- IPC disconnect and timeout cancellation now reach broker authorization waits without marking System Auth broken or starting a failure cooldown. Canceling the native OS prompt itself still requires the helper request-cancel protocol.
+- Daemon shutdown stops new prompts and cancels broker-owned prompt contexts before waiting. It closes the helper after admitted auth work drains, while retaining the shared vault session until admitted agent and IPC work has finished.
+- IPC cancellation sends the helper a one-way request-ID cancel. macOS invalidates the matching `LAContext` or password alert, Linux/Windows cancel the matching child process, helper lock monitors share the helper shutdown context, late results are suppressed, and one canceled broker waiter cannot abort a prompt still needed by another waiter.
 
 ## Decisions
 

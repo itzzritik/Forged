@@ -34,6 +34,9 @@ func authorize(ctx context.Context, action sensitiveauth.Action) string {
 		encodePowerShellCommand(windowsHelloScript(action.NativeReason())),
 	)
 	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return "canceled"
+	}
 	if err == nil {
 		return "ok"
 	}
@@ -56,13 +59,14 @@ func authorize(ctx context.Context, action sensitiveauth.Action) string {
 	}
 }
 
-func status() string {
+func status(ctx context.Context) string {
 	shell, err := windowsPowerShellPath()
 	if err != nil {
 		return "unavailable_by_environment"
 	}
 
-	cmd := exec.Command(
+	cmd := exec.CommandContext(
+		ctx,
 		shell,
 		"-NoProfile",
 		"-NonInteractive",
@@ -72,6 +76,9 @@ func status() string {
 		encodePowerShellCommand(windowsHelloStatusScript()),
 	)
 	output, err := cmd.CombinedOutput()
+	if ctx.Err() != nil {
+		return "canceled"
+	}
 	if err == nil {
 		return "ok"
 	}
@@ -94,11 +101,11 @@ func status() string {
 	}
 }
 
-func startLockLoop(onLock func()) {
+func startLockLoop(ctx context.Context, onLock func()) {
 	if onLock == nil {
 		return
 	}
-	go watchWindowsLocks(onLock)
+	watchWindowsLocks(ctx, onLock)
 }
 
 func windowsPowerShellPath() (string, error) {
@@ -203,7 +210,7 @@ exit [ForgedWindowsHelloStatus]::Run()
 `
 }
 
-func watchWindowsLocks(onLock func()) {
+func watchWindowsLocks(ctx context.Context, onLock func()) {
 	shell, err := windowsPowerShellPath()
 	if err != nil {
 		return
@@ -230,7 +237,8 @@ try {
 `
 
 	for {
-		cmd := exec.Command(
+		cmd := exec.CommandContext(
+			ctx,
 			shell,
 			"-NoProfile",
 			"-NonInteractive",
@@ -241,11 +249,15 @@ try {
 		)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			time.Sleep(time.Second)
+			if !retryLockMonitor(ctx) {
+				return
+			}
 			continue
 		}
 		if err := cmd.Start(); err != nil {
-			time.Sleep(time.Second)
+			if !retryLockMonitor(ctx) {
+				return
+			}
 			continue
 		}
 
@@ -257,6 +269,19 @@ try {
 		}
 
 		_ = cmd.Wait()
-		time.Sleep(time.Second)
+		if !retryLockMonitor(ctx) {
+			return
+		}
+	}
+}
+
+func retryLockMonitor(ctx context.Context) bool {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }

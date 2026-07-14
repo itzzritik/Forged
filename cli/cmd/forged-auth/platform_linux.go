@@ -19,6 +19,7 @@ func providerName() string { return "pkexec" }
 
 func authorize(ctx context.Context, action sensitiveauth.Action) string {
 	_ = action
+	parent := ctx
 	ctx, cancel := context.WithTimeout(ctx, time.Minute)
 	defer cancel()
 	if !hasGraphicalSession() {
@@ -31,6 +32,12 @@ func authorize(ctx context.Context, action sensitiveauth.Action) string {
 
 	cmd := exec.CommandContext(ctx, path, "--disable-internal-agent", "/bin/true")
 	if err := cmd.Run(); err != nil {
+		if parent.Err() != nil {
+			return "canceled"
+		}
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "failed"
+		}
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			switch exitErr.ExitCode() {
@@ -45,7 +52,7 @@ func authorize(ctx context.Context, action sensitiveauth.Action) string {
 	return "ok"
 }
 
-func status() string {
+func status(context.Context) string {
 	if !hasGraphicalSession() {
 		return "unavailable_by_environment"
 	}
@@ -60,21 +67,22 @@ func hasGraphicalSession() bool {
 		strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != ""
 }
 
-func startLockLoop(onLock func()) {
+func startLockLoop(ctx context.Context, onLock func()) {
 	if onLock == nil {
 		return
 	}
-	go watchLinuxLocks(onLock)
+	watchLinuxLocks(ctx, onLock)
 }
 
-func watchLinuxLocks(onLock func()) {
+func watchLinuxLocks(ctx context.Context, onLock func()) {
 	gdbusPath, err := exec.LookPath("gdbus")
 	if err != nil {
 		return
 	}
 
 	for {
-		cmd := exec.Command(
+		cmd := exec.CommandContext(
+			ctx,
 			gdbusPath,
 			"monitor",
 			"--session",
@@ -83,16 +91,22 @@ func watchLinuxLocks(onLock func()) {
 		)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
-			time.Sleep(time.Second)
+			if !retryLockMonitor(ctx) {
+				return
+			}
 			continue
 		}
 		stderr, err := cmd.StderrPipe()
 		if err != nil {
-			time.Sleep(time.Second)
+			if !retryLockMonitor(ctx) {
+				return
+			}
 			continue
 		}
 		if err := cmd.Start(); err != nil {
-			time.Sleep(time.Second)
+			if !retryLockMonitor(ctx) {
+				return
+			}
 			continue
 		}
 
@@ -105,6 +119,19 @@ func watchLinuxLocks(onLock func()) {
 		}
 
 		_ = cmd.Wait()
-		time.Sleep(time.Second)
+		if !retryLockMonitor(ctx) {
+			return
+		}
+	}
+}
+
+func retryLockMonitor(ctx context.Context) bool {
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case <-timer.C:
+		return true
+	case <-ctx.Done():
+		return false
 	}
 }

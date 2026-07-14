@@ -33,11 +33,17 @@ type Broker struct {
 	stopping    bool
 	stopOnce    sync.Once
 	background  sync.WaitGroup
+	stopCtx     context.Context
+	stopCancel  context.CancelFunc
 }
 
 type systemAuthCall struct {
-	done   chan struct{}
-	result systemAuthResult
+	done      chan struct{}
+	cancel    context.CancelFunc
+	waiters   int
+	complete  bool
+	abandoned bool
+	result    systemAuthResult
 }
 
 type systemAuthResult struct {
@@ -62,13 +68,16 @@ type SessionController interface {
 }
 
 func NewBroker(paths config.Paths, helperPath string, logger *slog.Logger, session SessionController) *Broker {
+	stopCtx, stopCancel := context.WithCancel(context.Background())
 	b := &Broker{
-		paths:    paths,
-		logger:   logger,
-		password: NewPasswordVerifier(paths, logger),
-		leases:   newLeaseState(),
-		session:  session,
-		native:   CapabilityUnavailableByEnv,
+		paths:      paths,
+		logger:     logger,
+		password:   NewPasswordVerifier(paths, logger),
+		leases:     newLeaseState(),
+		session:    session,
+		native:     CapabilityUnavailableByEnv,
+		stopCtx:    stopCtx,
+		stopCancel: stopCancel,
 	}
 
 	if helperPath != "" {
@@ -92,19 +101,26 @@ func (b *Broker) BeginStop() {
 		b.lifecycleMu.Lock()
 		b.stopping = true
 		b.lifecycleMu.Unlock()
-		if b.helper != nil {
-			_ = b.helper.Close()
-		}
+		b.stopCancel()
 	})
 }
 
 func (b *Broker) Wait() {
 	b.background.Wait()
+	b.systemMu.Lock()
+	call := b.systemRun
+	b.systemMu.Unlock()
+	if call != nil {
+		<-call.done
+	}
 }
 
 func (b *Broker) Close() {
 	b.BeginStop()
 	b.Wait()
+	if b.helper != nil {
+		_ = b.helper.Close()
+	}
 	b.Invalidate("shutdown")
 }
 
@@ -305,21 +321,26 @@ func (b *Broker) promptPasswordUnlock() {
 
 	go func() {
 		defer b.background.Done()
-		b.runPasswordUnlock()
+		setCooldown := b.runPasswordUnlock()
 		b.pwMu.Lock()
 		b.pwRunning = false
-		b.pwCooldown = time.Now().Add(externalPromptCooldown)
+		if setCooldown {
+			b.pwCooldown = time.Now().Add(externalPromptCooldown)
+		}
 		b.pwMu.Unlock()
 	}()
 }
 
-func (b *Broker) runPasswordUnlock() {
-	password, err := b.helper.CollectPassword(context.Background(), externalPasswordReason)
+func (b *Broker) runPasswordUnlock() bool {
+	password, err := b.helper.CollectPassword(b.stopCtx, externalPasswordReason)
 	if err != nil {
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+			return false
+		}
 		if b.logger != nil && !errors.Is(err, ErrAuthenticationCanceled) {
 			b.logger.Warn("master-password popup unavailable", "error", err)
 		}
-		return
+		return true
 	}
 	defer zeroSensitiveBytes(password)
 
@@ -329,9 +350,13 @@ func (b *Broker) runPasswordUnlock() {
 	if _, err := b.AuthorizeWithPassword(ActionExternal, password); err != nil && b.logger != nil {
 		b.logger.Warn("master-password unlock failed", "error", err)
 	}
+	return true
 }
 
 func (b *Broker) authorizeSystem(ctx context.Context, action Action) (CapabilityState, error) {
+	if err := ctx.Err(); err != nil {
+		return CapabilityBroken, err
+	}
 	if b.helper == nil {
 		return b.nativeCapability(), ErrNativeUnavailable
 	}
@@ -341,31 +366,91 @@ func (b *Broker) authorizeSystem(ctx context.Context, action Action) (Capability
 		}
 	}
 
-	b.systemMu.Lock()
-	if call := b.systemRun; call != nil {
+	for {
+		if err := ctx.Err(); err != nil {
+			return CapabilityBroken, err
+		}
+		b.lifecycleMu.Lock()
+		if b.stopping {
+			b.lifecycleMu.Unlock()
+			return CapabilityBroken, context.Canceled
+		}
+		b.systemMu.Lock()
+		call := b.systemRun
+		if call != nil && call.abandoned {
+			done := call.done
+			b.systemMu.Unlock()
+			b.lifecycleMu.Unlock()
+			select {
+			case <-done:
+				continue
+			case <-ctx.Done():
+				return CapabilityBroken, ctx.Err()
+			}
+		}
+		if call == nil {
+			callCtx, cancel := context.WithCancel(b.stopCtx)
+			call = &systemAuthCall{done: make(chan struct{}), cancel: cancel}
+			b.systemRun = call
+			go b.runSystemAuth(call, callCtx, action)
+		}
+		call.waiters++
 		b.systemMu.Unlock()
+		b.lifecycleMu.Unlock()
+
 		select {
 		case <-call.done:
+			b.releaseSystemAuthWaiter(call)
 			return call.result.capability, call.result.err
 		case <-ctx.Done():
+			if result, complete := b.cancelSystemAuthWaiter(call); complete {
+				return result.capability, result.err
+			}
 			return CapabilityBroken, ctx.Err()
 		}
 	}
-	call := &systemAuthCall{done: make(chan struct{})}
-	b.systemRun = call
-	b.systemMu.Unlock()
+}
 
+func (b *Broker) runSystemAuth(call *systemAuthCall, ctx context.Context, action Action) {
 	capability, err := b.helper.Authorize(ctx, action)
-	call.result = systemAuthResult{capability: capability, err: err}
-
 	b.systemMu.Lock()
+	call.result = systemAuthResult{capability: capability, err: err}
+	call.complete = true
 	if b.systemRun == call {
 		b.systemRun = nil
 	}
 	close(call.done)
 	b.systemMu.Unlock()
+	call.cancel()
+}
 
-	return capability, err
+func (b *Broker) releaseSystemAuthWaiter(call *systemAuthCall) {
+	b.systemMu.Lock()
+	if call.waiters > 0 {
+		call.waiters--
+	}
+	b.systemMu.Unlock()
+}
+
+func (b *Broker) cancelSystemAuthWaiter(call *systemAuthCall) (systemAuthResult, bool) {
+	b.systemMu.Lock()
+	if call.waiters > 0 {
+		call.waiters--
+	}
+	if call.complete {
+		result := call.result
+		b.systemMu.Unlock()
+		return result, true
+	}
+	cancel := call.waiters == 0 && !call.abandoned
+	if cancel {
+		call.abandoned = true
+	}
+	b.systemMu.Unlock()
+	if cancel {
+		call.cancel()
+	}
+	return systemAuthResult{}, false
 }
 
 func (b *Broker) authorizeWithoutSystemAuth(action Action, capability CapabilityState) (AuthorizeResult, error) {

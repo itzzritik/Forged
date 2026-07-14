@@ -19,6 +19,7 @@ type HelperClient struct {
 	path      string
 	cmd       *exec.Cmd
 	stdin     *bufio.Writer
+	stdinPipe io.WriteCloser
 	responses map[string]chan HelperResponse
 	onLock    func()
 	mu        sync.Mutex
@@ -51,6 +52,7 @@ func (c *HelperClient) Start(ctx context.Context, onLock func()) error {
 
 	c.cmd = cmd
 	c.stdin = bufio.NewWriter(stdin)
+	c.stdinPipe = stdin
 	c.onLock = onLock
 
 	go c.readLoop(bufio.NewScanner(stdout))
@@ -69,21 +71,38 @@ func (c *HelperClient) Start(ctx context.Context, onLock func()) error {
 func (c *HelperClient) Close() error {
 	c.mu.Lock()
 	cmd := c.cmd
+	stdin := c.stdinPipe
+	for id := range c.responses {
+		_ = c.writeRequestLocked(NewCancelRequest(id))
+	}
 	c.cmd = nil
 	c.stdin = nil
+	c.stdinPipe = nil
 	for id, ch := range c.responses {
 		delete(c.responses, id)
 		close(ch)
 	}
 	c.mu.Unlock()
+	if stdin != nil {
+		_ = stdin.Close()
+	}
 
 	if cmd == nil || cmd.Process == nil {
 		return nil
 	}
-	if err := cmd.Process.Kill(); err != nil {
+	done := make(chan error, 1)
+	go func() {
+		done <- cmd.Wait()
+	}()
+	timer := time.NewTimer(time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-done:
 		return err
+	case <-timer.C:
 	}
-	_, _ = cmd.Process.Wait()
+	_ = cmd.Process.Kill()
+	<-done
 	return nil
 }
 
@@ -116,6 +135,9 @@ func (c *HelperClient) Authorize(ctx context.Context, action Action) (Capability
 func (c *HelperClient) CollectPassword(ctx context.Context, reason string) ([]byte, error) {
 	resp, err := c.do(ctx, NewCollectPasswordRequest(c.id(), reason))
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
 		return nil, ErrNativeBroken
 	}
 
@@ -141,26 +163,23 @@ func (c *HelperClient) CollectPassword(ctx context.Context, reason string) ([]by
 func (c *HelperClient) Capability(ctx context.Context) (CapabilityState, error) {
 	resp, err := c.do(ctx, NewStatusRequest(c.id()))
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return CapabilityBroken, ctxErr
+		}
 		return CapabilityBroken, ErrNativeBroken
 	}
 	return capabilityFromHelperStatus(resp.Status), nil
 }
 
 func (c *HelperClient) do(ctx context.Context, req HelperRequest) (HelperResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return HelperResponse{}, err
+	}
 	ch := make(chan HelperResponse, 1)
 
 	c.mu.Lock()
-	if c.stdin == nil {
-		c.mu.Unlock()
-		return HelperResponse{}, ErrNativeUnavailable
-	}
 	c.responses[req.ID] = ch
-	if err := json.NewEncoder(c.stdin).Encode(req); err != nil {
-		delete(c.responses, req.ID)
-		c.mu.Unlock()
-		return HelperResponse{}, err
-	}
-	if err := c.stdin.Flush(); err != nil {
+	if err := c.writeRequestLocked(req); err != nil {
 		delete(c.responses, req.ID)
 		c.mu.Unlock()
 		return HelperResponse{}, err
@@ -175,10 +194,29 @@ func (c *HelperClient) do(ctx context.Context, req HelperRequest) (HelperRespons
 		return resp, nil
 	case <-ctx.Done():
 		c.mu.Lock()
-		delete(c.responses, req.ID)
+		_, pending := c.responses[req.ID]
+		if pending {
+			delete(c.responses, req.ID)
+			_ = c.writeRequestLocked(NewCancelRequest(req.ID))
+		}
 		c.mu.Unlock()
+		if !pending {
+			if resp, ok := <-ch; ok {
+				return resp, nil
+			}
+		}
 		return HelperResponse{}, ctx.Err()
 	}
+}
+
+func (c *HelperClient) writeRequestLocked(req HelperRequest) error {
+	if c.stdin == nil {
+		return ErrNativeUnavailable
+	}
+	if err := json.NewEncoder(c.stdin).Encode(req); err != nil {
+		return err
+	}
+	return c.stdin.Flush()
 }
 
 func (c *HelperClient) readLoop(scanner *bufio.Scanner) {

@@ -18,9 +18,26 @@ struct HelperResponse: Encodable {
     var secret: String? = nil
 }
 
+private final class AuthorizationState {
+    let context = LAContext()
+}
+
+private final class PasswordPromptState {
+    var alert: NSAlert?
+}
+
+private enum ActiveRequest {
+    case pending
+    case authorization(AuthorizationState)
+    case password(PasswordPromptState)
+}
+
 final class HelperRuntime {
     private let encoder = JSONEncoder()
     private let writeQueue = DispatchQueue(label: "me.ritik.forged.auth.write")
+    private let stateLock = NSLock()
+    private var activeRequests: [String: ActiveRequest] = [:]
+    private var seenRequestIDs = Set<String>()
     private var inputBuffer = Data()
 
     // start wires up stdin and lock observers. The caller runs the NSApplication
@@ -39,6 +56,8 @@ final class HelperRuntime {
         stdinHandle.readabilityHandler = { [weak self] handle in
             let data = handle.availableData
             if data.isEmpty {
+                handle.readabilityHandler = nil
+                self?.cancelAllAuthorizations()
                 exit(0)
             }
             self?.ingest(data)
@@ -57,23 +76,38 @@ final class HelperRuntime {
     }
 
     private func handle(_ req: HelperRequest) {
+        if req.type == "cancel" {
+            cancelRequest(id: req.id)
+            return
+        }
+        guard let id = req.id, !id.isEmpty else {
+            emit(HelperResponse(id: req.id, type: req.type, status: "failed", provider: "local-authentication", message: "missing request id"))
+            return
+        }
+        guard claimRequest(id: id) else { return }
+
         switch req.type {
         case "authorize":
-            authorize(request: req)
+            authorize(request: req, id: id)
         case "collect-password":
-            collectPassword(request: req)
+            collectPassword(request: req, id: id)
         case "subscribe-locks":
-            emit(HelperResponse(id: req.id, type: req.type, status: "ok", provider: "local-authentication", message: nil))
+            guard finishPendingRequest(id: id) else { return }
+            emit(HelperResponse(id: id, type: req.type, status: "ok", provider: "local-authentication", message: nil))
         case "status":
             let (status, message) = capabilityStatus()
-            emit(HelperResponse(id: req.id, type: req.type, status: status, provider: "local-authentication", message: message))
+            guard finishPendingRequest(id: id) else { return }
+            emit(HelperResponse(id: id, type: req.type, status: status, provider: "local-authentication", message: message))
         default:
-            emit(HelperResponse(id: req.id, type: req.type, status: "failed", provider: "local-authentication", message: "unsupported request"))
+            guard finishPendingRequest(id: id) else { return }
+            emit(HelperResponse(id: id, type: req.type, status: "failed", provider: "local-authentication", message: "unsupported request"))
         }
     }
 
-    private func authorize(request: HelperRequest) {
-        let context = LAContext()
+    private func authorize(request: HelperRequest, id: String) {
+        let state = AuthorizationState()
+        let context = state.context
+        guard beginAuthorization(state, id: id) else { return }
         if #available(macOS 10.12.2, *) {
             context.touchIDAuthenticationAllowableReuseDuration = 0
         }
@@ -81,47 +115,115 @@ final class HelperRuntime {
         let policy: LAPolicy = .deviceOwnerAuthentication
 
         guard context.canEvaluatePolicy(policy, error: &policyError) else {
+            guard finishAuthorization(id: id, state: state) else { return }
             let status = helperUnavailableStatus(policyError as? LAError)
-            emit(HelperResponse(id: request.id, type: request.type, status: status, provider: "local-authentication", message: policyError?.localizedDescription))
+            emit(HelperResponse(id: id, type: request.type, status: status, provider: "local-authentication", message: policyError?.localizedDescription))
             return
         }
 
         let reason = (request.reason?.isEmpty == false ? request.reason! : "Authenticate to continue")
         context.evaluatePolicy(policy, localizedReason: reason) { [weak self] success, error in
             guard let self else { return }
+            guard self.finishAuthorization(id: id, state: state) else { return }
             if success {
-                self.emit(HelperResponse(id: request.id, type: request.type, status: "ok", provider: "local-authentication", message: nil))
+                self.emit(HelperResponse(id: id, type: request.type, status: "ok", provider: "local-authentication", message: nil))
                 return
             }
 
             if let laError = error as? LAError {
                 switch laError.code {
                 case .userCancel, .appCancel, .systemCancel:
-                    self.emit(HelperResponse(id: request.id, type: request.type, status: "canceled", provider: "local-authentication", message: laError.localizedDescription))
+                    self.emit(HelperResponse(id: id, type: request.type, status: "canceled", provider: "local-authentication", message: laError.localizedDescription))
                     return
                 case .notInteractive:
-                    self.emit(HelperResponse(id: request.id, type: request.type, status: "unavailable_by_environment", provider: "local-authentication", message: laError.localizedDescription))
+                    self.emit(HelperResponse(id: id, type: request.type, status: "unavailable_by_environment", provider: "local-authentication", message: laError.localizedDescription))
                     return
                 case .biometryNotAvailable, .biometryNotEnrolled, .biometryLockout, .passcodeNotSet:
-                    self.emit(HelperResponse(id: request.id, type: request.type, status: "unavailable_by_platform", provider: "local-authentication", message: laError.localizedDescription))
+                    self.emit(HelperResponse(id: id, type: request.type, status: "unavailable_by_platform", provider: "local-authentication", message: laError.localizedDescription))
                     return
                 default:
                     break
                 }
             }
 
-            self.emit(HelperResponse(id: request.id, type: request.type, status: "failed", provider: "local-authentication", message: error?.localizedDescription))
+            self.emit(HelperResponse(id: id, type: request.type, status: "failed", provider: "local-authentication", message: error?.localizedDescription))
+        }
+    }
+
+    private func claimRequest(id: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard !seenRequestIDs.contains(id) else { return false }
+        seenRequestIDs.insert(id)
+        activeRequests[id] = .pending
+        return true
+    }
+
+    private func finishPendingRequest(id: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let request = activeRequests[id], case .pending = request else { return false }
+        activeRequests.removeValue(forKey: id)
+        return true
+    }
+
+    private func beginAuthorization(_ state: AuthorizationState, id: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let request = activeRequests[id], case .pending = request else { return false }
+        activeRequests[id] = .authorization(state)
+        return true
+    }
+
+    private func finishAuthorization(id: String, state: AuthorizationState) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let request = activeRequests[id], case .authorization(let current) = request, current === state else { return false }
+        activeRequests.removeValue(forKey: id)
+        return true
+    }
+
+    private func cancelRequest(id: String?) {
+        guard let id, !id.isEmpty else { return }
+        stateLock.lock()
+        let request = activeRequests.removeValue(forKey: id)
+        stateLock.unlock()
+        switch request {
+        case .authorization(let state):
+            state.context.invalidate()
+        case .password(let prompt):
+            abortPasswordPrompt(prompt.alert)
+        case .pending, nil:
+            break
+        }
+    }
+
+    private func cancelAllAuthorizations() {
+        stateLock.lock()
+        let requests = Array(activeRequests.values)
+        activeRequests.removeAll()
+        stateLock.unlock()
+        for request in requests {
+            switch request {
+            case .authorization(let state):
+                state.context.invalidate()
+            case .password(let prompt):
+                abortPasswordPrompt(prompt.alert)
+            case .pending:
+                break
+            }
         }
     }
 
     // collectPassword shows a native master-password prompt. Used for external
     // (SSH/signing) use once the device-unlock window has lapsed, where there is
     // no TUI to fall back to. Must run on the main thread for AppKit.
-    private func collectPassword(request: HelperRequest) {
+    private func collectPassword(request: HelperRequest, id: String) {
+        let prompt = PasswordPromptState()
+        guard beginPasswordPrompt(prompt, id: id) else { return }
+
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-
-            NSApp.activate(ignoringOtherApps: true)
 
             let alert = NSAlert()
             alert.messageText = "Forged is locked"
@@ -134,12 +236,59 @@ final class HelperRuntime {
             alert.accessoryView = field
             alert.window.initialFirstResponder = field
 
-            if alert.runModal() == .alertFirstButtonReturn {
+            guard self.attachPasswordAlert(alert, prompt: prompt, id: id) else { return }
+            guard self.activatePasswordPrompt(prompt, id: id) else { return }
+
+            let result = alert.runModal()
+            guard self.finishPasswordPrompt(prompt, id: id) else { return }
+            if result == .alertFirstButtonReturn {
                 let encoded = Data(field.stringValue.utf8).base64EncodedString()
-                self.emit(HelperResponse(id: request.id, type: request.type, status: "ok", provider: "local-authentication", message: nil, secret: encoded))
+                self.emit(HelperResponse(id: id, type: request.type, status: "ok", provider: "local-authentication", message: nil, secret: encoded))
             } else {
-                self.emit(HelperResponse(id: request.id, type: request.type, status: "canceled", provider: "local-authentication", message: nil))
+                self.emit(HelperResponse(id: id, type: request.type, status: "canceled", provider: "local-authentication", message: nil))
             }
+        }
+    }
+
+    private func beginPasswordPrompt(_ prompt: PasswordPromptState, id: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let request = activeRequests[id], case .pending = request else { return false }
+        activeRequests[id] = .password(prompt)
+        return true
+    }
+
+    private func attachPasswordAlert(_ alert: NSAlert, prompt: PasswordPromptState, id: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let request = activeRequests[id], case .password(let current) = request, current === prompt else { return false }
+        prompt.alert = alert
+        return true
+    }
+
+    private func activatePasswordPrompt(_ prompt: PasswordPromptState, id: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let request = activeRequests[id], case .password(let current) = request, current === prompt else { return false }
+        NSApp.activate(ignoringOtherApps: true)
+        return true
+    }
+
+    private func finishPasswordPrompt(_ prompt: PasswordPromptState, id: String) -> Bool {
+        stateLock.lock()
+        defer { stateLock.unlock() }
+        guard let request = activeRequests[id], case .password(let current) = request, current === prompt else { return false }
+        activeRequests.removeValue(forKey: id)
+        return true
+    }
+
+    private func abortPasswordPrompt(_ alert: NSAlert?) {
+        guard let alert else { return }
+        RunLoop.main.perform(inModes: [.default, .modalPanel, .eventTracking]) {
+            if NSApp.modalWindow === alert.window {
+                NSApp.abortModal()
+            }
+            alert.window.orderOut(nil)
         }
     }
 

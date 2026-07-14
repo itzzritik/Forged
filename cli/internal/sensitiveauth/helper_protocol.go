@@ -22,6 +22,7 @@ type HelperResponse struct {
 
 const (
 	helperTypeAuthorize       = "authorize"
+	helperTypeCancel          = "cancel"
 	helperTypeCollectPassword = "collect-password"
 	helperTypeStatus          = "status"
 	helperTypeSubscribe       = "subscribe-locks"
@@ -44,6 +45,13 @@ func NewAuthorizeRequest(id string, action Action) HelperRequest {
 		Type:   helperTypeAuthorize,
 		Action: string(action),
 		Reason: action.NativeReason(),
+	}
+}
+
+func NewCancelRequest(id string) HelperRequest {
+	return HelperRequest{
+		ID:   id,
+		Type: helperTypeCancel,
 	}
 }
 
