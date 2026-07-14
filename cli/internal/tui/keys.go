@@ -124,6 +124,7 @@ type keyBrowserState struct {
 	refreshing bool
 	err        string
 	notice     string
+	refreshErr string
 
 	all      []actions.KeySummary
 	rows     []actions.KeySummary
@@ -563,7 +564,7 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 			SearchView:   theme.AdaptTextInputPlaceholder(m.keyBrowser.input.View(), m.keyBrowser.input.Value()),
 			SearchQuery:  m.keyBrowser.input.Value(),
 			SearchActive: m.keyBrowser.searchActive,
-			SearchNotice: m.keyBrowser.notice,
+			SearchNotice: m.keyBrowserNotice(),
 			CountLabel:   m.keyBrowserCountLabel(),
 			Rows:         browserRows,
 			SelectedIndex: func() int {
@@ -1498,12 +1499,12 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 
 	if msg.err != nil {
 		errorText := m.reportError("keys.list", msg.err)
+		m.keyBrowser.loading = false
 		switch current.ID {
 		case RouteKeysBrowser:
-			m.keyBrowser.loading = false
 			m.keyBrowser.refreshing = false
 			if msg.preserve && m.keyBrowser.loaded {
-				m.keyBrowser.notice = errorText
+				m.keyBrowser.refreshErr = errorText
 				return m, nil
 			}
 			m.keyBrowser.err = errorText
@@ -2025,6 +2026,7 @@ func (m *model) prepareKeyBrowser(keys []actions.KeySummary, query string, notic
 	m.keyBrowser.refreshing = false
 	m.keyBrowser.err = ""
 	m.keyBrowser.notice = strings.TrimSpace(notice)
+	m.keyBrowser.refreshErr = ""
 	m.keyBrowser.all = keys
 	m.keyBrowser.input = newKeyInput("Search keys")
 	m.keyBrowser.input.SetValue(query)
@@ -2101,6 +2103,7 @@ func (m *model) nextKeyListID() int {
 func (m *model) refreshKeyBrowser(sync bool) tea.Cmd {
 	m.keyBrowser.refreshing = true
 	m.keyBrowser.err = ""
+	m.keyBrowser.refreshErr = ""
 	id := m.nextKeyListID()
 	if sync {
 		return tea.Batch(m.spinner.Tick, m.syncAndListKeys(id))
@@ -2156,9 +2159,18 @@ func (m *model) storeKeyCache(keys []actions.KeySummary) {
 		preserveName = key.Name
 	}
 	m.keyBrowser.all = keys
+	m.keyBrowser.loading = false
 	m.keyBrowser.loaded = true
+	m.keyBrowser.refreshErr = ""
 	m.refreshKeyBrowserRows()
 	m.selectKeyBrowserByName(preserveName)
+}
+
+func (m *model) keyBrowserNotice() string {
+	if m.keyBrowser.refreshErr != "" {
+		return m.keyBrowser.refreshErr
+	}
+	return m.keyBrowser.notice
 }
 
 func (m *model) selectKeyBrowserByName(name string) {
