@@ -451,7 +451,11 @@ func (m *model) changePasswordCmd(id int, currentPassword []byte, newPassword []
 	changePassword := m.changePassword
 	currentCopy := append([]byte(nil), currentPassword...)
 	newCopy := append([]byte(nil), newPassword...)
+	clear(currentPassword)
+	clear(newPassword)
 	return func() tea.Msg {
+		defer clear(currentCopy)
+		defer clear(newCopy)
 		result, err := changePassword(currentCopy, newCopy)
 		return manageChangePasswordFinishedMsg{id: id, result: result, err: err}
 	}
@@ -492,6 +496,7 @@ func (m *model) scheduleManageAutoReturn(id int) tea.Cmd {
 }
 
 func (m *model) returnFromManageFlow() tea.Cmd {
+	m.discardPasswordInput()
 	m.screen = screenDashboard
 	m.passwordAuth = ""
 	m.passwordBusy = false
@@ -622,6 +627,7 @@ func (m *model) handleManageChangePasswordFinishedMsg(msg manageChangePasswordFi
 		detail = "Returning to Manage..."
 	}
 
+	m.discardPasswordInput()
 	m.screen = screenDashboard
 	m.passwordAuth = ""
 	m.manage.success = m.newManageSuccessState(

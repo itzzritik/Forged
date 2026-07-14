@@ -154,6 +154,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	if err := ReadMessage(conn, &req); err != nil {
 		return
 	}
+	defer clear(req.Args)
 
 	switch req.Command {
 	case CmdSensitiveAuth, CmdSensitivePassword:
@@ -163,6 +164,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	s.logger.Debug("ipc request", "command", req.Command)
 
 	resp := s.dispatch(req)
+	defer clear(resp.Data)
 	WriteMessage(conn, resp)
 }
 
@@ -756,18 +758,15 @@ func (s *Server) handleSensitivePassword(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
+	clear(raw)
+	password := []byte(a.Password)
+	a.Password = ""
+	defer clear(password)
 
 	action, err := sensitiveauth.ParseAction(a.Action)
 	if err != nil {
 		return ErrorResponse(err)
 	}
-
-	password := []byte(a.Password)
-	defer func() {
-		for i := range password {
-			password[i] = 0
-		}
-	}()
 
 	result, err := s.authBroker.AuthorizeWithPassword(action, password)
 	if err != nil {

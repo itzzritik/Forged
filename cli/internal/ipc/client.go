@@ -36,13 +36,17 @@ func (c *Client) CallWithTimeout(command string, args any, timeout time.Duration
 	if args != nil {
 		b, err := json.Marshal(args)
 		if err != nil {
+			clear(b)
 			return Response{}, fmt.Errorf("Marshaling args: %w", err)
 		}
 		rawArgs = b
+		args = nil
 	}
 
 	req := Request{Command: command, Args: rawArgs}
-	if err := WriteMessage(conn, req); err != nil {
+	err = WriteMessage(conn, req)
+	clear(rawArgs)
+	if err != nil {
 		return Response{}, fmt.Errorf("Sending request: %w", err)
 	}
 

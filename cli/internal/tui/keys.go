@@ -1326,8 +1326,11 @@ func (m *model) copyPrivateKey(password []byte) tea.Cmd {
 	copySensitiveText := m.copySensitiveText
 	name := strings.TrimSpace(m.keyDetail.key.Name)
 	paths := config.DefaultPaths()
+	passwordCopy := append([]byte(nil), password...)
+	clear(password)
 	return func() tea.Msg {
-		detail, err := actions.ViewFullKey(paths, name, password)
+		defer clear(passwordCopy)
+		detail, err := actions.ViewFullKey(paths, name, passwordCopy)
 		if err != nil {
 			return keyPrivateCopyFinishedMsg{err: err}
 		}
@@ -1409,13 +1412,16 @@ func (m *model) exportVault(password []byte) tea.Cmd {
 	paths := config.DefaultPaths()
 	outPath := strings.TrimSpace(m.keyExport.pathInput.Value())
 	token := strings.TrimSpace(m.keyExport.token)
+	passwordCopy := append([]byte(nil), password...)
+	clear(password)
 	return func() tea.Msg {
+		defer clear(passwordCopy)
 		var (
 			result actions.ExportResult
 			err    error
 		)
-		if len(password) > 0 {
-			result, err = actions.ExportVault(paths, outPath, password)
+		if len(passwordCopy) > 0 {
+			result, err = actions.ExportVault(paths, outPath, passwordCopy)
 		} else {
 			result, err = actions.ExportVaultWithToken(paths, outPath, token)
 		}
@@ -1428,11 +1434,10 @@ func (m *model) authorizeKeyExport(password []byte) tea.Cmd {
 	id := m.keyExportID
 	paths := config.DefaultPaths()
 	passwordCopy := append([]byte(nil), password...)
+	clear(password)
 	return func() tea.Msg {
+		defer clear(passwordCopy)
 		token, err := actions.AuthorizeExport(paths, passwordCopy)
-		for i := range passwordCopy {
-			passwordCopy[i] = 0
-		}
 		return keyExportAuthorizedMsg{id: id, token: token, err: err}
 	}
 }
@@ -1604,6 +1609,7 @@ func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (
 		}
 		m.passwordOverlay = false
 		m.passwordAuth = ""
+		m.discardPasswordInput()
 		m.screen = screenDashboard
 		m.keyDetail.busy = false
 		return m, m.startPrivateClipboard(msg.name, msg.lease)
@@ -1876,6 +1882,7 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 		}
 		m.passwordOverlay = false
 		m.passwordAuth = ""
+		m.discardPasswordInput()
 		m.screen = screenDashboard
 		m.keyExport.exporting = false
 		m.keyExport.err = ""
@@ -1921,6 +1928,7 @@ func (m *model) handleKeyExportAuthorizedMsg(msg keyExportAuthorizedMsg) (tea.Mo
 	}
 	m.passwordOverlay = false
 	m.passwordAuth = ""
+	m.discardPasswordInput()
 	m.screen = screenDashboard
 	m.keyExport.token = strings.TrimSpace(msg.token)
 	m.keyExport.err = ""

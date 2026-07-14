@@ -187,6 +187,7 @@ func viewKey(paths config.Paths, name string, full bool) (KeyDetail, error) {
 	if err != nil {
 		return KeyDetail{}, err
 	}
+	defer clear(resp.Data)
 
 	var result KeyDetail
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
@@ -213,6 +214,7 @@ func authorizeSensitiveResult(paths config.Paths, action sensitiveauth.Action, p
 func authorizeSensitiveResultWithOptions(paths config.Paths, action sensitiveauth.Action, password []byte, force bool) (sensitiveauth.AuthorizeResult, error) {
 	client := ipc.NewClient(paths.CtlSocket())
 	parseResult := func(raw json.RawMessage) (sensitiveauth.AuthorizeResult, error) {
+		defer clear(raw)
 		var result sensitiveauth.AuthorizeResult
 		if err := json.Unmarshal(raw, &result); err != nil {
 			return sensitiveauth.AuthorizeResult{}, fmt.Errorf("Parsing auth response: %w", err)

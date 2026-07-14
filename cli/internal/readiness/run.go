@@ -128,6 +128,7 @@ func (e *Engine) restoreLinkedVault(state *repairState, opts RunOptions) error {
 	}
 
 	password, err := opts.PromptPassword("Enter your Forged master password to restore your linked vault on this device:")
+	defer clear(password)
 	if err != nil || len(password) == 0 {
 		state.result.Next = NextActionNeedsPassword
 		return nil

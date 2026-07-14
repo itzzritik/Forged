@@ -29,6 +29,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Runtime sync errors must clear the in-memory syncing flag so stale status cannot leave the header spinner active forever.
 - Startup unlock uses the shared auth broker: desktop TUI tries System Auth and falls back to the universal master-password page; headless TUI hydrates enrolled device unlock without prompting.
 - Master-password screens share one component for create, restore, unlock fallback, export, repair, and change-password flows.
+- Valid password submissions reset every field immediately; leaving a password screen discards the component, and background commands clear their owned byte copies when done.
 - Printable keys always reach focused inputs. Ctrl-C is the only global quit shortcut; startup System Auth retry uses Ctrl-A while the password field is empty.
 - Browser login remains cancelable until approval arrives. While the daemon commits the account, screen actions are hidden and ignored; Ctrl-C remains the global force-quit shortcut.
 - Private-key clipboard copies use sensitive platform hints when available, show a 45-second countdown, and clear only while the copied value is still current; normal TUI exit also clears an active copy.

@@ -127,6 +127,11 @@ func (p *PasswordInput) ClearStatus() {
 	p.info = ""
 }
 
+func (p *PasswordInput) Clear() {
+	p.clearValues()
+	p.ClearStatus()
+}
+
 func (p *PasswordInput) FocusIndex() int {
 	return p.focus
 }
@@ -223,7 +228,9 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 		}
 	}
 
-	return []byte(primary), nil
+	password := []byte(primary)
+	p.clearValues()
+	return password, nil
 }
 
 func (p *PasswordInput) SubmitChangePassword() ([]byte, []byte, error) {
@@ -245,7 +252,21 @@ func (p *PasswordInput) SubmitChangePassword() ([]byte, []byte, error) {
 		return nil, nil, fmt.Errorf("Passwords do not match")
 	}
 
-	return []byte(current), []byte(next), nil
+	currentPassword := []byte(current)
+	newPassword := []byte(next)
+	p.clearValues()
+	return currentPassword, newPassword, nil
+}
+
+func (p *PasswordInput) clearValues() {
+	for index := range p.fields {
+		p.fields[index].Reset()
+		p.fields[index].Blur()
+	}
+	p.focus = 0
+	if len(p.fields) > 0 {
+		p.fields[0].Focus()
+	}
 }
 
 func (p *PasswordInput) View(spinner string, labels ...string) string {

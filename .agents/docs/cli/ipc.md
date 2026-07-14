@@ -13,6 +13,7 @@ stable: yes
 ## Must know
 
 - Socket ownership and `0600` perms are the main access control. Sensitive operations still add broker checks on top.
+- Mutable JSON and framing buffers are cleared after use to shorten sensitive-data lifetime; the compatible wire format still uses transient JSON strings.
 - Vault-backed handlers can be called while the daemon is cold; they should return a locked error, not panic.
 - `proto/ipc.md` is not current. Code is the source of truth for the command set.
 - `sensitive-auth` takes an `action` and optional `force`. `force=true` is used for launch auth.

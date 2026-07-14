@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/charmbracelet/bubbles/spinner"
@@ -139,8 +140,49 @@ type loginFinishedMsg struct {
 
 type restoreFinishedMsg struct {
 	id       int
-	password []byte
+	password *passwordBuffer
 	err      error
+}
+
+type passwordBuffer struct {
+	mu    sync.Mutex
+	value []byte
+}
+
+func newPasswordBuffer(password []byte) *passwordBuffer {
+	buffer := &passwordBuffer{value: append([]byte(nil), password...)}
+	clear(password)
+	return buffer
+}
+
+func (b *passwordBuffer) use(fn func([]byte) error) error {
+	b.mu.Lock()
+	if len(b.value) == 0 {
+		b.mu.Unlock()
+		return errors.New("password is unavailable")
+	}
+	working := append([]byte(nil), b.value...)
+	b.mu.Unlock()
+	defer clear(working)
+	return fn(working)
+}
+
+func (b *passwordBuffer) take() []byte {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	value := b.value
+	b.value = nil
+	return value
+}
+
+func (b *passwordBuffer) clear() {
+	if b == nil {
+		return
+	}
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	clear(b.value)
+	b.value = nil
 }
 
 type maintenanceFinishedMsg struct {
@@ -313,6 +355,7 @@ type model struct {
 	loginCancel     context.CancelFunc
 	loginCommitting bool
 	restoreID       int
+	restorePassword *passwordBuffer
 
 	maintenanceID           int
 	maintenanceBusy         bool
@@ -411,7 +454,10 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("TUI open-link dependency is required")
 	}
 
-	final, err := tea.NewProgram(newModel(intent, deps, components.NewSpinner())).Run()
+	initial := newModel(intent, deps, components.NewSpinner())
+	final, err := tea.NewProgram(initial).Run()
+	initial.clearRestorePassword()
+	initial.discardPasswordInput()
 	closeErr := deps.CloseClipboard()
 	if err != nil {
 		return Result{}, errors.Join(err, closeErr)
@@ -557,10 +603,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.summary = readiness.RepairSummary{}
 			m.maintenanceAuthEmail = ""
 			m.maintenanceUsedPassword = false
+			m.discardPasswordInput()
 			m.screen = screenDashboard
 			m.systemHeader = systemHeaderHealthy
 			return m, nil
 		}
+		m.discardPasswordInput()
 		m.screen = screenDashboard
 		m.systemHeader = systemHeaderChecking
 		needsRepair := msg.snapshot.State != readiness.StateReady &&
@@ -654,6 +702,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.accountEmail = msg.creds.Email
 		m.accountName = msg.creds.Name
 		m.passwordAuth = msg.creds.Email
+		m.discardPasswordInput()
 		m.screen = screenDashboard
 		m.loginScreen.Waiting = true
 		m.loginScreen.Status = "Finishing account setup"
@@ -666,16 +715,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, m.startMaintenance(maintenanceTriggerPostLogin, nil, false, "Finishing account setup", msg.creds.Email)
 	case restoreFinishedMsg:
 		if msg.id != m.restoreID {
-			for i := range msg.password {
-				msg.password[i] = 0
-			}
+			msg.password.clear()
 			return m, nil
+		}
+		if m.restorePassword == msg.password {
+			m.restorePassword = nil
 		}
 		m.passwordBusy = false
 		if msg.err != nil {
-			for i := range msg.password {
-				msg.password[i] = 0
-			}
+			msg.password.clear()
 			switch {
 			case errors.Is(msg.err, readiness.ErrInvalidRestorePassword):
 				m.passwordInput.SetError("Couldn't decrypt vault, incorrect password")
@@ -686,10 +734,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		}
-		cmd := m.startMaintenance(maintenanceTriggerUnlock, msg.password, false, "Setting up Forged", m.passwordAuth)
-		for i := range msg.password {
-			msg.password[i] = 0
-		}
+		password := msg.password.take()
+		cmd := m.startMaintenance(maintenanceTriggerUnlock, password, false, "Setting up Forged", m.passwordAuth)
+		clear(password)
 		return m, cmd
 	case maintenanceFinishedMsg:
 		if msg.id != m.maintenanceID {
@@ -1533,6 +1580,9 @@ func (m *model) footerActions() []shell.FooterAction {
 func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
+		if m.passwordInput != nil {
+			m.passwordInput.Clear()
+		}
 		return m, tea.Quit
 	}
 	if m.clipboardBusy {
@@ -1818,12 +1868,17 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.passwordOverlay = false
 			m.passwordBusy = false
 			m.passwordAuth = ""
+			m.discardPasswordInput()
 			m.screen = screenDashboard
 			return m, nil
 		}
 		if m.session.Back() {
+			m.discardPasswordInput()
 			m.passwordAuth = ""
 			return m, m.showCurrentRoute()
+		}
+		if m.passwordInput != nil {
+			m.passwordInput.Clear()
 		}
 		return m, tea.Quit
 	case "ctrl+a":
@@ -1838,6 +1893,9 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.passwordInput != nil && m.passwordInput.FieldCount() > 1 && m.passwordInput.FocusIndex() < m.passwordInput.FieldCount()-1 {
 			m.passwordInput.MoveNext()
 			return m, nil
+		}
+		if m.passwordFlow == passwordManageChange {
+			return m, m.submitManageChangePassword()
 		}
 		password, err := m.passwordInput.Submit()
 		switch m.passwordFlow {
@@ -1884,8 +1942,6 @@ func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				return m, nil
 			}
 			return m, m.startDoctorRepair(password)
-		case passwordManageChange:
-			return m, m.submitManageChangePassword()
 		default:
 			if err != nil {
 				m.passwordInput.SetError(err.Error())
@@ -2209,6 +2265,7 @@ func (m *model) assessCurrentState() tea.Cmd {
 }
 
 func (m *model) startLoginFlow() tea.Cmd {
+	m.discardPasswordInput()
 	m.screen = screenLogin
 	m.notice = notice{}
 	m.loginCommitting = false
@@ -2275,16 +2332,15 @@ func (m *model) commitLogin(id int, creds actions.AccountCredentials) tea.Cmd {
 
 func (m *model) restoreLinkedVault(id int, password []byte) tea.Cmd {
 	restore := m.restoreVault
-	passwordCopy := append([]byte(nil), password...)
+	m.clearRestorePassword()
+	passwordBuffer := newPasswordBuffer(password)
+	m.restorePassword = passwordBuffer
 	return func() tea.Msg {
-		err := restore(passwordCopy)
+		err := passwordBuffer.use(restore)
 		if err != nil {
-			for i := range passwordCopy {
-				passwordCopy[i] = 0
-			}
-			return restoreFinishedMsg{id: id, err: err}
+			passwordBuffer.clear()
 		}
-		return restoreFinishedMsg{id: id, password: passwordCopy, err: err}
+		return restoreFinishedMsg{id: id, password: passwordBuffer, err: err}
 	}
 }
 
@@ -2311,6 +2367,7 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 	createVault := m.createVault
 	unlock := m.unlockSensitiveLaunch
 	passwordCopy := append([]byte(nil), password...)
+	clear(password)
 
 	return tea.Batch(
 		m.spinner.Tick,
@@ -2416,6 +2473,7 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 			m.showDashboardNotice(m.summaryMessage(), dashboardscreen.ToneSuccess)
 		}
 		m.popWizardRoutes()
+		m.discardPasswordInput()
 		m.screen = screenDashboard
 		return nil
 	default:
@@ -2454,7 +2512,9 @@ func (m *model) systemHeaderForSnapshot(snapshot readiness.Snapshot) systemHeade
 func (m *model) unlockSensitiveLaunchCmd(password []byte) tea.Cmd {
 	unlock := m.unlockSensitiveLaunch
 	passwordCopy := append([]byte(nil), password...)
+	clear(password)
 	return func() tea.Msg {
+		defer clear(passwordCopy)
 		result, err := unlock(passwordCopy)
 		return startupUnlockFinishedMsg{result: result, err: err}
 	}
@@ -2502,6 +2562,7 @@ func (m *model) submitStartupUnlock(password []byte) tea.Cmd {
 
 func (m *model) finishVaultBoot() tea.Cmd {
 	m.notice = notice{}
+	m.discardPasswordInput()
 	m.screen = screenDashboard
 	if m.systemHeader == systemHeaderChecking {
 		m.systemHeader = m.systemHeaderForSnapshot(m.snapshot)
@@ -2601,6 +2662,7 @@ func (m *model) maintenanceModeForTrigger(trigger maintenanceTrigger) readiness.
 func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.notice = notice{}
 	m.onboardingCursor = 0
+	m.discardPasswordInput()
 	m.screen = screenDashboard
 	if m.session.Current().ID == RouteAccountLogin {
 		m.session.ReplaceCurrent(Route{ID: RouteDashboardHome})
@@ -2624,6 +2686,7 @@ func (m *model) showPasswordScreen(flow passwordFlow, authEmail string, errorTex
 }
 
 func (m *model) showPasswordScreenOnRoute(route RouteID, flow passwordFlow, authEmail string, errorText string, reuseCurrentRoute bool) {
+	m.discardPasswordInput()
 	if !reuseCurrentRoute && m.session.Current().ID != route {
 		m.session.Push(Route{ID: route})
 	}
@@ -2675,8 +2738,25 @@ func (m *model) showPasswordScreenOnRoute(route RouteID, flow passwordFlow, auth
 	}
 }
 
+func (m *model) discardPasswordInput() {
+	if m.passwordInput == nil {
+		return
+	}
+	m.passwordInput.Clear()
+	m.passwordInput = nil
+}
+
+func (m *model) clearRestorePassword() {
+	if m.restorePassword == nil {
+		return
+	}
+	m.restorePassword.clear()
+	m.restorePassword = nil
+}
+
 func (m *model) showCurrentRoute() tea.Cmd {
 	m.notice = notice{}
+	m.discardPasswordInput()
 	m.screen = screenDashboard
 	switch m.session.Current().ID {
 	case RouteAccountLogin:

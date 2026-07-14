@@ -82,6 +82,7 @@ func ExportVaultWithToken(paths config.Paths, outPath string, token string) (Exp
 		}
 		return ExportResult{}, err
 	}
+	defer clear(resp.Data)
 
 	var keys []exportedKey
 	if err := json.Unmarshal(resp.Data, &keys); err != nil {
@@ -115,8 +116,10 @@ func ExportVaultWithToken(paths config.Paths, outPath string, token string) (Exp
 
 	data, err := json.MarshalIndent(export, "", "  ")
 	if err != nil {
+		clear(data)
 		return ExportResult{}, fmt.Errorf("Marshaling export: %w", err)
 	}
+	defer clear(data)
 	if err := os.WriteFile(outPath, data, 0o600); err != nil {
 		return ExportResult{}, fmt.Errorf("Writing export file: %w", err)
 	}

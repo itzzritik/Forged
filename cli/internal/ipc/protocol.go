@@ -37,8 +37,10 @@ func ErrorResponse(err error) Response {
 func WriteMessage(conn net.Conn, v any) error {
 	data, err := json.Marshal(v)
 	if err != nil {
+		clear(data)
 		return fmt.Errorf("Marshaling message: %w", err)
 	}
+	defer clear(data)
 
 	length := uint32(len(data))
 	if err := binary.Write(conn, binary.BigEndian, length); err != nil {
@@ -64,6 +66,7 @@ func ReadMessage(conn net.Conn, v any) error {
 	}
 
 	buf := make([]byte, length)
+	defer clear(buf)
 	if _, err := io.ReadFull(conn, buf); err != nil {
 		return fmt.Errorf("Reading payload: %w", err)
 	}
