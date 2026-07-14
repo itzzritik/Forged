@@ -19,7 +19,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Navigation is route-stack based, with boundaries so back behavior can return to dashboard or exit.
 - Body height is fixed. Pages that need more space must scroll or paginate themselves; import review sizes its window to the available body and key feedback stays bottom-docked.
 - Readiness establishes or restores a usable vault before it creates config files or enables the managed SSH include.
-- Vault-backed launch repairs degraded or stale machine state before showing the auth wall, so unlock happens against the daemon that will remain active.
+- Vault-backed launch gives an installed running service a bounded boot grace, then repairs degraded, stale, or wrong-owner state before showing the auth wall so unlock uses the daemon that will remain active.
 - Maintenance stays on the current route: dashboard repairs run in the background with header status, while password setup and recovery use the existing busy state.
 - First setup or restore reuses the verified master password to hydrate the launch session and skips the duplicate startup auth wall when that succeeds.
 - Header status must settle from explicit model messages; startup unlock finalizes health from the current snapshot, runtime sync polls daemon status, and signing load errors render as an issue instead of an endless spinner.

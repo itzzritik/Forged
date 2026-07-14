@@ -57,7 +57,7 @@ func New(paths config.Paths) *Engine {
 		sleep: func() {
 			time.Sleep(500 * time.Millisecond)
 		},
-		serviceRetries: 6,
+		serviceRetries: 17,
 	}
 }
 

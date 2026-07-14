@@ -1,11 +1,14 @@
 package readiness
 
 import (
+	"strings"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 )
+
+const serviceReadyTimeout = 8 * time.Second
 
 func (e *Engine) ensureConfigFile(paths config.Paths) error {
 	if e != nil && e.ensureConfig != nil {
@@ -40,19 +43,30 @@ func (e *Engine) serviceRuntimeSpec() (daemon.RuntimeSpec, error) {
 }
 
 func (e *Engine) waitForServiceReady() (Snapshot, error) {
+	return e.waitForServiceReadyWhile(nil)
+}
+
+func (e *Engine) waitForServiceReadyWhile(keepWaiting func(Snapshot) bool) (Snapshot, error) {
 	retries := 1
 	if e != nil && e.serviceRetries > 0 {
 		retries = e.serviceRetries
 	}
+	deadline := time.Now().Add(serviceReadyTimeout)
 
 	var last Snapshot
 	for attempt := 0; attempt < retries; attempt++ {
+		if attempt > 0 && !time.Now().Before(deadline) {
+			break
+		}
 		updated, err := e.Assess()
 		if err != nil {
 			return updated, err
 		}
 		last = updated
 		if serviceHealthy(updated) {
+			return updated, nil
+		}
+		if keepWaiting != nil && !keepWaiting(updated) {
 			return updated, nil
 		}
 		if attempt == retries-1 {
@@ -104,4 +118,26 @@ func serviceNeedsRepair(snapshot Snapshot) bool {
 		return false
 	}
 	return !serviceHealthy(snapshot)
+}
+
+func serviceMayBeBooting(snapshot Snapshot) bool {
+	if !snapshot.Service.Installed ||
+		!snapshot.Service.ConfigValid ||
+		!snapshot.Service.Repairable ||
+		snapshot.Service.BinaryMissing ||
+		!snapshot.Service.Running {
+		return false
+	}
+	if snapshot.Service.PID > 0 && snapshot.DaemonPID > 0 && snapshot.Service.PID != snapshot.DaemonPID {
+		return false
+	}
+	currentBuild := strings.TrimSpace(snapshot.CurrentBuildID)
+	daemonBuild := strings.TrimSpace(snapshot.DaemonBuildID)
+	if currentBuild != "" && daemonBuild != "" && daemonBuild != currentBuild {
+		return false
+	}
+	return !snapshot.IPCSocketReady ||
+		!snapshot.AgentSocketReady ||
+		(snapshot.Service.PID > 0 && snapshot.DaemonPID == 0) ||
+		(currentBuild != "" && daemonBuild == "")
 }

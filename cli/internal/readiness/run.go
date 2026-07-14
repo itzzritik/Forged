@@ -157,6 +157,16 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 	if !serviceNeedsRepair(state.result.Snapshot) {
 		return nil
 	}
+	if serviceMayBeBooting(state.result.Snapshot) {
+		updated, err := e.waitForServiceReadyWhile(serviceMayBeBooting)
+		if err != nil {
+			return err
+		}
+		state.result.Snapshot = updated
+		if !serviceNeedsRepair(updated) {
+			return nil
+		}
+	}
 
 	if err := e.ensureServiceInstalled(); err != nil {
 		if updated, waitErr := e.waitForServiceReady(); waitErr == nil {
