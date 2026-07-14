@@ -5,7 +5,7 @@ applies_to:
   - cli/internal/crypto/**
 depends_on:
   - architecture/security-model.md
-last_verified: 2026-07-14
+last_verified: 2026-07-15
 stable: partial
 ---
 
@@ -21,6 +21,7 @@ The local vault is the encrypted source of truth for keys, metadata, and synced 
 - Closing a vault makes stale references unusable before its symmetric key is zeroed.
 - Password verification can recover the vault symmetric key without opening the whole vault for normal use.
 - Password change rewraps the vault symmetric key. It does not rotate that key today.
+- A failed password-change save restores the vault's previous in-memory KDF and protected-key header, so any later save cannot silently activate a password reported as failed.
 - Local unlock trust is device-local even though the vault itself is shared.
 - Private keys are now decrypted on demand instead of being kept plaintext in session memory.
 - Key removal validates any reviewed fingerprint while holding the vault transaction lock, before writing its tombstone.

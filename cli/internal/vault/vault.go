@@ -442,10 +442,17 @@ func (v *Vault) ChangePassword(newPassword []byte) error {
 	var protectedKeyArr [ProtectedKeySize]byte
 	copy(protectedKeyArr[:], newProtectedKey)
 
+	previousKDF := v.kdf
+	previousProtectedKey := v.protectedKey
 	v.kdf = newKDF
 	v.protectedKey = protectedKeyArr
 
-	return v.saveLocked()
+	if err := v.saveLocked(); err != nil {
+		v.kdf = previousKDF
+		v.protectedKey = previousProtectedKey
+		return err
+	}
+	return nil
 }
 
 func (v *Vault) ExportForSync() ([]byte, KDFParams, []byte, error) {
