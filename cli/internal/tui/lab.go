@@ -503,9 +503,7 @@ func labShortFingerprint(value string) string {
 	if value == "" {
 		return ""
 	}
-	if strings.HasPrefix(value, "SHA256:") {
-		value = strings.TrimPrefix(value, "SHA256:")
-	}
+	value = strings.TrimPrefix(value, "SHA256:")
 	return "SHA256:" + labTruncate(value, 12)
 }
 
