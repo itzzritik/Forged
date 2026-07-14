@@ -25,6 +25,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Header status must settle from explicit model messages; startup unlock finalizes health from the current snapshot, runtime sync polls daemon status, and signing load errors render as an issue instead of an endless spinner.
 - Doctor marks a daemon as outdated when its IPC build id does not match the current CLI build; Fix Issues restarts the managed service through readiness.
 - Doctor distinguishes unsupported System Auth from a prompt that is unavailable in the current environment.
+- Doctor checks stay in dependency order while their status icon and tone show changing health.
 - The Agent tab includes SSH Routing diagnostics. The page reads and clears route memory through daemon IPC and keeps route memory current with background polling while the page is open.
 - SSH Routing diagnostics reuse the Commit Signing browser-table pattern: selected item summary on top, a compact table below, and no manual refresh footer action.
 - Key deletion and commit-signing disable use an explicit review-and-confirm step. Once submitted, their non-cancelable work hides route navigation until it finishes.

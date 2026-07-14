@@ -3,7 +3,6 @@ package tui
 import (
 	"fmt"
 	"runtime"
-	"sort"
 	"strings"
 	"time"
 
@@ -15,16 +14,8 @@ import (
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
-const (
-	doctorSeverityDanger = iota
-	doctorSeverityWarning
-	doctorSeveritySuccess
-)
-
 type doctorRow struct {
-	screen   doctorscreen.Row
-	severity int
-	order    int
+	screen doctorscreen.Row
 }
 
 type doctorReportCopiedMsg struct {
@@ -275,12 +266,6 @@ func (m *model) doctorRows() []doctorRow {
 		m.doctorSyncAccountRow(),
 	}
 
-	sort.SliceStable(rows, func(i, j int) bool {
-		if rows[i].severity != rows[j].severity {
-			return rows[i].severity < rows[j].severity
-		}
-		return rows[i].order < rows[j].order
-	})
 	return rows
 }
 
@@ -293,8 +278,6 @@ func (m *model) doctorVaultRow(paths config.Paths) doctorRow {
 				Detail: paths.VaultFile(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    0,
 		}
 	}
 
@@ -309,8 +292,6 @@ func (m *model) doctorVaultRow(paths config.Paths) doctorRow {
 			Detail: detail,
 			Tone:   doctorscreen.ToneDanger,
 		},
-		severity: doctorSeverityDanger,
-		order:    0,
 	}
 }
 
@@ -323,8 +304,6 @@ func (m *model) doctorConfigRow(paths config.Paths) doctorRow {
 				Detail: paths.ConfigFile(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    1,
 		}
 	}
 	return doctorRow{
@@ -334,8 +313,6 @@ func (m *model) doctorConfigRow(paths config.Paths) doctorRow {
 			Detail: "Run Fix Issues",
 			Tone:   doctorscreen.ToneDanger,
 		},
-		severity: doctorSeverityDanger,
-		order:    1,
 	}
 }
 
@@ -348,8 +325,6 @@ func (m *model) doctorServiceRow() doctorRow {
 				Detail: "System service ready",
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    2,
 		}
 	}
 
@@ -370,8 +345,6 @@ func (m *model) doctorServiceRow() doctorRow {
 			Detail: detail,
 			Tone:   doctorscreen.ToneDanger,
 		},
-		severity: doctorSeverityDanger,
-		order:    2,
 	}
 }
 
@@ -389,8 +362,6 @@ func (m *model) doctorDaemonRow() doctorRow {
 					Detail: "Run Fix Issues",
 					Tone:   doctorscreen.ToneDanger,
 				},
-				severity: doctorSeverityDanger,
-				order:    3,
 			}
 		}
 		return doctorRow{
@@ -400,8 +371,6 @@ func (m *model) doctorDaemonRow() doctorRow {
 				Detail: detail,
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    3,
 		}
 	}
 	return doctorRow{
@@ -411,8 +380,6 @@ func (m *model) doctorDaemonRow() doctorRow {
 			Detail: "Run Fix Issues",
 			Tone:   doctorscreen.ToneDanger,
 		},
-		severity: doctorSeverityDanger,
-		order:    3,
 	}
 }
 
@@ -425,8 +392,6 @@ func (m *model) doctorIPCSocketRow(paths config.Paths) doctorRow {
 				Detail: paths.CtlSocket(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    4,
 		}
 	}
 	return doctorRow{
@@ -436,8 +401,6 @@ func (m *model) doctorIPCSocketRow(paths config.Paths) doctorRow {
 			Detail: paths.CtlSocket(),
 			Tone:   doctorscreen.ToneDanger,
 		},
-		severity: doctorSeverityDanger,
-		order:    4,
 	}
 }
 
@@ -450,8 +413,6 @@ func (m *model) doctorAgentSocketRow(paths config.Paths) doctorRow {
 				Detail: paths.AgentSocket(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    5,
 		}
 	}
 	return doctorRow{
@@ -461,8 +422,6 @@ func (m *model) doctorAgentSocketRow(paths config.Paths) doctorRow {
 			Detail: paths.AgentSocket(),
 			Tone:   doctorscreen.ToneDanger,
 		},
-		severity: doctorSeverityDanger,
-		order:    5,
 	}
 }
 
@@ -475,8 +434,6 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 				Detail: "Fix Issues will re-enable it",
 				Tone:   doctorscreen.ToneWarning,
 			},
-			severity: doctorSeverityWarning,
-			order:    6,
 		}
 	}
 	if m.snapshot.SSHEnabled {
@@ -487,8 +444,6 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 				Detail: "Forged SSH include is configured",
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    6,
 		}
 	}
 	return doctorRow{
@@ -498,8 +453,6 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 			Detail: "Run Fix Issues",
 			Tone:   doctorscreen.ToneDanger,
 		},
-		severity: doctorSeverityDanger,
-		order:    6,
 	}
 }
 
@@ -512,8 +465,6 @@ func (m *model) doctorSSHConfigRow(paths config.Paths) doctorRow {
 				Detail: "Fix Issues will re-enable it",
 				Tone:   doctorscreen.ToneWarning,
 			},
-			severity: doctorSeverityWarning,
-			order:    7,
 		}
 	}
 	if m.snapshot.ManagedConfigReady {
@@ -524,8 +475,6 @@ func (m *model) doctorSSHConfigRow(paths config.Paths) doctorRow {
 				Detail: paths.SSHManagedConfig(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    7,
 		}
 	}
 	return doctorRow{
@@ -535,8 +484,6 @@ func (m *model) doctorSSHConfigRow(paths config.Paths) doctorRow {
 			Detail: paths.SSHManagedConfig(),
 			Tone:   doctorscreen.ToneDanger,
 		},
-		severity: doctorSeverityDanger,
-		order:    7,
 	}
 }
 
@@ -549,8 +496,6 @@ func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
 				Detail: "Fix Issues will re-enable it",
 				Tone:   doctorscreen.ToneWarning,
 			},
-			severity: doctorSeverityWarning,
-			order:    8,
 		}
 	}
 	if m.snapshot.IdentityAgentOwner.IsForged() {
@@ -565,8 +510,6 @@ func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
 				Detail: detail,
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    8,
 		}
 	}
 
@@ -592,8 +535,6 @@ func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
 			Detail: detail,
 			Tone:   doctorscreen.ToneDanger,
 		},
-		severity: doctorSeverityDanger,
-		order:    8,
 	}
 }
 
@@ -606,8 +547,6 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 				Detail: "Multi-device sync unavailable",
 				Tone:   doctorscreen.ToneWarning,
 			},
-			severity: doctorSeverityWarning,
-			order:    12,
 		}
 	}
 
@@ -620,8 +559,6 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 					Detail: syncErr,
 					Tone:   doctorscreen.ToneDanger,
 				},
-				severity: doctorSeverityDanger,
-				order:    12,
 			}
 		}
 		if m.runtimeStatus.Syncing {
@@ -632,8 +569,6 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 					Detail: "Multi-device sync in progress",
 					Tone:   doctorscreen.ToneWarning,
 				},
-				severity: doctorSeverityWarning,
-				order:    12,
 			}
 		}
 		if m.runtimeStatus.Linked && m.runtimeStatus.Dirty {
@@ -644,8 +579,6 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 					Detail: "Local changes have not synced yet",
 					Tone:   doctorscreen.ToneWarning,
 				},
-				severity: doctorSeverityWarning,
-				order:    12,
 			}
 		}
 	}
@@ -657,8 +590,6 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 			Detail: "Multi-device sync available",
 			Tone:   doctorscreen.ToneSuccess,
 		},
-		severity: doctorSeveritySuccess,
-		order:    12,
 	}
 }
 
@@ -671,8 +602,6 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 				Detail: "Loading security state",
 				Tone:   doctorscreen.ToneWarning,
 			},
-			severity: doctorSeverityWarning,
-			order:    9,
 		}
 	}
 	switch m.securityState.SystemAuthCapability {
@@ -684,8 +613,6 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 				Detail: "System Auth is ready for sensitive actions",
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    9,
 		}
 	case securityCapabilityUnavailableByPlatform, securityCapabilityUnavailableByEnv:
 		status := "! Not available"
@@ -699,8 +626,6 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 				Detail: systemAuthUnavailableHint(m.securityState.SystemAuthCapability),
 				Tone:   doctorscreen.ToneWarning,
 			},
-			severity: doctorSeverityWarning,
-			order:    9,
 		}
 	default:
 		return doctorRow{
@@ -710,8 +635,6 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 				Detail: "System Auth is expected but not working",
 				Tone:   doctorscreen.ToneDanger,
 			},
-			severity: doctorSeverityDanger,
-			order:    9,
 		}
 	}
 }
@@ -725,8 +648,6 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 				Detail: "Loading security state",
 				Tone:   doctorscreen.ToneWarning,
 			},
-			severity: doctorSeverityWarning,
-			order:    10,
 		}
 	}
 	switch m.securityState.SecureStoreCapability {
@@ -738,8 +659,6 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 				Detail: "Local unlock trust can be stored securely",
 				Tone:   doctorscreen.ToneSuccess,
 			},
-			severity: doctorSeveritySuccess,
-			order:    10,
 		}
 	case securityCapabilityUnavailableByPlatform, securityCapabilityUnavailableByEnv:
 		return doctorRow{
@@ -749,8 +668,6 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 				Detail: secureStoreUnavailableHint(),
 				Tone:   doctorscreen.ToneWarning,
 			},
-			severity: doctorSeverityWarning,
-			order:    10,
 		}
 	default:
 		return doctorRow{
@@ -760,8 +677,6 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 				Detail: "Local unlock trust cannot be persisted",
 				Tone:   doctorscreen.ToneDanger,
 			},
-			severity: doctorSeverityDanger,
-			order:    10,
 		}
 	}
 }
