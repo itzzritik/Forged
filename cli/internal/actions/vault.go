@@ -62,7 +62,6 @@ func unlockSensitive(ctx context.Context, paths config.Paths, password []byte, f
 	if err := ctx.Err(); err != nil {
 		return UnlockResult{}, err
 	}
-	_, _ = sensitiveauth.VerifyAndRefreshLocalEnrollment(paths, password)
 	return UnlockResult{}, nil
 }
 

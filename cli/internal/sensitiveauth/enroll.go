@@ -29,6 +29,20 @@ type EnrollmentResult struct {
 }
 
 func RecoverEnrolledSymmetricKey(paths config.Paths) ([]byte, error) {
+	var symmetricKey []byte
+	err := withLocalEnrollmentLock(paths, func() error {
+		var err error
+		symmetricKey, err = recoverEnrolledSymmetricKeyLocked(paths)
+		return err
+	})
+	if err != nil {
+		zeroSensitiveBytes(symmetricKey)
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, err)
+	}
+	return symmetricKey, nil
+}
+
+func recoverEnrolledSymmetricKeyLocked(paths config.Paths) ([]byte, error) {
 	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
 	if err != nil {
 		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Reading local unlock enrollment: %w", err))
@@ -86,24 +100,39 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 		return EnrollmentResult{}, fmt.Errorf("Vault symmetric key required")
 	}
 
-	store := NewSecureStore(paths)
-	capability := store.Capability(context.Background())
-	if !capability.IsAvailable() {
-		if isHeadlessLocalUnlockAllowed(paths, capability) {
-			return refreshHeadlessLocalEnrollment(paths, symmetricKey, capability)
+	var result EnrollmentResult
+	if err := withLocalEnrollmentLock(paths, func() error {
+		store := NewSecureStore(paths)
+		capability := store.Capability(context.Background())
+		if !capability.IsAvailable() {
+			if isHeadlessLocalUnlockAllowed(paths, capability) {
+				result = refreshHeadlessLocalEnrollmentLocked(paths, symmetricKey, capability)
+				return nil
+			}
+			result = EnrollmentResult{
+				Capability: capability,
+				Reason:     "secure storage unavailable for local unlock enrollment",
+			}
+			return nil
 		}
-		return EnrollmentResult{
-			Capability: capability,
-			Reason:     "secure storage unavailable for local unlock enrollment",
-		}, nil
-	}
-
-	installID, err := LoadOrCreateInstallID(paths)
-	if err != nil {
+		result = refreshSecureStoreLocalEnrollmentLocked(paths, symmetricKey, store, capability)
+		return nil
+	}); err != nil {
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     err.Error(),
 		}, nil
+	}
+	return result, nil
+}
+
+func refreshSecureStoreLocalEnrollmentLocked(paths config.Paths, symmetricKey []byte, store SecureStore, capability CapabilityState) EnrollmentResult {
+	installID, err := config.LoadOrCreateInstallID(paths)
+	if err != nil {
+		return EnrollmentResult{
+			Capability: CapabilityBroken,
+			Reason:     err.Error(),
+		}
 	}
 
 	deviceKey := make([]byte, vault.KeySize)
@@ -111,7 +140,7 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     fmt.Sprintf("generating device key: %v", err),
-		}, nil
+		}
 	}
 	defer zeroSensitiveBytes(deviceKey)
 
@@ -120,7 +149,7 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     err.Error(),
-		}, nil
+		}
 	}
 	defer zeroSensitiveBytes(localKey)
 
@@ -129,9 +158,11 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     fmt.Sprintf("wrapping vault symmetric key: %v", err),
-		}, nil
+		}
 	}
 
+	previous, _ := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+	slot := nextLocalEnrollmentDeviceKeySlot(previous)
 	enrollment := LocalEnrollment{
 		Version:                  LocalEnrollmentVersion,
 		TrustMode:                LocalEnrollmentTrustSecureStore,
@@ -139,68 +170,60 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 		LocalUser:                CurrentLocalUser(),
 		CreatedAt:                time.Now().UTC(),
 		ExpiresAt:                time.Now().UTC().Add(config.MasterPasswordIntervalDuration(loadMasterPasswordInterval(paths))),
+		DeviceKeySlot:            slot,
 		WrappedVaultSymmetricKey: wrappedVaultKey,
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	previousDeviceKey, previousDeviceKeyErr := store.LoadDeviceKey(ctx, installID)
-	hasPreviousDeviceKey := previousDeviceKeyErr == nil
-	if hasPreviousDeviceKey {
-		defer zeroSensitiveBytes(previousDeviceKey)
-	}
-
-	if err := store.SaveDeviceKey(ctx, installID, deviceKey); err != nil {
+	if err := store.SaveDeviceKey(ctx, installID, slot, deviceKey); err != nil {
 		return EnrollmentResult{
 			Capability: capabilityFromSecureStoreError(err),
 			Reason:     err.Error(),
-		}, nil
+		}
 	}
 
 	if err := WriteLocalEnrollment(paths.LocalUnlockBlobFile(), enrollment); err != nil {
-		switch {
-		case hasPreviousDeviceKey:
-			_ = store.SaveDeviceKey(ctx, installID, previousDeviceKey)
-		case errors.Is(previousDeviceKeyErr, ErrSecureStoreNotFound):
-			_ = store.DeleteDeviceKey(ctx, installID)
-		}
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     err.Error(),
-		}, nil
+		}
 	}
+	cleanupRetiredLocalEnrollmentKey(paths, previous, installID)
 
 	return EnrollmentResult{
 		Refreshed:  true,
-		Capability: CapabilityAvailable,
-	}, nil
+		Capability: capability,
+	}
 }
 
 func InvalidateLocalEnrollment(paths config.Paths) error {
-	_ = DeleteLocalEnrollment(paths.LocalUnlockBlobFile())
-	_ = os.Remove(paths.HeadlessUnlockKeyFile())
-
-	store := NewSecureStore(paths)
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-	defer cancel()
-	installID, _ := osReadTrimmed(paths.InstallIDFile())
-
-	if err := store.DeleteDeviceKey(ctx, installID); err != nil &&
-		err != ErrSecureStoreUnavailable &&
-		err != ErrSecureStoreNotFound &&
-		err != ErrSecureStoreBroken {
-		return err
-	}
-	return nil
+	return withLocalEnrollmentLock(paths, func() error {
+		if err := DeleteLocalEnrollment(paths.LocalUnlockBlobFile()); err != nil {
+			return err
+		}
+		if err := removeHeadlessLocalEnrollmentKeys(paths); err != nil {
+			return err
+		}
+		return removeSecureStoreLocalEnrollmentKeys(paths)
+	})
 }
 
 func recoverLocalEnrollmentDeviceKey(paths config.Paths, enrollment *LocalEnrollment, installID string) ([]byte, error) {
+	slot, err := localEnrollmentDeviceKeySlot(enrollment)
+	if err != nil {
+		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, err)
+	}
 	if enrollment != nil && enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile {
 		if !HeadlessModeEnabled(paths) {
 			return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Headless local unlock is disabled"))
 		}
-		deviceKey, err := os.ReadFile(paths.HeadlessUnlockKeyFile())
+		path, err := headlessUnlockKeyFile(paths, slot)
+		if err != nil {
+			return nil, errors.Join(ErrLocalUnlockTrustUnavailable, err)
+		}
+		deviceKey, err := os.ReadFile(path)
 		if err != nil {
 			return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Reading headless local unlock key: %w", err))
 		}
@@ -215,7 +238,7 @@ func recoverLocalEnrollmentDeviceKey(paths config.Paths, enrollment *LocalEnroll
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
 
-	deviceKey, err := store.LoadDeviceKey(ctx, installID)
+	deviceKey, err := store.LoadDeviceKey(ctx, installID, slot)
 	if err != nil {
 		return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Loading secure-store device key: %w", err))
 	}
@@ -226,13 +249,13 @@ func recoverLocalEnrollmentDeviceKey(paths config.Paths, enrollment *LocalEnroll
 	return deviceKey, nil
 }
 
-func refreshHeadlessLocalEnrollment(paths config.Paths, symmetricKey []byte, capability CapabilityState) (EnrollmentResult, error) {
-	installID, err := LoadOrCreateInstallID(paths)
+func refreshHeadlessLocalEnrollmentLocked(paths config.Paths, symmetricKey []byte, capability CapabilityState) EnrollmentResult {
+	installID, err := config.LoadOrCreateInstallID(paths)
 	if err != nil {
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     err.Error(),
-		}, nil
+		}
 	}
 
 	deviceKey := make([]byte, vault.KeySize)
@@ -240,7 +263,7 @@ func refreshHeadlessLocalEnrollment(paths config.Paths, symmetricKey []byte, cap
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     fmt.Sprintf("generating headless device key: %v", err),
-		}, nil
+		}
 	}
 	defer zeroSensitiveBytes(deviceKey)
 
@@ -249,7 +272,7 @@ func refreshHeadlessLocalEnrollment(paths config.Paths, symmetricKey []byte, cap
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     err.Error(),
-		}, nil
+		}
 	}
 	defer zeroSensitiveBytes(localKey)
 
@@ -258,14 +281,23 @@ func refreshHeadlessLocalEnrollment(paths config.Paths, symmetricKey []byte, cap
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     fmt.Sprintf("wrapping vault symmetric key: %v", err),
-		}, nil
+		}
 	}
 
-	if err := writeHeadlessUnlockKey(paths.HeadlessUnlockKeyFile(), deviceKey); err != nil {
+	previous, _ := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+	slot := nextLocalEnrollmentDeviceKeySlot(previous)
+	path, err := headlessUnlockKeyFile(paths, slot)
+	if err != nil {
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     err.Error(),
-		}, nil
+		}
+	}
+	if err := writeHeadlessUnlockKey(path, deviceKey); err != nil {
+		return EnrollmentResult{
+			Capability: CapabilityBroken,
+			Reason:     err.Error(),
+		}
 	}
 
 	enrollment := LocalEnrollment{
@@ -274,20 +306,21 @@ func refreshHeadlessLocalEnrollment(paths config.Paths, symmetricKey []byte, cap
 		InstallID:                installID,
 		LocalUser:                CurrentLocalUser(),
 		CreatedAt:                time.Now().UTC(),
+		DeviceKeySlot:            slot,
 		WrappedVaultSymmetricKey: wrappedVaultKey,
 	}
 	if err := WriteLocalEnrollment(paths.LocalUnlockBlobFile(), enrollment); err != nil {
-		_ = os.Remove(paths.HeadlessUnlockKeyFile())
 		return EnrollmentResult{
 			Capability: CapabilityBroken,
 			Reason:     err.Error(),
-		}, nil
+		}
 	}
+	cleanupRetiredLocalEnrollmentKey(paths, previous, installID)
 
 	return EnrollmentResult{
 		Refreshed:  true,
 		Capability: capability,
-	}, nil
+	}
 }
 
 func writeHeadlessUnlockKey(path string, key []byte) error {
@@ -313,11 +346,18 @@ func writeHeadlessUnlockKey(path string, key []byte) error {
 		tmp.Close()
 		return fmt.Errorf("Setting headless local unlock permissions: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("Syncing headless local unlock key: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("Closing headless local unlock temp file: %w", err)
 	}
-	if err := os.Rename(tmpPath, path); err != nil {
+	if err := replaceLocalEnrollmentFile(tmpPath, path); err != nil {
 		return fmt.Errorf("Replacing headless local unlock key: %w", err)
+	}
+	if err := syncLocalEnrollmentDir(path); err != nil {
+		return err
 	}
 	return nil
 }
@@ -400,6 +440,13 @@ const renewLocalEnrollmentThrottle = time.Hour
 // successful biometric unlock. Best-effort: if the rewrite fails the only cost
 // is an earlier expiry, never lost access, so errors are swallowed.
 func RenewLocalEnrollmentUsage(paths config.Paths) {
+	_ = withLocalEnrollmentLock(paths, func() error {
+		renewLocalEnrollmentUsageLocked(paths)
+		return nil
+	})
+}
+
+func renewLocalEnrollmentUsageLocked(paths config.Paths) {
 	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
 	if err != nil || enrollment == nil {
 		return
@@ -420,8 +467,22 @@ func RenewLocalEnrollmentUsage(paths config.Paths) {
 // broker uses it to skip a doomed Touch ID prompt and fall through to the
 // master-password popup once the sliding window has lapsed.
 func LocalEnrollmentUsable(paths config.Paths) bool {
+	usable := false
+	if err := withLocalEnrollmentLock(paths, func() error {
+		usable = localEnrollmentUsableLocked(paths)
+		return nil
+	}); err != nil {
+		return false
+	}
+	return usable
+}
+
+func localEnrollmentUsableLocked(paths config.Paths) bool {
 	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
 	if err != nil || enrollment == nil {
+		return false
+	}
+	if _, err := localEnrollmentDeviceKeySlot(enrollment); err != nil {
 		return false
 	}
 	if enrollmentExpired(paths, enrollment) {
@@ -455,28 +516,34 @@ func headlessModePreemptsSystemAuth(paths config.Paths) bool {
 	if !HeadlessModeEnabled(paths) {
 		return false
 	}
-	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
-	return err != nil || enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile
+	preempts := false
+	if err := withLocalEnrollmentLock(paths, func() error {
+		enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+		preempts = err != nil || enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile
+		return nil
+	}); err != nil {
+		return false
+	}
+	return preempts
 }
 
 func InvalidateHeadlessEnrollment(paths config.Paths) error {
-	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
-	if err != nil {
-		if os.IsNotExist(err) {
+	return withLocalEnrollmentLock(paths, func() error {
+		enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return fmt.Errorf("Reading local enrollment: %w", err)
+		}
+		if enrollment.TrustMode != LocalEnrollmentTrustHeadlessFile {
 			return nil
 		}
-		return fmt.Errorf("Reading local enrollment: %w", err)
-	}
-	if enrollment.TrustMode != LocalEnrollmentTrustHeadlessFile {
-		return nil
-	}
-	if err := DeleteLocalEnrollment(paths.LocalUnlockBlobFile()); err != nil {
-		return err
-	}
-	if err := os.Remove(paths.HeadlessUnlockKeyFile()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("Deleting headless unlock key: %w", err)
-	}
-	return nil
+		if err := DeleteLocalEnrollment(paths.LocalUnlockBlobFile()); err != nil {
+			return err
+		}
+		return removeHeadlessLocalEnrollmentKeys(paths)
+	})
 }
 
 func isHeadlessLocalUnlockAllowed(paths config.Paths, capability CapabilityState) bool {
@@ -484,6 +551,67 @@ func isHeadlessLocalUnlockAllowed(paths config.Paths, capability CapabilityState
 		return false
 	}
 	return HeadlessModeEnabled(paths)
+}
+
+var localEnrollmentDeviceKeySlots = []string{
+	"",
+	localEnrollmentDeviceKeySlotA,
+	localEnrollmentDeviceKeySlotB,
+}
+
+func cleanupRetiredLocalEnrollmentKey(paths config.Paths, previous *LocalEnrollment, fallbackInstallID string) {
+	// Refresh calls this only after both the inactive key and its metadata
+	// pointer reached their durable commit points.
+	if previous == nil {
+		return
+	}
+	slot, err := localEnrollmentDeviceKeySlot(previous)
+	if err != nil {
+		return
+	}
+	if previous.TrustMode == LocalEnrollmentTrustHeadlessFile {
+		path, err := headlessUnlockKeyFile(paths, slot)
+		if err == nil {
+			_ = os.Remove(path)
+		}
+		return
+	}
+	installID := strings.TrimSpace(previous.InstallID)
+	if installID == "" {
+		installID = fallbackInstallID
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = NewSecureStore(paths).DeleteDeviceKey(ctx, installID, slot)
+}
+
+func removeHeadlessLocalEnrollmentKeys(paths config.Paths) error {
+	for _, slot := range localEnrollmentDeviceKeySlots {
+		path, err := headlessUnlockKeyFile(paths, slot)
+		if err != nil {
+			return err
+		}
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("Deleting headless unlock key: %w", err)
+		}
+	}
+	return nil
+}
+
+func removeSecureStoreLocalEnrollmentKeys(paths config.Paths) error {
+	installID, _ := osReadTrimmed(paths.InstallIDFile())
+	store := NewSecureStore(paths)
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	for _, slot := range localEnrollmentDeviceKeySlots {
+		err := store.DeleteDeviceKey(ctx, installID, slot)
+		if err == nil || errors.Is(err, ErrSecureStoreUnavailable) ||
+			errors.Is(err, ErrSecureStoreNotFound) || errors.Is(err, ErrSecureStoreBroken) {
+			continue
+		}
+		return err
+	}
+	return nil
 }
 
 func osReadTrimmed(path string) (string, error) {

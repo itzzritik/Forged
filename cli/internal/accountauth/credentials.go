@@ -3,10 +3,8 @@ package accountauth
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -511,7 +509,7 @@ func credentialIDForSave(paths config.Paths) (string, *accountMetadata, error) {
 		return "", nil, err
 	}
 
-	installID, err := loadOrCreateInstallID(paths.InstallIDFile())
+	installID, err := config.LoadOrCreateInstallID(paths)
 	if err != nil {
 		return "", nil, err
 	}
@@ -595,29 +593,6 @@ func credentialSecretPath(legacyPath, credentialID string) string {
 	}
 	ext := filepath.Ext(legacyPath)
 	return strings.TrimSuffix(legacyPath, ext) + slot + ext
-}
-
-func loadOrCreateInstallID(path string) (string, error) {
-	if data, err := os.ReadFile(path); err == nil {
-		if id := strings.TrimSpace(string(data)); id != "" {
-			return id, nil
-		}
-	} else if !os.IsNotExist(err) {
-		return "", fmt.Errorf("Reading device ID: %w", err)
-	}
-
-	raw := make([]byte, 16)
-	if _, err := rand.Read(raw); err != nil {
-		return "", fmt.Errorf("Generating device ID: %w", err)
-	}
-	id := hex.EncodeToString(raw)
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return "", fmt.Errorf("Creating device ID directory: %w", err)
-	}
-	if err := writePrivateFile(path, []byte(id+"\n")); err != nil {
-		return "", fmt.Errorf("Writing device ID: %w", err)
-	}
-	return id, nil
 }
 
 func writePrivateFile(path string, body []byte) error {

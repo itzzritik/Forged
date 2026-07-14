@@ -21,10 +21,10 @@ Forged is zero-knowledge. The server stores the encrypted vault blob, KDF params
 - Key hierarchy is: password + salt -> master key -> stretched key -> unwrap Protected Symmetric Key -> vault symmetric key.
 - Password change rewraps the vault symmetric key. It does not re-encrypt every item and it does not rotate the inner symmetric key.
 - Local unlock trust is per-device:
-  - secure-store device key
-  - Windows: a CurrentUser-DPAPI `auth/local-unlock.dpapi` blob bound to the installation ID
-  - `~/.config/forged/auth/headless-unlock.key` when no OS secure store exists
-  - `~/.config/forged/auth/local-unlock.json`
+  - secure-store or headless device-key A/B slots, selected by `local-unlock.json` version 2 under one cross-process lock
+  - Windows: CurrentUser-DPAPI `auth/local-unlock-a.dpapi` / `local-unlock-b.dpapi` blobs bound to the installation ID (the original single blob remains migration-only)
+  - `~/.config/forged/auth/headless-unlock-a.key` / `headless-unlock-b.key` when no OS secure store exists
+  - `~/.config/forged/auth/local-unlock.json`, which is durably switched only after its inactive key slot is ready
   - `~/.config/forged/auth/device.id`
 - The daemon now starts cold. It does not need a stored plaintext master password to boot.
 - Active auth creates a shared session. The session can be cleared by expiry, system lock/sleep, or TUI idle lock.

@@ -18,14 +18,14 @@ func (s *stubSecureStore) Capability(context.Context) CapabilityState {
 	return CapabilityUnavailableByPlatform
 }
 
-func (s *stubSecureStore) SaveDeviceKey(context.Context, string, []byte) error {
+func (s *stubSecureStore) SaveDeviceKey(context.Context, string, string, []byte) error {
 	return ErrSecureStoreUnavailable
 }
 
-func (s *stubSecureStore) LoadDeviceKey(context.Context, string) ([]byte, error) {
+func (s *stubSecureStore) LoadDeviceKey(context.Context, string, string) ([]byte, error) {
 	return nil, ErrSecureStoreUnavailable
 }
 
-func (s *stubSecureStore) DeleteDeviceKey(context.Context, string) error {
+func (s *stubSecureStore) DeleteDeviceKey(context.Context, string, string) error {
 	return ErrSecureStoreUnavailable
 }

@@ -31,12 +31,21 @@ func (p Paths) SyncDirtyFile() string { return filepath.Join(p.DataDir, "sync.di
 func (p Paths) LocalUnlockBlobFile() string {
 	return filepath.Join(p.AuthDir(), "local-unlock.json")
 }
+func (p Paths) LocalUnlockLockFile() string {
+	return filepath.Join(p.AuthDir(), "local-unlock.lock")
+}
 func (p Paths) LocalUnlockDeviceKeyFile() string {
 	return filepath.Join(p.AuthDir(), "local-unlock.dpapi")
+}
+func (p Paths) LocalUnlockDeviceKeySlotFile(slot string) string {
+	return filepath.Join(p.AuthDir(), "local-unlock-"+slot+".dpapi")
 }
 func (p Paths) InstallIDFile() string { return filepath.Join(p.AuthDir(), "device.id") }
 func (p Paths) HeadlessUnlockKeyFile() string {
 	return filepath.Join(p.AuthDir(), "headless-unlock.key")
+}
+func (p Paths) HeadlessUnlockKeySlotFile(slot string) string {
+	return filepath.Join(p.AuthDir(), "headless-unlock-"+slot+".key")
 }
 
 func (p Paths) SSHManagedDir() string {

@@ -26,9 +26,13 @@ func (s *darwinSecureStore) Capability(context.Context) CapabilityState {
 	return CapabilityAvailable
 }
 
-func (s *darwinSecureStore) SaveDeviceKey(ctx context.Context, installID string, key []byte) error {
+func (s *darwinSecureStore) SaveDeviceKey(ctx context.Context, installID, slot string, key []byte) error {
 	if !s.Capability(ctx).IsAvailable() {
 		return ErrSecureStoreBroken
+	}
+	account, err := secureStoreDeviceKeyAccount(installID, slot)
+	if err != nil {
+		return err
 	}
 
 	encoded := base64.StdEncoding.EncodeToString(key)
@@ -36,7 +40,7 @@ func (s *darwinSecureStore) SaveDeviceKey(ctx context.Context, installID string,
 		"add-generic-password",
 		"-U",
 		"-s", darwinSecureStoreService,
-		"-a", installID,
+		"-a", account,
 		"-w", encoded,
 	)
 	if out, err := cmd.CombinedOutput(); err != nil {
@@ -48,15 +52,19 @@ func (s *darwinSecureStore) SaveDeviceKey(ctx context.Context, installID string,
 	return nil
 }
 
-func (s *darwinSecureStore) LoadDeviceKey(ctx context.Context, installID string) ([]byte, error) {
+func (s *darwinSecureStore) LoadDeviceKey(ctx context.Context, installID, slot string) ([]byte, error) {
 	if !s.Capability(ctx).IsAvailable() {
 		return nil, ErrSecureStoreBroken
+	}
+	account, err := secureStoreDeviceKeyAccount(installID, slot)
+	if err != nil {
+		return nil, err
 	}
 
 	cmd := exec.CommandContext(ctx, "security",
 		"find-generic-password",
 		"-s", darwinSecureStoreService,
-		"-a", installID,
+		"-a", account,
 		"-w",
 	)
 	out, err := cmd.CombinedOutput()
@@ -79,15 +87,19 @@ func (s *darwinSecureStore) LoadDeviceKey(ctx context.Context, installID string)
 	return decoded, nil
 }
 
-func (s *darwinSecureStore) DeleteDeviceKey(ctx context.Context, installID string) error {
+func (s *darwinSecureStore) DeleteDeviceKey(ctx context.Context, installID, slot string) error {
 	if !s.Capability(ctx).IsAvailable() {
 		return ErrSecureStoreBroken
+	}
+	account, err := secureStoreDeviceKeyAccount(installID, slot)
+	if err != nil {
+		return err
 	}
 
 	cmd := exec.CommandContext(ctx, "security",
 		"delete-generic-password",
 		"-s", darwinSecureStoreService,
-		"-a", installID,
+		"-a", account,
 	)
 	out, err := cmd.CombinedOutput()
 	if err == nil {

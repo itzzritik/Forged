@@ -31,8 +31,12 @@ func (s *windowsSecureStore) Capability(context.Context) CapabilityState {
 	return CapabilityAvailable
 }
 
-func (s *windowsSecureStore) SaveDeviceKey(ctx context.Context, installID string, key []byte) error {
+func (s *windowsSecureStore) SaveDeviceKey(ctx context.Context, installID, slot string, key []byte) error {
 	if err := ctx.Err(); err != nil {
+		return err
+	}
+	path, err := localUnlockDeviceKeyFile(s.paths, slot)
+	if err != nil {
 		return err
 	}
 
@@ -49,14 +53,18 @@ func (s *windowsSecureStore) SaveDeviceKey(ctx context.Context, installID string
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := writeWindowsDeviceKey(s.paths.LocalUnlockDeviceKeyFile(), protected); err != nil {
+	if err := writeWindowsDeviceKey(path, protected); err != nil {
 		return ErrSecureStoreBroken
 	}
 	return nil
 }
 
-func (s *windowsSecureStore) LoadDeviceKey(ctx context.Context, installID string) ([]byte, error) {
+func (s *windowsSecureStore) LoadDeviceKey(ctx context.Context, installID, slot string) ([]byte, error) {
 	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
+	path, err := localUnlockDeviceKeyFile(s.paths, slot)
+	if err != nil {
 		return nil, err
 	}
 
@@ -64,7 +72,7 @@ func (s *windowsSecureStore) LoadDeviceKey(ctx context.Context, installID string
 	if err != nil {
 		return nil, err
 	}
-	protected, err := readWindowsDeviceKey(s.paths.LocalUnlockDeviceKeyFile())
+	protected, err := readWindowsDeviceKey(path)
 	if err != nil {
 		return nil, err
 	}
@@ -84,17 +92,31 @@ func (s *windowsSecureStore) LoadDeviceKey(ctx context.Context, installID string
 	return key, nil
 }
 
-func (s *windowsSecureStore) DeleteDeviceKey(ctx context.Context, _ string) error {
+func (s *windowsSecureStore) DeleteDeviceKey(ctx context.Context, _ string, slot string) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	if err := os.Remove(s.paths.LocalUnlockDeviceKeyFile()); err != nil && !os.IsNotExist(err) {
+	path, err := localUnlockDeviceKeyFile(s.paths, slot)
+	if err != nil {
+		return err
+	}
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 		return ErrSecureStoreBroken
 	}
 	if err := ctx.Err(); err != nil {
 		return err
 	}
 	return nil
+}
+
+func localUnlockDeviceKeyFile(paths config.Paths, slot string) (string, error) {
+	if slot == "" {
+		return paths.LocalUnlockDeviceKeyFile(), nil
+	}
+	if slot != localEnrollmentDeviceKeySlotA && slot != localEnrollmentDeviceKeySlotB {
+		return "", ErrSecureStoreBroken
+	}
+	return paths.LocalUnlockDeviceKeySlotFile(slot), nil
 }
 
 func windowsDeviceKeyEntropy(installID string) ([]byte, error) {
@@ -199,7 +221,7 @@ func writeWindowsDeviceKey(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return err
 	}
-	return os.Rename(tmpPath, path)
+	return replaceLocalEnrollmentFile(tmpPath, path)
 }
 
 func readWindowsDeviceKey(path string) ([]byte, error) {

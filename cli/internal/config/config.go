@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -251,6 +252,14 @@ func withConfigLock(path string, fn func() error) error {
 }
 
 func writePrivateFileAtomic(path string, data []byte) error {
+	return writePrivateFile(path, data, false)
+}
+
+func writePrivateFileAtomicDurable(path string, data []byte) error {
+	return writePrivateFile(path, data, true)
+}
+
+func writePrivateFile(path string, data []byte, durable bool) error {
 	target, err := resolveWritePath(path)
 	if err != nil {
 		return err
@@ -277,8 +286,18 @@ func writePrivateFileAtomic(path string, data []byte) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("Closing temporary file: %w", err)
 	}
-	if err := os.Rename(tmpPath, target); err != nil {
+	if err := replacePrivateFile(tmpPath, target, durable); err != nil {
 		return fmt.Errorf("Replacing %s: %w", target, err)
+	}
+	if durable && runtime.GOOS != "windows" {
+		dir, err := os.Open(filepath.Dir(target))
+		if err != nil {
+			return fmt.Errorf("Opening private file directory: %w", err)
+		}
+		defer dir.Close()
+		if err := dir.Sync(); err != nil {
+			return fmt.Errorf("Syncing private file directory: %w", err)
+		}
 	}
 	return nil
 }
