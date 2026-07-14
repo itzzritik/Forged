@@ -273,6 +273,12 @@ func (m *model) doctorCanFixIssues() bool {
 	if !s.Service.Installed || !s.Service.ConfigValid || !s.Service.Running {
 		return true
 	}
+	if s.Service.PID > 0 && (s.DaemonPID <= 0 || s.Service.PID != s.DaemonPID) {
+		return true
+	}
+	if current := strings.TrimSpace(s.CurrentBuildID); current != "" && strings.TrimSpace(s.DaemonBuildID) != current {
+		return true
+	}
 	if !s.IPCSocketReady || !s.AgentSocketReady {
 		return true
 	}
