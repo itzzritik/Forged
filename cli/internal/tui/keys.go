@@ -1193,13 +1193,14 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 			m.keyBrowser.refreshing = m.snapshot.LoggedIn
 			m.keyBrowser.err = ""
 			if m.snapshot.LoggedIn {
-				return m.refreshKeyBrowser(true)
+				return m.refreshKeyBrowser(false)
 			}
 			return nil
 		}
 		m.keyBrowser = keyBrowserState{
 			loading: true,
 			input:   newKeyInput("Search keys"),
+			notice:  strings.TrimSpace(route.Params["notice"]),
 		}
 		if query := strings.TrimSpace(route.Params["query"]); query != "" {
 			m.keyBrowser.input.SetValue(query)
@@ -1484,9 +1485,19 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
+	current := m.session.Current()
+	if msg.preserve && current.ID != RouteKeysBrowser {
+		if msg.err != nil {
+			m.reportError("keys.list", msg.err)
+			return m, nil
+		}
+		m.storeKeyCache(msg.keys)
+		return m, nil
+	}
+
 	if msg.err != nil {
 		errorText := m.reportError("keys.list", msg.err)
-		switch m.session.Current().ID {
+		switch current.ID {
 		case RouteKeysBrowser:
 			m.keyBrowser.loading = false
 			m.keyBrowser.refreshing = false
@@ -1511,35 +1522,14 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	current := m.session.Current()
 	m.storeKeyCache(msg.keys)
 	switch current.ID {
 	case RouteKeysBrowser:
-		preserveName := ""
-		if key, ok := m.selectedKeyRow(); ok {
-			preserveName = key.Name
-		}
 		m.keyBrowser.loading = false
 		m.keyBrowser.refreshing = false
 		m.keyBrowser.err = ""
-		if len(m.keyBrowser.all) == 0 {
-			searchActive := current.Params["search"] == "true"
-			m.prepareKeyBrowser(msg.keys, current.Params["query"], current.Params["notice"], searchActive)
-		} else {
-			query := m.keyBrowser.input.Value()
-			notice := m.keyBrowser.notice
-			searchActive := m.keyBrowser.searchActive
-			m.prepareKeyBrowser(msg.keys, query, notice, searchActive)
-			m.selectKeyBrowserByName(preserveName)
-		}
 		if m.keyBrowser.searchActive {
-			if !msg.preserve && m.snapshot.LoggedIn {
-				return m, tea.Batch(textinput.Blink, m.refreshKeyBrowser(true))
-			}
 			return m, textinput.Blink
-		}
-		if !msg.preserve && m.snapshot.LoggedIn {
-			return m, m.refreshKeyBrowser(true)
 		}
 		return m, nil
 	case RouteKeysDetail:
