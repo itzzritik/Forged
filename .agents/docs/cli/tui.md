@@ -26,6 +26,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Runtime and snapshot health checks accept only their newest generation; daemon transport loss and recovery each trigger one readiness refresh, including for local-only vaults.
 - Doctor marks a daemon as outdated when its IPC build id does not match the current CLI build; Fix Issues restarts the managed service through readiness.
 - Doctor distinguishes unsupported System Auth from a prompt that is unavailable in the current environment.
+- Doctor shows explicit Linux headless mode as file-backed trust and labels desktop System Auth detection as terminal-local rather than daemon readiness.
 - Doctor checks stay in dependency order while their status icon and tone show changing health.
 - The Agent tab includes SSH Routing diagnostics. The page reads and clears route memory through daemon IPC and keeps route memory current with background polling while the page is open.
 - SSH Routing diagnostics reuse the Commit Signing browser-table pattern: selected item summary on top, a compact table below, and no manual refresh footer action.

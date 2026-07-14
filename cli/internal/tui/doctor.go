@@ -604,13 +604,29 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 			},
 		}
 	}
-	switch m.securityState.SystemAuthCapability {
-	case securityCapabilityAvailable:
+	if m.securityState.HeadlessUnlock {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "System Auth",
-				Status: theme.Glyphs.Check + " Available",
-				Detail: "System Auth is ready for sensitive actions",
+				Status: "! Headless mode",
+				Detail: "System Auth is intentionally skipped on this device",
+				Tone:   doctorscreen.ToneWarning,
+			},
+		}
+	}
+	switch m.securityState.SystemAuthCapability {
+	case securityCapabilityAvailable:
+		status := theme.Glyphs.Check + " Available"
+		detail := "System Auth is ready for sensitive actions"
+		if runtime.GOOS == "linux" {
+			status = theme.Glyphs.Check + " Detected"
+			detail = "Desktop session and pkexec detected in this terminal"
+		}
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "System Auth",
+				Status: status,
+				Detail: detail,
 				Tone:   doctorscreen.ToneSuccess,
 			},
 		}
@@ -628,11 +644,15 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 			},
 		}
 	default:
+		detail := "System Auth is expected but not working"
+		if runtime.GOOS == "linux" {
+			detail = "Forged auth helper or pkexec is not working"
+		}
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "System Auth",
 				Status: theme.Glyphs.Cross + " Broken",
-				Detail: "System Auth is expected but not working",
+				Detail: detail,
 				Tone:   doctorscreen.ToneDanger,
 			},
 		}
@@ -650,6 +670,16 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 			},
 		}
 	}
+	if m.securityState.HeadlessUnlock {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Secure Store",
+				Status: "! File-backed",
+				Detail: "Device unlock trust is stored in a local file",
+				Tone:   doctorscreen.ToneWarning,
+			},
+		}
+	}
 	switch m.securityState.SecureStoreCapability {
 	case securityCapabilityAvailable:
 		return doctorRow{
@@ -661,10 +691,14 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 			},
 		}
 	case securityCapabilityUnavailableByPlatform, securityCapabilityUnavailableByEnv:
+		status := "! Unavailable"
+		if runtime.GOOS == "linux" {
+			status = "! Not supported"
+		}
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Secure Store",
-				Status: "! Unavailable",
+				Status: status,
 				Detail: secureStoreUnavailableHint(),
 				Tone:   doctorscreen.ToneWarning,
 			},
@@ -687,7 +721,7 @@ func systemAuthUnavailableHint(capability string) string {
 		case "windows":
 			return "Windows Hello can't prompt here"
 		case "linux":
-			return "Needs desktop session and pkexec"
+			return "No desktop prompt here; use --headless only on a trusted headless device"
 		case "darwin":
 			return "No desktop prompt (often SSH)"
 		default:
@@ -710,9 +744,9 @@ func systemAuthUnavailableHint(capability string) string {
 func secureStoreUnavailableHint() string {
 	switch runtime.GOOS {
 	case "windows":
-		return "DPAPI-backed device key is not yet wired on Windows " + theme.Glyphs.Empty + " using headless fallback"
+		return "Windows secure device-key storage is not implemented"
 	case "linux":
-		return "Secret Service / D-Bus not available; using headless fallback"
+		return "Linux secure device-key storage is not implemented"
 	default:
 		return "Master-password trust cannot be remembered securely"
 	}

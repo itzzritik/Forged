@@ -275,6 +275,7 @@ enabled = false
 
 [security]
 master_password_interval = "7d"
+headless_unlock = false
 `, paths.AgentSocket())
 
 	return os.WriteFile(paths.ConfigFile(), []byte(content), 0o600)

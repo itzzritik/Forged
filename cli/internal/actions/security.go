@@ -17,6 +17,7 @@ type SecurityState struct {
 	MasterPasswordInterval string
 	SystemAuthCapability   string
 	SecureStoreCapability  string
+	HeadlessUnlock         bool
 }
 
 func LoadSecurityState(paths config.Paths) (SecurityState, error) {
@@ -29,6 +30,7 @@ func LoadSecurityState(paths config.Paths) (SecurityState, error) {
 		MasterPasswordInterval: config.NormalizeMasterPasswordInterval(cfg.Security.MasterPasswordInterval),
 		SystemAuthCapability:   string(inspectNativeCapability(helperBinaryPath())),
 		SecureStoreCapability:  string(sensitiveauth.NewSecureStore().Capability(context.Background())),
+		HeadlessUnlock:         sensitiveauth.HeadlessModeEnabled(paths),
 	}, nil
 }
 

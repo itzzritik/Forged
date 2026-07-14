@@ -30,6 +30,7 @@ type SyncConfig struct {
 
 type SecurityConfig struct {
 	MasterPasswordInterval string `toml:"master_password_interval"`
+	HeadlessUnlock         bool   `toml:"headless_unlock"`
 }
 
 const (
@@ -83,6 +84,7 @@ func Save(path string, cfg Config) error {
 	body.WriteString(fmt.Sprintf("enabled = %t\n", cfg.Sync.Enabled))
 	body.WriteString("\n[security]\n")
 	body.WriteString(fmt.Sprintf("master_password_interval = %q\n", cfg.Security.MasterPasswordInterval))
+	body.WriteString(fmt.Sprintf("headless_unlock = %t\n", cfg.Security.HeadlessUnlock))
 
 	return os.WriteFile(path, []byte(body.String()), 0o600)
 }
@@ -142,5 +144,22 @@ func SetMasterPasswordInterval(paths Paths, interval string) error {
 		cfg.Agent.Socket = paths.AgentSocket()
 	}
 	cfg.Security.MasterPasswordInterval = NormalizeMasterPasswordInterval(interval)
+	return Save(paths.ConfigFile(), cfg)
+}
+
+func HeadlessUnlockEnabled(paths Paths) bool {
+	cfg, err := Load(paths.ConfigFile())
+	return err == nil && cfg.Security.HeadlessUnlock
+}
+
+func SetHeadlessUnlock(paths Paths, enabled bool) error {
+	cfg, err := Load(paths.ConfigFile())
+	if err != nil {
+		return err
+	}
+	if strings.TrimSpace(cfg.Agent.Socket) == "" {
+		cfg.Agent.Socket = paths.AgentSocket()
+	}
+	cfg.Security.HeadlessUnlock = enabled
 	return Save(paths.ConfigFile(), cfg)
 }

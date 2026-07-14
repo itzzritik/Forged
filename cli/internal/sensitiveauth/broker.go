@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
-	"os"
 	"runtime"
 	"strings"
 	"sync"
@@ -110,6 +109,9 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 	now := time.Now()
 	if !force && b.hasActiveSession(now) {
 		return b.allow(action, now), nil
+	}
+	if headlessModePreemptsSystemAuth(b.paths) {
+		return b.authorizeWithoutSystemAuth(action, CapabilityUnavailableByPlatform)
 	}
 
 	if b.helper != nil {
@@ -338,7 +340,7 @@ func (b *Broker) authorizeSystem(ctx context.Context, action Action) (Capability
 }
 
 func (b *Broker) authorizeWithoutSystemAuth(action Action, capability CapabilityState) (AuthorizeResult, error) {
-	if !isHeadlessAuthMode(capability) {
+	if !isHeadlessAuthMode(b.paths, capability) {
 		if action == ActionExternal {
 			return AuthorizeResult{}, externalUseBrokenError()
 		}
@@ -355,11 +357,11 @@ func (b *Broker) authorizeWithoutSystemAuth(action Action, capability Capability
 	return result, nil
 }
 
-func isHeadlessAuthMode(capability CapabilityState) bool {
+func isHeadlessAuthMode(paths config.Paths, capability CapabilityState) bool {
 	if !capability.IsUnavailable() {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("FORGED_HEADLESS")), "1")
+	return HeadlessModeEnabled(paths)
 }
 
 func (b *Broker) grantWithEnrollment(action Action, now time.Time) (AuthorizeResult, error) {

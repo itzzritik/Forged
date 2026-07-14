@@ -5,11 +5,15 @@ import (
 	"os"
 	"strings"
 
+	"github.com/itzzritik/forged/cli/internal/actions"
+	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"github.com/spf13/cobra"
 )
 
 var (
 	versionOutput bool
+	headlessMode  bool
 
 	version = "dev"
 	commit  = "none"
@@ -74,6 +78,7 @@ func newRootCmd() *cobra.Command {
 
 func installPersistentFlags(cmd *cobra.Command) {
 	cmd.Flags().BoolVarP(&versionOutput, "version", "v", false, "print version information")
+	cmd.Flags().BoolVar(&headlessMode, "headless", false, "persistently use file-backed unlock on this trusted device (set false to disable)")
 }
 
 func installRootSubcommands(cmd *cobra.Command) {
@@ -105,6 +110,27 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 	}
 	if !shouldLaunchBareForged(args) {
 		return fmt.Errorf("Forged requires an interactive terminal. Use `forged help` or `forged version`")
+	}
+	if cmd.Flags().Changed("headless") {
+		if headlessMode && !sensitiveauth.HeadlessModeSupported() {
+			return fmt.Errorf("Headless mode is not supported on this platform")
+		}
+		paths := config.DefaultPaths()
+		if err := config.SetHeadlessUnlock(paths, headlessMode); err != nil {
+			return fmt.Errorf("Saving headless mode: %w", err)
+		}
+		if headlessMode {
+			if err := actions.LockSensitive(paths); err != nil {
+				return fmt.Errorf("Locking Forged to enroll headless mode: %w", err)
+			}
+		} else {
+			if err := sensitiveauth.InvalidateHeadlessEnrollment(paths); err != nil {
+				return fmt.Errorf("Removing headless unlock trust: %w", err)
+			}
+			if err := actions.LockSensitive(paths); err != nil {
+				return fmt.Errorf("Locking Forged after disabling headless mode: %w", err)
+			}
+		}
 	}
 	return runBareForged(cmd)
 }

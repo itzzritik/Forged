@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -67,11 +68,7 @@ func RecoverEnrolledSymmetricKey(paths config.Paths) ([]byte, error) {
 }
 
 func HasLocalEnrollment(paths config.Paths) bool {
-	if _, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile()); err != nil {
-		return false
-	}
-	installID, err := osReadTrimmed(paths.InstallIDFile())
-	return err == nil && strings.TrimSpace(installID) != ""
+	return LocalEnrollmentUsable(paths)
 }
 
 func VerifyAndRefreshLocalEnrollment(paths config.Paths, password []byte) (EnrollmentResult, error) {
@@ -92,7 +89,7 @@ func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (Enrollment
 	store := NewSecureStore()
 	capability := store.Capability(context.Background())
 	if !capability.IsAvailable() {
-		if isHeadlessLocalUnlockAllowed(capability) {
+		if isHeadlessLocalUnlockAllowed(paths, capability) {
 			return refreshHeadlessLocalEnrollment(paths, symmetricKey, capability)
 		}
 		return EnrollmentResult{
@@ -193,6 +190,9 @@ func InvalidateLocalEnrollment(paths config.Paths) error {
 
 func recoverLocalEnrollmentDeviceKey(paths config.Paths, enrollment *LocalEnrollment, installID string) ([]byte, error) {
 	if enrollment != nil && enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile {
+		if !HeadlessModeEnabled(paths) {
+			return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Headless local unlock is disabled"))
+		}
 		deviceKey, err := os.ReadFile(paths.HeadlessUnlockKeyFile())
 		if err != nil {
 			return nil, errors.Join(ErrLocalUnlockTrustUnavailable, fmt.Errorf("Reading headless local unlock key: %w", err))
@@ -416,6 +416,9 @@ func LocalEnrollmentUsable(paths config.Paths) bool {
 	if enrollmentExpired(paths, enrollment) {
 		return false
 	}
+	if enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile && !HeadlessModeEnabled(paths) {
+		return false
+	}
 	installID, err := osReadTrimmed(paths.InstallIDFile())
 	if err != nil || installID == "" || enrollment.InstallID != installID {
 		return false
@@ -426,11 +429,50 @@ func LocalEnrollmentUsable(paths config.Paths) bool {
 	return true
 }
 
-func isHeadlessLocalUnlockAllowed(capability CapabilityState) bool {
+func HeadlessModeSupported() bool {
+	return runtime.GOOS == "linux" && NewSecureStore().Capability(context.Background()).IsUnavailable()
+}
+
+func HeadlessModeEnabled(paths config.Paths) bool {
+	if !HeadlessModeSupported() {
+		return false
+	}
+	return config.HeadlessUnlockEnabled(paths)
+}
+
+func headlessModePreemptsSystemAuth(paths config.Paths) bool {
+	if !HeadlessModeEnabled(paths) {
+		return false
+	}
+	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+	return err != nil || enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile
+}
+
+func InvalidateHeadlessEnrollment(paths config.Paths) error {
+	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("Reading local enrollment: %w", err)
+	}
+	if enrollment.TrustMode != LocalEnrollmentTrustHeadlessFile {
+		return nil
+	}
+	if err := DeleteLocalEnrollment(paths.LocalUnlockBlobFile()); err != nil {
+		return err
+	}
+	if err := os.Remove(paths.HeadlessUnlockKeyFile()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("Deleting headless unlock key: %w", err)
+	}
+	return nil
+}
+
+func isHeadlessLocalUnlockAllowed(paths config.Paths, capability CapabilityState) bool {
 	if !capability.IsUnavailable() {
 		return false
 	}
-	return strings.EqualFold(strings.TrimSpace(os.Getenv("FORGED_HEADLESS")), "1")
+	return HeadlessModeEnabled(paths)
 }
 
 func osReadTrimmed(path string) (string, error) {
