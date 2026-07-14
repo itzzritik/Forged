@@ -972,8 +972,6 @@ func (d *Daemon) shutdown() {
 	}
 	d.clearActiveSession("shutdown")
 
-	os.Remove(d.paths.AgentSocket())
-	os.Remove(d.paths.CtlSocket())
 	removeOwnedPIDFile(d.paths.PIDFile(), os.Getpid())
 
 	d.logger.Info("daemon stopped")
