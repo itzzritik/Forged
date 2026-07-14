@@ -28,7 +28,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Session clear waits for admitted sync work to finish before zeroing and closing the vault.
 - Sync only exists while account credentials are present and a live vault session is available.
 - Local sync state preserves the three-way merge base and server version. Corrupt history is quarantined with a recovery marker, blocks sync and account-change state replacement, and is never auto-relinked or deleted as stale state.
-- Account actions require the daemon's account-change protocol, repairing or restarting the managed service before sending versioned replace and clear commands. They never write credentials directly. Credential commit is quick; reconciliation continues as bounded, generation-checked background work.
+- Account actions require the daemon's account-change protocol, repairing or restarting the managed service before sending versioned replace and clear commands. They never write credentials directly. Replacement and clear hold the credential lock through their sync-state transaction, so restore cannot publish state for the previous account mid-switch or logout. Credential commit is quick; reconciliation continues as bounded, generation-checked background work.
 - Refreshing credentials for the same account and server retains its validated sync history; only a different-account transition stages that history away before linking.
 - Logout commits local credential and sync-state removal under the session lock, then releases it before the bounded remote token revocation.
 - While sync is active, learned SSH route proofs mark the vault dirty and the sync bus also runs low-frequency status checks.

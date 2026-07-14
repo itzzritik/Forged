@@ -100,11 +100,16 @@ func CredentialsPath(paths config.Paths) string {
 func Load(paths config.Paths) (Credentials, error) {
 	var creds Credentials
 	err := WithCredentialsLock(paths, func() error {
-		var err error
-		creds, err = loadCredentials(paths)
-		return err
+		var loadErr error
+		creds, loadErr = LoadLocked(paths)
+		return loadErr
 	})
 	return creds, err
+}
+
+// LoadLocked reads credentials while the caller holds WithCredentialsLock.
+func LoadLocked(paths config.Paths) (Credentials, error) {
+	return loadCredentials(paths)
 }
 
 func loadCredentials(paths config.Paths) (Credentials, error) {
@@ -182,8 +187,13 @@ func credsAreFresher(cached cachedCredentials, metadata accountMetadata) bool {
 
 func Save(paths config.Paths, creds Credentials) error {
 	return WithCredentialsLock(paths, func() error {
-		return saveCredentials(paths, creds)
+		return SaveLocked(paths, creds)
 	})
+}
+
+// SaveLocked writes credentials while the caller holds WithCredentialsLock.
+func SaveLocked(paths config.Paths, creds Credentials) error {
+	return saveCredentials(paths, creds)
 }
 
 func ValidateCredentials(creds Credentials) error {
@@ -261,8 +271,13 @@ func saveCredentials(paths config.Paths, creds Credentials) error {
 
 func Delete(paths config.Paths) error {
 	return WithCredentialsLock(paths, func() error {
-		return deleteCredentials(paths)
+		return DeleteLocked(paths)
 	})
+}
+
+// DeleteLocked removes credentials while the caller holds WithCredentialsLock.
+func DeleteLocked(paths config.Paths) error {
+	return deleteCredentials(paths)
 }
 
 func deleteCredentials(paths config.Paths) error {

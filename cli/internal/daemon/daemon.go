@@ -500,40 +500,40 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
 	if err := d.beginAccountChangeLocked(); err != nil {
 		return err
 	}
-	if current, err := accountauth.Load(d.paths); err == nil {
-		if err := d.recoverSyncStateLocked(current); err != nil {
-			d.syncSuppressed = false
-			d.initSyncLocked()
+	err := accountauth.WithCredentialsLock(d.paths, func() error {
+		if current, err := accountauth.LoadLocked(d.paths); err == nil {
+			if err := d.recoverSyncStateLocked(current); err != nil {
+				return err
+			}
+		}
+		preserveState, err := d.syncStateMatchesAccountLocked(creds)
+		if err != nil {
 			return err
 		}
-	}
-	preserveState, err := d.syncStateMatchesAccountLocked(creds)
+		staged := false
+		if !preserveState {
+			staged, err = d.stageSyncStateLocked()
+			if err != nil {
+				return err
+			}
+		}
+		if err := accountauth.SaveLocked(d.paths, creds); err != nil {
+			if restoreErr := d.restoreSyncStateLocked(staged); restoreErr != nil {
+				return errors.Join(err, restoreErr)
+			}
+			return err
+		}
+		if staged {
+			if err := d.removeSyncStateBackupLocked(); err != nil {
+				d.logger.Warn("removing staged sync state after account replacement failed", "error", err)
+			}
+		}
+		return nil
+	})
 	if err != nil {
 		d.syncSuppressed = false
 		d.initSyncLocked()
 		return err
-	}
-	staged := false
-	if !preserveState {
-		staged, err = d.stageSyncStateLocked()
-		if err != nil {
-			d.syncSuppressed = false
-			d.initSyncLocked()
-			return err
-		}
-	}
-	if err := accountauth.Save(d.paths, creds); err != nil {
-		if restoreErr := d.restoreSyncStateLocked(staged); restoreErr != nil {
-			err = errors.Join(err, restoreErr)
-		}
-		d.syncSuppressed = false
-		d.initSyncLocked()
-		return err
-	}
-	if staged {
-		if err := d.removeSyncStateBackupLocked(); err != nil {
-			d.logger.Warn("removing staged sync state after account replacement failed", "error", err)
-		}
 	}
 	d.syncSuppressed = false
 	d.initSyncLocked()
@@ -562,19 +562,26 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
 	if err := d.beginAccountChangeLocked(); err != nil {
 		return accountauth.Credentials{}, err
 	}
-	creds, _ := accountauth.Load(d.paths)
-	if err := accountauth.Delete(d.paths); err != nil {
+	var creds accountauth.Credentials
+	err := accountauth.WithCredentialsLock(d.paths, func() error {
+		creds, _ = accountauth.LoadLocked(d.paths)
+		if err := accountauth.DeleteLocked(d.paths); err != nil {
+			return err
+		}
+		if err := d.removeSyncStateLocked(); err != nil {
+			d.logger.Warn("removing sync state after logout failed", "error", err)
+		} else {
+			d.clearSyncStateRecoveryLocked()
+		}
+		if err := os.Remove(d.paths.SyncDirtyFile()); err != nil && !os.IsNotExist(err) {
+			d.logger.Warn("removing sync dirty marker after logout failed", "error", err)
+		}
+		return nil
+	})
+	if err != nil {
 		d.syncSuppressed = false
 		d.initSyncLocked()
 		return accountauth.Credentials{}, err
-	}
-	if err := d.removeSyncStateLocked(); err != nil {
-		d.logger.Warn("removing sync state after logout failed", "error", err)
-	} else {
-		d.clearSyncStateRecoveryLocked()
-	}
-	if err := os.Remove(d.paths.SyncDirtyFile()); err != nil && !os.IsNotExist(err) {
-		d.logger.Warn("removing sync dirty marker after logout failed", "error", err)
 	}
 	return creds, nil
 }

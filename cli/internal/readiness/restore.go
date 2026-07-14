@@ -22,11 +22,13 @@ import (
 var (
 	errInvalidRestorePassword = errors.New("Invalid restore password")
 	errNoRemoteLinkedVault    = errors.New("No remote linked vault")
+	errRestoreTargetExists    = errors.New("a local vault was created while restoring")
 )
 
 var (
 	ErrInvalidRestorePassword = errInvalidRestorePassword
 	ErrNoRemoteLinkedVault    = errNoRemoteLinkedVault
+	ErrRestoreTargetExists    = errRestoreTargetExists
 )
 
 type linkedCredentials struct {
@@ -36,10 +38,9 @@ type linkedCredentials struct {
 }
 
 type linkedRestorePlan struct {
-	creds      linkedCredentials
-	state      *forgedsync.SyncState
-	stateStore *forgedsync.StateStore
-	result     forgedsync.PullResult
+	creds    linkedCredentials
+	deviceID string
+	result   forgedsync.PullResult
 }
 
 func RestoreLinkedVault(paths config.Paths, password []byte) error {
@@ -56,30 +57,22 @@ func prepareLinkedRestore(paths config.Paths) (linkedRestorePlan, error) {
 		return linkedRestorePlan{}, err
 	}
 
-	stateStore := forgedsync.NewStateStore(paths.SyncStateFile())
-	state, err := stateStore.Load()
+	var state *forgedsync.SyncState
+	err = accountauth.WithCredentials(paths, func(current accountauth.Credentials) error {
+		if !linkedRestoreAccountMatches(current, creds) {
+			return fmt.Errorf("linked account changed while preparing restore")
+		}
+		return vault.WithVaultLock(paths.VaultFile(), func() error {
+			if err := restoreTargetAbsent(paths.VaultFile()); err != nil {
+				return err
+			}
+			var err error
+			state, _, err = loadLinkedRestoreState(paths, creds, "")
+			return err
+		})
+	})
 	if err != nil {
-		return linkedRestorePlan{}, fmt.Errorf("Loading sync state: %w", err)
-	}
-	stagedState, err := forgedsync.NewStateStore(paths.SyncStateFile() + ".account-change").Load()
-	if err != nil {
-		return linkedRestorePlan{}, fmt.Errorf("loading staged sync state: %w", err)
-	}
-	if stagedState != nil {
-		return linkedRestorePlan{}, fmt.Errorf("%w: staged sync state requires recovery", forgedsync.ErrStateRecoveryRequired)
-	}
-	if state == nil {
-		defaultState := forgedsync.DefaultSyncState(uuid.NewString())
-		state = &defaultState
-	}
-	if state.DeviceID == "" {
-		state.DeviceID = uuid.NewString()
-	}
-	if state.LinkedUserID != "" && state.LinkedUserID != creds.UserID {
-		return linkedRestorePlan{}, fmt.Errorf("%w: local sync state belongs to another account", forgedsync.ErrStateRecoveryRequired)
-	}
-	if state.ServerURL != "" && !sameRestoreServer(state.ServerURL, creds.ServerURL) {
-		return linkedRestorePlan{}, fmt.Errorf("%w: local sync state belongs to another server", forgedsync.ErrStateRecoveryRequired)
+		return linkedRestorePlan{}, err
 	}
 
 	client := forgedsync.NewClient(creds.ServerURL, creds.Token, state.DeviceID)
@@ -92,11 +85,47 @@ func prepareLinkedRestore(paths config.Paths) (linkedRestorePlan, error) {
 	}
 
 	return linkedRestorePlan{
-		creds:      creds,
-		state:      state,
-		stateStore: stateStore,
-		result:     result,
+		creds:    creds,
+		deviceID: state.DeviceID,
+		result:   result,
 	}, nil
+}
+
+// loadLinkedRestoreState is called while holding the account and vault locks.
+func loadLinkedRestoreState(paths config.Paths, creds linkedCredentials, fallbackDeviceID string) (*forgedsync.SyncState, *forgedsync.StateStore, error) {
+	stateStore := forgedsync.NewStateStore(paths.SyncStateFile())
+	state, err := stateStore.Load()
+	if err != nil {
+		return nil, nil, fmt.Errorf("Loading sync state: %w", err)
+	}
+	stagedState, err := forgedsync.NewStateStore(paths.SyncStateFile() + ".account-change").Load()
+	if err != nil {
+		return nil, nil, fmt.Errorf("loading staged sync state: %w", err)
+	}
+	if stagedState != nil {
+		return nil, nil, fmt.Errorf("%w: staged sync state requires recovery", forgedsync.ErrStateRecoveryRequired)
+	}
+	if fallbackDeviceID == "" {
+		fallbackDeviceID = uuid.NewString()
+	}
+	if state == nil {
+		defaultState := forgedsync.DefaultSyncState(fallbackDeviceID)
+		state = &defaultState
+	}
+	if state.DeviceID == "" {
+		state.DeviceID = fallbackDeviceID
+	}
+	if state.LinkedUserID != "" && state.LinkedUserID != creds.UserID {
+		return nil, nil, fmt.Errorf("%w: local sync state belongs to another account", forgedsync.ErrStateRecoveryRequired)
+	}
+	if state.ServerURL != "" && !sameRestoreServer(state.ServerURL, creds.ServerURL) {
+		return nil, nil, fmt.Errorf("%w: local sync state belongs to another server", forgedsync.ErrStateRecoveryRequired)
+	}
+	return state, stateStore, nil
+}
+
+func linkedRestoreAccountMatches(current accountauth.Credentials, plan linkedCredentials) bool {
+	return current.UserID == plan.UserID && sameRestoreServer(current.ServerURL, plan.ServerURL)
 }
 
 func loadLinkedCredentials(paths config.Paths) (linkedCredentials, error) {
@@ -121,34 +150,57 @@ func applyLinkedRestore(paths config.Paths, plan linkedRestorePlan, password []b
 		return err
 	}
 	defer wipeBytes(syncKey)
-	if err := forgedsync.ValidateStateHistoryWithKey(syncKey, plan.state); err != nil {
-		if errors.Is(err, forgedsync.ErrStateCorrupt) {
-			if quarantineErr := plan.stateStore.Quarantine(); quarantineErr != nil {
-				return fmt.Errorf("quarantining sync state: %w", quarantineErr)
-			}
-		}
-		return fmt.Errorf("validating sync state: %w", err)
-	}
 
 	raw := vault.MarshalVault(header, ciphertext)
-	if err := writeAtomicFile(paths.VaultFile(), raw); err != nil {
-		return fmt.Errorf("Writing restored vault: %w", err)
+	return accountauth.WithCredentials(paths, func(current accountauth.Credentials) error {
+		if !linkedRestoreAccountMatches(current, plan.creds) {
+			return fmt.Errorf("linked account changed while restoring")
+		}
+		return vault.WithVaultLock(paths.VaultFile(), func() error {
+			if err := restoreTargetAbsent(paths.VaultFile()); err != nil {
+				return err
+			}
+			state, stateStore, err := loadLinkedRestoreState(paths, plan.creds, plan.deviceID)
+			if err != nil {
+				return err
+			}
+			if err := forgedsync.ValidateStateHistoryWithKey(syncKey, state); err != nil {
+				if errors.Is(err, forgedsync.ErrStateCorrupt) {
+					if quarantineErr := stateStore.Quarantine(); quarantineErr != nil {
+						return fmt.Errorf("quarantining sync state: %w", quarantineErr)
+					}
+				}
+				return fmt.Errorf("validating sync state: %w", err)
+			}
+			if err := writeAtomicFile(paths.VaultFile(), raw); err != nil {
+				return fmt.Errorf("Writing restored vault: %w", err)
+			}
+
+			state.LinkedUserID = plan.creds.UserID
+			state.ServerURL = plan.creds.ServerURL
+			state.Dirty = false
+			state.LastKnownServerVersion = plan.result.Version
+			state.LastSyncedBaseBlob = append([]byte(nil), plan.result.Blob...)
+			state.LastSyncedHash = hashSyncBlob(plan.result.Blob)
+			state.LastSuccessfulPullAt = time.Now().UTC()
+			state.LastError = ""
+			state.NextRetryAt = time.Time{}
+
+			if err := stateStore.Save(state); err != nil {
+				return fmt.Errorf("Saving restored sync state: %w", err)
+			}
+			return nil
+		})
+	})
+}
+
+// restoreTargetAbsent is called while holding vault's persistent writer lock.
+func restoreTargetAbsent(path string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return errRestoreTargetExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("Checking restore target: %w", err)
 	}
-
-	plan.state.LinkedUserID = plan.creds.UserID
-	plan.state.ServerURL = plan.creds.ServerURL
-	plan.state.Dirty = false
-	plan.state.LastKnownServerVersion = plan.result.Version
-	plan.state.LastSyncedBaseBlob = append([]byte(nil), plan.result.Blob...)
-	plan.state.LastSyncedHash = hashSyncBlob(plan.result.Blob)
-	plan.state.LastSuccessfulPullAt = time.Now().UTC()
-	plan.state.LastError = ""
-	plan.state.NextRetryAt = time.Time{}
-
-	if err := plan.stateStore.Save(plan.state); err != nil {
-		return fmt.Errorf("Saving restored sync state: %w", err)
-	}
-
 	return nil
 }
 

@@ -141,6 +141,8 @@ func (e *Engine) restoreLinkedVault(state *repairState, opts RunOptions) error {
 	case errors.Is(err, errNoRemoteLinkedVault):
 		state.result.Next = NextActionNeedsInteractiveSetup
 		return nil
+	case errors.Is(err, errRestoreTargetExists):
+		return e.refreshSnapshot(state)
 	case err != nil:
 		return err
 	}
@@ -157,10 +159,24 @@ func (e *Engine) restoreLinkedVault(state *repairState, opts RunOptions) error {
 		return nil
 	}
 
+	plan, err = prepareLinkedRestore(e.Paths)
+	switch {
+	case errors.Is(err, errNoRemoteLinkedVault):
+		state.result.Next = NextActionNeedsInteractiveSetup
+		return nil
+	case errors.Is(err, errRestoreTargetExists):
+		return e.refreshSnapshot(state)
+	case err != nil:
+		return err
+	}
+
 	if err := applyLinkedRestore(e.Paths, plan, password); err != nil {
 		if errors.Is(err, errInvalidRestorePassword) {
 			state.result.Next = NextActionNeedsPassword
 			return nil
+		}
+		if errors.Is(err, errRestoreTargetExists) {
+			return e.refreshSnapshot(state)
 		}
 		return err
 	}

@@ -13,7 +13,10 @@ import (
 	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
-var ErrVaultLocked = errors.New("Vault is locked by another process")
+var (
+	ErrVaultLocked = errors.New("Vault is locked by another process")
+	ErrVaultExists = errors.New("vault already exists")
+)
 
 type Vault struct {
 	mu           sync.RWMutex
@@ -159,6 +162,10 @@ func Create(path string, password []byte) (*Vault, error) {
 	}
 
 	if err := v.acquireLock(); err != nil {
+		return nil, err
+	}
+	if err := ensureVaultAbsent(path); err != nil {
+		v.Close()
 		return nil, err
 	}
 
@@ -585,6 +592,29 @@ func (v *Vault) acquireLock() error {
 		return err
 	}
 	v.lockFile = f
+	return nil
+}
+
+// WithVaultLock runs fn while holding the same persistent lock used by
+// writable vault instances.
+func WithVaultLock(path string, fn func() error) error {
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		return fmt.Errorf("creating vault directory: %w", err)
+	}
+	f, err := acquireVaultLock(path)
+	if err != nil {
+		return err
+	}
+	defer releaseVaultLock(f)
+	return fn()
+}
+
+func ensureVaultAbsent(path string) error {
+	if _, err := os.Lstat(path); err == nil {
+		return ErrVaultExists
+	} else if !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("checking vault path: %w", err)
+	}
 	return nil
 }
 

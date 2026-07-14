@@ -695,6 +695,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.passwordInput.SetError("Couldn't decrypt vault, incorrect password")
 			case errors.Is(msg.err, readiness.ErrNoRemoteLinkedVault):
 				m.passwordInput.SetError("No linked vault was found for this account.")
+			case errors.Is(msg.err, readiness.ErrRestoreTargetExists):
+				m.passwordInput.SetError("A local vault was created while restoring. It was kept; reopen Forged.")
 			default:
 				m.passwordInput.SetError(errorText)
 			}
