@@ -150,14 +150,12 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 
 	generation := b.authorizationGeneration()
 	now := time.Now()
-	if !force {
-		result, activeSession, err := b.allowActiveSession(action, now, generation)
-		if errors.Is(err, ErrAuthenticationCanceled) {
-			return b.authorizationInterrupted(action)
-		}
-		if activeSession {
-			return result, nil
-		}
+	result, activeSession, err := b.allowActiveSession(action, now, generation)
+	if errors.Is(err, ErrAuthenticationCanceled) {
+		return b.authorizationInterrupted(action)
+	}
+	if !force && activeSession {
+		return result, nil
 	}
 	if headlessModePreemptsSystemAuth(b.paths) {
 		return b.authorizeWithoutSystemAuth(action, CapabilityUnavailableByPlatform, generation)
