@@ -55,6 +55,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Private-key clipboard copies use sensitive platform hints when available, show a 45-second countdown, and clear only while the copied value is still current; normal TUI exit also clears an active copy.
 - While locked, the header uses the welcome product rail instead of live system status.
 - Manage owns user-facing security settings. Doctor shows security capability state.
+- Master-password interval loading, retries, and saves have explicit single-flight states; failed loads never expose a fake default selection.
 - `Master Password Interval` is local to the device, not synced through the vault.
 
 ## Decisions

@@ -43,6 +43,8 @@ type manageState struct {
 	logoutBusy             bool
 	logoutArmed            bool
 	settingItem            manageItemID
+	settingID              int
+	settingBusy            bool
 	settingErr             string
 	success                *manageSuccessState
 }
@@ -73,8 +75,9 @@ type manageAutoReturnMsg struct {
 }
 
 type manageSecuritySavedMsg struct {
+	id    int
 	item  manageItemID
-	state SecurityState
+	value string
 	err   error
 }
 
@@ -230,6 +233,21 @@ func (m *model) renderManageProfileBody(contentWidth int) string {
 }
 
 func (m *model) renderManageMasterIntervalBody(contentWidth int) string {
+	if !m.securityLoaded {
+		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
+			Title:       "Loading security settings",
+			Description: "Reading this device's master-password policy",
+		}, m.spinner.View(), contentWidth)
+	}
+	if m.securityLoadErr != "" {
+		width := max(28, min(contentWidth, theme.HeroMaxWidth))
+		return strings.Join([]string{
+			theme.Danger.Width(width).Render("Couldn't load security settings: " + m.securityLoadErr),
+			"",
+			theme.BodyMuted.Width(width).Render("Press Enter to retry."),
+		}, "\n")
+	}
+
 	descriptionWidth := max(28, min(contentWidth, theme.HeroMaxWidth))
 	description := theme.Body.Width(descriptionWidth).Render(
 		"Choose how often Forged asks for your master password again on this device.",
@@ -259,7 +277,9 @@ func (m *model) renderManageMasterIntervalBody(contentWidth int) string {
 	}, "\n")
 
 	summary := theme.BodyMuted.Width(descriptionWidth).Render(masterPasswordIntervalOptionSummary(options[selected].Value))
-	if errText := strings.TrimSpace(m.manage.settingErr); errText != "" {
+	if m.manage.settingBusy {
+		summary = theme.BodyMuted.Width(descriptionWidth).Render(theme.Spinner.Render(m.spinner.View()) + " Saving security settings")
+	} else if errText := strings.TrimSpace(m.manage.settingErr); errText != "" {
 		summary = theme.Warning.Width(descriptionWidth).Render(errText)
 	}
 	return shell.DockBottom(top+"\n", summary)
@@ -321,6 +341,29 @@ func (m *model) updateManageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateManageMasterIntervalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+	if m.manage.settingBusy {
+		return m, nil
+	}
+	if msg.String() == "esc" {
+		m.manage.settingItem = ""
+		m.manage.settingErr = ""
+		if m.session.Back() {
+			return m, m.showCurrentRoute()
+		}
+		return m, tea.Quit
+	}
+	if !m.securityLoaded {
+		return m, nil
+	}
+	if m.securityLoadErr != "" {
+		if msg.String() == "enter" {
+			m.securityLoaded = false
+			m.securityLoadErr = ""
+			return m, tea.Batch(m.spinner.Tick, m.loadSecurityStateCmd())
+		}
+		return m, nil
+	}
+
 	options := masterPasswordIntervalOptions()
 	if len(options) == 0 {
 		return m, nil
@@ -333,13 +376,6 @@ func (m *model) updateManageMasterIntervalKeys(msg tea.KeyMsg) (tea.Model, tea.C
 	}
 
 	switch msg.String() {
-	case "esc":
-		m.manage.settingItem = ""
-		m.manage.settingErr = ""
-		if m.session.Back() {
-			return m, m.showCurrentRoute()
-		}
-		return m, tea.Quit
 	case "up", "k":
 		m.manage.settingItem = ""
 		m.manage.settingErr = ""
@@ -733,39 +769,42 @@ func (m *model) currentMasterPasswordIntervalIndex() int {
 }
 
 func (m *model) saveManageSecuritySettingCmd(item manageItemID, value string) tea.Cmd {
+	m.manage.settingID++
+	id := m.manage.settingID
+	m.manage.settingBusy = true
 	setInterval := m.deps.SetMasterPasswordInterval
-	loadSecurity := m.deps.LoadSecurityState
-	return func() tea.Msg {
+	work := func() tea.Msg {
 		var err error
 		switch item {
 		case manageItemMasterInterval:
 			err = setInterval(value)
 		default:
-			return manageSecuritySavedMsg{item: item, err: fmt.Errorf("Unknown security setting")}
+			return manageSecuritySavedMsg{id: id, item: item, err: fmt.Errorf("Unknown security setting")}
 		}
 		if err != nil {
-			return manageSecuritySavedMsg{item: item, err: err}
+			return manageSecuritySavedMsg{id: id, item: item, err: err}
 		}
-		state, err := loadSecurity()
-		return manageSecuritySavedMsg{item: item, state: state, err: err}
+		return manageSecuritySavedMsg{id: id, item: item, value: config.NormalizeMasterPasswordInterval(value)}
 	}
+	return tea.Batch(m.spinner.Tick, work)
 }
 
 func (m *model) handleManageSecuritySavedMsg(msg manageSecuritySavedMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.manage.settingID {
+		return m, nil
+	}
+	m.manage.settingBusy = false
 	m.manage.settingItem = msg.item
 	if msg.err != nil {
 		m.manage.settingErr = m.reportError("security.save", msg.err)
 		return m, nil
 	}
 	m.manage.settingErr = ""
-	m.securityLoadID++
-	m.securityState = msg.state
-	m.securityLoaded = true
-	m.securityLoadErr = ""
 	if msg.item == manageItemMasterInterval {
+		m.securityState.MasterPasswordInterval = config.NormalizeMasterPasswordInterval(msg.value)
 		m.manage.masterIntervalSelected = m.currentMasterPasswordIntervalIndex()
-		if m.session.Current().ID == RouteVaultMasterPasswordInterval && m.session.Back() {
-			return m, m.showCurrentRoute()
+		if m.isManageMasterIntervalRoute() && m.session.Back() {
+			return m, nil
 		}
 	}
 	return m, nil

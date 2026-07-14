@@ -710,6 +710,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		} else {
 			m.securityState = msg.state
 			m.securityLoadErr = ""
+			if m.isManageMasterIntervalRoute() {
+				m.manage.masterIntervalSelected = m.currentMasterPasswordIntervalIndex()
+			}
 		}
 		return m, nil
 	case runtimeStatusMsg:
@@ -1514,6 +1517,18 @@ func (m *model) footerActions() []shell.FooterAction {
 			}
 		}
 		if m.isManageMasterIntervalRoute() {
+			if m.manage.settingBusy {
+				return nil
+			}
+			if !m.securityLoaded {
+				return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+			}
+			if m.securityLoadErr != "" {
+				return []shell.FooterAction{
+					{Key: "Enter", Label: "Retry"},
+					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+				}
+			}
 			return []shell.FooterAction{
 				{Key: theme.Glyphs.UpDown, Label: "Move"},
 				{Key: "Enter", Label: "Apply"},
@@ -2222,7 +2237,7 @@ func (m *model) usesSpinner() bool {
 	case screenPassword:
 		return m.passwordBusy
 	case screenDashboard:
-		return m.keyUsesSpinner() || m.agentUsesSpinner() || m.lab.loading || m.lab.busy || m.manage.syncBusy || m.manage.logoutBusy || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
+		return m.keyUsesSpinner() || m.agentUsesSpinner() || m.lab.loading || m.lab.busy || m.manage.syncBusy || m.manage.logoutBusy || m.manage.settingBusy || (m.isManageMasterIntervalRoute() && !m.securityLoaded) || m.systemHeader == systemHeaderChecking || m.systemHeader == systemHeaderFixing || m.runtimeSyncPending()
 	default:
 		return false
 	}
@@ -2839,7 +2854,7 @@ func (m *model) showCurrentRoute() tea.Cmd {
 		return tea.Batch(cmds...)
 	case RouteVaultMasterPasswordInterval:
 		m.manage.masterIntervalSelected = m.currentMasterPasswordIntervalIndex()
-		return m.loadSecurityStateCmd()
+		return tea.Batch(m.spinner.Tick, m.loadSecurityStateCmd())
 	default:
 		return nil
 	}
@@ -3036,6 +3051,8 @@ func (m *model) pollRuntimeStatus(delay time.Duration) tea.Cmd {
 }
 
 func (m *model) loadSecurityStateCmd() tea.Cmd {
+	m.securityLoaded = false
+	m.securityLoadErr = ""
 	m.securityLoadID++
 	id := m.securityLoadID
 	loadSecurityState := m.deps.LoadSecurityState
