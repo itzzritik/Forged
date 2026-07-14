@@ -247,7 +247,7 @@ func renderBrowserEmptyRows(width int, visibleRows int, title string, subtitle s
 	subtitleRow := min(visibleRows-1, titleRow+1)
 
 	rows[titleRow] = centerRow(theme.BodyStrong.Render(title), width)
-	if msg := strings.TrimSpace(subtitle); msg != "" {
+	if msg := strings.TrimSpace(subtitle); msg != "" && subtitleRow != titleRow {
 		rows[subtitleRow] = centerRow(theme.BodyMuted.Render(msg), width)
 	}
 	return rows

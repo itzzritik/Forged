@@ -130,6 +130,7 @@ type keyBrowserState struct {
 	rows     []actions.KeySummary
 	selected int
 	offset   int
+	pageRows int
 
 	searchActive bool
 	input        textinput.Model
@@ -551,6 +552,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 	switch m.session.Current().ID {
 	case RouteKeysBrowser:
+		m.resizeKeyBrowserPage(bodyHeight)
 		rows := m.keyBrowserVisibleRows()
 		browserRows := make([]keyscreen.BrowserRow, 0, len(rows))
 		for _, row := range rows {
@@ -566,6 +568,7 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 			SearchActive: m.keyBrowser.searchActive,
 			SearchNotice: m.keyBrowserNotice(),
 			CountLabel:   m.keyBrowserCountLabel(),
+			VisibleRows:  m.keyBrowserPageRows(),
 			Rows:         browserRows,
 			SelectedIndex: func() int {
 				if m.keyBrowser.selected < m.keyBrowser.offset {
@@ -2206,14 +2209,14 @@ func (m *model) removeCachedKey(name string) {
 }
 
 func (m *model) ensureKeyBrowserVisible() {
+	pageRows := m.keyBrowserPageRows()
+	maxOffset := max(0, len(m.keyBrowser.rows)-pageRows)
+	m.keyBrowser.offset = max(0, min(m.keyBrowser.offset, maxOffset))
 	if m.keyBrowser.selected < m.keyBrowser.offset {
 		m.keyBrowser.offset = m.keyBrowser.selected
 	}
-	if m.keyBrowser.selected >= m.keyBrowser.offset+keyscreen.VisibleRows() {
-		m.keyBrowser.offset = m.keyBrowser.selected - keyscreen.VisibleRows() + 1
-	}
-	if m.keyBrowser.offset < 0 {
-		m.keyBrowser.offset = 0
+	if m.keyBrowser.selected >= m.keyBrowser.offset+pageRows {
+		m.keyBrowser.offset = m.keyBrowser.selected - pageRows + 1
 	}
 }
 
@@ -2222,8 +2225,20 @@ func (m *model) keyBrowserVisibleRows() []actions.KeySummary {
 		return nil
 	}
 	start := min(max(m.keyBrowser.offset, 0), len(m.keyBrowser.rows))
-	end := min(len(m.keyBrowser.rows), start+keyscreen.VisibleRows())
+	end := min(len(m.keyBrowser.rows), start+m.keyBrowserPageRows())
 	return m.keyBrowser.rows[start:end]
+}
+
+func (m *model) resizeKeyBrowserPage(bodyHeight int) {
+	m.keyBrowser.pageRows = max(1, min(keyscreen.VisibleRows(), bodyHeight-6))
+	m.ensureKeyBrowserVisible()
+}
+
+func (m *model) keyBrowserPageRows() int {
+	if m.keyBrowser.pageRows <= 0 {
+		return keyscreen.VisibleRows()
+	}
+	return m.keyBrowser.pageRows
 }
 
 func (m *model) keyBrowserCountLabel() string {
