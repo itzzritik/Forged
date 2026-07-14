@@ -256,6 +256,7 @@ type snapshotRefreshMsg struct {
 }
 
 type securityStateMsg struct {
+	id    int
 	state SecurityState
 	err   error
 }
@@ -384,6 +385,8 @@ type model struct {
 	snapshotRefreshID        int
 	securityState            SecurityState
 	securityLoaded           bool
+	securityLoadID           int
+	securityLoadErr          string
 	idleLockID               int
 	idleLockDeadline         time.Time
 	idleLockTimerArmed       bool
@@ -694,11 +697,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case snapshotRefreshMsg:
 		return m.handleSnapshotRefreshMsg(msg)
 	case securityStateMsg:
+		if msg.id != m.securityLoadID {
+			return m, nil
+		}
+		m.securityLoaded = true
 		if msg.err != nil {
-			m.reportError("security.load", msg.err)
+			m.securityLoadErr = m.reportError("security.load", msg.err)
 		} else {
 			m.securityState = msg.state
-			m.securityLoaded = true
+			m.securityLoadErr = ""
 		}
 		return m, nil
 	case runtimeStatusMsg:
@@ -3014,10 +3021,12 @@ func (m *model) loadSecurityStateCmd() tea.Cmd {
 	if !m.snapshot.VaultExists {
 		return nil
 	}
+	m.securityLoadID++
+	id := m.securityLoadID
 	loadSecurityState := m.deps.LoadSecurityState
 	return func() tea.Msg {
 		state, err := loadSecurityState()
-		return securityStateMsg{state: state, err: err}
+		return securityStateMsg{id: id, state: state, err: err}
 	}
 }
 

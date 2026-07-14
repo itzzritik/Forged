@@ -104,7 +104,7 @@ func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "r", "R":
-		return m, m.refreshSnapshotCmd()
+		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd())
 	case "c", "C":
 		return m, m.copyDoctorReportCmd()
 	case "enter":
@@ -132,7 +132,7 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "right", "l":
 		return m, m.switchDashboardTab(1, tabs)
 	case "r", "R":
-		return m, m.refreshSnapshotCmd()
+		return m, tea.Batch(m.refreshSnapshotCmd(), m.loadSecurityStateCmd())
 	case "c", "C":
 		return m, m.copyDoctorReportCmd()
 	case "enter":
@@ -604,6 +604,9 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 			},
 		}
 	}
+	if m.securityLoadErr != "" {
+		return m.doctorSecurityLoadFailureRow("System Auth")
+	}
 	if m.securityState.HeadlessUnlock {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -670,6 +673,9 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 			},
 		}
 	}
+	if m.securityLoadErr != "" {
+		return m.doctorSecurityLoadFailureRow("Secure Store")
+	}
 	if m.securityState.HeadlessUnlock {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -712,6 +718,17 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 				Tone:   doctorscreen.ToneDanger,
 			},
 		}
+	}
+}
+
+func (m *model) doctorSecurityLoadFailureRow(check string) doctorRow {
+	return doctorRow{
+		screen: doctorscreen.Row{
+			Check:  check,
+			Status: theme.Glyphs.Cross + " Check failed",
+			Detail: "Security inspection failed: " + m.securityLoadErr,
+			Tone:   doctorscreen.ToneDanger,
+		},
 	}
 }
 

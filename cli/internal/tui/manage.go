@@ -683,6 +683,9 @@ func (m *model) masterPasswordIntervalSummary() string {
 	if !m.securityLoaded {
 		return "Loading security settings"
 	}
+	if m.securityLoadErr != "" {
+		return "Security settings could not be loaded"
+	}
 	return fmt.Sprintf("Ask for your master password again every %s on this device.", formatMasterPasswordInterval(m.currentMasterPasswordInterval()))
 }
 
@@ -755,8 +758,10 @@ func (m *model) handleManageSecuritySavedMsg(msg manageSecuritySavedMsg) (tea.Mo
 		return m, nil
 	}
 	m.manage.settingErr = ""
+	m.securityLoadID++
 	m.securityState = msg.state
 	m.securityLoaded = true
+	m.securityLoadErr = ""
 	if msg.item == manageItemMasterInterval {
 		m.manage.masterIntervalSelected = m.currentMasterPasswordIntervalIndex()
 		if m.session.Current().ID == RouteVaultMasterPasswordInterval && m.session.Back() {
