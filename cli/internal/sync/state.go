@@ -4,6 +4,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"time"
@@ -62,17 +63,17 @@ func (s *StateStore) Load() (*SyncState, error) {
 		return nil, nil
 	}
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Reading sync state: %w", err)
 	}
 
 	var state SyncState
 	if err := json.Unmarshal(data, &state); err != nil {
-		return nil, err
+		return nil, fmt.Errorf("Parsing sync state: %w", err)
 	}
 	if state.LastSyncedBaseBlobB64 != "" {
 		state.LastSyncedBaseBlob, err = base64.StdEncoding.DecodeString(state.LastSyncedBaseBlobB64)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("Decoding sync base: %w", err)
 		}
 	}
 
@@ -81,18 +82,41 @@ func (s *StateStore) Load() (*SyncState, error) {
 
 func (s *StateStore) Save(state *SyncState) error {
 	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
-		return err
+		return fmt.Errorf("Creating sync state directory: %w", err)
 	}
 
 	copyState := *state
-	if len(copyState.LastSyncedBaseBlob) > 0 {
-		copyState.LastSyncedBaseBlobB64 = base64.StdEncoding.EncodeToString(copyState.LastSyncedBaseBlob)
-	}
+	copyState.LastSyncedBaseBlobB64 = base64.StdEncoding.EncodeToString(copyState.LastSyncedBaseBlob)
 
 	data, err := json.MarshalIndent(copyState, "", "  ")
 	if err != nil {
-		return err
+		return fmt.Errorf("Encoding sync state: %w", err)
 	}
 
-	return os.WriteFile(s.path, data, 0o600)
+	tmp, err := os.CreateTemp(filepath.Dir(s.path), ".sync-state.tmp-*")
+	if err != nil {
+		return fmt.Errorf("Creating temporary sync state: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer func() {
+		tmp.Close()
+		os.Remove(tmpPath)
+	}()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("Securing temporary sync state: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("Writing temporary sync state: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("Syncing temporary sync state: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("Closing temporary sync state: %w", err)
+	}
+	if err := os.Rename(tmpPath, s.path); err != nil {
+		return fmt.Errorf("Replacing sync state: %w", err)
+	}
+	return nil
 }

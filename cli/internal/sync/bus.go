@@ -363,14 +363,17 @@ func (b *Bus) CheckDirtyFlag() {
 	if b.cfg.DirtyFlagPath == "" {
 		return
 	}
-	if _, err := os.Stat(b.cfg.DirtyFlagPath); err == nil {
-		b.mu.Lock()
-		b.mutationVersion++
-		b.state.MarkDirty("", time.Time{})
-		b.persistLocked()
-		_ = os.Remove(b.cfg.DirtyFlagPath)
-		b.mu.Unlock()
+	if _, err := os.Stat(b.cfg.DirtyFlagPath); err != nil {
+		if !errors.Is(err, os.ErrNotExist) && b.logger != nil {
+			b.logger.Warn("reading sync dirty marker failed", "error", err)
+		}
+		return
 	}
+	b.mu.Lock()
+	b.mutationVersion++
+	b.state.MarkDirty("", time.Time{})
+	b.persistLocked()
+	b.mu.Unlock()
 }
 
 func (b *Bus) enqueuePush(reason string) {
@@ -708,9 +711,13 @@ func (b *Bus) startBackgroundRefresh() {
 }
 
 func (b *Bus) persistLocked() {
+	stateSaved := true
 	if b.cfg.StateStore != nil {
-		if err := b.cfg.StateStore.Save(b.state); err != nil && b.logger != nil {
-			b.logger.Warn("persisting sync state failed", "error", err)
+		if err := b.cfg.StateStore.Save(b.state); err != nil {
+			stateSaved = false
+			if b.logger != nil {
+				b.logger.Warn("persisting sync state failed", "error", err)
+			}
 		}
 	}
 
@@ -718,14 +725,22 @@ func (b *Bus) persistLocked() {
 		return
 	}
 
-	if b.state.Dirty {
-		if err := os.MkdirAll(filepath.Dir(b.cfg.DirtyFlagPath), 0o700); err == nil {
-			_ = os.WriteFile(b.cfg.DirtyFlagPath, []byte("1"), 0o600)
+	if b.state.Dirty || !stateSaved {
+		if err := os.MkdirAll(filepath.Dir(b.cfg.DirtyFlagPath), 0o700); err != nil {
+			if b.logger != nil {
+				b.logger.Warn("creating sync dirty directory failed", "error", err)
+			}
+			return
+		}
+		if err := os.WriteFile(b.cfg.DirtyFlagPath, []byte("1"), 0o600); err != nil && b.logger != nil {
+			b.logger.Warn("persisting sync dirty marker failed", "error", err)
 		}
 		return
 	}
 
-	_ = os.Remove(b.cfg.DirtyFlagPath)
+	if err := os.Remove(b.cfg.DirtyFlagPath); err != nil && !errors.Is(err, os.ErrNotExist) && b.logger != nil {
+		b.logger.Warn("removing sync dirty marker failed", "error", err)
+	}
 }
 
 func waitForSync(ctx context.Context, done <-chan struct{}) error {
