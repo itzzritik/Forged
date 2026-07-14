@@ -46,8 +46,8 @@ func runInteractiveIntent(intent tui.Intent) error {
 		RestoreVault: func(password []byte) error {
 			return readiness.RestoreLinkedVault(paths, password)
 		},
-		StartLogin: func(server string, progress func(actions.LoginProgress)) (actions.LoginSession, error) {
-			return actions.BeginLoginWithProgress(server, actions.OpenBrowser, progress)
+		StartLogin: func(ctx context.Context, server string, progress func(actions.LoginProgress)) (actions.LoginSession, error) {
+			return actions.BeginLoginWithProgressContext(ctx, server, actions.OpenBrowser, progress)
 		},
 		SaveCredentials: func(creds actions.AccountCredentials) error { return actions.SaveCredentials(paths, creds) },
 		TriggerSync:     func() error { return actions.TriggerSync(paths) },

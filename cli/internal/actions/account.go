@@ -158,10 +158,17 @@ func runningAccountProtocol(paths config.Paths) (int, error) {
 }
 
 func BeginLogin(server string, openBrowser func(string)) (LoginSession, error) {
-	return BeginLoginWithProgress(server, openBrowser, nil)
+	return BeginLoginWithProgressContext(context.Background(), server, openBrowser, nil)
 }
 
 func BeginLoginWithProgress(server string, openBrowser func(string), progress func(LoginProgress)) (LoginSession, error) {
+	return BeginLoginWithProgressContext(context.Background(), server, openBrowser, progress)
+}
+
+func BeginLoginWithProgressContext(ctx context.Context, server string, openBrowser func(string), progress func(LoginProgress)) (LoginSession, error) {
+	if err := ctx.Err(); err != nil {
+		return LoginSession{}, err
+	}
 	code, err := randomHex(16)
 	if err != nil {
 		return LoginSession{}, fmt.Errorf("Generating code: %w", err)
@@ -183,13 +190,16 @@ func BeginLoginWithProgress(server string, openBrowser func(string), progress fu
 		"challenge_method": "S256",
 	})
 
-	resp, err := createAuthSessionWithRetry(server, payload, progress)
+	resp, err := createAuthSessionWithRetry(ctx, server, payload, progress)
 	if err != nil {
 		return LoginSession{}, err
 	}
 	resp.Body.Close()
 
 	authURL := ipc.DefaultWebApp + "/login?code=" + code
+	if err := ctx.Err(); err != nil {
+		return LoginSession{}, err
+	}
 	if openBrowser != nil {
 		openBrowser(authURL)
 	}
@@ -209,6 +219,7 @@ func BeginLoginWithProgress(server string, openBrowser func(string), progress fu
 func pollLogin(ctx context.Context, server, code, pollURL, codeVerifier string) (AccountCredentials, error) {
 	deadline := time.Now().Add(5 * time.Minute)
 	interval := 2 * time.Second
+	client := &http.Client{Timeout: 15 * time.Second}
 
 	for time.Now().Before(deadline) {
 		timer := time.NewTimer(interval)
@@ -219,8 +230,15 @@ func pollLogin(ctx context.Context, server, code, pollURL, codeVerifier string) 
 		case <-timer.C:
 		}
 
-		resp, err := http.Get(pollURL)
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, pollURL, nil)
 		if err != nil {
+			return AccountCredentials{}, fmt.Errorf("Creating login status request: %w", err)
+		}
+		resp, err := client.Do(req)
+		if err != nil {
+			if ctx.Err() != nil {
+				return AccountCredentials{}, ctx.Err()
+			}
 			interval = min(interval*2, 10*time.Second)
 			continue
 		}
@@ -333,7 +351,7 @@ func OpenBrowser(url string) {
 	}
 }
 
-func createAuthSessionWithRetry(server string, payload []byte, progress func(LoginProgress)) (*http.Response, error) {
+func createAuthSessionWithRetry(ctx context.Context, server string, payload []byte, progress func(LoginProgress)) (*http.Response, error) {
 	backoffSchedule := []time.Duration{
 		1 * time.Second,
 		3 * time.Second,
@@ -345,13 +363,22 @@ func createAuthSessionWithRetry(server string, payload []byte, progress func(Log
 
 	var lastErr error
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		req, err := http.NewRequest(http.MethodPost, server+"/api/v1/auth/sessions", bytes.NewReader(payload))
+		if err := ctx.Err(); err != nil {
+			return nil, err
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, server+"/api/v1/auth/sessions", bytes.NewReader(payload))
 		if err != nil {
 			return nil, fmt.Errorf("Creating auth session request: %w", err)
 		}
 		req.Header.Set("Content-Type", "application/json")
 
 		resp, err := client.Do(req)
+		if ctx.Err() != nil {
+			if resp != nil {
+				resp.Body.Close()
+			}
+			return nil, ctx.Err()
+		}
 		if err == nil && resp.StatusCode == http.StatusCreated {
 			if attempt > 1 {
 				logLoginAttempt("auth session created after retry", attempt, server, http.StatusCreated, nil)
@@ -378,7 +405,13 @@ func createAuthSessionWithRetry(server string, payload []byte, progress func(Log
 				Status: fmt.Sprintf("Attempt %d failed. Retrying in %s (%d/%d)", attempt, humanizeDuration(delay), attempt+1, maxAttempts),
 			})
 		}
-		time.Sleep(delay)
+		timer := time.NewTimer(delay)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return nil, ctx.Err()
+		case <-timer.C:
+		}
 	}
 
 	return nil, lastErr

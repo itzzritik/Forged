@@ -39,7 +39,7 @@ type Dependencies struct {
 	Repair                    func(readiness.RunOptions) (readiness.RunResult, error)
 	CreateVault               func([]byte) error
 	RestoreVault              func([]byte) error
-	StartLogin                func(string, func(actions.LoginProgress)) (actions.LoginSession, error)
+	StartLogin                func(context.Context, string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	SaveCredentials           func(actions.AccountCredentials) error
 	TriggerSync               func() error
 	LockSensitive             func() error
@@ -160,6 +160,7 @@ type assessmentMsg struct {
 
 type loginStartedMsg struct {
 	id      int
+	ctx     context.Context
 	session actions.LoginSession
 	err     error
 }
@@ -426,6 +427,7 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 
 	initial := newModel(intent, deps, components.NewSpinner())
 	final, err := tea.NewProgram(initial, tea.WithAltScreen()).Run()
+	initial.cancelLoginFlow()
 	initial.clearRestorePassword()
 	initial.discardPasswordInput()
 	closeErr := deps.CloseClipboard()
@@ -585,6 +587,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.loginProgress = nil
 		if msg.err != nil {
+			m.cancelLoginFlow()
 			errorText := m.reportError("login.start", msg.err)
 			m.loginScreen.Waiting = false
 			m.loginScreen.Error = errorText
@@ -600,12 +603,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			Waiting:          true,
 		}
 
-		if m.loginCancel != nil {
-			m.loginCancel()
-		}
-		ctx, cancel := context.WithCancel(context.Background())
-		m.loginCancel = cancel
-		return m, m.waitForLogin(ctx, msg.id, msg.session)
+		return m, m.waitForLogin(msg.ctx, msg.id, msg.session)
 	case startupUnlockFinishedMsg:
 		return m, m.handleStartupUnlockFinishedMsg(msg)
 	case loginProgressMsg:
@@ -622,7 +620,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.id != m.loginID || m.screen != screenLogin {
 			return m, nil
 		}
-		m.loginCancel = nil
+		m.cancelLoginFlow()
 		m.loginCommitting = true
 		m.loginScreen.Waiting = true
 		m.loginScreen.Status = "Saving account securely"
@@ -633,9 +631,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.loginCommitting = false
-		if m.loginCancel != nil {
-			m.loginCancel = nil
-		}
+		m.cancelLoginFlow()
 		if msg.canceled {
 			return m, nil
 		}
@@ -1894,10 +1890,7 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "esc":
 		m.loginID++
 		m.loginProgress = nil
-		if m.loginCancel != nil {
-			m.loginCancel()
-			m.loginCancel = nil
-		}
+		m.cancelLoginFlow()
 		if m.session.Back() {
 			return m, m.showCurrentRoute()
 		}
@@ -2300,6 +2293,7 @@ func (m *model) assessCurrentState() tea.Cmd {
 }
 
 func (m *model) startLoginFlow() tea.Cmd {
+	m.cancelLoginFlow()
 	m.discardPasswordInput()
 	m.screen = screenLogin
 	m.notice = notice{}
@@ -2312,6 +2306,8 @@ func (m *model) startLoginFlow() tea.Cmd {
 	}
 	m.loginID++
 	id := m.loginID
+	ctx, cancel := context.WithCancel(context.Background())
+	m.loginCancel = cancel
 	startLogin := m.deps.StartLogin
 	server := m.serverURL()
 	progressCh := make(chan actions.LoginProgress, 8)
@@ -2320,16 +2316,24 @@ func (m *model) startLoginFlow() tea.Cmd {
 		m.spinner.Tick,
 		m.waitForLoginStartProgress(id, progressCh),
 		func() tea.Msg {
-			session, err := startLogin(server, func(progress actions.LoginProgress) {
+			session, err := startLogin(ctx, server, func(progress actions.LoginProgress) {
 				select {
 				case progressCh <- progress:
 				default:
 				}
 			})
 			close(progressCh)
-			return loginStartedMsg{id: id, session: session, err: err}
+			return loginStartedMsg{id: id, ctx: ctx, session: session, err: err}
 		},
 	)
+}
+
+func (m *model) cancelLoginFlow() {
+	if m.loginCancel == nil {
+		return
+	}
+	m.loginCancel()
+	m.loginCancel = nil
 }
 
 func (m *model) waitForLoginStartProgress(id int, ch <-chan actions.LoginProgress) tea.Cmd {

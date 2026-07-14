@@ -59,7 +59,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - UI chrome falls back to ASCII for non-UTF-8 or legacy terminals; `FORGED_ASCII=1` forces it without rewriting user-provided text.
 - Foreground colors adapt to the terminal background; `FORGED_COLOR_SCHEME=light|dark` overrides incorrect detection.
 - On supported terminals, the TUI uses the alternate screen so account and key data do not remain in shell scrollback after exit.
-- Browser login remains cancelable until approval arrives. While the daemon commits the account, screen actions are hidden and ignored; Ctrl-C remains the global force-quit shortcut.
+- Browser login remains cancelable from session creation through approval polling; canceling stops retries and in-flight HTTP before it can open a late browser. While the daemon commits the account, screen actions are hidden and ignored; Ctrl-C remains the global force-quit shortcut.
 - Private-key clipboard copies use sensitive platform hints when available, show a 45-second countdown, and clear only while the copied value is still current; normal TUI exit also clears an active copy.
 - While locked, the header uses the welcome product rail instead of live system status.
 - Manage owns user-facing security settings. Doctor shows security capability state.
