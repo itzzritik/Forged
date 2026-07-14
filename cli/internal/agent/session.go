@@ -59,7 +59,7 @@ func (s *sessionAgent) List() ([]*agent.Key, error) {
 		out = append(out, &agent.Key{
 			Format:  pub.Type(),
 			Blob:    pub.Marshal(),
-			Comment: key.Name,
+			Comment: sanitizeKeyComment(key.Name),
 		})
 	}
 	return out, nil

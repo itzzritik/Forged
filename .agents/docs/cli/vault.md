@@ -25,6 +25,7 @@ The local vault is the encrypted source of truth for keys, metadata, and synced 
 - Local unlock trust is device-local even though the vault itself is shared.
 - Private keys are now decrypted on demand instead of being kept plaintext in session memory.
 - Key removal validates any reviewed fingerprint while holding the vault transaction lock, before writing its tombstone.
+- New key names reject terminal control characters. Import names strip them; legacy or synced values remain render-sanitized until renamed.
 - SSH route entries include proof metadata, operation class, success timestamps, bounded attempt history, and route tombstones; the vault remains the synced source of truth for learned routes.
 - Clearing learned SSH routes must use `KeyStore.ClearSSHRoute` so tombstones are written; deleting route JSON would let sync resurrect old memory.
 - Export and change-password are intentionally stricter than normal unlock flows.

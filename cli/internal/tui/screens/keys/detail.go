@@ -33,7 +33,7 @@ func RenderDetail(screen DetailScreen, spinner string, width int) string {
 		return theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(msg))
 	}
 
-	name := strings.TrimSpace(screen.Key.Name)
+	name := strings.TrimSpace(theme.SanitizeText(screen.Key.Name))
 	if name == "" {
 		name = "Unnamed key"
 	}
@@ -71,7 +71,7 @@ func RenderDetail(screen DetailScreen, spinner string, width int) string {
 }
 
 func renderDetailRow(label, value string) string {
-	return padRight(theme.RowLabel.Render(strings.ToUpper(label)), 15) + theme.BodyStrong.Render(value)
+	return padRight(theme.RowLabel.Render(strings.ToUpper(label)), 15) + theme.BodyStrong.Render(theme.SanitizeText(value))
 }
 
 type detailTableRow struct {
@@ -86,7 +86,7 @@ func renderDetailTable(rows []detailTableRow, width int) string {
 	lines := make([]string, 0, len(rows)*2)
 
 	for _, row := range rows {
-		value := strings.TrimSpace(row.Value)
+		value := strings.TrimSpace(theme.SanitizeText(row.Value))
 		if value == "" {
 			value = theme.Glyphs.Empty
 		}
@@ -130,7 +130,7 @@ func detailTableValueWidth(width int) int {
 }
 
 func renderDetailFieldBlock(label, value string, width int, style lipgloss.Style) string {
-	value = strings.TrimSpace(value)
+	value = strings.TrimSpace(theme.SanitizeText(value))
 	if value == "" {
 		value = theme.Glyphs.Empty
 	}

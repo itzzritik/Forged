@@ -455,7 +455,7 @@ func routeLabel(route actions.SSHRouteDebug) string {
 }
 
 func labRouteKeyLabel(route actions.SSHRouteDebug) string {
-	return labFirstNonEmpty(route.KeyName, route.KeyRef, labShortFingerprint(route.Fingerprint), "unknown key")
+	return theme.SanitizeText(labFirstNonEmpty(route.KeyName, route.KeyRef, labShortFingerprint(route.Fingerprint), "unknown key"))
 }
 
 func labRouteSummaryTitle(route actions.SSHRouteDebug, width int) string {

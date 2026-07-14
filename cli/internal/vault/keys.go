@@ -10,6 +10,7 @@ import (
 	"os"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/google/uuid"
 	"github.com/itzzritik/forged/cli/internal/keytypes"
@@ -93,6 +94,9 @@ func (ks *KeyStore) ResolveName(input string) (string, error) {
 }
 
 func (ks *KeyStore) Generate(name, comment string) (Key, error) {
+	if err := validateKeyName(name); err != nil {
+		return Key{}, err
+	}
 	ks.vault.mu.Lock()
 	defer ks.vault.mu.Unlock()
 
@@ -178,6 +182,9 @@ func (ks *KeyStore) Generate(name, comment string) (Key, error) {
 }
 
 func (ks *KeyStore) Add(name string, privateKeyBytes []byte, comment string) (Key, error) {
+	if err := validateKeyName(name); err != nil {
+		return Key{}, err
+	}
 	ks.vault.mu.Lock()
 	defer ks.vault.mu.Unlock()
 
@@ -289,6 +296,9 @@ func (ks *KeyStore) Remove(name string, expectedFingerprint string) error {
 }
 
 func (ks *KeyStore) Rename(oldName, newName string) error {
+	if err := validateKeyName(newName); err != nil {
+		return err
+	}
 	ks.vault.mu.Lock()
 	defer ks.vault.mu.Unlock()
 
@@ -530,6 +540,13 @@ func (ks *KeyStore) indexOf(name string) int {
 		}
 	}
 	return -1
+}
+
+func validateKeyName(name string) error {
+	if strings.IndexFunc(name, unicode.IsControl) >= 0 {
+		return fmt.Errorf("Key name contains control characters")
+	}
+	return nil
 }
 
 func (ks *KeyStore) bumpVersionVector() {

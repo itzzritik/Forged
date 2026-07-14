@@ -107,6 +107,9 @@ func forceASCII() bool {
 }
 
 func AdaptTextInputPlaceholder(view string, value string) string {
+	if value != "" {
+		view = strings.ReplaceAll(view, value, SanitizeText(value))
+	}
 	if Glyphs.Unicode || value != "" {
 		return view
 	}

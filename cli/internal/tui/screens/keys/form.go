@@ -422,7 +422,7 @@ func renderImportReviewCompactRow(item ImportReviewItem) string {
 	if item.Active {
 		prefix = theme.Kicker.Render(theme.Glyphs.Selection)
 	}
-	return fmt.Sprintf("%s %s %s", prefix, renderImportCheckbox(item), item.Name)
+	return fmt.Sprintf("%s %s %s", prefix, renderImportCheckbox(item), theme.SanitizeText(item.Name))
 }
 
 func renderImportCheckbox(item ImportReviewItem) string {
@@ -492,7 +492,7 @@ func renderResultStatus(info string, warning string, err string, busy bool, spin
 }
 
 func displayMessage(value string) string {
-	trimmed := strings.TrimSpace(value)
+	trimmed := strings.TrimSpace(theme.SanitizeText(value))
 	if trimmed == "" {
 		return ""
 	}

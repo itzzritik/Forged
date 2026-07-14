@@ -48,7 +48,7 @@ func renderStatusCard(screen SigningScreen, spinner string, width int) string {
 
 	switch screen.Status.Mode {
 	case actions.CommitSigningForged:
-		if keyName := strings.TrimSpace(screen.Status.KeyName); keyName != "" {
+		if keyName := strings.TrimSpace(theme.SanitizeText(screen.Status.KeyName)); keyName != "" {
 			statusLine = theme.Success.Render(theme.Glyphs.Check+" Signing with Forged: ") + theme.BodyStrong.Render(keyName)
 		} else {
 			statusLine = theme.Success.Render(theme.Glyphs.Check + " Signing with Forged")
@@ -66,7 +66,7 @@ func renderStatusCard(screen SigningScreen, spinner string, width int) string {
 	default:
 		statusLine = theme.Warning.Render("! Commits on this machine are not being signed")
 	}
-	if errText := strings.TrimSpace(screen.Error); errText != "" {
+	if errText := strings.TrimSpace(theme.SanitizeText(screen.Error)); errText != "" {
 		statusLine = theme.Danger.Render(theme.Glyphs.Cross + " " + errText)
 		details = nil
 	}
@@ -76,7 +76,7 @@ func renderStatusCard(screen SigningScreen, spinner string, width int) string {
 	}
 
 	if screen.Busy {
-		message := strings.TrimSpace(screen.BusyMessage)
+		message := strings.TrimSpace(theme.SanitizeText(screen.BusyMessage))
 		if message == "" {
 			message = "Updating signing configuration"
 		}

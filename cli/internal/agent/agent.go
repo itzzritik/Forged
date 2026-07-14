@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"reflect"
+	"strings"
 	"sync"
 	"time"
+	"unicode"
 
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"golang.org/x/crypto/ssh"
@@ -105,10 +107,19 @@ func (a *ForgedAgent) List() ([]*agent.Key, error) {
 		out = append(out, &agent.Key{
 			Format:  pub.Type(),
 			Blob:    pub.Marshal(),
-			Comment: k.Name,
+			Comment: sanitizeKeyComment(k.Name),
 		})
 	}
 	return out, nil
+}
+
+func sanitizeKeyComment(name string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return unicode.ReplacementChar
+		}
+		return r
+	}, name)
 }
 
 func (a *ForgedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {

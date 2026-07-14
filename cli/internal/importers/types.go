@@ -3,6 +3,7 @@ package importers
 import (
 	"fmt"
 	"strings"
+	"unicode"
 )
 
 type ImportedKey struct {
@@ -14,6 +15,12 @@ type ImportedKey struct {
 const DefaultImportedName = "Imported"
 
 func SanitizeName(name string) string {
+	name = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, name)
 	name = strings.Join(strings.Fields(strings.TrimSpace(name)), " ")
 	if name == "" {
 		return DefaultImportedName

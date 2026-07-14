@@ -944,6 +944,7 @@ func (m *model) updateKeyRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 	var cmd tea.Cmd
 	m.keyRename.input, cmd = m.keyRename.input.Update(msg)
+	sanitizeKeyNameInput(&m.keyRename.input)
 	m.keyRename.err = ""
 	return m, cmd
 }
@@ -1229,6 +1230,7 @@ func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) updateKeyGenerateInputs(msg tea.KeyMsg) tea.Cmd {
 	var cmd tea.Cmd
 	m.keyGenerate.nameInput, cmd = m.keyGenerate.nameInput.Update(msg)
+	sanitizeKeyNameInput(&m.keyGenerate.nameInput)
 	m.keyGenerate.err = ""
 	m.keyGenerate.status = ""
 	return cmd
@@ -1304,7 +1306,7 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 					original: key.Name,
 					input:    newKeyInput("Enter new key name"),
 				}
-				m.keyRename.input.SetValue(key.Name)
+				setSanitizedKeyNameInput(&m.keyRename.input, key.Name)
 				m.keyRename.input.Focus()
 				m.resizeKeyInputs()
 				return textinput.Blink
@@ -1325,7 +1327,7 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 			nameInput: newKeyInput("Enter key name"),
 		}
 		if name := strings.TrimSpace(route.Params["name"]); name != "" {
-			m.keyGenerate.nameInput.SetValue(name)
+			setSanitizedKeyNameInput(&m.keyGenerate.nameInput, name)
 		}
 		m.keyGenerate.nameInput.Focus()
 		m.resizeKeyInputs()
@@ -1621,9 +1623,9 @@ func (m *model) handleKeyListMsg(msg keyListMsg) (tea.Model, tea.Cmd) {
 				original:  resolution.Exact.Name,
 				input:     newKeyInput("Enter new key name"),
 			}
-			m.keyRename.input.SetValue(strings.TrimSpace(current.Params["new_name"]))
+			setSanitizedKeyNameInput(&m.keyRename.input, strings.TrimSpace(current.Params["new_name"]))
 			if strings.TrimSpace(current.Params["new_name"]) == "" {
-				m.keyRename.input.SetValue(resolution.Exact.Name)
+				setSanitizedKeyNameInput(&m.keyRename.input, resolution.Exact.Name)
 			}
 			m.keyRename.input.Focus()
 			m.resizeKeyInputs()
@@ -2427,6 +2429,18 @@ func newKeyInput(placeholder string) textinput.Model {
 	return input
 }
 
+func sanitizeKeyNameInput(input *textinput.Model) {
+	value := input.Value()
+	sanitized := theme.SanitizeText(value)
+	if sanitized != value {
+		input.SetValue(sanitized)
+	}
+}
+
+func setSanitizedKeyNameInput(input *textinput.Model, value string) {
+	input.SetValue(theme.SanitizeText(value))
+}
+
 func fallbackNotice(route RouteID, query string, matches int) string {
 	if strings.TrimSpace(query) == "" {
 		return ""
@@ -2876,6 +2890,7 @@ func footerImportLabel(selected int) string {
 }
 
 func renameContext(name string) string {
+	name = theme.SanitizeText(name)
 	if strings.TrimSpace(name) == "" {
 		return "Choose a new name for this key"
 	}
@@ -2890,6 +2905,7 @@ func renameStatus(saving bool) string {
 }
 
 func deleteWarning(name string) string {
+	name = theme.SanitizeText(name)
 	if strings.TrimSpace(name) == "" {
 		return "Deleting this key removes it from the vault and cannot be undone in Forged."
 	}

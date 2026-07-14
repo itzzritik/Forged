@@ -222,7 +222,7 @@ func renderBrowserRow(key BrowserRow, selected bool, preserveTypeCase bool, sele
 		detailStyle = theme.Body
 	}
 
-	name := truncateRunes(key.Name, nameWidth)
+	name := truncateRunes(theme.SanitizeText(key.Name), nameWidth)
 	keyTypeValue := key.Type
 	if !preserveTypeCase {
 		keyTypeValue = strings.ToUpper(keyTypeValue)
