@@ -228,8 +228,10 @@ type keyTransferSuccessState struct {
 }
 
 const (
-	keyImportStepSource keyImportStep = "source"
-	keyImportStepReview keyImportStep = "review"
+	keyImportStepSource           keyImportStep = "source"
+	keyImportStepReview           keyImportStep = "review"
+	exportPlaintextWarning                      = "This export contains every private key in plaintext. Store it securely, avoid shared or cloud-synced folders, and delete it when finished."
+	exportPlaintextSuccessWarning               = "Contains plaintext private keys. Store it securely and delete it when finished."
 
 	keyBrowserSearchPrefixWidth = 3
 	keyBrowserSearchGapWidth    = 4
@@ -520,11 +522,14 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
 		return actions
 	case RouteKeysExport:
-		if m.keyExport.exporting || m.keyExport.pickerOpening {
-			return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+		if m.keyExport.exporting {
+			return nil
+		}
+		if m.keyExport.pickerOpening {
+			return []shell.FooterAction{{Key: "Esc", Label: "Cancel"}}
 		}
 		if m.keyExport.success != nil {
-			return []shell.FooterAction{{Key: "Esc", Label: "Dashboard"}}
+			return []shell.FooterAction{{Key: "Enter", Label: "Dashboard"}}
 		}
 		if !m.keyExport.pathVisible {
 			return []shell.FooterAction{
@@ -675,14 +680,15 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 	case RouteKeysExport:
 		if m.keyExport.success != nil {
 			return commonscreen.RenderSuccess(commonscreen.SuccessScreen{
-				Context: "Export this vault to a Forged JSON file",
+				Context: "Vault export",
 				Title:   m.keyExport.success.Title,
 				Message: m.keyExport.success.Message,
-				Detail:  m.keyExport.success.Detail,
+				Warning: m.keyExport.success.Detail,
 			}, contentWidth)
 		}
 		return keyscreen.RenderExport(keyscreen.ExportScreen{
-			Context:     "Export this vault to a Forged JSON file",
+			Context:     "Choose where to save the export",
+			Warning:     exportPlaintextWarning,
 			PathView:    theme.AdaptTextInputPlaceholder(m.keyExport.pathInput.View(), m.keyExport.pathInput.Value()),
 			Focused:     m.keyExport.pathVisible,
 			PathVisible: m.keyExport.pathVisible,
@@ -1088,8 +1094,14 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.keyExport.exporting || m.keyExport.pickerOpening {
+	if m.keyExport.exporting {
+		return m, nil
+	}
+	if m.keyExport.pickerOpening {
 		if msg.String() == "esc" {
+			m.keyExportPickerID++
+			m.keyExport.pickerOpening = false
+			m.keyExport.token = ""
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
 			}
@@ -1098,7 +1110,8 @@ func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	if m.keyExport.success != nil {
-		if msg.String() == "esc" {
+		switch msg.String() {
+		case "enter", "esc":
 			m.keyExport.success = nil
 			return m, m.returnToDashboardRoute()
 		}
@@ -1906,6 +1919,9 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 		return m, nil
 	}
 	if m.screen == screenPassword && m.passwordFlow == passwordKeyExport {
+		if !m.passwordBusy || m.session.Current().ID != RouteKeysExport {
+			return m, nil
+		}
 		m.passwordBusy = false
 		if msg.err != nil {
 			m.passwordInput.SetError(m.reportError("keys.export", msg.err))
@@ -1919,11 +1935,14 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 		m.keyExport.err = ""
 		m.keyExport.status = ""
 		m.keyExport.success = m.newKeyTransferSuccessState(
-			"Export complete",
+			"Export saved",
 			exportSuccessMessage(msg.result),
-			"Returning to dashboard...",
+			exportPlaintextSuccessWarning,
 		)
-		return m, m.scheduleKeyTransferAutoReturn(RouteKeysExport, m.keyExport.success.autoReturnID)
+		return m, nil
+	}
+	if m.screen != screenDashboard || m.session.Current().ID != RouteKeysExport || !m.keyExport.exporting {
+		return m, nil
 	}
 
 	m.keyExport.exporting = false
@@ -1941,15 +1960,19 @@ func (m *model) handleKeyExportFinishedMsg(msg keyExportFinishedMsg) (tea.Model,
 	m.keyExport.err = ""
 	m.keyExport.status = ""
 	m.keyExport.success = m.newKeyTransferSuccessState(
-		"Export complete",
+		"Export saved",
 		exportSuccessMessage(msg.result),
-		"Returning to dashboard...",
+		exportPlaintextSuccessWarning,
 	)
-	return m, m.scheduleKeyTransferAutoReturn(RouteKeysExport, m.keyExport.success.autoReturnID)
+	return m, nil
 }
 
 func (m *model) handleKeyExportAuthorizedMsg(msg keyExportAuthorizedMsg) (tea.Model, tea.Cmd) {
-	if msg.id != m.keyExportID || m.passwordFlow != passwordKeyExport {
+	if msg.id != m.keyExportID ||
+		m.screen != screenPassword ||
+		m.passwordFlow != passwordKeyExport ||
+		!m.passwordBusy ||
+		m.session.Current().ID != RouteKeysExport {
 		return m, nil
 	}
 	m.passwordBusy = false
@@ -2002,7 +2025,10 @@ func (m *model) handleKeyImportPickerMsg(msg keyImportPickerMsg) (tea.Model, tea
 }
 
 func (m *model) handleKeyExportPickerMsg(msg keyExportPickerMsg) (tea.Model, tea.Cmd) {
-	if msg.id != m.keyExportPickerID {
+	if msg.id != m.keyExportPickerID ||
+		m.screen != screenDashboard ||
+		m.session.Current().ID != RouteKeysExport ||
+		!m.keyExport.pickerOpening {
 		return m, nil
 	}
 	m.keyExport.pickerOpening = false
@@ -2400,9 +2426,9 @@ func (m *model) upsertCachedKey(summary actions.KeySummary) {
 
 func exportSuccessMessage(result actions.ExportResult) string {
 	if result.KeyCount == 1 {
-		return fmt.Sprintf("1 Key exported to %s", filepath.Base(result.Path))
+		return fmt.Sprintf("1 key exported to %s", filepath.Base(result.Path))
 	}
-	return fmt.Sprintf("%d Keys exported to %s", result.KeyCount, filepath.Base(result.Path))
+	return fmt.Sprintf("%d keys exported to %s", result.KeyCount, filepath.Base(result.Path))
 }
 
 func importSuccessMessage(result actions.ImportResult) string {
@@ -2604,12 +2630,6 @@ func (m *model) handleKeyTransferAutoReturnMsg(msg keyTransferAutoReturnMsg) (te
 			return m, nil
 		}
 		m.keyImport.success = nil
-		return m, m.returnToDashboardRoute()
-	case RouteKeysExport:
-		if m.keyExport.success == nil || m.keyExport.success.autoReturnID != msg.id || m.session.Current().ID != RouteKeysExport {
-			return m, nil
-		}
-		m.keyExport.success = nil
 		return m, m.returnToDashboardRoute()
 	default:
 		return m, nil

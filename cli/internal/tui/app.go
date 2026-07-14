@@ -1354,8 +1354,13 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 		)
 	}
 
-	if strings.TrimSpace(m.passwordContext) != "" {
-		sections = append(sections, theme.Body.Width(textWidth).Render(m.passwordContext))
+	if context := strings.TrimSpace(m.passwordContext); context != "" {
+		style := theme.Body
+		if m.passwordFlow == passwordKeyExport {
+			style = theme.Warning
+			context = "! " + context
+		}
+		sections = append(sections, style.Width(textWidth).Render(context))
 	}
 
 	if m.passwordHideInput && !m.passwordBusy {
@@ -2717,7 +2722,7 @@ func (m *model) showPasswordScreenOnRoute(route RouteID, flow passwordFlow, auth
 		m.passwordInput = components.NewUnlockPasswordInput()
 	case passwordKeyExport:
 		m.passwordTitle = "Export vault"
-		m.passwordContext = "Master password is required to export this vault and its private keys"
+		m.passwordContext = exportPlaintextWarning + " Enter your master password to continue."
 		m.passwordInput = components.NewUnlockPasswordInput()
 	case passwordStartupUnlock:
 		m.passwordTitle = "Unlock Forged"

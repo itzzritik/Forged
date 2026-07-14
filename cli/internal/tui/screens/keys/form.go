@@ -81,6 +81,7 @@ type ImportReviewScreen struct {
 
 type ExportScreen struct {
 	Context     string
+	Warning     string
 	PathView    string
 	Focused     bool
 	PathVisible bool
@@ -375,6 +376,9 @@ func RenderExport(screen ExportScreen, spinner string, width int) string {
 	sections := make([]string, 0, 5)
 	if context := strings.TrimSpace(screen.Context); context != "" {
 		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
+	}
+	if warning := strings.TrimSpace(screen.Warning); warning != "" {
+		sections = append(sections, "", theme.Warning.Width(contentWidth).Render("! "+warning))
 	}
 
 	if screen.Busy {

@@ -28,6 +28,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - The Agent tab includes SSH Routing diagnostics. The page reads and clears route memory through daemon IPC and keeps route memory current with background polling while the page is open.
 - SSH Routing diagnostics reuse the Commit Signing browser-table pattern: selected item summary on top, a compact table below, and no manual refresh footer action.
 - Key deletion and commit-signing disable use an explicit review-and-confirm step. Once submitted, their non-cancelable work hides route navigation until it finishes.
+- Vault export warns before and after writing plaintext private keys, hides route navigation during the write, and waits for explicit dismissal on success.
 - Signing-status refreshes are single-flight and identify the configured Forged key by matching one parsed SSH fingerprint against one key list.
 - Runtime sync errors must clear the in-memory syncing flag so stale status cannot leave the header spinner active forever.
 - Idle locking keeps one coalesced deadline timer; keyboard activity moves the deadline instead of spawning another timer.

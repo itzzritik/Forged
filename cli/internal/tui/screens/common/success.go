@@ -11,6 +11,7 @@ type SuccessScreen struct {
 	Title   string
 	Message string
 	Detail  string
+	Warning string
 }
 
 func RenderSuccess(screen SuccessScreen, width int) string {
@@ -36,6 +37,9 @@ func RenderSuccess(screen SuccessScreen, width int) string {
 	}
 	if detail := strings.TrimSpace(screen.Detail); detail != "" {
 		sections = append(sections, "", theme.BodyMuted.Width(contentWidth).Render(detail))
+	}
+	if warning := strings.TrimSpace(screen.Warning); warning != "" {
+		sections = append(sections, "", theme.Warning.Width(contentWidth).Render("! "+warning))
 	}
 
 	return strings.Join(sections, "\n")
