@@ -1,9 +1,11 @@
 package agent
 
 import (
+	"errors"
 	"log/slog"
 	"net"
 	"sync"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/platform"
 	"golang.org/x/crypto/ssh/agent"
@@ -50,11 +52,28 @@ func (s *Server) Stop() {
 }
 
 func (s *Server) acceptLoop() {
+	var retryDelay time.Duration
 	for {
 		conn, err := s.listener.Accept()
 		if err != nil {
+			if errors.Is(err, net.ErrClosed) {
+				return
+			}
+			//lint:ignore SA1019 Listener implementations use Temporary to classify retriable accept failures.
+			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
+				if retryDelay == 0 {
+					retryDelay = 5 * time.Millisecond
+				} else {
+					retryDelay = min(2*retryDelay, time.Second)
+				}
+				s.logger.Warn("temporary SSH agent accept failure", "error", err, "retry_in", retryDelay)
+				time.Sleep(retryDelay)
+				continue
+			}
+			s.logger.Error("SSH agent accept loop stopped", "error", err)
 			return
 		}
+		retryDelay = 0
 		s.wg.Add(1)
 		go func(conn net.Conn) {
 			defer s.wg.Done()
