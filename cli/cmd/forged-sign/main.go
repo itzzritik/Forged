@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"fmt"
-	"net"
 	"os"
 	"strings"
 	"time"
@@ -11,6 +10,7 @@ import (
 	"github.com/hiddeco/sshsig"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -93,7 +93,7 @@ func signFile(keyFile, bufferFile, namespace string) error {
 	}
 
 	socketPath := paths.AgentSocket()
-	conn, err := net.DialTimeout("unix", socketPath, 2*time.Second)
+	conn, err := platform.Dial(socketPath, 2*time.Second)
 	if err != nil {
 		return fmt.Errorf("Cannot connect to Forged agent at %s: %w", socketPath, err)
 	}
