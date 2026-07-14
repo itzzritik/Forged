@@ -19,6 +19,8 @@ func providerName() string { return "pkexec" }
 
 func authorize(ctx context.Context, action sensitiveauth.Action) string {
 	_ = action
+	ctx, cancel := context.WithTimeout(ctx, time.Minute)
+	defer cancel()
 	if !hasGraphicalSession() {
 		return "unavailable_by_environment"
 	}
