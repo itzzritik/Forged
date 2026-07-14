@@ -10,11 +10,13 @@ import (
 )
 
 type SigningScreen struct {
-	Loading     bool
-	Busy        bool
-	BusyMessage string
-	Status      actions.CommitSigningStatus
-	Browser     keyscreen.BrowserScreen
+	Loading       bool
+	StatusLoading bool
+	Busy          bool
+	BusyMessage   string
+	Error         string
+	Status        actions.CommitSigningStatus
+	Browser       keyscreen.BrowserScreen
 }
 
 func RenderSigning(screen SigningScreen, spinner string, width int) string {
@@ -57,6 +59,14 @@ func renderStatusCard(screen SigningScreen, spinner string, width int) string {
 		}
 	default:
 		statusLine = theme.Warning.Render("! Commits on this machine are not being signed")
+	}
+	if errText := strings.TrimSpace(screen.Error); errText != "" {
+		statusLine = theme.Danger.Width(width).Render("✕ " + errText)
+		details = nil
+	}
+	if screen.StatusLoading {
+		statusLine = theme.BodyStrong.Render(spinner + " Checking signing configuration")
+		details = nil
 	}
 
 	if screen.Busy {

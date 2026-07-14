@@ -1,13 +1,17 @@
 package actions
 
 import (
+	"bytes"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strconv"
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"golang.org/x/crypto/ssh"
 )
 
 type CommitSigningMode string
@@ -31,12 +35,20 @@ func (s CommitSigningStatus) Enabled() bool {
 }
 
 func LoadCommitSigningStatus(paths config.Paths) (CommitSigningStatus, error) {
-	signingKey := strings.TrimSpace(gitGlobalConfig("user.signingkey"))
-	gpgFormat := strings.ToLower(strings.TrimSpace(gitGlobalConfig("gpg.format")))
-	signProgram := strings.TrimSpace(gitGlobalConfig("gpg.ssh.program"))
-	commitSign := strings.ToLower(strings.TrimSpace(gitGlobalConfig("commit.gpgsign")))
+	gitConfig, err := loadGlobalGitSigningConfig()
+	if err != nil {
+		return CommitSigningStatus{}, err
+	}
+	signingKey := strings.TrimSpace(gitConfig["user.signingkey"])
+	gpgFormat := strings.ToLower(strings.TrimSpace(gitConfig["gpg.format"]))
+	signProgram := strings.TrimSpace(gitConfig["gpg.ssh.program"])
+	commitValue, commitPresent := gitConfig["commit.gpgsign"]
+	commitSign, err := parseGitBool(commitValue, commitPresent)
+	if err != nil {
+		return CommitSigningStatus{}, fmt.Errorf("Reading commit.gpgsign: %w", err)
+	}
 
-	if !gitBoolEnabled(commitSign) || signingKey == "" {
+	if !commitSign || signingKey == "" {
 		return CommitSigningStatus{Mode: CommitSigningOff}, nil
 	}
 
@@ -46,22 +58,22 @@ func LoadCommitSigningStatus(paths config.Paths) (CommitSigningStatus, error) {
 		Program:   signProgram,
 	}
 
-	if signProgram == "" || (gpgFormat != "" && gpgFormat != "ssh") {
+	if signProgram == "" || gpgFormat != "ssh" {
 		return status, nil
 	}
 	if !isForgedSigningProgram(signProgram) {
 		return status, nil
 	}
 
-	status.Mode = CommitSigningForged
 	match, err := matchForgedSigningKey(paths, signingKey)
 	if err != nil {
-		return status, nil
+		return status, err
 	}
 	if match == nil {
-		return status, nil
+		return status, fmt.Errorf("Configured signing key is not available in Forged")
 	}
 
+	status.Mode = CommitSigningForged
 	status.KeyName = match.Name
 	status.Fingerprint = match.Fingerprint
 	status.PublicKey = match.PublicKey
@@ -117,46 +129,114 @@ type matchedSigningKey struct {
 func matchForgedSigningKey(paths config.Paths, publicKey string) (*matchedSigningKey, error) {
 	keys, err := ListKeys(paths)
 	if err != nil {
+		return nil, fmt.Errorf("Listing keys for commit signing: %w", err)
+	}
+	configuredKey, err := parseConfiguredSigningKey(publicKey)
+	if err != nil {
 		return nil, err
 	}
+	fingerprint := ssh.FingerprintSHA256(configuredKey)
+	canonicalPublicKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(configuredKey)))
 
 	for _, key := range keys {
-		exported, err := ExportPublicKey(paths, key.Name)
-		if err != nil {
-			continue
-		}
-		if !samePublicKey(exported.PublicKey, publicKey) {
+		if strings.TrimSpace(key.Fingerprint) != fingerprint {
 			continue
 		}
 		return &matchedSigningKey{
-			Name:        exported.Name,
-			Fingerprint: exported.Fingerprint,
-			PublicKey:   exported.PublicKey,
+			Name:        key.Name,
+			Fingerprint: key.Fingerprint,
+			PublicKey:   canonicalPublicKey,
 		}, nil
 	}
 
 	return nil, nil
 }
 
-func samePublicKey(left string, right string) bool {
-	return strings.TrimSpace(left) == strings.TrimSpace(right)
-}
-
-func gitGlobalConfig(key string) string {
-	out, err := exec.Command("git", "config", "--global", key).Output()
+func loadGlobalGitSigningConfig() (map[string]string, error) {
+	out, err := exec.Command(
+		"git", "config", "--global", "--null", "--get-regexp",
+		"^(user\\.signingkey|gpg\\.format|gpg\\.ssh\\.program|commit\\.gpgsign)$",
+	).Output()
 	if err != nil {
-		return ""
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+			return map[string]string{}, nil
+		}
+		detail := ""
+		if exitErr != nil {
+			detail = strings.TrimSpace(string(exitErr.Stderr))
+		}
+		if detail != "" {
+			return nil, fmt.Errorf("Reading global Git signing config: %s: %w", detail, err)
+		}
+		return nil, fmt.Errorf("Reading global Git signing config: %w", err)
 	}
-	return strings.TrimSpace(string(out))
+
+	values := make(map[string]string, 4)
+	for _, record := range bytes.Split(out, []byte{0}) {
+		if len(record) == 0 {
+			continue
+		}
+		key, value, hasValue := bytes.Cut(record, []byte{'\n'})
+		normalizedKey := strings.ToLower(strings.TrimSpace(string(key)))
+		if !hasValue && normalizedKey == "commit.gpgsign" {
+			value = []byte("true")
+		}
+		values[normalizedKey] = strings.TrimSpace(string(value))
+	}
+	return values, nil
 }
 
-func gitBoolEnabled(value string) bool {
-	switch strings.ToLower(strings.TrimSpace(value)) {
-	case "true", "yes", "on", "1":
-		return true
-	default:
-		return false
+func parseConfiguredSigningKey(value string) (ssh.PublicKey, error) {
+	value = strings.TrimSpace(value)
+	if literal, ok := strings.CutPrefix(value, "key::"); ok {
+		key, _, _, _, err := ssh.ParseAuthorizedKey([]byte(strings.TrimSpace(literal)))
+		if err != nil {
+			return nil, fmt.Errorf("Parsing configured signing key: %w", err)
+		}
+		return key, nil
 	}
+
+	key, _, _, _, parseErr := ssh.ParseAuthorizedKey([]byte(value))
+	if parseErr == nil {
+		return key, nil
+	}
+	path := value
+	if value == "~" || strings.HasPrefix(value, "~/") {
+		if home, err := os.UserHomeDir(); err == nil {
+			path = filepath.Join(home, strings.TrimPrefix(value, "~/"))
+		}
+	}
+	data, readErr := os.ReadFile(path)
+	if readErr != nil {
+		return nil, fmt.Errorf("Reading configured signing key file %q: %w", path, readErr)
+	}
+	key, _, _, _, err := ssh.ParseAuthorizedKey(data)
+	if err != nil {
+		return nil, fmt.Errorf("Parsing configured signing key file: %w", err)
+	}
+	return key, nil
+}
+
+func parseGitBool(value string, present bool) (bool, error) {
+	if !present {
+		return false, nil
+	}
+	value = strings.ToLower(strings.TrimSpace(value))
+	switch value {
+	case "true", "yes", "on":
+		return true, nil
+	case "", "false", "no", "off":
+		return false, nil
+	}
+	if strings.HasSuffix(value, "k") || strings.HasSuffix(value, "m") || strings.HasSuffix(value, "g") {
+		value = value[:len(value)-1]
+	}
+	number, err := strconv.ParseInt(value, 0, 64)
+	if err != nil {
+		return false, fmt.Errorf("Invalid boolean value %q", value)
+	}
+	return number != 0, nil
 }
 
 func isForgedSigningProgram(program string) bool {

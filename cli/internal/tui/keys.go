@@ -1767,7 +1767,7 @@ func (m *model) handleKeyRenameFinishedMsg(msg keyRenameFinishedMsg) (tea.Model,
 			"query": msg.result.NewName,
 		},
 	})
-	return m, m.showCurrentRoute()
+	return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
 }
 
 func (m *model) handleKeyDeleteFinishedMsg(msg keyDeleteFinishedMsg) (tea.Model, tea.Cmd) {
@@ -1783,7 +1783,7 @@ func (m *model) handleKeyDeleteFinishedMsg(msg keyDeleteFinishedMsg) (tea.Model,
 	m.removeCachedKey(msg.name)
 
 	m.session.ReplaceCurrent(Route{ID: RouteKeysBrowser})
-	return m, m.showCurrentRoute()
+	return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
 }
 
 func (m *model) handleKeyGenerateFinishedMsg(msg keyGenerateFinishedMsg) (tea.Model, tea.Cmd) {
@@ -1809,7 +1809,7 @@ func (m *model) handleKeyGenerateFinishedMsg(msg keyGenerateFinishedMsg) (tea.Mo
 			"source": "browser",
 		},
 	})
-	return m, m.showCurrentRoute()
+	return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
 }
 
 func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model, tea.Cmd) {
@@ -1838,7 +1838,10 @@ func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model,
 		importSuccessMessage(msg.result),
 		"Returning to dashboard...",
 	)
-	return m, m.scheduleKeyTransferAutoReturn(RouteKeysImport, m.keyImport.success.autoReturnID)
+	return m, tea.Batch(
+		m.scheduleKeyTransferAutoReturn(RouteKeysImport, m.keyImport.success.autoReturnID),
+		m.invalidateSigningStatusCmd(),
+	)
 }
 
 func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, tea.Cmd) {

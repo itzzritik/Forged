@@ -319,6 +319,8 @@ type model struct {
 	appVersion                string
 	signingStatus             actions.CommitSigningStatus
 	signingLoaded             bool
+	signingStatusLoading      bool
+	signingStatusPending      bool
 	signingError              string
 	signingLoadID             int
 
@@ -754,6 +756,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case runtimeStatusMsg:
 		wasUsingSpinner := m.usesSpinner()
 		wasUnlocked := m.runtimeStatus.SensitiveKnown && m.runtimeStatus.Unlocked
+		wasSyncPending := m.runtimeSyncPending()
+		hadRuntimeStatus := m.runtimeLoaded
+		lastSuccessfulPullAt := m.runtimeStatus.LastSuccessfulPullAt
+		lastSuccessfulPushAt := m.runtimeStatus.LastSuccessfulPushAt
 		if msg.err == nil {
 			if !msg.status.SensitiveReported {
 				msg.status.Unlocked = m.runtimeStatus.Unlocked
@@ -773,6 +779,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.snapshot.VaultExists {
 			cmds := []tea.Cmd{m.pollRuntimeStatus(time.Second)}
+			syncCompleted := msg.err == nil && hadRuntimeStatus && (m.runtimeStatus.LastSuccessfulPullAt.After(lastSuccessfulPullAt) ||
+				m.runtimeStatus.LastSuccessfulPushAt.After(lastSuccessfulPushAt))
+			if msg.err == nil && (syncCompleted || wasSyncPending && !m.runtimeSyncPending()) {
+				cmds = append(cmds, m.invalidateSigningStatusCmd())
+			}
 			if !wasUsingSpinner && m.usesSpinner() {
 				cmds = append([]tea.Cmd{m.spinner.Tick}, cmds...)
 			}
@@ -1505,7 +1516,7 @@ func (m *model) footerActions() []shell.FooterAction {
 			if m.agent.signing.busy {
 				return nil
 			}
-			if m.agent.signing.loading {
+			if m.agent.signing.loading || !m.signingLoaded {
 				return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 			}
 			if m.agent.signing.disableArmed {
@@ -1534,6 +1545,9 @@ func (m *model) footerActions() []shell.FooterAction {
 			}
 			if m.signingStatus.Enabled() {
 				actions = append(actions, shell.FooterAction{Key: "D", Label: "Disable Signing"})
+			}
+			if m.signingError != "" {
+				actions = append(actions, shell.FooterAction{Key: "R", Label: "Retry Status"})
 			}
 			actions = append(actions, shell.FooterAction{Key: "/", Label: "Search"})
 			actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
@@ -2687,7 +2701,10 @@ func (m *model) restartAfterVaultReady() tea.Cmd {
 	m.maintenanceAuthEmail = ""
 	m.runtimeLoaded = false
 	m.signingLoaded = false
+	m.signingStatusLoading = false
+	m.signingStatusPending = false
 	m.signingError = ""
+	m.signingLoadID++
 	return tea.Batch(
 		m.spinner.Tick,
 		m.assessCurrentState(),

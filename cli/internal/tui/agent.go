@@ -198,10 +198,12 @@ func (m *model) renderAgentSigningBody(contentWidth int) string {
 		warning = "Disable automatic commit signing in your global Git config?"
 	}
 	return agentscreen.RenderSigning(agentscreen.SigningScreen{
-		Loading:     m.agent.signing.loading,
-		Busy:        m.agent.signing.busy,
-		BusyMessage: m.agent.signing.busyMessage,
-		Status:      m.signingStatus,
+		Loading:       m.agent.signing.loading || !m.signingLoaded,
+		StatusLoading: !m.signingLoaded,
+		Busy:          m.agent.signing.busy,
+		BusyMessage:   m.agent.signing.busyMessage,
+		Error:         m.signingError,
+		Status:        m.signingStatus,
 		Browser: keyscreen.BrowserScreen{
 			SearchView:    m.agent.signing.input.View(),
 			SearchQuery:   m.agent.signing.input.Value(),
@@ -429,7 +431,7 @@ func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	if m.agent.signing.loading {
+	if m.agent.signing.loading || !m.signingLoaded {
 		if msg.String() == "esc" {
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
@@ -506,6 +508,13 @@ func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.agent.signing.err = ""
 		m.moveAgentSigningSelection(1)
 		return m, nil
+	case "r":
+		if m.signingError == "" {
+			return m, nil
+		}
+		m.signingLoaded = false
+		m.signingError = ""
+		return m, m.startAgentSigningRoute()
 	case "d":
 		if !m.signingStatus.Enabled() {
 			return m, nil
@@ -610,6 +619,8 @@ func (m *model) listAgentSigningKeysCmd() tea.Cmd {
 func (m *model) runEnableCommitSigning(name string) tea.Cmd {
 	enable := m.enableCommitSigning
 	m.signingLoadID++
+	m.signingStatusLoading = false
+	m.signingStatusPending = false
 	m.agent.actionID++
 	actionID := m.agent.actionID
 	m.agent.signing.busy = true
@@ -627,6 +638,8 @@ func (m *model) runDisableCommitSigning() tea.Cmd {
 	disable := m.disableCommitSigning
 	m.agent.signing.disableArmed = false
 	m.signingLoadID++
+	m.signingStatusLoading = false
+	m.signingStatusPending = false
 	m.agent.actionID++
 	actionID := m.agent.actionID
 	m.agent.signing.busy = true
@@ -641,9 +654,11 @@ func (m *model) runDisableCommitSigning() tea.Cmd {
 }
 
 func (m *model) loadSigningStatusCmd() tea.Cmd {
-	if m.loadSigningStatus == nil {
+	if m.loadSigningStatus == nil || m.signingStatusLoading {
 		return nil
 	}
+	m.signingStatusPending = false
+	m.signingStatusLoading = true
 	load := m.loadSigningStatus
 	m.signingLoadID++
 	loadID := m.signingLoadID
@@ -651,6 +666,17 @@ func (m *model) loadSigningStatusCmd() tea.Cmd {
 		status, err := load()
 		return signingStatusMsg{id: loadID, status: status, err: err}
 	}
+}
+
+func (m *model) invalidateSigningStatusCmd() tea.Cmd {
+	m.signingLoaded = false
+	m.signingError = ""
+	m.agent.signing.disableArmed = false
+	if m.signingStatusLoading {
+		m.signingStatusPending = true
+		return nil
+	}
+	return m.loadSigningStatusCmd()
 }
 
 func (m *model) refreshSnapshotCmd() tea.Cmd {
@@ -677,9 +703,16 @@ func (m *model) handleSigningStatusMsg(msg signingStatusMsg) (tea.Model, tea.Cmd
 	if msg.id != m.signingLoadID {
 		return m, nil
 	}
+	m.signingStatusLoading = false
+	if m.signingStatusPending {
+		m.signingStatusPending = false
+		return m, m.loadSigningStatusCmd()
+	}
 	if msg.err != nil {
+		m.signingStatus = msg.status
 		m.signingLoaded = true
 		m.signingError = msg.err.Error()
+		m.agent.signing.disableArmed = false
 		return m, nil
 	}
 	m.signingStatus = msg.status
@@ -744,8 +777,14 @@ func (m *model) handleAgentSigningFinishedMsg(msg agentSigningFinishedMsg) (tea.
 	m.agent.signing.busy = false
 	m.agent.signing.busyMessage = ""
 	m.agent.signing.disableArmed = false
+	m.signingLoadID++
+	m.signingStatusLoading = false
+	m.signingStatusPending = false
 	if msg.err != nil {
-		m.agent.signing.err = msg.err.Error()
+		m.agent.signing.err = ""
+		m.signingStatus = msg.status
+		m.signingLoaded = true
+		m.signingError = msg.err.Error()
 		return m, nil
 	}
 
