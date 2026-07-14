@@ -380,7 +380,7 @@ func (s *StateStore) Save(state *SyncState) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("Closing temporary sync state: %w", err)
 	}
-	if err := os.Rename(tmpPath, s.path); err != nil {
+	if err := replaceSyncStateFile(tmpPath, s.path); err != nil {
 		return fmt.Errorf("Replacing sync state: %w", err)
 	}
 	if err := syncStateDirectory(filepath.Dir(s.path)); err != nil {
