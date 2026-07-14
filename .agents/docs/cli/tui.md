@@ -43,6 +43,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Key mutations and commit-signing changes hide route navigation once submitted; delayed completions may update cached data but cannot dismiss a newer authentication wall.
 - Vault export warns before and after writing plaintext private keys, writes through a private same-directory temporary file before replacing the destination, hides route navigation during the write, and waits for explicit dismissal on success.
 - Import's delayed success return only navigates while the dashboard import route is still active, so it cannot dismiss a lock screen.
+- Post-preview import failures retain sanitized name/fingerprint/reason details, with each untrusted error bounded before redaction. A read-only result view never resubmits successful inputs, pages the selected reason on short terminals, and writes one bounded aggregate diagnostic event.
 - Change-password success returns only while its dashboard success route is still visible, so a stale timer cannot dismiss a new authentication wall.
 - Key-browser refreshes reuse the live search input, treat a successful empty list as loaded, clear transient refresh failures after success without erasing route guidance, and become cache-only after navigation; normal list reads already apply the daemon's freshness policy.
 - Key-browser row pages shrink with the available body height so the selected row and bottom-docked search controls remain visible on short terminals.

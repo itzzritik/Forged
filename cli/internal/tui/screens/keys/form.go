@@ -62,6 +62,7 @@ type ImportReviewItem struct {
 	Checked     bool
 	Active      bool
 	Converted   bool
+	Failed      bool
 }
 
 type ImportReviewScreen struct {
@@ -74,6 +75,7 @@ type ImportReviewScreen struct {
 	Summary     []string
 	Guidance    string
 	Warning     string
+	Failure     string
 	Error       string
 	Status      string
 	Busy        bool
@@ -335,6 +337,9 @@ func renderImportReviewBottom(screen ImportReviewScreen, spinner string, width i
 	case strings.TrimSpace(screen.Status) != "":
 		lines = append(lines, renderImportReviewFeedback(theme.BodyStrong, displayMessage(screen.Status), width, compactFeedback))
 	}
+	if failure := strings.TrimSpace(screen.Failure); failure != "" {
+		lines = append(lines, renderImportReviewFeedback(theme.Danger, theme.Glyphs.Cross+" "+displayMessage(failure), width, compactFeedback))
+	}
 	return strings.Join(lines, "\n")
 }
 
@@ -417,11 +422,14 @@ func renderImportReviewCompactRow(item ImportReviewItem) string {
 	if item.Active {
 		prefix = theme.Kicker.Render(theme.Glyphs.Selection)
 	}
-	return fmt.Sprintf("%s %s %s", prefix, renderImportCheckbox(item.Checked), item.Name)
+	return fmt.Sprintf("%s %s %s", prefix, renderImportCheckbox(item), item.Name)
 }
 
-func renderImportCheckbox(checked bool) string {
-	if checked {
+func renderImportCheckbox(item ImportReviewItem) string {
+	if item.Failed {
+		return theme.Danger.Render(theme.Glyphs.Cross)
+	}
+	if item.Checked {
 		return theme.Kicker.Render(theme.Glyphs.Checked)
 	}
 	return theme.BodyMuted.Render(theme.Glyphs.Unchecked)
@@ -439,6 +447,9 @@ func renderImportBadges(item ImportReviewItem) string {
 	var badges []string
 	if item.Converted {
 		badges = append(badges, theme.Kicker.Render("Upgrade"))
+	}
+	if item.Failed {
+		badges = append(badges, theme.Danger.Render("Failed"))
 	}
 	return strings.Join(badges, theme.BodyMuted.Render(" | "))
 }

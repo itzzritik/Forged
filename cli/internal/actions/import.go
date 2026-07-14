@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"unicode"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/hostmatch"
@@ -22,7 +23,19 @@ type ImportResult struct {
 	Imported   int
 	Skipped    int
 	Keys       []KeySummary
+	Failures   []ImportFailure
 }
+
+type ImportFailure struct {
+	Name        string
+	Fingerprint string
+	Reason      string
+}
+
+const (
+	maxImportFailureNameRunes = 120
+	maxImportFailureRawBytes  = 4 << 10
+)
 
 type ImportPreview struct {
 	Key         importers.ImportedKey
@@ -85,25 +98,26 @@ func PreviewImportSource(paths config.Paths, source string, file string) (Import
 }
 
 func ImportSelectedPreviews(paths config.Paths, source string, discovered int, previews []ImportPreview) (ImportResult, error) {
-	keys := make([]importers.ImportedKey, 0, len(previews))
+	selected := make([]ImportPreview, 0, len(previews))
 	for _, preview := range previews {
 		if preview.Selected {
-			keys = append(keys, preview.Key)
+			selected = append(selected, preview)
 		}
 	}
 	return importKeys(paths, ImportResult{
 		Source:     strings.TrimSpace(strings.ToLower(source)),
 		Discovered: discovered,
-	}, keys)
+	}, selected)
 }
 
-func importKeys(paths config.Paths, result ImportResult, keys []importers.ImportedKey) (ImportResult, error) {
-	if len(keys) == 0 {
+func importKeys(paths config.Paths, result ImportResult, previews []ImportPreview) (ImportResult, error) {
+	if len(previews) == 0 {
 		return result, nil
 	}
 
 	client := ipc.NewClient(paths.CtlSocket())
-	for _, key := range keys {
+	for _, preview := range previews {
+		key := preview.Key
 		resp, err := client.Call(ipc.CmdAdd, map[string]string{
 			"name":        key.Name,
 			"private_key": key.PrivateKey,
@@ -111,6 +125,7 @@ func importKeys(paths config.Paths, result ImportResult, keys []importers.Import
 		})
 		if err != nil {
 			result.Skipped++
+			result.Failures = append(result.Failures, importFailureForPreview(preview, err))
 			continue
 		}
 		result.Imported++
@@ -137,6 +152,46 @@ func importKeys(paths config.Paths, result ImportResult, keys []importers.Import
 	}
 
 	return result, nil
+}
+
+func importFailureForPreview(preview ImportPreview, err error) ImportFailure {
+	name := sanitizeImportFailureText(preview.Key.Name, maxImportFailureNameRunes)
+	if name == "" {
+		name = importers.DefaultImportedName
+	}
+	reason := "Import failed"
+	if err != nil {
+		raw := err.Error()
+		if len(raw) > maxImportFailureRawBytes {
+			raw = raw[:maxImportFailureRawBytes]
+		}
+		raw = sanitizeImportFailureText(raw, 0)
+		reason = sanitizeImportFailureText(sanitizeDiagnosticError(raw), 0)
+		if reason == "" {
+			reason = "Import failed"
+		}
+	}
+	return ImportFailure{
+		Name:        name,
+		Fingerprint: sanitizeImportFailureText(preview.Fingerprint, maxImportFailureNameRunes),
+		Reason:      reason,
+	}
+}
+
+func sanitizeImportFailureText(value string, maxRunes int) string {
+	value = strings.ToValidUTF8(value, "�")
+	value = strings.Map(func(r rune) rune {
+		if unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, value)
+	value = strings.Join(strings.Fields(value), " ")
+	runes := []rune(value)
+	if maxRunes > 0 && len(runes) > maxRunes {
+		return string(runes[:maxRunes]) + "..."
+	}
+	return value
 }
 
 func buildImportPreview(keys []importers.ImportedKey, existingFingerprints map[string]struct{}) ([]ImportPreview, int, error) {

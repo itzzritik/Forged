@@ -189,16 +189,19 @@ type keyImportState struct {
 	status        string
 	warning       string
 
-	sourceIndex  int
-	focus        int
-	pathVisible  bool
-	pathInput    textinput.Model
-	step         keyImportStep
-	previews     []actions.ImportPreview
-	reviewCursor int
-	discovered   int
-	duplicates   int
-	success      *keyTransferSuccessState
+	sourceIndex   int
+	focus         int
+	pathVisible   bool
+	pathInput     textinput.Model
+	step          keyImportStep
+	previews      []actions.ImportPreview
+	reviewCursor  int
+	discovered    int
+	duplicates    int
+	result        actions.ImportResult
+	failureCursor int
+	failureOffset int
+	success       *keyTransferSuccessState
 }
 
 type keyExportState struct {
@@ -232,6 +235,7 @@ type keyTransferSuccessState struct {
 const (
 	keyImportStepSource           keyImportStep = "source"
 	keyImportStepReview           keyImportStep = "review"
+	keyImportStepResult           keyImportStep = "result"
 	exportPlaintextWarning                      = "This export contains every private key in plaintext. Store it securely, avoid shared or cloud-synced folders, and delete it when finished."
 	exportPlaintextSuccessWarning               = "Contains plaintext private keys. Store it securely and delete it when finished."
 
@@ -239,6 +243,7 @@ const (
 	keyBrowserSearchGapWidth    = 4
 	keyBrowserSearchCursorWidth = 1
 	keyBrowserSearchMinInput    = 4
+	maxImportFailureLogReasons  = 3
 )
 
 var keyImportSources = []keyImportSource{
@@ -305,7 +310,7 @@ func (m *model) keyRouteLoaded() bool {
 	case RouteKeysGenerate:
 		return strings.TrimSpace(m.keyGenerate.nameInput.Placeholder) != "" || m.keyGenerate.generating || strings.TrimSpace(m.keyGenerate.err) != "" || strings.TrimSpace(m.keyGenerate.status) != ""
 	case RouteKeysImport:
-		return len(keyImportSources) > 0 && (strings.TrimSpace(m.keyImport.err) != "" || strings.TrimSpace(m.keyImport.warning) != "" || strings.TrimSpace(m.keyImport.status) != "" || m.keyImport.loading || m.keyImport.importing || m.keyImport.pickerOpening || m.keyImport.pathVisible || strings.TrimSpace(m.keyImport.pathInput.Placeholder) != "" || len(m.keyImport.previews) > 0 || m.keyImport.success != nil)
+		return len(keyImportSources) > 0 && (strings.TrimSpace(m.keyImport.err) != "" || strings.TrimSpace(m.keyImport.warning) != "" || strings.TrimSpace(m.keyImport.status) != "" || m.keyImport.loading || m.keyImport.importing || m.keyImport.pickerOpening || m.keyImport.pathVisible || strings.TrimSpace(m.keyImport.pathInput.Placeholder) != "" || len(m.keyImport.previews) > 0 || m.keyImport.step == keyImportStepResult || m.keyImport.success != nil)
 	case RouteKeysExport:
 		return strings.TrimSpace(m.keyExport.pathInput.Placeholder) != "" || strings.TrimSpace(m.keyExport.err) != "" || strings.TrimSpace(m.keyExport.status) != "" || m.keyExport.exporting || m.keyExport.pickerOpening || m.keyExport.pathVisible || m.keyExport.success != nil
 	default:
@@ -495,6 +500,16 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 		if m.keyImport.success != nil {
 			return []shell.FooterAction{{Key: "Esc", Label: "Dashboard"}}
 		}
+		if m.keyImport.step == keyImportStepResult {
+			actions := make([]shell.FooterAction, 0, 2)
+			if len(m.keyImport.result.Failures) > 1 {
+				actions = append(actions, shell.FooterAction{Key: theme.Glyphs.UpDown, Label: "Move"})
+			}
+			if m.keyImportFailureHasMorePages() {
+				actions = append(actions, shell.FooterAction{Key: theme.Glyphs.LeftRight, Label: "Reason"})
+			}
+			return append(actions, shell.FooterAction{Key: "Esc", Label: "Dashboard"})
+		}
 		if m.keyImport.step == keyImportStepReview {
 			actions := []shell.FooterAction{
 				{Key: theme.Glyphs.UpDown, Label: "Move"},
@@ -639,6 +654,32 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 				Message: m.keyImport.success.Message,
 				Detail:  m.keyImport.success.Detail,
 			}, contentWidth)
+		}
+		if m.keyImport.step == keyImportStepResult {
+			start, end := importReviewWindowBounds(len(m.keyImport.result.Failures), m.keyImport.failureCursor)
+			items := make([]keyscreen.ImportReviewItem, 0, max(end-start, 0))
+			for index := start; index < end; index++ {
+				failure := m.keyImport.result.Failures[index]
+				items = append(items, keyscreen.ImportReviewItem{
+					Name:        failure.Name,
+					Fingerprint: failure.Fingerprint,
+					Active:      index == m.keyImport.failureCursor,
+					Failed:      true,
+				})
+			}
+			failure, _ := m.selectedKeyImportFailure()
+			failurePage, _ := importFailureReasonPage(failure.Reason, m.keyImport.failureOffset, importReviewContentWidth(contentWidth))
+			return keyscreen.RenderImportReview(keyscreen.ImportReviewScreen{
+				Context:     "Review each key that could not be imported",
+				SourceLabel: "Import failures",
+				Count:       len(m.keyImport.result.Failures),
+				Items:       items,
+				HasAbove:    start > 0,
+				HasBelow:    end < len(m.keyImport.result.Failures),
+				Summary:     importFailureResultSummaryLines(m.keyImport.result),
+				Guidance:    m.keyImportFailureGuidance(),
+				Failure:     failurePage,
+			}, m.spinner.View(), contentWidth, bodyHeight)
 		}
 		if m.keyImport.step == keyImportStepReview {
 			start, end := importReviewWindowBounds(len(m.keyImport.previews), m.keyImport.reviewCursor)
@@ -986,6 +1027,24 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	}
+	if m.keyImport.step == keyImportStepResult {
+		switch msg.String() {
+		case "esc":
+			m.keyImport.result = actions.ImportResult{}
+			m.keyImport.previews = nil
+			m.keyImport.failureOffset = 0
+			return m, m.returnToDashboardRoute()
+		case "up", "k":
+			m.moveKeyImportFailureCursor(-1)
+		case "down", "j":
+			m.moveKeyImportFailureCursor(1)
+		case "left", "h":
+			m.moveKeyImportFailurePage(false)
+		case "right", "l":
+			m.moveKeyImportFailurePage(true)
+		}
+		return m, nil
+	}
 
 	if m.keyImport.step == keyImportStepReview {
 		switch msg.String() {
@@ -1014,6 +1073,8 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.keyImport.err = ""
 			m.keyImport.warning = ""
 			m.keyImport.status = fmt.Sprintf("Importing %d keys", selected)
+			m.keyImport.result = actions.ImportResult{}
+			m.keyImport.failureOffset = 0
 			m.keyImport.importing = true
 			return m, tea.Batch(m.spinner.Tick, m.importSelectedPreviewsCmd(m.currentImportSource().ID, m.keyImport.discovered, m.keyImport.previews))
 		default:
@@ -1855,11 +1916,23 @@ func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model,
 	for _, key := range msg.result.Keys {
 		m.upsertCachedKey(key)
 	}
+	m.keyImport.result = msg.result
+	if len(msg.result.Failures) > 0 {
+		m.keyImport.step = keyImportStepResult
+		m.keyImport.failureCursor = 0
+		m.keyImport.failureOffset = 0
+		m.keyImport.previews = nil
+		m.keyImport.err = ""
+		m.keyImport.warning = ""
+		m.logImportFailures(msg.result)
+		return m, m.invalidateSigningStatusCmd()
+	}
 	if msg.result.Imported == 0 {
 		m.keyImport.err = "No keys were imported"
 		m.keyImport.warning = ""
 		return m, nil
 	}
+	m.keyImport.previews = nil
 	m.keyImport.err = ""
 	m.keyImport.warning = ""
 	m.keyImport.success = m.newKeyTransferSuccessState(
@@ -1878,6 +1951,9 @@ func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, t
 		return m, nil
 	}
 	m.keyImport.loading = false
+	m.keyImport.result = actions.ImportResult{}
+	m.keyImport.failureCursor = 0
+	m.keyImport.failureOffset = 0
 	source := m.currentImportSource()
 	if msg.err != nil {
 		m.keyImport.step = keyImportStepSource
@@ -2447,6 +2523,154 @@ func importSuccessMessage(result actions.ImportResult) string {
 		return "1 Key added to this vault"
 	}
 	return fmt.Sprintf("%d Keys added to this vault", result.Imported)
+}
+
+func importFailureResultSummaryLines(result actions.ImportResult) []string {
+	lines := make([]string, 0, 2)
+	if result.Imported > 0 {
+		lines = append(lines, importSuccessMessage(result))
+	} else {
+		lines = append(lines, "No keys added to this vault")
+	}
+	if result.Skipped == 1 {
+		lines = append(lines, "1 key failed to import")
+	} else {
+		lines = append(lines, fmt.Sprintf("%d keys failed to import", result.Skipped))
+	}
+	return lines
+}
+
+func (m *model) selectedKeyImportFailure() (actions.ImportFailure, bool) {
+	failures := m.keyImport.result.Failures
+	if len(failures) == 0 || m.keyImport.failureCursor < 0 || m.keyImport.failureCursor >= len(failures) {
+		return actions.ImportFailure{}, false
+	}
+	return failures[m.keyImport.failureCursor], true
+}
+
+func importReviewContentWidth(width int) int {
+	return max(28, min(width, theme.HeroMaxWidth+10))
+}
+
+func importFailureReasonPage(reason string, offset int, width int) (string, int) {
+	const label = "Reason: "
+	runes := []rune(strings.TrimSpace(reason))
+	if len(runes) == 0 {
+		return "", 0
+	}
+	if offset < 0 || offset >= len(runes) {
+		offset = 0
+	}
+
+	available := max(1, width-lipgloss.Width(theme.Glyphs.Cross+" ")-lipgloss.Width(label))
+	prefix := ""
+	if offset > 0 {
+		prefix = theme.Glyphs.Ellipsis + " "
+	}
+	used := lipgloss.Width(prefix)
+	end := offset
+	for end < len(runes) {
+		runeWidth := lipgloss.Width(string(runes[end]))
+		suffixWidth := 0
+		if end+1 < len(runes) {
+			suffixWidth = lipgloss.Width(" " + theme.Glyphs.Ellipsis)
+		}
+		if end > offset && used+runeWidth+suffixWidth > available {
+			break
+		}
+		used += runeWidth
+		end++
+	}
+
+	page := prefix + string(runes[offset:end])
+	if end < len(runes) {
+		page += " " + theme.Glyphs.Ellipsis
+	}
+	return label + page, end
+}
+
+func (m *model) keyImportFailurePageWidth() int {
+	return importReviewContentWidth(shell.BodyWidth(m.width))
+}
+
+func (m *model) keyImportFailureHasMorePages() bool {
+	failure, ok := m.selectedKeyImportFailure()
+	if !ok {
+		return false
+	}
+	_, end := importFailureReasonPage(failure.Reason, m.keyImport.failureOffset, m.keyImportFailurePageWidth())
+	return m.keyImport.failureOffset > 0 || end < len([]rune(strings.TrimSpace(failure.Reason)))
+}
+
+func (m *model) keyImportFailureGuidance() string {
+	guidance := "Use ↑/↓ to inspect each failed key."
+	if m.keyImportFailureHasMorePages() {
+		guidance += " Use ←/→ to read the selected reason."
+	}
+	return guidance + " Esc returns to dashboard."
+}
+
+func (m *model) moveKeyImportFailureCursor(delta int) {
+	if len(m.keyImport.result.Failures) == 0 {
+		m.keyImport.failureCursor = 0
+		m.keyImport.failureOffset = 0
+		return
+	}
+	next := m.keyImport.failureCursor + delta
+	if next < 0 {
+		next = 0
+	}
+	if next >= len(m.keyImport.result.Failures) {
+		next = len(m.keyImport.result.Failures) - 1
+	}
+	m.keyImport.failureCursor = next
+	m.keyImport.failureOffset = 0
+}
+
+func (m *model) moveKeyImportFailurePage(forward bool) {
+	failure, ok := m.selectedKeyImportFailure()
+	if !ok {
+		return
+	}
+	width := m.keyImportFailurePageWidth()
+	if forward {
+		_, end := importFailureReasonPage(failure.Reason, m.keyImport.failureOffset, width)
+		if end < len([]rune(strings.TrimSpace(failure.Reason))) {
+			m.keyImport.failureOffset = end
+		}
+		return
+	}
+	if m.keyImport.failureOffset <= 0 {
+		return
+	}
+	previous := 0
+	for start := 0; start < m.keyImport.failureOffset; {
+		_, end := importFailureReasonPage(failure.Reason, start, width)
+		if end >= m.keyImport.failureOffset {
+			previous = start
+			break
+		}
+		previous = start
+		start = end
+	}
+	m.keyImport.failureOffset = previous
+}
+
+func (m *model) logImportFailures(result actions.ImportResult) {
+	limit := min(len(result.Failures), maxImportFailureLogReasons)
+	reasons := make([]string, 0, limit+1)
+	for _, failure := range result.Failures[:limit] {
+		reasons = append(reasons, failure.Reason)
+	}
+	if result.Skipped > limit {
+		reasons = append(reasons, fmt.Sprintf("%d additional failures", result.Skipped-limit))
+	}
+	m.deps.LogError(actions.DiagnosticErrorEvent{
+		Route:   string(RouteKeysImport),
+		Action:  "keys.import.partial",
+		Version: m.deps.AppVersion,
+		Message: fmt.Sprintf("%d import failures: %s", result.Skipped, strings.Join(reasons, "; ")),
+	})
 }
 
 func (m *model) moveKeyImportReviewCursor(delta int) {
