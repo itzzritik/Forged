@@ -9,11 +9,11 @@ import (
 
 var Magic = [8]byte{'F', 'O', 'R', 'G', 'E', 'D', 0x00, 0x01}
 
-const (
-	CurrentVersion   uint16 = 2
-	ProtectedKeySize        = 60 // nonce(12) + ciphertext(32) + tag(16)
+const CurrentVersion uint16 = 2
 
-	HeaderSize = 8 + 2 + SaltSize + 4 + 4 + 1 + ProtectedKeySize + NonceSize // 123 bytes
+const (
+	ProtectedKeySize = 60                                                          // nonce(12) + ciphertext(32) + tag(16)
+	HeaderSize       = 8 + 2 + SaltSize + 4 + 4 + 1 + ProtectedKeySize + NonceSize // 123 bytes
 )
 
 type Header struct {
