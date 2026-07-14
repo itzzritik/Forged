@@ -1632,6 +1632,9 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	}
+	if m.idleLockInFlight {
+		return m, nil
+	}
 	if m.clipboardBusy {
 		return m, nil
 	}
