@@ -55,7 +55,7 @@ func newPasswordInput(kind PasswordKind) *PasswordInput {
 	for index := 0; index < fieldCount; index++ {
 		input := textinput.New()
 		input.EchoMode = textinput.EchoPassword
-		input.EchoCharacter = '•'
+		input.EchoCharacter = []rune(theme.Glyphs.Mask)[0]
 		input.Prompt = ""
 		input.CharLimit = 128
 		input.Cursor.Style = theme.FooterKey
@@ -297,8 +297,8 @@ func (p *PasswordInput) View(spinner string, labels ...string) string {
 
 		inputWidth := max(12, p.width)
 		lines := []string{
-			theme.FieldValue.Render(field.View()),
-			lineStyle.Render(strings.Repeat("─", min(inputWidth, 36))),
+			theme.FieldValue.Render(theme.AdaptTextInputPlaceholder(field.View(), field.Value())),
+			lineStyle.Render(strings.Repeat(theme.Glyphs.Horizontal, min(inputWidth, 36))),
 		}
 		if strings.TrimSpace(label) != "" {
 			lines = append([]string{theme.FieldLabel.Render(label)}, lines...)
@@ -310,9 +310,9 @@ func (p *PasswordInput) View(spinner string, labels ...string) string {
 	}
 
 	if p.err != "" {
-		sections = append(sections, theme.Danger.Render("✕ "+sentenceCase(p.err)))
+		sections = append(sections, theme.Danger.Render(theme.Glyphs.Cross+" "+sentenceCase(p.err)))
 	} else if p.ok != "" {
-		sections = append(sections, theme.Success.Render("✓ "+sentenceCase(p.ok)))
+		sections = append(sections, theme.Success.Render(theme.Glyphs.Check+" "+sentenceCase(p.ok)))
 	} else if p.info != "" {
 		sections = append(sections, theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+sentenceCase(p.info)))
 	} else {

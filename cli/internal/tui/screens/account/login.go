@@ -75,7 +75,7 @@ func renderLink(raw string, copied bool) string {
 
 	label := theme.BodyStrong.Render("Log In Link")
 	if copied {
-		label += "  " + theme.Success.Render("✓") + " " + theme.BodyMuted.Render("Copied")
+		label += "  " + theme.Success.Render(theme.Glyphs.Check) + " " + theme.BodyMuted.Render("Copied")
 	}
 	return strings.Join([]string{
 		label,
@@ -116,7 +116,7 @@ func renderError(message string, width int) string {
 	}
 
 	lines := []string{
-		theme.Danger.Render("✕ " + title),
+		theme.Danger.Render(theme.Glyphs.Cross + " " + title),
 	}
 	if strings.TrimSpace(detail) != "" {
 		lines = append(lines, theme.Body.Width(max(24, width)).Render(detail))

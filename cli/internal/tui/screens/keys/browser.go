@@ -59,7 +59,7 @@ func RenderBrowser(screen BrowserScreen, spinner string, width int) string {
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
 		top := strings.Join([]string{
-			theme.Danger.Render("✕ " + displayMessage(msg)),
+			theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(msg)),
 			"",
 		}, "\n")
 		if screen.HideFooter {
@@ -96,7 +96,7 @@ func renderSearchField(view string, active bool, notice string, countLabel strin
 	lines := []string{renderBrowserMetaRow(notice, width)}
 	lines = append(lines,
 		shell.FullBleed(theme.Divider(fieldWidth)),
-		shell.JoinRow(width, theme.Kicker.Render("❯")+"  "+value, renderBrowserCountLabel(countLabel)),
+		shell.JoinRow(width, theme.Kicker.Render(theme.Glyphs.Prompt)+"  "+value, renderBrowserCountLabel(countLabel)),
 	)
 	return strings.Join(lines, "\n")
 }
@@ -206,7 +206,7 @@ func renderBrowserRow(key BrowserRow, selected bool, preserveTypeCase bool, sele
 	nameStyle := theme.FieldValue
 	detailStyle := theme.BodyMuted
 	if selected {
-		prefix = theme.Kicker.Render("▸")
+		prefix = theme.Kicker.Render(theme.Glyphs.Selection)
 		nameStyle = theme.Kicker
 		detailStyle = theme.Body
 	}
@@ -295,10 +295,10 @@ func truncateRunes(value string, width int) string {
 		return value
 	}
 	if width == 1 {
-		return "…"
+		return theme.Glyphs.Ellipsis
 	}
 	runes := []rune(value)
-	return string(runes[:width-1]) + "…"
+	return string(runes[:width-1]) + theme.Glyphs.Ellipsis
 }
 
 func centerRow(value string, width int) string {

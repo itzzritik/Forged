@@ -34,6 +34,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Valid password submissions reset every field immediately; leaving a password screen discards the component, and background commands clear their owned byte copies when done.
 - Printable keys always reach focused inputs. Ctrl-C is the only global quit shortcut, except while master-password rotation is changing local and remote state; startup System Auth retry uses Ctrl-A while the password field is empty.
 - Single-letter footer actions accept either letter case. Separate actions use separate letters instead of Shift-only variants.
+- UI chrome falls back to ASCII for non-UTF-8 or legacy terminals; `FORGED_ASCII=1` forces it without rewriting user-provided text.
 - Browser login remains cancelable until approval arrives. While the daemon commits the account, screen actions are hidden and ignored; Ctrl-C remains the global force-quit shortcut.
 - Private-key clipboard copies use sensitive platform hints when available, show a 45-second countdown, and clear only while the copied value is still current; normal TUI exit also clears an active copy.
 - While locked, the header uses the welcome product rail instead of live system status.

@@ -77,10 +77,10 @@ func truncateRunes(value string, width int) string {
 		return value
 	}
 	if width == 1 {
-		return "…"
+		return theme.Glyphs.Ellipsis
 	}
 	runes := []rune(value)
-	return string(runes[:width-1]) + "…"
+	return string(runes[:width-1]) + theme.Glyphs.Ellipsis
 }
 
 func max(a, b int) int {

@@ -191,10 +191,10 @@ func RenderImport(screen ImportScreen, spinner string, width int) string {
 	if len(screen.Sources) > 0 {
 		lines := make([]string, 0, len(screen.Sources))
 		for _, source := range screen.Sources {
-			prefix := theme.BodyMuted.Render("·")
+			prefix := theme.BodyMuted.Render(theme.Glyphs.Bullet)
 			labelStyle := theme.BodyMuted
 			if source.Selected {
-				prefix = theme.Kicker.Render("▸")
+				prefix = theme.Kicker.Render(theme.Glyphs.Selection)
 				labelStyle = theme.BodyStrong
 			}
 			lines = append(lines, prefix+" "+labelStyle.Render(source.Label))
@@ -296,10 +296,10 @@ func renderImportReviewTop(screen ImportReviewScreen, items []ImportReviewItem, 
 
 	lines := make([]string, 0, len(items)+3)
 	if showSource {
-		lines = append(lines, theme.BodyMuted.Render(fmt.Sprintf("%s · %d keys", screen.SourceLabel, screen.Count)))
+		lines = append(lines, theme.BodyMuted.Render(fmt.Sprintf("%s %s %d keys", screen.SourceLabel, theme.Glyphs.Separator, screen.Count)))
 	}
 	if showMarkers && hasAbove {
-		lines = append(lines, theme.BodyMuted.Render("↑ more"))
+		lines = append(lines, theme.BodyMuted.Render(theme.Glyphs.Up+" more"))
 	}
 	for _, item := range items {
 		if compactRows {
@@ -309,7 +309,7 @@ func renderImportReviewTop(screen ImportReviewScreen, items []ImportReviewItem, 
 		}
 	}
 	if showMarkers && hasBelow {
-		lines = append(lines, theme.BodyMuted.Render("↓ more"))
+		lines = append(lines, theme.BodyMuted.Render(theme.Glyphs.Down+" more"))
 	}
 	if len(sections) > 0 {
 		sections = append(sections, "")
@@ -332,7 +332,7 @@ func renderImportReviewBottom(screen ImportReviewScreen, spinner string, width i
 	switch {
 	case strings.TrimSpace(screen.Error) != "":
 		err := strings.TrimSpace(screen.Error)
-		lines = append(lines, renderImportReviewFeedback(theme.Danger, "✕ "+displayMessage(err), width, compactFeedback))
+		lines = append(lines, renderImportReviewFeedback(theme.Danger, theme.Glyphs.Cross+" "+displayMessage(err), width, compactFeedback))
 	case screen.Busy && strings.TrimSpace(screen.Status) != "":
 		lines = append(lines, renderImportReviewFeedback(theme.BodyStrong, spinner+" "+displayMessage(screen.Status), width, compactFeedback))
 	case strings.TrimSpace(screen.Warning) != "":
@@ -356,10 +356,10 @@ func truncateImportReviewLine(value string, width int) string {
 		return value
 	}
 	runes := []rune(value)
-	for len(runes) > 0 && lipgloss.Width(string(runes)+"…") > width {
+	for len(runes) > 0 && lipgloss.Width(string(runes)+theme.Glyphs.Ellipsis) > width {
 		runes = runes[:len(runes)-1]
 	}
-	return string(runes) + "…"
+	return string(runes) + theme.Glyphs.Ellipsis
 }
 
 func importReviewBlockHeight(block string) int {
@@ -402,9 +402,9 @@ func RenderTransferSuccess(screen TransferSuccessScreen, width int) string {
 	}
 
 	confetti := strings.Join([]string{
-		theme.Kicker.Render("✦"),
-		theme.Success.Render("✓"),
-		theme.Kicker.Render("✦"),
+		theme.Kicker.Render(theme.Glyphs.Sparkle),
+		theme.Success.Render(theme.Glyphs.Check),
+		theme.Kicker.Render(theme.Glyphs.Sparkle),
 	}, "   ")
 	sections = append(sections,
 		"",
@@ -432,7 +432,7 @@ func renderTextField(view string, focused bool, width int) string {
 	return strings.Join([]string{
 		"",
 		renderedValue,
-		lineStyle.Render(strings.Repeat("─", fieldWidth)),
+		lineStyle.Render(strings.Repeat(theme.Glyphs.Horizontal, fieldWidth)),
 	}, "\n")
 }
 
@@ -446,16 +446,16 @@ func renderImportReviewRow(item ImportReviewItem) string {
 func renderImportReviewCompactRow(item ImportReviewItem) string {
 	prefix := " "
 	if item.Active {
-		prefix = theme.Kicker.Render("▸")
+		prefix = theme.Kicker.Render(theme.Glyphs.Selection)
 	}
 	return fmt.Sprintf("%s %s %s", prefix, renderImportCheckbox(item.Checked), item.Name)
 }
 
 func renderImportCheckbox(checked bool) string {
 	if checked {
-		return theme.Kicker.Render("■")
+		return theme.Kicker.Render(theme.Glyphs.Checked)
 	}
-	return theme.BodyMuted.Render("□")
+	return theme.BodyMuted.Render(theme.Glyphs.Unchecked)
 }
 
 func renderImportMetadataLine(item ImportReviewItem) string {
@@ -487,7 +487,7 @@ func inputFieldWidth(contentWidth int) int {
 
 func renderStatus(info string, err string, spinner string) string {
 	if strings.TrimSpace(err) != "" {
-		return theme.Danger.Render("✕ " + displayMessage(err))
+		return theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(err))
 	}
 	if strings.TrimSpace(info) != "" {
 		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + displayMessage(info))
@@ -497,7 +497,7 @@ func renderStatus(info string, err string, spinner string) string {
 
 func renderResultStatus(info string, warning string, err string, busy bool, spinner string) string {
 	if strings.TrimSpace(err) != "" {
-		return theme.Danger.Render("✕ " + displayMessage(err))
+		return theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(err))
 	}
 	if strings.TrimSpace(warning) != "" {
 		return theme.Warning.Render("! " + displayMessage(warning))
@@ -508,7 +508,7 @@ func renderResultStatus(info string, warning string, err string, busy bool, spin
 	if busy {
 		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + displayMessage(info))
 	}
-	return theme.Success.Render("✓ " + displayMessage(info))
+	return theme.Success.Render(theme.Glyphs.Check + " " + displayMessage(info))
 }
 
 func displayMessage(value string) string {

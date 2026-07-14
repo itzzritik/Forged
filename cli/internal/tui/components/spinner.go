@@ -10,7 +10,7 @@ import (
 func NewSpinner() spinner.Model {
 	model := spinner.New()
 	model.Spinner = spinner.Spinner{
-		Frames: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},
+		Frames: theme.Glyphs.SpinnerFrames,
 		FPS:    time.Second / 12,
 	}
 	model.Style = theme.Spinner

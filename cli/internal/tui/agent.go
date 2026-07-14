@@ -166,7 +166,7 @@ func (m *model) renderAgentBody(contentWidth int) string {
 		bottomSections = append(bottomSections, theme.BodyMuted.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(item.Summary))
 	}
 	if errText := strings.TrimSpace(m.agent.statusErr); errText != "" {
-		bottomSections = append(bottomSections, theme.Danger.Render("✕ "+errText))
+		bottomSections = append(bottomSections, theme.Danger.Render(theme.Glyphs.Cross+" "+errText))
 	}
 
 	top := strings.Join(sections, "\n")
@@ -188,7 +188,7 @@ func (m *model) renderAgentSigningBody(contentWidth int) string {
 			Fingerprint: key.Fingerprint,
 		}
 		if m.isAgentSigningKeyApplied(key) {
-			row.StatusIcon = "✓"
+			row.StatusIcon = theme.Glyphs.Check
 		}
 		browserRows = append(browserRows, row)
 	}
@@ -205,7 +205,7 @@ func (m *model) renderAgentSigningBody(contentWidth int) string {
 		Error:         m.signingError,
 		Status:        m.signingStatus,
 		Browser: keyscreen.BrowserScreen{
-			SearchView:    m.agent.signing.input.View(),
+			SearchView:    theme.AdaptTextInputPlaceholder(m.agent.signing.input.View(), m.agent.signing.input.Value()),
 			SearchQuery:   m.agent.signing.input.Value(),
 			SearchActive:  m.agent.signing.searchActive,
 			SearchNotice:  warning,

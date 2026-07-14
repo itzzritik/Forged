@@ -35,13 +35,13 @@ func renderProfileTable(rows []profileRow, width int) string {
 	for _, row := range rows {
 		value := strings.TrimSpace(row.Value)
 		if value == "" {
-			value = "—"
+			value = theme.Glyphs.Empty
 		}
 
 		label := padProfileRight(theme.RowLabel.Render(strings.ToUpper(row.Label)), labelWidth+2)
 		wrapped := wrapProfileText(value, valueWidth)
 		if len(wrapped) == 0 {
-			wrapped = []string{"—"}
+			wrapped = []string{theme.Glyphs.Empty}
 		}
 
 		lines = append(lines, label+theme.BodyStrong.Render(wrapped[0]))

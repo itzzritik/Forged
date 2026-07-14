@@ -88,7 +88,7 @@ func renderHeaderBox(width int, data HeaderData) string {
 }
 
 func renderBrandBanner(width int) string {
-	if width > 0 && width < lipgloss.Width(brandBanner) {
+	if !theme.Glyphs.Unicode || width > 0 && width < lipgloss.Width(brandBanner) {
 		return theme.Kicker.Render("FORGED")
 	}
 	return theme.BrandBanner.Render(brandBanner)
@@ -119,7 +119,7 @@ func renderHeaderSeparator(height int) string {
 	}
 	lines := make([]string, height)
 	for index := range lines {
-		lines[index] = theme.HeaderSeparator.Render("│")
+		lines[index] = theme.HeaderSeparator.Render(theme.Glyphs.Vertical)
 	}
 	return strings.Join(lines, "\n")
 }
@@ -147,13 +147,13 @@ func padBlockHeight(block string, targetHeight int) string {
 }
 
 func renderStatusItem(item StatusItem) string {
-	icon := theme.Danger.Render("✕")
+	icon := theme.Danger.Render(theme.Glyphs.Cross)
 	if strings.TrimSpace(item.Icon) != "" {
 		icon = theme.Kicker.Render(item.Icon)
 	} else {
 		switch item.Tone {
 		case StatusToneSuccess:
-			icon = theme.Success.Render("✓")
+			icon = theme.Success.Render(theme.Glyphs.Check)
 		case StatusToneWarning:
 			icon = theme.Warning.Render("!")
 		}
@@ -170,7 +170,7 @@ func renderBreadcrumbs(items []Breadcrumb) string {
 	parts := make([]string, 0, len(items)*2)
 	for index, item := range items {
 		if index > 0 {
-			parts = append(parts, theme.BreadcrumbSeparator.Render("❱"))
+			parts = append(parts, theme.BreadcrumbSeparator.Render(theme.Glyphs.Breadcrumb))
 		}
 		if item.Current {
 			parts = append(parts, theme.BreadcrumbCurrent.Render(strings.ToUpper(item.Label)))

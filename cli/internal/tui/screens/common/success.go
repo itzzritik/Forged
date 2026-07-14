@@ -21,9 +21,9 @@ func RenderSuccess(screen SuccessScreen, width int) string {
 	}
 
 	confetti := strings.Join([]string{
-		theme.Kicker.Render("✦"),
-		theme.Success.Render("✓"),
-		theme.Kicker.Render("✦"),
+		theme.Kicker.Render(theme.Glyphs.Sparkle),
+		theme.Success.Render(theme.Glyphs.Check),
+		theme.Kicker.Render(theme.Glyphs.Sparkle),
 	}, "   ")
 	sections = append(sections,
 		"",

@@ -347,7 +347,7 @@ func (m *model) labBrowserNotice() string {
 		return "Clearing route memory"
 	}
 	if strings.TrimSpace(m.lab.err) != "" {
-		return "✕ " + m.lab.err
+		return theme.Glyphs.Cross + " " + m.lab.err
 	}
 	if strings.TrimSpace(m.lab.notice) != "" {
 		return m.lab.notice
@@ -376,7 +376,7 @@ func (m *model) labFooterActions() []shell.FooterAction {
 		}
 	}
 	return []shell.FooterAction{
-		{Key: "↑/↓", Label: "Select"},
+		{Key: theme.Glyphs.UpDown, Label: "Select"},
 		{Key: "C", Label: "Clear Route"},
 		{Key: "A", Label: "Clear All"},
 		{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
@@ -402,7 +402,7 @@ func labRouteSummaryTitle(route actions.SSHRouteDebug, width int) string {
 	keyWidth := max(14, width-targetWidth-3)
 	target := theme.Success.Render(labTruncate(routeLabel(route), targetWidth))
 	key := theme.BodyStrong.Render(labTruncate(labRouteKeyLabel(route), keyWidth))
-	return target + theme.BodyMuted.Render("  ·  ") + key
+	return target + theme.BodyMuted.Render("  "+theme.Glyphs.Separator+"  ") + key
 }
 
 func labRouteSummaryMeta(route actions.SSHRouteDebug) string {
@@ -412,7 +412,7 @@ func labRouteSummaryMeta(route actions.SSHRouteDebug) string {
 		"last " + labRouteLastUsed(route),
 		labRouteUseCount(route.SuccessCount),
 	}
-	return theme.BodyMuted.Render(strings.Join(parts, "  ·  "))
+	return theme.BodyMuted.Render(strings.Join(parts, "  "+theme.Glyphs.Separator+"  "))
 }
 
 func labRouteServiceLabel(route actions.SSHRouteDebug) string {
@@ -514,9 +514,9 @@ func labTruncate(value string, width int) string {
 		return string(runes)
 	}
 	if width == 1 {
-		return "…"
+		return theme.Glyphs.Ellipsis
 	}
-	return string(runes[:width-1]) + "…"
+	return string(runes[:width-1]) + theme.Glyphs.Ellipsis
 }
 
 func labFirstNonEmpty(values ...string) string {

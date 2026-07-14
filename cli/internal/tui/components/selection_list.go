@@ -31,7 +31,7 @@ func renderSelectionListItem(item SelectionListItem, width int) string {
 	prefix := theme.BodyMuted.Render("  ")
 	labelStyle := theme.BodyStrong
 	if item.Selected {
-		prefix = theme.Bullet.Render("▸ ")
+		prefix = theme.Bullet.Render(theme.Glyphs.Selection + " ")
 		labelStyle = theme.Kicker
 	}
 	return lipgloss.NewStyle().Width(width).Render(prefix + labelStyle.Render(item.Label))

@@ -225,10 +225,10 @@ func renderTabs(tabs []Tab, width int) string {
 
 	row := joinTabBlocks(visible)
 	if leftOverflow {
-		row = theme.BodyMuted.Render("… ") + row
+		row = theme.BodyMuted.Render(theme.Glyphs.Ellipsis+" ") + row
 	}
 	if rightOverflow {
-		row += theme.BodyMuted.Render(" …")
+		row += theme.BodyMuted.Render(" " + theme.Glyphs.Ellipsis)
 	}
 	return row
 }
@@ -272,9 +272,9 @@ func renderTab(tab Tab, width ...int) string {
 		bodyWidth = lipgloss.Width(body.Render(labelStyle.Render(tab.Label)))
 	}
 
-	top := borderStyle.Render("┌") + borderStyle.Render(strings.Repeat("─", bodyWidth)) + borderStyle.Render("┐")
-	middle := borderStyle.Render("│") + body.Render(labelStyle.Render(tab.Label)) + borderStyle.Render("│")
-	bottom := borderStyle.Render("└") + borderStyle.Render(strings.Repeat("─", bodyWidth)) + borderStyle.Render("┘")
+	top := borderStyle.Render(theme.Glyphs.TopLeft) + borderStyle.Render(strings.Repeat(theme.Glyphs.Horizontal, bodyWidth)) + borderStyle.Render(theme.Glyphs.TopRight)
+	middle := borderStyle.Render(theme.Glyphs.Vertical) + body.Render(labelStyle.Render(tab.Label)) + borderStyle.Render(theme.Glyphs.Vertical)
+	bottom := borderStyle.Render(theme.Glyphs.BottomLeft) + borderStyle.Render(strings.Repeat(theme.Glyphs.Horizontal, bodyWidth)) + borderStyle.Render(theme.Glyphs.BottomRight)
 	return strings.Join([]string{top, middle, bottom}, "\n")
 }
 
@@ -379,7 +379,7 @@ func renderAreaCard(area Area, cardWidth int) string {
 	}
 
 	frame := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
+		BorderStyle(theme.RoundedBorder()).
 		BorderForeground(borderColor).
 		Padding(1, 2).
 		Width(cardWidth)
@@ -416,11 +416,11 @@ func renderNotice(notice Notice) string {
 
 	switch notice.Tone {
 	case ToneSuccess:
-		return theme.Success.Render("✓ " + notice.Message)
+		return theme.Success.Render(theme.Glyphs.Check + " " + notice.Message)
 	case ToneWarning:
 		return theme.Warning.Render("! " + notice.Message)
 	case ToneDanger:
-		return theme.Danger.Render("✕ " + notice.Message)
+		return theme.Danger.Render(theme.Glyphs.Cross + " " + notice.Message)
 	default:
 		return theme.BodyStrong.Render(notice.Message)
 	}
@@ -528,7 +528,7 @@ func renderWelcomeCards(options []Option, width int, leftInset int) string {
 func renderWelcomeSeparator(height int) string {
 	lines := make([]string, height)
 	for index := range lines {
-		lines[index] = " " + theme.HeaderSeparator.Render("│") + " "
+		lines[index] = " " + theme.HeaderSeparator.Render(theme.Glyphs.Vertical) + " "
 	}
 	return strings.Join(lines, "\n")
 }
@@ -550,7 +550,7 @@ func renderWelcomeCard(option Option, cardWidth int, bodyHeight int) string {
 	}
 
 	frame := lipgloss.NewStyle().
-		BorderStyle(lipgloss.RoundedBorder()).
+		BorderStyle(theme.RoundedBorder()).
 		BorderForeground(borderColor).
 		Padding(padding[0], padding[1]).
 		Width(cardWidth)

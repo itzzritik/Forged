@@ -30,7 +30,7 @@ func RenderDetail(screen DetailScreen, spinner string, width int) string {
 		}, spinner, contentWidth)
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
-		return theme.Danger.Render("✕ " + displayMessage(msg))
+		return theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(msg))
 	}
 
 	name := strings.TrimSpace(screen.Key.Name)
@@ -88,13 +88,13 @@ func renderDetailTable(rows []detailTableRow, width int) string {
 	for _, row := range rows {
 		value := strings.TrimSpace(row.Value)
 		if value == "" {
-			value = "—"
+			value = theme.Glyphs.Empty
 		}
 
 		label := padRight(theme.RowLabel.Render(strings.ToUpper(row.Label)), labelWidth+2)
 		wrapped := wrapDetailText(value, valueWidth)
 		if len(wrapped) == 0 {
-			wrapped = []string{"—"}
+			wrapped = []string{theme.Glyphs.Empty}
 		}
 
 		lines = append(lines, label+row.Style.Render(wrapped[0]))
@@ -132,7 +132,7 @@ func detailTableValueWidth(width int) int {
 func renderDetailFieldBlock(label, value string, width int, style lipgloss.Style) string {
 	value = strings.TrimSpace(value)
 	if value == "" {
-		value = "—"
+		value = theme.Glyphs.Empty
 	}
 
 	lines := []string{theme.RowLabel.Render(strings.ToUpper(label))}
@@ -183,13 +183,13 @@ func boolLabel(value bool) string {
 
 func renderDetailStatus(status string, statusError string, busy bool, spinner string) string {
 	if strings.TrimSpace(statusError) != "" {
-		return theme.Danger.Render("✕ " + displayMessage(statusError))
+		return theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(statusError))
 	}
 	if busy && strings.TrimSpace(status) != "" {
 		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + displayMessage(status))
 	}
 	if strings.TrimSpace(status) != "" {
-		return theme.Success.Render("✓ " + displayMessage(status))
+		return theme.Success.Render(theme.Glyphs.Check + " " + displayMessage(status))
 	}
 	return " "
 }
@@ -228,11 +228,11 @@ func compactMiddle(value string, maxRunes int) string {
 	if head+tail >= len(runes) {
 		return value
 	}
-	return string(runes[:head]) + "…" + string(runes[len(runes)-tail:])
+	return string(runes[:head]) + theme.Glyphs.Ellipsis + string(runes[len(runes)-tail:])
 }
 
 func privateKeyVisibilityLabel() string {
-	return "••••••••••••••••"
+	return strings.Repeat(theme.Glyphs.Mask, 16)
 }
 
 func wrapDetailText(value string, width int) []string {

@@ -977,9 +977,9 @@ func (m *model) canRetryStartupSystemAuth() bool {
 
 func (m *model) productRailItems() []shell.StatusItem {
 	return []shell.StatusItem{
-		{Label: "Encrypted key vault", Icon: "✦"},
-		{Label: "Multi-device sync", Icon: "✦"},
-		{Label: "SSH + commit signing", Icon: "✦"},
+		{Label: "Encrypted key vault", Icon: theme.Glyphs.Sparkle},
+		{Label: "Multi-device sync", Icon: theme.Glyphs.Sparkle},
+		{Label: "SSH + commit signing", Icon: theme.Glyphs.Sparkle},
 	}
 }
 
@@ -1393,7 +1393,7 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 
 	if m.passwordAuth != "" {
 		sections = append(sections,
-			theme.Success.Render("✓")+" "+theme.BodyMuted.Render(" Logged in as")+" "+theme.Body.Render(m.passwordAuth),
+			theme.Success.Render(theme.Glyphs.Check)+" "+theme.BodyMuted.Render(" Logged in as")+" "+theme.Body.Render(m.passwordAuth),
 			"",
 		)
 	}
@@ -1483,7 +1483,7 @@ func (m *model) footerActions() []shell.FooterAction {
 				return nil
 			}
 			return []shell.FooterAction{
-				{Key: "↑/↓", Label: "Move"},
+				{Key: theme.Glyphs.UpDown, Label: "Move"},
 				{Key: "Enter", Label: "Open"},
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
@@ -1495,7 +1495,7 @@ func (m *model) footerActions() []shell.FooterAction {
 		}
 		if m.isManageMasterIntervalRoute() {
 			return []shell.FooterAction{
-				{Key: "↑/↓", Label: "Move"},
+				{Key: theme.Glyphs.UpDown, Label: "Move"},
 				{Key: "Enter", Label: "Apply"},
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
@@ -1507,7 +1507,7 @@ func (m *model) footerActions() []shell.FooterAction {
 		}
 		if m.isAgentHomeRoute() {
 			return []shell.FooterAction{
-				{Key: "↑/↓", Label: "Move"},
+				{Key: theme.Glyphs.UpDown, Label: "Move"},
 				{Key: "Enter", Label: "Open"},
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
@@ -1538,7 +1538,7 @@ func (m *model) footerActions() []shell.FooterAction {
 				}
 			}
 			actions := []shell.FooterAction{
-				{Key: "↑/↓", Label: "Move"},
+				{Key: theme.Glyphs.UpDown, Label: "Move"},
 			}
 			if _, ok := m.selectedAgentSigningKey(); ok && !m.selectedAgentSigningKeyApplied() {
 				actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Use For Signing"})
@@ -1564,7 +1564,7 @@ func (m *model) footerActions() []shell.FooterAction {
 		}
 		if m.isWelcomeState() {
 			return []shell.FooterAction{
-				{Key: "↑/↓", Label: "Move"},
+				{Key: theme.Glyphs.UpDown, Label: "Move"},
 				{Key: "Enter", Label: "Select"},
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
@@ -1588,8 +1588,8 @@ func (m *model) footerActions() []shell.FooterAction {
 		}
 		if tabs := m.dashboardTabs(); len(tabs) > 0 {
 			return []shell.FooterAction{
-				{Key: "←/→", Label: "Tabs"},
-				{Key: "↑/↓", Label: "Pages"},
+				{Key: theme.Glyphs.LeftRight, Label: "Tabs"},
+				{Key: theme.Glyphs.UpDown, Label: "Pages"},
 				{Key: "Enter", Label: "Open"},
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
@@ -1603,7 +1603,7 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "ctrl+c":
 		if m.passwordBusy && m.passwordFlow == passwordManageChange {
 			if m.passwordInput != nil {
-				m.passwordInput.SetInfo("Changing master password — quit is unavailable until this finishes")
+				m.passwordInput.SetInfo("Changing master password " + theme.Glyphs.Empty + " quit is unavailable until this finishes")
 			}
 			return m, nil
 		}

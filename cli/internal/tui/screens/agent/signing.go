@@ -43,9 +43,9 @@ func renderStatusCard(screen SigningScreen, spinner string, width int) string {
 	switch screen.Status.Mode {
 	case actions.CommitSigningForged:
 		if keyName := strings.TrimSpace(screen.Status.KeyName); keyName != "" {
-			statusLine = theme.Success.Render("✓ Signing with Forged: ") + theme.BodyStrong.Render(keyName)
+			statusLine = theme.Success.Render(theme.Glyphs.Check+" Signing with Forged: ") + theme.BodyStrong.Render(keyName)
 		} else {
-			statusLine = theme.Success.Render("✓ Signing with Forged")
+			statusLine = theme.Success.Render(theme.Glyphs.Check + " Signing with Forged")
 		}
 		if publicKey := strings.TrimSpace(screen.Status.PublicKey); publicKey != "" {
 			details = append(details, theme.Body.Render(compactSigningValue(publicKey, max(28, width-10))))
@@ -61,7 +61,7 @@ func renderStatusCard(screen SigningScreen, spinner string, width int) string {
 		statusLine = theme.Warning.Render("! Commits on this machine are not being signed")
 	}
 	if errText := strings.TrimSpace(screen.Error); errText != "" {
-		statusLine = theme.Danger.Width(width).Render("✕ " + errText)
+		statusLine = theme.Danger.Width(width).Render(theme.Glyphs.Cross + " " + errText)
 		details = nil
 	}
 	if screen.StatusLoading {
@@ -116,7 +116,7 @@ func compactMiddle(value string, maxRunes int) string {
 	if head+tail >= len(runes) {
 		return value
 	}
-	return string(runes[:head]) + "…" + string(runes[len(runes)-tail:])
+	return string(runes[:head]) + theme.Glyphs.Ellipsis + string(runes[len(runes)-tail:])
 }
 
 func max(a int, b int) int {

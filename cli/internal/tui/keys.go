@@ -412,7 +412,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			}
 		}
 		return []shell.FooterAction{
-			{Key: "↑/↓", Label: "Move"},
+			{Key: theme.Glyphs.UpDown, Label: "Move"},
 			{Key: "Enter", Label: "View"},
 			{Key: "E", Label: "Edit"},
 			{Key: "D", Label: "Delete"},
@@ -487,7 +487,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 		}
 		if m.keyImport.step == keyImportStepReview {
 			actions := []shell.FooterAction{
-				{Key: "↑/↓", Label: "Move"},
+				{Key: theme.Glyphs.UpDown, Label: "Move"},
 				{Key: "Space", Label: "Toggle"},
 				{Key: "A", Label: m.keyImportBulkToggleLabel()},
 			}
@@ -500,7 +500,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 		source := m.currentImportSource()
 		if m.keyImport.pathVisible && m.keyImport.focus == 1 {
 			return []shell.FooterAction{
-				{Key: "↑/↓", Label: "Source"},
+				{Key: theme.Glyphs.UpDown, Label: "Source"},
 				{Key: "Enter", Label: "Review"},
 				{Key: "Tab", Label: "Choose file"},
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
@@ -511,7 +511,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			enterLabel = "Choose File"
 		}
 		actions := []shell.FooterAction{
-			{Key: "↑/↓", Label: "Source"},
+			{Key: theme.Glyphs.UpDown, Label: "Source"},
 			{Key: "Enter", Label: enterLabel},
 		}
 		if m.keyImport.pathVisible {
@@ -555,7 +555,7 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 			})
 		}
 		return keyscreen.RenderBrowser(keyscreen.BrowserScreen{
-			SearchView:   m.keyBrowser.input.View(),
+			SearchView:   theme.AdaptTextInputPlaceholder(m.keyBrowser.input.View(), m.keyBrowser.input.Value()),
 			SearchQuery:  m.keyBrowser.input.Value(),
 			SearchActive: m.keyBrowser.searchActive,
 			SearchNotice: m.keyBrowser.notice,
@@ -589,7 +589,7 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 		}
 		return keyscreen.RenderRename(keyscreen.RenameScreen{
 			Context:   renameContext(m.keyRename.original),
-			FieldView: m.keyRename.input.View(),
+			FieldView: theme.AdaptTextInputPlaceholder(m.keyRename.input.View(), m.keyRename.input.Value()),
 			Focused:   true,
 			Status:    renameStatus(m.keyRename.saving),
 			Error:     m.keyRename.err,
@@ -610,7 +610,7 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 	case RouteKeysGenerate:
 		return keyscreen.RenderGenerate(keyscreen.GenerateScreen{
 			Context:    "Create a new SSH key and add it to this vault",
-			NameView:   m.keyGenerate.nameInput.View(),
+			NameView:   theme.AdaptTextInputPlaceholder(m.keyGenerate.nameInput.View(), m.keyGenerate.nameInput.Value()),
 			Focused:    true,
 			Status:     m.keyGenerate.status,
 			Error:      m.keyGenerate.err,
@@ -664,7 +664,7 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 			Context:     "Import keys from another source into this vault",
 			Sources:     options,
 			SourceFocus: m.keyImport.focus == 0,
-			PathView:    m.keyImport.pathInput.View(),
+			PathView:    theme.AdaptTextInputPlaceholder(m.keyImport.pathInput.View(), m.keyImport.pathInput.Value()),
 			PathFocused: m.keyImport.focus == 1,
 			PathVisible: m.keyImport.pathVisible,
 			Status:      m.keyImport.status,
@@ -683,7 +683,7 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 		}
 		return keyscreen.RenderExport(keyscreen.ExportScreen{
 			Context:     "Export this vault to a Forged JSON file",
-			PathView:    m.keyExport.pathInput.View(),
+			PathView:    theme.AdaptTextInputPlaceholder(m.keyExport.pathInput.View(), m.keyExport.pathInput.Value()),
 			Focused:     m.keyExport.pathVisible,
 			PathVisible: m.keyExport.pathVisible,
 			Status:      m.keyExport.status,
@@ -1710,7 +1710,7 @@ func (m *model) handleKeyPrivateClipboardClearedMsg(msg keyPrivateClipboardClear
 	if msg.cleared {
 		m.keyDetail.status = "Private key cleared from clipboard"
 	} else {
-		m.keyDetail.status = "Clipboard changed · no clear needed"
+		m.keyDetail.status = "Clipboard changed " + theme.Glyphs.Separator + " no clear needed"
 	}
 	return m, nil
 }
@@ -1724,7 +1724,7 @@ func (m *model) setPrivateClipboardStatus(remaining int) {
 		return
 	}
 	m.keyDetail.statusErr = ""
-	m.keyDetail.status = fmt.Sprintf("Private key copied · clears in %ds", remaining)
+	m.keyDetail.status = fmt.Sprintf("Private key copied %s clears in %ds", theme.Glyphs.Separator, remaining)
 }
 
 func (m *model) privateClipboardDetailActive() bool {

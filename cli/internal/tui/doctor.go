@@ -11,6 +11,7 @@ import (
 	dashboardscreen "github.com/itzzritik/forged/cli/internal/tui/screens/dashboard"
 	doctorscreen "github.com/itzzritik/forged/cli/internal/tui/screens/doctor"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
+	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
 const (
@@ -77,7 +78,7 @@ func (m *model) renderDoctorDashboardBody(contentWidth int) string {
 func (m *model) doctorFooterActions(includeTabs bool) []shell.FooterAction {
 	actions := make([]shell.FooterAction, 0, 4)
 	if includeTabs {
-		actions = append(actions, shell.FooterAction{Key: "←/→", Label: "Tabs"})
+		actions = append(actions, shell.FooterAction{Key: theme.Glyphs.LeftRight, Label: "Tabs"})
 	}
 	if m.doctorCanFixIssues() && !m.maintenanceBusy {
 		actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Fix Issues"})
@@ -195,7 +196,7 @@ func (m *model) doctorVaultRow(paths config.Paths) doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Vault",
-				Status: "✓ Present",
+				Status: theme.Glyphs.Check + " Present",
 				Detail: paths.VaultFile(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -211,7 +212,7 @@ func (m *model) doctorVaultRow(paths config.Paths) doctorRow {
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "Vault",
-			Status: "✕ Missing",
+			Status: theme.Glyphs.Cross + " Missing",
 			Detail: detail,
 			Tone:   doctorscreen.ToneDanger,
 		},
@@ -225,7 +226,7 @@ func (m *model) doctorConfigRow(paths config.Paths) doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Config",
-				Status: "✓ Ready",
+				Status: theme.Glyphs.Check + " Ready",
 				Detail: paths.ConfigFile(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -236,7 +237,7 @@ func (m *model) doctorConfigRow(paths config.Paths) doctorRow {
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "Config",
-			Status: "✕ Missing",
+			Status: theme.Glyphs.Cross + " Missing",
 			Detail: "Run Fix Issues",
 			Tone:   doctorscreen.ToneDanger,
 		},
@@ -250,7 +251,7 @@ func (m *model) doctorServiceRow() doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Service",
-				Status: "✓ Installed",
+				Status: theme.Glyphs.Check + " Installed",
 				Detail: "System service ready",
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -259,10 +260,10 @@ func (m *model) doctorServiceRow() doctorRow {
 		}
 	}
 
-	status := "✕ Not installed"
+	status := theme.Glyphs.Cross + " Not installed"
 	detail := "Run Fix Issues"
 	if m.snapshot.Service.Installed && !m.snapshot.Service.ConfigValid {
-		status = "✕ Invalid"
+		status = theme.Glyphs.Cross + " Invalid"
 		detail = strings.TrimSpace(m.snapshot.Service.Detail)
 		if detail == "" {
 			detail = "Service configuration is invalid"
@@ -291,7 +292,7 @@ func (m *model) doctorDaemonRow() doctorRow {
 			return doctorRow{
 				screen: doctorscreen.Row{
 					Check:  "Daemon",
-					Status: "✕ Outdated",
+					Status: theme.Glyphs.Cross + " Outdated",
 					Detail: "Run Fix Issues",
 					Tone:   doctorscreen.ToneDanger,
 				},
@@ -302,7 +303,7 @@ func (m *model) doctorDaemonRow() doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Daemon",
-				Status: "✓ Running",
+				Status: theme.Glyphs.Check + " Running",
 				Detail: detail,
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -313,7 +314,7 @@ func (m *model) doctorDaemonRow() doctorRow {
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "Daemon",
-			Status: "✕ Not running",
+			Status: theme.Glyphs.Cross + " Not running",
 			Detail: "Run Fix Issues",
 			Tone:   doctorscreen.ToneDanger,
 		},
@@ -327,7 +328,7 @@ func (m *model) doctorIPCSocketRow(paths config.Paths) doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "IPC Socket",
-				Status: "✓ Ready",
+				Status: theme.Glyphs.Check + " Ready",
 				Detail: paths.CtlSocket(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -338,7 +339,7 @@ func (m *model) doctorIPCSocketRow(paths config.Paths) doctorRow {
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "IPC Socket",
-			Status: "✕ Not responding",
+			Status: theme.Glyphs.Cross + " Not responding",
 			Detail: paths.CtlSocket(),
 			Tone:   doctorscreen.ToneDanger,
 		},
@@ -352,7 +353,7 @@ func (m *model) doctorAgentSocketRow(paths config.Paths) doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Agent Socket",
-				Status: "✓ Ready",
+				Status: theme.Glyphs.Check + " Ready",
 				Detail: paths.AgentSocket(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -363,7 +364,7 @@ func (m *model) doctorAgentSocketRow(paths config.Paths) doctorRow {
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "Agent Socket",
-			Status: "✕ Not responding",
+			Status: theme.Glyphs.Cross + " Not responding",
 			Detail: paths.AgentSocket(),
 			Tone:   doctorscreen.ToneDanger,
 		},
@@ -389,7 +390,7 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "SSH Agent",
-				Status: "✓ Active",
+				Status: theme.Glyphs.Check + " Active",
 				Detail: "Forged SSH include is configured",
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -400,7 +401,7 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "SSH Agent",
-			Status: "✕ Not active",
+			Status: theme.Glyphs.Cross + " Not active",
 			Detail: "Run Fix Issues",
 			Tone:   doctorscreen.ToneDanger,
 		},
@@ -426,7 +427,7 @@ func (m *model) doctorSSHConfigRow(paths config.Paths) doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "SSH Config",
-				Status: "✓ Ready",
+				Status: theme.Glyphs.Check + " Ready",
 				Detail: paths.SSHManagedConfig(),
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -437,7 +438,7 @@ func (m *model) doctorSSHConfigRow(paths config.Paths) doctorRow {
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "SSH Config",
-			Status: "✕ Missing",
+			Status: theme.Glyphs.Cross + " Missing",
 			Detail: paths.SSHManagedConfig(),
 			Tone:   doctorscreen.ToneDanger,
 		},
@@ -467,7 +468,7 @@ func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "IdentityAgent",
-				Status: "✓ Forged",
+				Status: theme.Glyphs.Check + " Forged",
 				Detail: detail,
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -476,14 +477,14 @@ func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
 		}
 	}
 
-	status := "✕ Not Forged"
+	status := theme.Glyphs.Cross + " Not Forged"
 	detail := strings.TrimSpace(m.snapshot.IdentityAgentOwner.Name)
 	switch detail {
 	case "":
-		status = "✕ Unknown"
+		status = theme.Glyphs.Cross + " Unknown"
 		detail = "Could not inspect active ssh configuration"
 	case "None":
-		status = "✕ Not configured"
+		status = theme.Glyphs.Cross + " Not configured"
 		detail = "No active IdentityAgent is configured"
 	default:
 		if ownerPath := strings.TrimSpace(m.snapshot.IdentityAgentOwner.Path); ownerPath != "" {
@@ -522,7 +523,7 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 			return doctorRow{
 				screen: doctorscreen.Row{
 					Check:  "Sync Account",
-					Status: "✕ Sync error",
+					Status: theme.Glyphs.Cross + " Sync error",
 					Detail: syncErr,
 					Tone:   doctorscreen.ToneDanger,
 				},
@@ -534,7 +535,7 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 			return doctorRow{
 				screen: doctorscreen.Row{
 					Check:  "Sync Account",
-					Status: "… Syncing",
+					Status: theme.Glyphs.Pending + " Syncing",
 					Detail: "Multi-device sync in progress",
 					Tone:   doctorscreen.ToneWarning,
 				},
@@ -559,7 +560,7 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 	return doctorRow{
 		screen: doctorscreen.Row{
 			Check:  "Sync Account",
-			Status: "✓ Logged in",
+			Status: theme.Glyphs.Check + " Logged in",
 			Detail: "Multi-device sync available",
 			Tone:   doctorscreen.ToneSuccess,
 		},
@@ -586,7 +587,7 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "System Auth",
-				Status: "✓ Available",
+				Status: theme.Glyphs.Check + " Available",
 				Detail: "System Auth is ready for sensitive actions",
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -608,7 +609,7 @@ func (m *model) doctorSystemAuthRow() doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "System Auth",
-				Status: "✕ Broken",
+				Status: theme.Glyphs.Cross + " Broken",
 				Detail: "System Auth is expected but not working",
 				Tone:   doctorscreen.ToneDanger,
 			},
@@ -636,7 +637,7 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Secure Store",
-				Status: "✓ Available",
+				Status: theme.Glyphs.Check + " Available",
 				Detail: "Local unlock trust can be stored securely",
 				Tone:   doctorscreen.ToneSuccess,
 			},
@@ -658,7 +659,7 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "Secure Store",
-				Status: "✕ Broken",
+				Status: theme.Glyphs.Cross + " Broken",
 				Detail: "Local unlock trust cannot be persisted",
 				Tone:   doctorscreen.ToneDanger,
 			},
@@ -671,7 +672,7 @@ func (m *model) doctorSecureStoreRow() doctorRow {
 func systemAuthUnavailableHint() string {
 	switch runtime.GOOS {
 	case "windows":
-		return "Windows Hello is not enrolled — set up a Hello PIN/face/fingerprint to enable"
+		return "Windows Hello is not enrolled " + theme.Glyphs.Empty + " set up a Hello PIN/face/fingerprint to enable"
 	case "linux":
 		return "No graphical session detected; biometric prompts are disabled"
 	case "darwin":
@@ -684,7 +685,7 @@ func systemAuthUnavailableHint() string {
 func secureStoreUnavailableHint() string {
 	switch runtime.GOOS {
 	case "windows":
-		return "DPAPI-backed device key is not yet wired on Windows — using headless fallback"
+		return "DPAPI-backed device key is not yet wired on Windows " + theme.Glyphs.Empty + " using headless fallback"
 	case "linux":
 		return "Secret Service / D-Bus not available; using headless fallback"
 	default:

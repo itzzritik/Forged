@@ -39,7 +39,7 @@ var (
 			Foreground(lipgloss.Color(ColorAccent))
 
 	HeaderFrame = lipgloss.NewStyle().
-			BorderStyle(lipgloss.NormalBorder()).
+			BorderStyle(NormalBorder()).
 			BorderForeground(lipgloss.Color(ColorBorder)).
 			Padding(1, 2)
 
@@ -135,7 +135,7 @@ var (
 		Foreground(lipgloss.Color(ColorDanger))
 
 	CodeFrame = lipgloss.NewStyle().
-			BorderStyle(lipgloss.RoundedBorder()).
+			BorderStyle(RoundedBorder()).
 			BorderForeground(lipgloss.Color(ColorBorder)).
 			Padding(0, 1)
 
@@ -147,13 +147,13 @@ var (
 			Foreground(lipgloss.Color(ColorText))
 
 	AsideRail = lipgloss.NewStyle().
-			BorderStyle(lipgloss.NormalBorder()).
+			BorderStyle(NormalBorder()).
 			BorderLeft(true).
 			BorderForeground(lipgloss.Color(ColorBorder)).
 			PaddingLeft(2)
 
 	AlertRail = lipgloss.NewStyle().
-			BorderStyle(lipgloss.NormalBorder()).
+			BorderStyle(NormalBorder()).
 			BorderLeft(true).
 			BorderForeground(lipgloss.Color(ColorDanger)).
 			PaddingLeft(2)
@@ -197,5 +197,5 @@ func Divider(width int) string {
 	if width <= 0 {
 		return ""
 	}
-	return DividerStyle.Render(strings.Repeat("─", width))
+	return DividerStyle.Render(strings.Repeat(Glyphs.Horizontal, width))
 }
