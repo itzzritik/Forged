@@ -31,7 +31,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - The Agent tab includes SSH Routing diagnostics. The page reads and clears route memory through daemon IPC and keeps route memory current with background polling while the page is open.
 - SSH Routing diagnostics reuse the Commit Signing browser-table pattern: selected item summary on top, a compact table below, and no manual refresh footer action.
 - Key deletion and commit-signing disable use an explicit review-and-confirm step. Once submitted, their non-cancelable work hides route navigation until it finishes.
-- Vault export warns before and after writing plaintext private keys, hides route navigation during the write, and waits for explicit dismissal on success.
+- Vault export warns before and after writing plaintext private keys, writes through a private same-directory temporary file before replacing the destination, hides route navigation during the write, and waits for explicit dismissal on success.
 - Import's delayed success return only navigates while the dashboard import route is still active, so it cannot dismiss a lock screen.
 - Key-browser refreshes reuse the live search input and become cache-only after navigation; normal list reads already apply the daemon's freshness policy.
 - Signing-status refreshes are single-flight and identify the configured Forged key by matching one parsed SSH fingerprint against one key list.

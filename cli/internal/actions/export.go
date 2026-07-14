@@ -105,9 +105,45 @@ func ExportVaultWithToken(paths config.Paths, outPath string, token string) (Exp
 		return ExportResult{}, fmt.Errorf("Marshaling export: %w", err)
 	}
 	defer clear(data)
-	if err := os.WriteFile(outPath, data, 0o600); err != nil {
+	if err := writePrivateExport(outPath, data); err != nil {
 		return ExportResult{}, fmt.Errorf("Writing export file: %w", err)
 	}
 
 	return ExportResult{Path: outPath, KeyCount: len(keys)}, nil
+}
+
+func writePrivateExport(path string, data []byte) error {
+	tmp, err := os.CreateTemp(filepath.Dir(path), ".forged-export-*")
+	if err != nil {
+		return fmt.Errorf("Creating temporary file: %w", err)
+	}
+	tmpPath := tmp.Name()
+	closed := false
+	defer func() {
+		if !closed {
+			_ = tmp.Close()
+		}
+		if tmpPath != "" {
+			_ = os.Remove(tmpPath)
+		}
+	}()
+
+	if err := tmp.Chmod(0o600); err != nil {
+		return fmt.Errorf("Setting private permissions: %w", err)
+	}
+	if _, err := tmp.Write(data); err != nil {
+		return fmt.Errorf("Writing temporary file: %w", err)
+	}
+	if err := tmp.Sync(); err != nil {
+		return fmt.Errorf("Syncing temporary file: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("Closing temporary file: %w", err)
+	}
+	closed = true
+	if err := os.Rename(tmpPath, path); err != nil {
+		return fmt.Errorf("Replacing destination: %w", err)
+	}
+	tmpPath = ""
+	return nil
 }
