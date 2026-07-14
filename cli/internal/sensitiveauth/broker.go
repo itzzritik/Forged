@@ -359,10 +359,7 @@ func isHeadlessAuthMode(capability CapabilityState) bool {
 	if !capability.IsUnavailable() {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("FORGED_HEADLESS")), "1") {
-		return true
-	}
-	return runtime.GOOS == "linux"
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("FORGED_HEADLESS")), "1")
 }
 
 func (b *Broker) grantWithEnrollment(action Action, now time.Time) (AuthorizeResult, error) {

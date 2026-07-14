@@ -32,8 +32,10 @@ func authorize(ctx context.Context, action sensitiveauth.Action) string {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
 			switch exitErr.ExitCode() {
-			case 126, 127:
-				return "unavailable_by_environment"
+			case 126:
+				return "canceled"
+			case 127:
+				return "failed"
 			}
 		}
 		return "failed"

@@ -8,7 +8,6 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
 
@@ -417,9 +416,6 @@ func LocalEnrollmentUsable(paths config.Paths) bool {
 	if enrollmentExpired(paths, enrollment) {
 		return false
 	}
-	if enrollment.TrustMode == LocalEnrollmentTrustHeadlessFile {
-		return true
-	}
 	installID, err := osReadTrimmed(paths.InstallIDFile())
 	if err != nil || installID == "" || enrollment.InstallID != installID {
 		return false
@@ -434,10 +430,7 @@ func isHeadlessLocalUnlockAllowed(capability CapabilityState) bool {
 	if !capability.IsUnavailable() {
 		return false
 	}
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("FORGED_HEADLESS")), "1") {
-		return true
-	}
-	return runtime.GOOS == "linux"
+	return strings.EqualFold(strings.TrimSpace(os.Getenv("FORGED_HEADLESS")), "1")
 }
 
 func osReadTrimmed(path string) (string, error) {
