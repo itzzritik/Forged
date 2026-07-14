@@ -1502,9 +1502,16 @@ func (m *model) footerActions() []shell.FooterAction {
 			}
 		}
 		if m.isAgentSigningRoute() {
-			if m.agent.signing.loading || m.agent.signing.busy {
+			if m.agent.signing.busy {
+				return nil
+			}
+			if m.agent.signing.loading {
+				return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+			}
+			if m.agent.signing.disableArmed {
 				return []shell.FooterAction{
-					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+					{Key: "Enter", Label: "Confirm Disable"},
+					{Key: "Esc", Label: "Cancel"},
 				}
 			}
 			if m.agent.signing.err != "" {

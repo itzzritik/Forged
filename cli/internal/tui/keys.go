@@ -449,14 +449,26 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
 	case RouteKeysDelete:
-		if m.keyDelete.loading || m.keyDelete.deleting {
+		if m.keyDelete.deleting {
+			return nil
+		}
+		if m.keyDelete.loading {
 			return []shell.FooterAction{
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
 		}
+		if !keyDeleteReviewValid(m.keyDelete.key) {
+			if m.keyDelete.err != "" {
+				return []shell.FooterAction{
+					{Key: "Enter", Label: "Retry"},
+					{Key: "Esc", Label: "Cancel"},
+				}
+			}
+			return []shell.FooterAction{{Key: "Esc", Label: "Cancel"}}
+		}
 		return []shell.FooterAction{
-			{Key: "Enter", Label: "Delete"},
-			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+			{Key: "Enter", Label: "Confirm Delete"},
+			{Key: "Esc", Label: "Cancel"},
 		}
 	case RouteKeysGenerate:
 		if m.keyGenerate.generating {
@@ -588,8 +600,9 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 			return ""
 		}
 		return keyscreen.RenderDelete(keyscreen.DeleteScreen{
-			Context: deleteContext(m.keyDelete.key.Name),
+			Context: "Review this key before permanently deleting it from the vault",
 			Key:     m.keyDelete.key,
+			Warning: deleteWarning(m.keyDelete.key.Name),
 			Status:  deleteStatus(m.keyDelete.deleting),
 			Error:   m.keyDelete.err,
 			Loading: m.keyDelete.loading,
@@ -876,7 +889,10 @@ func (m *model) updateKeyRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) updateKeyDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
-	if m.keyDelete.loading || m.keyDelete.deleting {
+	if m.keyDelete.deleting {
+		return m, nil
+	}
+	if m.keyDelete.loading {
 		if msg.String() == "esc" {
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
@@ -893,9 +909,13 @@ func (m *model) updateKeyDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "enter":
+		if !keyDeleteReviewValid(m.keyDelete.key) {
+			m.keyDelete = keyDeleteState{loading: true, resolving: true}
+			return m, tea.Batch(m.spinner.Tick, m.listKeys(m.nextKeyListID(), false))
+		}
 		m.keyDelete.err = ""
 		m.keyDelete.deleting = true
-		return m, tea.Batch(m.spinner.Tick, m.deleteKey(m.keyDelete.key.Name))
+		return m, tea.Batch(m.spinner.Tick, m.deleteKey(m.keyDelete.key.Name, m.keyDelete.key.Fingerprint))
 	}
 	return m, nil
 }
@@ -1355,12 +1375,12 @@ func (m *model) renameKey(oldName, newName string) tea.Cmd {
 	}
 }
 
-func (m *model) deleteKey(name string) tea.Cmd {
+func (m *model) deleteKey(name string, fingerprint string) tea.Cmd {
 	m.keyDeleteID++
 	id := m.keyDeleteID
 	paths := config.DefaultPaths()
 	return func() tea.Msg {
-		resolvedName, err := actions.DeleteKey(paths, name)
+		resolvedName, err := actions.DeleteKey(paths, name, fingerprint)
 		return keyDeleteFinishedMsg{id: id, name: resolvedName, err: err}
 	}
 }
@@ -1756,6 +1776,7 @@ func (m *model) handleKeyDeleteFinishedMsg(msg keyDeleteFinishedMsg) (tea.Model,
 	}
 	m.keyDelete.deleting = false
 	if msg.err != nil {
+		m.keyDelete.key = actions.KeySummary{}
 		m.keyDelete.err = msg.err.Error()
 		return m, nil
 	}
@@ -2602,11 +2623,15 @@ func renameStatus(saving bool) string {
 	return ""
 }
 
-func deleteContext(name string) string {
+func deleteWarning(name string) string {
 	if strings.TrimSpace(name) == "" {
-		return "Delete this key from the vault"
+		return "Deleting this key removes it from the vault and cannot be undone in Forged."
 	}
-	return fmt.Sprintf("Delete %s from this vault", name)
+	return fmt.Sprintf("Deleting %s removes this key from the vault and cannot be undone in Forged.", name)
+}
+
+func keyDeleteReviewValid(key actions.KeySummary) bool {
+	return strings.TrimSpace(key.Name) != "" && strings.TrimSpace(key.Fingerprint) != ""
 }
 
 func deleteStatus(deleting bool) string {

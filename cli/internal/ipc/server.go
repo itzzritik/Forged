@@ -406,7 +406,8 @@ func (s *Server) handleGenerate(raw json.RawMessage) Response {
 }
 
 type removeArgs struct {
-	Name string `json:"name"`
+	Name        string `json:"name"`
+	Fingerprint string `json:"fingerprint"`
 }
 
 func (s *Server) handleRemove(raw json.RawMessage) Response {
@@ -415,19 +416,15 @@ func (s *Server) handleRemove(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
-	resolvedName, err := s.resolveKeyName(a.Name)
-	if err != nil {
-		return ErrorResponse(err)
-	}
 	keyStore, err := s.requireKeyStore()
 	if err != nil {
 		return ErrorResponse(err)
 	}
-	if err := keyStore.Remove(resolvedName); err != nil {
+	if err := keyStore.Remove(a.Name, a.Fingerprint); err != nil {
 		return ErrorResponse(err)
 	}
 	s.afterKeyMutation("key_removed")
-	return OkResponse(map[string]string{"resolved_name": resolvedName})
+	return OkResponse(map[string]string{"resolved_name": a.Name})
 }
 
 type renameArgs struct {

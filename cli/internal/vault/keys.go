@@ -258,13 +258,16 @@ func (ks *KeyStore) AddFromFile(name, path, comment string) (Key, error) {
 	return ks.Add(name, data, comment)
 }
 
-func (ks *KeyStore) Remove(name string) error {
+func (ks *KeyStore) Remove(name string, expectedFingerprint string) error {
 	ks.vault.mu.Lock()
 	defer ks.vault.mu.Unlock()
 
 	idx := ks.indexOf(name)
 	if idx < 0 {
 		return fmt.Errorf("Key %q not found", name)
+	}
+	if expected := strings.TrimSpace(expectedFingerprint); expected != "" && strings.TrimSpace(ks.vault.data.Keys[idx].Fingerprint) != expected {
+		return fmt.Errorf("Key %q no longer matches the reviewed key. Go back and choose it again.", name)
 	}
 
 	originalVersionVector := cloneVersionVector(ks.vault.data.VersionVector)

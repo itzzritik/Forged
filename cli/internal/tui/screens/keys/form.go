@@ -23,6 +23,7 @@ type RenameScreen struct {
 type DeleteScreen struct {
 	Context string
 	Key     actions.KeySummary
+	Warning string
 	Status  string
 	Error   string
 	Loading bool
@@ -136,11 +137,16 @@ func RenderDelete(screen DeleteScreen, spinner string, width int) string {
 	}
 	sections = append(sections, "", strings.Join(lines, "\n"))
 
-	if status := renderStatus(screen.Status, screen.Error, spinner); status != "" {
-		sections = append(sections, "", status)
+	feedback := ""
+	switch {
+	case strings.TrimSpace(screen.Error) != "":
+		feedback = renderStatus("", screen.Error, spinner)
+	case strings.TrimSpace(screen.Status) != "":
+		feedback = renderStatus(screen.Status, "", spinner)
+	case strings.TrimSpace(screen.Warning) != "":
+		feedback = theme.Warning.Width(contentWidth).Render("! " + displayMessage(screen.Warning))
 	}
-
-	return strings.Join(sections, "\n")
+	return shell.DockBottom(strings.Join(sections, "\n"), feedback)
 }
 
 func RenderGenerate(screen GenerateScreen, spinner string, width int) string {

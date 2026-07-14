@@ -269,9 +269,10 @@ func RenameKey(paths config.Paths, oldName, newName string) (RenameResult, error
 	return RenameResult{OldName: result.OldName, NewName: result.NewName}, nil
 }
 
-func DeleteKey(paths config.Paths, name string) (string, error) {
+func DeleteKey(paths config.Paths, name string, fingerprint string) (string, error) {
 	resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdRemove, map[string]string{
-		"name": name,
+		"name":        name,
+		"fingerprint": fingerprint,
 	})
 	if err != nil {
 		return "", err

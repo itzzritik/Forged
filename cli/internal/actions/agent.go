@@ -89,13 +89,13 @@ func EnableCommitSigning(paths config.Paths, keyName string) (CommitSigningStatu
 }
 
 func DisableCommitSigning(paths config.Paths) (CommitSigningStatus, error) {
-	for _, args := range [][]string{
-		{"git", "config", "--global", "--unset", "user.signingkey"},
-		{"git", "config", "--global", "--unset", "gpg.format"},
-		{"git", "config", "--global", "--unset", "gpg.ssh.program"},
-		{"git", "config", "--global", "--unset", "commit.gpgsign"},
-	} {
-		_ = exec.Command(args[0], args[1:]...).Run()
+	cmd := exec.Command("git", "config", "--global", "--replace-all", "commit.gpgsign", "false")
+	if out, err := cmd.CombinedOutput(); err != nil {
+		detail := strings.TrimSpace(string(out))
+		if detail != "" {
+			return CommitSigningStatus{}, fmt.Errorf("Disabling commit signing: %s: %w", detail, err)
+		}
+		return CommitSigningStatus{}, fmt.Errorf("Disabling commit signing: %w", err)
 	}
 	return LoadCommitSigningStatus(paths)
 }
