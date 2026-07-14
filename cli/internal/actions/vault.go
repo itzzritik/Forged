@@ -70,24 +70,30 @@ func unlockPrompt(err error, fallback string) string {
 	return fallback
 }
 
-func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []byte) (ChangePasswordResult, error) {
+func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []byte) (result ChangePasswordResult, resultErr error) {
 	check, err := vault.OpenReadOnly(paths.VaultFile(), currentPassword)
 	if err != nil {
 		return ChangePasswordResult{}, fmt.Errorf("Wrong password or corrupted vault")
 	}
 	check.Close()
 
-	serviceStopped, err := stopDaemonForPasswordChange(paths)
+	restartRequired, err := stopDaemonForPasswordChange(paths)
+	defer func() {
+		if !restartRequired {
+			return
+		}
+		if err := daemon.StartService(); err != nil {
+			restartErr := fmt.Errorf("Restarting local service: %w", err)
+			if resultErr != nil {
+				resultErr = errors.Join(resultErr, restartErr)
+				return
+			}
+			result.Detail = strings.TrimSpace(result.Detail + " The fallback service restart also failed. Run Forged Doctor to repair it.")
+		}
+	}()
 	if err != nil {
 		return ChangePasswordResult{}, err
 	}
-
-	passwordChanged := false
-	defer func() {
-		if serviceStopped && !passwordChanged {
-			_ = daemon.StartService()
-		}
-	}()
 
 	v, err := vault.Open(paths.VaultFile(), currentPassword)
 	if err != nil {
@@ -106,7 +112,6 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 	if err := v.ChangePassword(newPassword); err != nil {
 		return ChangePasswordResult{}, fmt.Errorf("Changing password: %w", err)
 	}
-	passwordChanged = true
 	_ = sensitiveauth.InvalidateLocalEnrollment(paths)
 
 	kdf := v.KDFParams()
@@ -124,12 +129,13 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		return result, nil
 	}
 	if err := daemon.EnsureService(paths, runtime); err != nil {
-		result := ChangePasswordResult{
+		result = ChangePasswordResult{
 			Detail: "Local vault updated. The local service needs repair with your new password. Run Forged Doctor to finish setup.",
 		}
 		applyEnrollmentDetail(&result, enrollmentResult, enrollmentErr)
 		return result, nil
 	}
+	restartRequired = false
 
 	creds, err := LoadFreshCredentials(context.Background(), paths)
 	if err != nil {
@@ -149,7 +155,7 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		return result, nil
 	}
 
-	result := ChangePasswordResult{
+	result = ChangePasswordResult{
 		Detail: "Local vault and remote recovery were updated.",
 		Synced: true,
 	}
@@ -167,7 +173,7 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 	}
 
 	if err := daemon.StopService(); err != nil {
-		return false, fmt.Errorf("Stopping local service: %w", err)
+		return true, fmt.Errorf("Stopping local service: %w", err)
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -178,7 +184,7 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return false, fmt.Errorf("Waiting for local service to stop")
+	return true, fmt.Errorf("Waiting for local service to stop")
 }
 
 func applyEnrollmentDetail(result *ChangePasswordResult, enrollment sensitiveauth.EnrollmentResult, err error) {

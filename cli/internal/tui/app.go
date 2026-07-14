@@ -1580,6 +1580,12 @@ func (m *model) footerActions() []shell.FooterAction {
 func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
+		if m.passwordBusy && m.passwordFlow == passwordManageChange {
+			if m.passwordInput != nil {
+				m.passwordInput.SetInfo("Changing master password — quit is unavailable until this finishes")
+			}
+			return m, nil
+		}
 		if m.passwordInput != nil {
 			m.passwordInput.Clear()
 		}
