@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"context"
 	"fmt"
 	"net"
 	"time"
@@ -12,11 +13,9 @@ import (
 
 // pipeSecurityDescriptor is the SDDL applied to the daemon's named pipes.
 //
-// D:P                  = DACL is protected (no inheritance from parent)
-// (A;;GA;;;OW)         = allow GENERIC_ALL to the creator-owner (the user
-//                        running the daemon).
-// (A;;GA;;;SY)         = allow GENERIC_ALL to LocalSystem so platform
-//                        services can interact when needed.
+// D:P protects the DACL from inheritance.
+// (A;;GA;;;OW) grants GENERIC_ALL to the user running the daemon.
+// (A;;GA;;;SY) grants GENERIC_ALL to LocalSystem for platform services.
 //
 // We intentionally do NOT grant BUILTIN\Administrators here, so an
 // administrator on a shared Windows machine cannot connect to another
@@ -45,4 +44,8 @@ func Dial(addr string, timeout time.Duration) (net.Conn, error) {
 		timeout = 2 * time.Second
 	}
 	return winio.DialPipe(addr, &timeout)
+}
+
+func DialContext(ctx context.Context, addr string) (net.Conn, error) {
+	return winio.DialPipeContext(ctx, addr)
 }

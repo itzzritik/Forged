@@ -38,6 +38,7 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
 - `Master Password Interval` is a local device policy because device unlock enrollment is per-device. It now bounds *inactivity*, not time-since-password: each successful biometric unlock slides the window forward (throttled), so an actively-used device never expires. A 90-day hard cap since the last master-password entry (`localEnrollmentHardCap`) still forces one periodic re-verification regardless of activity.
 - Successful master-password fallback refreshes device unlock best-effort; successful biometric unlock slides the existing enrollment's expiry forward without a master password.
 - Daemon shutdown stops new background password prompts and closes the helper before waiting, but retains the shared vault session until admitted agent and IPC work has finished.
+- IPC disconnect and timeout cancellation now reach broker authorization waits without marking System Auth broken or starting a failure cooldown. Canceling the native OS prompt itself still requires the helper request-cancel protocol.
 
 ## Decisions
 

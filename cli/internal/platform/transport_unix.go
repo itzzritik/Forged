@@ -3,6 +3,7 @@
 package platform
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net"
@@ -71,4 +72,9 @@ func Dial(addr string, timeout time.Duration) (net.Conn, error) {
 		timeout = 2 * time.Second
 	}
 	return net.DialTimeout("unix", addr, timeout)
+}
+
+func DialContext(ctx context.Context, addr string) (net.Conn, error) {
+	var dialer net.Dialer
+	return dialer.DialContext(ctx, "unix", addr)
 }

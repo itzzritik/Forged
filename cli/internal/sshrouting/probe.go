@@ -171,6 +171,10 @@ func ProbeSSHServer(ctx context.Context, target Target, candidate Candidate, key
 		return ProbeResult{Status: ProbeInconclusive, Fingerprint: candidate.Fingerprint, Message: err.Error()}
 	}
 	defer conn.Close()
+	stopClose := context.AfterFunc(perKeyCtx, func() {
+		_ = conn.Close()
+	})
+	defer stopClose()
 	if deadline, ok := perKeyCtx.Deadline(); ok {
 		_ = conn.SetDeadline(deadline)
 	}

@@ -77,6 +77,13 @@ func (s *Service) SetOnMutation(fn func(reason string)) {
 }
 
 func (s *Service) Prepare(req PrepareRequest) error {
+	return s.PrepareContext(context.Background(), req)
+}
+
+func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if err := validateAttemptToken(req.Attempt); err != nil {
 		return err
 	}
@@ -123,7 +130,7 @@ func (s *Service) Prepare(req PrepareRequest) error {
 	}
 	probeProved := false
 	if target.Kind == TargetGit && !plan.HadExact && keyStore != nil {
-		probed, proved, err := s.probeGitProvider(target, operation, plan, refByFingerprint)
+		probed, proved, err := s.probeGitProvider(ctx, target, operation, plan, refByFingerprint)
 		if err != nil {
 			return err
 		}
@@ -133,7 +140,7 @@ func (s *Service) Prepare(req PrepareRequest) error {
 		}
 	}
 	if target.Kind == TargetSSH && keyStore != nil {
-		probed, proved, err := s.probeSSHServer(target, operation, plan)
+		probed, proved, err := s.probeSSHServer(ctx, target, operation, plan)
 		if err != nil {
 			return err
 		}
@@ -141,6 +148,9 @@ func (s *Service) Prepare(req PrepareRequest) error {
 			selected = probed
 			probeProved = proved
 		}
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 
 	s.mu.Lock()
@@ -423,11 +433,11 @@ func (s *Service) resolveTarget(req PrepareRequest, operation OperationClass) (T
 	return resolved, nil
 }
 
-func (s *Service) probeGitProvider(target Target, operation OperationClass, plan CandidatePlan, refs map[string]KeyRef) ([]string, bool, error) {
+func (s *Service) probeGitProvider(ctx context.Context, target Target, operation OperationClass, plan CandidatePlan, refs map[string]KeyRef) ([]string, bool, error) {
 	if _, ok := DetectProvider(target); !ok {
 		return nil, false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), probeTotalTimeout)
+	probeCtx, cancel := context.WithTimeout(ctx, probeTotalTimeout)
 	defer cancel()
 
 	attempted := 0
@@ -438,7 +448,10 @@ func (s *Service) probeGitProvider(target Target, operation OperationClass, plan
 			continue
 		}
 		attempted++
-		result := s.prober.Probe(ctx, target, operation, ref)
+		result := s.prober.Probe(probeCtx, target, operation, ref)
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		switch result.Status {
 		case ProbeSuccess:
 			proofOperation := operation
@@ -464,7 +477,10 @@ func (s *Service) probeGitProvider(target Target, operation OperationClass, plan
 		case ProbeSkipped, ProbeInconclusive:
 			inconclusive = true
 		}
-		if ctx.Err() != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		if probeCtx.Err() != nil {
 			inconclusive = true
 			break
 		}
@@ -475,18 +491,21 @@ func (s *Service) probeGitProvider(target Target, operation OperationClass, plan
 	return nil, false, nil
 }
 
-func (s *Service) probeSSHServer(target Target, operation OperationClass, plan CandidatePlan) ([]string, bool, error) {
+func (s *Service) probeSSHServer(ctx context.Context, target Target, operation OperationClass, plan CandidatePlan) ([]string, bool, error) {
 	if s.keyStore == nil {
 		return nil, false, nil
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), probeTotalTimeout)
+	probeCtx, cancel := context.WithTimeout(ctx, probeTotalTimeout)
 	defer cancel()
 
 	attempted := 0
 	inconclusive := false
 	for _, candidate := range plan.Candidates {
 		attempted++
-		result := ProbeSSHServer(ctx, target, candidate, s.keyStore)
+		result := ProbeSSHServer(probeCtx, target, candidate, s.keyStore)
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
 		switch result.Status {
 		case ProbeSuccess:
 			proofOperation := operation
@@ -515,7 +534,10 @@ func (s *Service) probeSSHServer(target Target, operation OperationClass, plan C
 		case ProbeInconclusive:
 			inconclusive = true
 		}
-		if ctx.Err() != nil {
+		if err := ctx.Err(); err != nil {
+			return nil, false, err
+		}
+		if probeCtx.Err() != nil {
 			inconclusive = true
 			break
 		}

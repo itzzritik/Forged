@@ -28,6 +28,10 @@ type SSHRouteHandler interface {
 	ClearAll() error
 }
 
+type sshRouteContextHandler interface {
+	PrepareContext(context.Context, sshrouting.PrepareRequest) error
+}
+
 type Server struct {
 	socketPath     string
 	stateMu        sync.RWMutex
@@ -224,7 +228,8 @@ func (s *Server) release(conn net.Conn) {
 }
 
 func (s *Server) handleConn(conn net.Conn) {
-	conn.SetDeadline(time.Now().Add(60 * time.Second))
+	deadline := time.Now().Add(60 * time.Second)
+	conn.SetDeadline(deadline)
 
 	var req Request
 	if err := ReadMessage(conn, &req); err != nil {
@@ -234,20 +239,43 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	switch req.Command {
 	case CmdSensitiveAuth, CmdSensitivePassword:
-		conn.SetDeadline(time.Now().Add(5 * time.Minute))
+		deadline = time.Now().Add(5 * time.Minute)
+		conn.SetDeadline(deadline)
 	}
 
 	s.logger.Debug("ipc request", "command", req.Command)
 
-	resp := s.dispatch(req)
+	ctx, cancel, watchDone := requestContext(conn, deadline)
+	defer func() {
+		cancel()
+		_ = conn.Close()
+		<-watchDone
+	}()
+
+	resp := s.dispatch(ctx, req)
 	defer clear(resp.Data)
 	WriteMessage(conn, resp)
 }
 
-func (s *Server) dispatch(req Request) Response {
+func requestContext(conn net.Conn, deadline time.Time) (context.Context, context.CancelFunc, <-chan struct{}) {
+	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		var extra [1]byte
+		_, err := conn.Read(extra[:])
+		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
+			return
+		}
+		cancel()
+	}()
+	return ctx, cancel, done
+}
+
+func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	switch req.Command {
 	case CmdList:
-		return s.handleList()
+		return s.handleList(ctx)
 	case CmdAdd:
 		return s.handleAdd(req.Args)
 	case CmdGenerate:
@@ -257,15 +285,15 @@ func (s *Server) dispatch(req Request) Response {
 	case CmdRename:
 		return s.handleRename(req.Args)
 	case CmdExport:
-		return s.handleExport(req.Args)
+		return s.handleExport(ctx, req.Args)
 	case CmdView:
-		return s.handleView(req.Args)
+		return s.handleView(ctx, req.Args)
 	case CmdExportAll:
 		return s.handleExportAll(req.Args)
 	case CmdActivity:
 		return s.handleActivity(req.Args)
 	case CmdSyncTrigger:
-		return s.handleSyncTrigger(req.Args)
+		return s.handleSyncTrigger(ctx, req.Args)
 	case CmdSyncLink:
 		return s.handleSyncLink(req.Args)
 	case CmdSyncUnlink:
@@ -275,17 +303,17 @@ func (s *Server) dispatch(req Request) Response {
 	case CmdAccountClear:
 		return s.handleAccountClear()
 	case CmdSSHRoutePrepare:
-		return s.handleSSHRoutePrepare(req.Args)
+		return s.handleSSHRoutePrepare(ctx, req.Args)
 	case CmdSSHRouteSuccess:
 		return s.handleSSHRouteSuccess(req.Args)
 	case CmdSSHRoutesList:
-		return s.handleSSHRoutesList()
+		return s.handleSSHRoutesList(ctx)
 	case CmdSSHRouteClear:
 		return s.handleSSHRouteClear(req.Args)
 	case CmdSSHRoutesClearAll:
 		return s.handleSSHRoutesClearAll()
 	case CmdSensitiveAuth:
-		return s.handleSensitiveAuth(req.Args)
+		return s.handleSensitiveAuth(ctx, req.Args)
 	case CmdSensitivePassword:
 		return s.handleSensitivePassword(req.Args)
 	case CmdSensitiveLock:
@@ -297,7 +325,7 @@ func (s *Server) dispatch(req Request) Response {
 	}
 }
 
-func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
+func (s *Server) handleSSHRoutePrepare(ctx context.Context, raw json.RawMessage) Response {
 	if s.sshRoutes == nil {
 		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
 	}
@@ -316,12 +344,12 @@ func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
 		User:         args.User,
 		Port:         args.Port,
 	}
-	if err := s.sshRoutes.Prepare(req); err != nil {
+	if err := s.prepareSSHRoute(ctx, req); err != nil {
 		if errors.Is(err, sshrouting.ErrRouteMemoryLocked) {
-			if authErr := s.ensureExternalSession(); authErr != nil {
+			if authErr := s.ensureExternalSession(ctx); authErr != nil {
 				return ErrorResponse(authErr)
 			}
-			err = s.sshRoutes.Prepare(req)
+			err = s.prepareSSHRoute(ctx, req)
 		}
 		if err == nil {
 			return OkResponse(nil)
@@ -332,14 +360,21 @@ func (s *Server) handleSSHRoutePrepare(raw json.RawMessage) Response {
 	return OkResponse(nil)
 }
 
-func (s *Server) ensureExternalSession() error {
+func (s *Server) prepareSSHRoute(ctx context.Context, req sshrouting.PrepareRequest) error {
+	if handler, ok := s.sshRoutes.(sshRouteContextHandler); ok {
+		return handler.PrepareContext(ctx, req)
+	}
+	return s.sshRoutes.Prepare(req)
+}
+
+func (s *Server) ensureExternalSession(ctx context.Context) error {
 	s.stateMu.RLock()
 	locked := s.keyStore == nil
 	s.stateMu.RUnlock()
 	if !locked || s.authBroker == nil {
 		return nil
 	}
-	result, err := s.authBroker.Authorize(context.Background(), sensitiveauth.ActionExternal)
+	result, err := s.authBroker.Authorize(ctx, sensitiveauth.ActionExternal)
 	if err != nil {
 		return err
 	}
@@ -366,12 +401,12 @@ func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
 	return OkResponse(nil)
 }
 
-func (s *Server) handleSSHRoutesList() Response {
+func (s *Server) handleSSHRoutesList(ctx context.Context) Response {
 	if s.sshRoutes == nil {
 		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
 	}
 
-	s.refreshForRead("ssh_routes_list")
+	s.refreshForRead(ctx, "ssh_routes_list")
 	snapshot, err := s.sshRoutes.DebugSnapshot()
 	if err != nil {
 		return ErrorResponse(err)
@@ -405,8 +440,8 @@ func (s *Server) handleSSHRoutesClearAll() Response {
 	return OkResponse(nil)
 }
 
-func (s *Server) handleList() Response {
-	s.refreshForRead("list_keys")
+func (s *Server) handleList(ctx context.Context) Response {
+	s.refreshForRead(ctx, "list_keys")
 
 	keyStore, err := s.requireKeyStore()
 	if err != nil {
@@ -536,13 +571,13 @@ type exportArgs struct {
 	Name string `json:"name"`
 }
 
-func (s *Server) handleExport(raw json.RawMessage) Response {
+func (s *Server) handleExport(ctx context.Context, raw json.RawMessage) Response {
 	var a exportArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
-	s.refreshForRead("export_key")
+	s.refreshForRead(ctx, "export_key")
 
 	resolvedName, err := s.resolveKeyName(a.Name)
 	if err != nil {
@@ -567,13 +602,13 @@ type viewArgs struct {
 	Full bool   `json:"full"`
 }
 
-func (s *Server) handleView(raw json.RawMessage) Response {
+func (s *Server) handleView(ctx context.Context, raw json.RawMessage) Response {
 	var a viewArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
-	s.refreshForRead("view_key")
+	s.refreshForRead(ctx, "view_key")
 
 	resolvedName, err := s.resolveKeyName(a.Name)
 	if err != nil {
@@ -707,7 +742,7 @@ type syncTriggerArgs struct {
 	Token     string `json:"token"`
 }
 
-func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
+func (s *Server) handleSyncTrigger(ctx context.Context, raw json.RawMessage) Response {
 	var a syncTriggerArgs
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
@@ -727,7 +762,7 @@ func (s *Server) handleSyncTrigger(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("Sync is unavailable; restart Forged and try again"))
 	}
 
-	if err := bus.ForceSync(context.Background(), "manual_sync"); err != nil {
+	if err := bus.ForceSync(ctx, "manual_sync"); err != nil {
 		return ErrorResponse(fmt.Errorf("Sync failed: %w", err))
 	}
 	state := bus.SnapshotState()
@@ -795,7 +830,7 @@ type sensitivePasswordArgs struct {
 	Password string `json:"password"`
 }
 
-func (s *Server) handleSensitiveAuth(raw json.RawMessage) Response {
+func (s *Server) handleSensitiveAuth(ctx context.Context, raw json.RawMessage) Response {
 	if s.authBroker == nil {
 		return ErrorResponse(fmt.Errorf("Sensitive auth broker unavailable"))
 	}
@@ -812,9 +847,9 @@ func (s *Server) handleSensitiveAuth(raw json.RawMessage) Response {
 
 	var result sensitiveauth.AuthorizeResult
 	if a.Force {
-		result, err = s.authBroker.AuthorizeForced(context.Background(), action)
+		result, err = s.authBroker.AuthorizeForced(ctx, action)
 	} else {
-		result, err = s.authBroker.Authorize(context.Background(), action)
+		result, err = s.authBroker.Authorize(ctx, action)
 	}
 	if err != nil {
 		return ErrorResponse(err)
@@ -894,17 +929,20 @@ func (s *Server) handleStatus() Response {
 	return OkResponse(status)
 }
 
-func (s *Server) refreshForRead(reason string) {
+func (s *Server) refreshForRead(parent context.Context, reason string) {
 	bus := s.currentSyncBus()
 	if bus == nil {
 		return
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 5*time.Second)
 	defer cancel()
 
 	if err := bus.ForegroundRead(ctx, reason); err != nil {
 		s.logger.Debug("foreground sync refresh failed", "reason", reason, "error", err)
+	}
+	if parent.Err() != nil {
+		return
 	}
 	if s.onReadSync != nil {
 		s.onReadSync()

@@ -90,6 +90,9 @@ func (c *HelperClient) Close() error {
 func (c *HelperClient) Authorize(ctx context.Context, action Action) (CapabilityState, error) {
 	resp, err := c.do(ctx, NewAuthorizeRequest(c.id(), action))
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return CapabilityBroken, ctxErr
+		}
 		return CapabilityBroken, ErrNativeBroken
 	}
 

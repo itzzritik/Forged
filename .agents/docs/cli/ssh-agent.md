@@ -28,6 +28,7 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 - External agent use goes through `ActionExternal`, not the TUI-style view path.
 - `forged-sign` now does an auth preflight so Git commit signing can show cleaner auth errors.
 - Raw SSH agent protocol is still limited in how much error detail it can surface back to callers.
+- SSH route preparation and both probe types inherit IPC request cancellation; route-specific end-to-end timeout policy remains separate from this transport behavior.
 
 ## Decisions
 

@@ -16,6 +16,7 @@ stable: yes
 - Mutable JSON and framing buffers are cleared after use to shorten sensitive-data lifetime; the compatible wire format still uses transient JSON strings.
 - Vault-backed handlers can be called while the daemon is cold; they should return a locked error, not panic.
 - The listener retries temporary accept failures with bounded backoff, exits quietly when closed, and logs terminal failures. Shutdown first closes admission and every tracked connection, then waits for admitted handlers.
+- Client calls have a context-aware API. Closing or timing out the one-request connection cancels the matching server request; dispatch stays synchronous so shutdown still waits for admitted work.
 - `proto/ipc.md` is not current. Code is the source of truth for the command set.
 - `sensitive-auth` takes an `action` and optional `force`. `force=true` is used for launch auth.
 - `status` exposes sensitive session state and daemon build id so the TUI/readiness layer can detect cold, active, and stale daemon states.

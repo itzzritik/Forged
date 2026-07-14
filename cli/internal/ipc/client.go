@@ -1,6 +1,7 @@
 package ipc
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -24,16 +25,34 @@ func (c *Client) Call(command string, args any) (Response, error) {
 }
 
 func (c *Client) CallWithTimeout(command string, args any, timeout time.Duration) (Response, error) {
-	conn, err := platform.Dial(c.socketPath, 2*time.Second)
+	if timeout <= 0 {
+		timeout = 30 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return c.CallContext(ctx, command, args)
+}
+
+func (c *Client) CallContext(ctx context.Context, command string, args any) (Response, error) {
+	if err := ctx.Err(); err != nil {
+		return Response{}, fmt.Errorf("Calling daemon: %w", err)
+	}
+
+	dialCtx, cancelDial := context.WithTimeout(ctx, 2*time.Second)
+	conn, err := platform.DialContext(dialCtx, c.socketPath)
+	cancelDial()
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Response{}, fmt.Errorf("Connecting to daemon: %w", ctxErr)
+		}
 		return Response{}, fmt.Errorf("%w. Open Forged to start it", ErrDaemonNotRunning)
 	}
 	defer conn.Close()
 
-	if timeout <= 0 {
-		timeout = 30 * time.Second
-	}
-	conn.SetDeadline(time.Now().Add(timeout))
+	stopClose := context.AfterFunc(ctx, func() {
+		_ = conn.Close()
+	})
+	defer stopClose()
 
 	var rawArgs json.RawMessage
 	if args != nil {
@@ -50,11 +69,17 @@ func (c *Client) CallWithTimeout(command string, args any, timeout time.Duration
 	err = WriteMessage(conn, req)
 	clear(rawArgs)
 	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Response{}, fmt.Errorf("Sending request: %w", ctxErr)
+		}
 		return Response{}, fmt.Errorf("Sending request: %w", err)
 	}
 
 	var resp Response
 	if err := ReadMessage(conn, &resp); err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return Response{}, fmt.Errorf("Reading response: %w", ctxErr)
+		}
 		return Response{}, fmt.Errorf("Reading response: %w", err)
 	}
 

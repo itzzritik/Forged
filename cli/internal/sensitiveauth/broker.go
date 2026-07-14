@@ -156,6 +156,8 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 				return b.handleMissingDeviceUnlock(action, "System Auth succeeded, but this device needs your master password to finish unlocking Forged.", err)
 			}
 			return result, nil
+		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
+			return AuthorizeResult{}, err
 		case errors.Is(err, ErrNativeUnavailable):
 			b.setNativeCapability(capability)
 			return b.authorizeWithoutSystemAuth(action, capability)
