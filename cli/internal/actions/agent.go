@@ -260,8 +260,8 @@ func findSignBinary() (string, error) {
 	}
 
 	candidate := filepath.Join(filepath.Dir(self), "forged-sign")
-	if _, err := os.Stat(candidate); err == nil {
-		return candidate, nil
+	if path, err := exec.LookPath(candidate); err == nil {
+		return path, nil
 	}
 	return "", fmt.Errorf("Forged-sign not found in PATH or next to the Forged binary")
 }
