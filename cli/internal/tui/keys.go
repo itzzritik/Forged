@@ -20,6 +20,11 @@ import (
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
+const (
+	privateClipboardLifetime       = 45 * time.Second
+	privateClipboardFastClearTries = 3
+)
+
 type keyListMsg struct {
 	id       int
 	keys     []actions.KeySummary
@@ -51,8 +56,20 @@ type keyCopyFinishedMsg struct {
 }
 
 type keyPrivateCopyFinishedMsg struct {
-	status string
-	err    error
+	name  string
+	lease SensitiveClipboardLease
+	err   error
+}
+
+type keyPrivateClipboardTickMsg struct {
+	id  int
+	now time.Time
+}
+
+type keyPrivateClipboardClearedMsg struct {
+	id      int
+	cleared bool
+	err     error
 }
 
 type keyGenerateFinishedMsg struct {
@@ -125,6 +142,15 @@ type keyDetailState struct {
 	busy      bool
 	status    string
 	statusErr string
+}
+
+type privateClipboardState struct {
+	id       int
+	detailID int
+	name     string
+	deadline time.Time
+	lease    SensitiveClipboardLease
+	tries    int
 }
 
 type keyRenameState struct {
@@ -1282,6 +1308,7 @@ func (m *model) refreshKeyDetail(name string) tea.Cmd {
 }
 
 func (m *model) copyKeyText(value string, status string) tea.Cmd {
+	m.clipboardBusy = true
 	copyText := m.copyText
 	return func() tea.Msg {
 		if strings.TrimSpace(value) == "" {
@@ -1295,7 +1322,8 @@ func (m *model) copyKeyText(value string, status string) tea.Cmd {
 }
 
 func (m *model) copyPrivateKey(password []byte) tea.Cmd {
-	copyText := m.copyText
+	m.clipboardBusy = true
+	copySensitiveText := m.copySensitiveText
 	name := strings.TrimSpace(m.keyDetail.key.Name)
 	paths := config.DefaultPaths()
 	return func() tea.Msg {
@@ -1306,10 +1334,11 @@ func (m *model) copyPrivateKey(password []byte) tea.Cmd {
 		if strings.TrimSpace(detail.PrivateKey) == "" {
 			return keyPrivateCopyFinishedMsg{err: fmt.Errorf("Private key is unavailable")}
 		}
-		if err := copyText(detail.PrivateKey); err != nil {
+		lease, err := copySensitiveText(detail.PrivateKey)
+		if err != nil {
 			return keyPrivateCopyFinishedMsg{err: err}
 		}
-		return keyPrivateCopyFinishedMsg{status: "Private key copied"}
+		return keyPrivateCopyFinishedMsg{name: name, lease: lease}
 	}
 }
 
@@ -1552,18 +1581,21 @@ func (m *model) handleKeyDetailMsg(msg keyDetailMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) handleKeyCopyFinishedMsg(msg keyCopyFinishedMsg) (tea.Model, tea.Cmd) {
+	m.clipboardBusy = false
 	m.keyDetail.busy = false
 	if msg.err != nil {
 		m.keyDetail.status = ""
 		m.keyDetail.statusErr = msg.err.Error()
 		return m, nil
 	}
+	m.cancelPrivateClipboard()
 	m.keyDetail.statusErr = ""
 	m.keyDetail.status = msg.status
 	return m, nil
 }
 
 func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (tea.Model, tea.Cmd) {
+	m.clipboardBusy = false
 	if m.screen == screenPassword && m.passwordFlow == passwordKeyView {
 		m.passwordBusy = false
 		if msg.err != nil {
@@ -1574,9 +1606,7 @@ func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (
 		m.passwordAuth = ""
 		m.screen = screenDashboard
 		m.keyDetail.busy = false
-		m.keyDetail.statusErr = ""
-		m.keyDetail.status = msg.status
-		return m, nil
+		return m, m.startPrivateClipboard(msg.name, msg.lease)
 	}
 
 	m.keyDetail.busy = false
@@ -1591,9 +1621,107 @@ func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (
 		m.keyDetail.statusErr = msg.err.Error()
 		return m, nil
 	}
+	return m, m.startPrivateClipboard(msg.name, msg.lease)
+}
+
+func (m *model) startPrivateClipboard(name string, lease SensitiveClipboardLease) tea.Cmd {
+	m.privateClip.id++
+	m.privateClip.detailID = m.keyDetailID
+	m.privateClip.name = name
+	m.privateClip.deadline = time.Now().Add(privateClipboardLifetime)
+	m.privateClip.lease = lease
+	m.privateClip.tries = 0
+	m.setPrivateClipboardStatus(privateClipboardSecondsRemaining(m.privateClip.deadline, time.Now()))
+	return privateClipboardTick(m.privateClip.id, m.privateClip.deadline)
+}
+
+func (m *model) handleKeyPrivateClipboardTickMsg(msg keyPrivateClipboardTickMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.privateClip.id || m.privateClip.lease == nil {
+		return m, nil
+	}
+	remaining := privateClipboardSecondsRemaining(m.privateClip.deadline, msg.now)
+	if remaining > 0 {
+		m.setPrivateClipboardStatus(remaining)
+		return m, privateClipboardTick(msg.id, m.privateClip.deadline)
+	}
+	if m.privateClipboardDetailActive() {
+		m.keyDetail.status = "Clearing private key from clipboard"
+		m.keyDetail.statusErr = ""
+	}
+	lease := m.privateClip.lease
+	return m, func() tea.Msg {
+		cleared, err := lease.ClearIfUnchanged()
+		return keyPrivateClipboardClearedMsg{id: msg.id, cleared: cleared, err: err}
+	}
+}
+
+func (m *model) handleKeyPrivateClipboardClearedMsg(msg keyPrivateClipboardClearedMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.privateClip.id {
+		return m, nil
+	}
+	activeDetail := m.privateClipboardDetailActive()
+	if msg.err != nil {
+		m.privateClip.tries++
+		if activeDetail {
+			m.keyDetail.status = ""
+			m.keyDetail.statusErr = fmt.Sprintf("Couldn't clear private key from clipboard: %v", msg.err)
+		}
+		delay := 5 * time.Second
+		if m.privateClip.tries >= privateClipboardFastClearTries {
+			delay = 30 * time.Second
+		}
+		return m, privateClipboardRetry(msg.id, delay)
+	}
+	m.privateClip.lease = nil
+	if !activeDetail {
+		return m, nil
+	}
 	m.keyDetail.statusErr = ""
-	m.keyDetail.status = msg.status
+	if msg.cleared {
+		m.keyDetail.status = "Private key cleared from clipboard"
+	} else {
+		m.keyDetail.status = "Clipboard changed · no clear needed"
+	}
 	return m, nil
+}
+
+func (m *model) cancelPrivateClipboard() {
+	m.privateClip = privateClipboardState{id: m.privateClip.id + 1}
+}
+
+func (m *model) setPrivateClipboardStatus(remaining int) {
+	if !m.privateClipboardDetailActive() {
+		return
+	}
+	m.keyDetail.statusErr = ""
+	m.keyDetail.status = fmt.Sprintf("Private key copied · clears in %ds", remaining)
+}
+
+func (m *model) privateClipboardDetailActive() bool {
+	return m.privateClip.detailID == m.keyDetailID &&
+		m.session.Current().ID == RouteKeysDetail &&
+		strings.TrimSpace(m.keyDetail.key.Name) == m.privateClip.name
+}
+
+func privateClipboardTick(id int, deadline time.Time) tea.Cmd {
+	delay := min(time.Second, max(time.Duration(0), time.Until(deadline)))
+	return tea.Tick(delay, func(now time.Time) tea.Msg {
+		return keyPrivateClipboardTickMsg{id: id, now: now}
+	})
+}
+
+func privateClipboardRetry(id int, delay time.Duration) tea.Cmd {
+	return tea.Tick(delay, func(now time.Time) tea.Msg {
+		return keyPrivateClipboardTickMsg{id: id, now: now}
+	})
+}
+
+func privateClipboardSecondsRemaining(deadline time.Time, now time.Time) int {
+	remaining := deadline.Sub(now)
+	if remaining <= 0 {
+		return 0
+	}
+	return int((remaining + time.Second - 1) / time.Second)
 }
 
 func (m *model) handleKeyRenameFinishedMsg(msg keyRenameFinishedMsg) (tea.Model, tea.Cmd) {

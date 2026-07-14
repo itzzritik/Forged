@@ -1,12 +1,15 @@
 package cmd
 
 import (
+	"bytes"
+	"context"
+	"crypto/sha256"
 	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"runtime"
-	"strings"
+	"sync"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/actions"
@@ -36,6 +39,7 @@ func runBareForged(cmd *cobra.Command) error {
 func runInteractiveIntent(intent tui.Intent) error {
 	paths := config.DefaultPaths()
 	engine := readiness.New(paths)
+	clipboard := &clipboardManager{}
 
 	_, err := tui.Run(intent, tui.Dependencies{
 		Repair:      engine.Run,
@@ -127,10 +131,12 @@ func runInteractiveIntent(intent tui.Intent) error {
 		ClearAllSSHRoutes: func() error {
 			return actions.ClearAllSSHRoutes(paths)
 		},
-		CopyText:      copyTextToClipboard,
-		OpenLink:      openLinkInBrowser,
-		DefaultServer: ipc.DefaultAPIServer,
-		AppVersion:    version,
+		CopyText:          clipboard.CopyText,
+		CopySensitiveText: clipboard.CopySensitiveText,
+		CloseClipboard:    clipboard.Close,
+		OpenLink:          openLinkInBrowser,
+		DefaultServer:     ipc.DefaultAPIServer,
+		AppVersion:        version,
 	})
 	return err
 }
@@ -148,42 +154,205 @@ func createLocalVault(paths config.Paths, password []byte) error {
 	return nil
 }
 
-func copyTextToClipboard(value string) error {
-	var commands [][]string
-	switch runtime.GOOS {
-	case "darwin":
-		commands = [][]string{{"pbcopy"}}
-	case "linux":
-		commands = [][]string{
-			{"wl-copy"},
-			{"xclip", "-selection", "clipboard"},
-			{"xsel", "--clipboard", "--input"},
-		}
-	case "windows":
-		commands = [][]string{{"clip"}}
-	default:
-		return fmt.Errorf("Clipboard copy is not supported on %s", runtime.GOOS)
-	}
+const clipboardCommandTimeout = 5 * time.Second
 
+const clipboardCloseAttempts = 3
+
+type clipboardBackend struct {
+	write []string
+	read  []string
+}
+
+type clipboardManager struct {
+	mu     sync.Mutex
+	closed bool
+	nextID uint64
+	active *activeClipboardLease
+}
+
+type activeClipboardLease struct {
+	id      uint64
+	backend clipboardBackend
+	digest  [sha256.Size]byte
+}
+
+type commandClipboardLease struct {
+	manager *clipboardManager
+	id      uint64
+}
+
+func (l commandClipboardLease) ClearIfUnchanged() (bool, error) {
+	return l.manager.clearIfUnchanged(l.id)
+}
+
+func (m *clipboardManager) CopyText(value string) error {
+	data := []byte(value)
+	defer clear(data)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return fmt.Errorf("Clipboard is closed")
+	}
+	_, err := copyToClipboard(data, false, false)
+	if err == nil {
+		m.active = nil
+	}
+	return err
+}
+
+func (m *clipboardManager) CopySensitiveText(value string) (tui.SensitiveClipboardLease, error) {
+	data := []byte(value)
+	defer clear(data)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil, fmt.Errorf("Clipboard is closed")
+	}
+	backend, err := copyToClipboard(data, true, true)
+	if err != nil {
+		return nil, err
+	}
+	m.nextID++
+	m.active = &activeClipboardLease{
+		id:      m.nextID,
+		backend: backend,
+		digest:  clipboardDigest(data),
+	}
+	return commandClipboardLease{manager: m, id: m.nextID}, nil
+}
+
+func (m *clipboardManager) clearIfUnchanged(id uint64) (bool, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.clearIfUnchangedLocked(id)
+}
+
+func (m *clipboardManager) clearIfUnchangedLocked(id uint64) (bool, error) {
+	if m.active == nil || m.active.id != id {
+		return false, nil
+	}
+	current, err := readClipboard(m.active.backend)
+	if err != nil {
+		return false, fmt.Errorf("reading clipboard: %w", err)
+	}
+	defer clear(current)
+	if clipboardDigest(current) != m.active.digest {
+		m.active = nil
+		return false, nil
+	}
+	if err := writeClipboard(m.active.backend, nil); err != nil {
+		return false, fmt.Errorf("clearing clipboard: %w", err)
+	}
+	m.active = nil
+	return true, nil
+}
+
+func (m *clipboardManager) Close() error {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	if m.closed {
+		return nil
+	}
+	m.closed = true
+	if m.active == nil {
+		return nil
+	}
 	var lastErr error
-	for _, argv := range commands {
-		if _, err := exec.LookPath(argv[0]); err != nil {
-			lastErr = err
-			continue
-		}
-		cmd := exec.Command(argv[0], argv[1:]...)
-		cmd.Stdin = strings.NewReader(value)
-		if err := cmd.Run(); err == nil {
+	for attempt := 0; attempt < clipboardCloseAttempts; attempt++ {
+		if _, err := m.clearIfUnchangedLocked(m.active.id); err == nil {
 			return nil
 		} else {
 			lastErr = err
 		}
+		if attempt < clipboardCloseAttempts-1 {
+			time.Sleep(100 * time.Millisecond)
+		}
 	}
+	return fmt.Errorf("Couldn't clear private key from clipboard; clear it manually: %w", lastErr)
+}
 
-	if lastErr != nil {
-		return fmt.Errorf("Copy failed: %w", lastErr)
+func clipboardDigest(value []byte) [sha256.Size]byte {
+	normalized := bytes.ReplaceAll(value, []byte("\r\n"), []byte("\n"))
+	defer clear(normalized)
+	return sha256.Sum256(normalized)
+}
+
+func copyToClipboard(value []byte, sensitive bool, requireRead bool) (clipboardBackend, error) {
+	backends, err := clipboardBackends(sensitive)
+	if err != nil {
+		return clipboardBackend{}, err
 	}
-	return fmt.Errorf("No clipboard helper is available")
+	var lastErr error
+	for _, backend := range backends {
+		if _, err := exec.LookPath(backend.write[0]); err != nil {
+			lastErr = err
+			continue
+		}
+		if requireRead {
+			if _, err := exec.LookPath(backend.read[0]); err != nil {
+				lastErr = err
+				continue
+			}
+		}
+		if err := writeClipboard(backend, value); err != nil {
+			lastErr = err
+			continue
+		}
+		return backend, nil
+	}
+	if lastErr != nil {
+		return clipboardBackend{}, fmt.Errorf("Copy failed: %w", lastErr)
+	}
+	return clipboardBackend{}, fmt.Errorf("No clipboard helper is available")
+}
+
+func clipboardBackends(sensitive bool) ([]clipboardBackend, error) {
+	switch runtime.GOOS {
+	case "darwin":
+		return []clipboardBackend{{write: []string{"pbcopy"}, read: []string{"pbpaste"}}}, nil
+	case "linux":
+		backends := make([]clipboardBackend, 0, 4)
+		if sensitive {
+			backends = append(backends, clipboardBackend{
+				write: []string{"wl-copy", "--sensitive", "--type", "text/plain"},
+				read:  []string{"wl-paste", "--no-newline", "--type", "text"},
+			})
+		}
+		return append(backends,
+			clipboardBackend{write: []string{"wl-copy", "--type", "text/plain"}, read: []string{"wl-paste", "--no-newline", "--type", "text"}},
+			clipboardBackend{write: []string{"xclip", "-selection", "clipboard", "-in"}, read: []string{"xclip", "-selection", "clipboard", "-out"}},
+			clipboardBackend{write: []string{"xsel", "--clipboard", "--input"}, read: []string{"xsel", "--clipboard", "--output"}},
+		), nil
+	case "windows":
+		return []clipboardBackend{{
+			write: []string{"clip"},
+			read:  []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.Write((Get-Clipboard -Raw))"},
+		}}, nil
+	default:
+		return nil, fmt.Errorf("Clipboard copy is not supported on %s", runtime.GOOS)
+	}
+}
+
+func writeClipboard(backend clipboardBackend, value []byte) error {
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardCommandTimeout)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, backend.write[0], backend.write[1:]...)
+	cmd.Stdin = bytes.NewReader(value)
+	if err := cmd.Run(); err != nil {
+		return err
+	}
+	return nil
+}
+
+func readClipboard(backend clipboardBackend) ([]byte, error) {
+	ctx, cancel := context.WithTimeout(context.Background(), clipboardCommandTimeout)
+	defer cancel()
+	output, err := exec.CommandContext(ctx, backend.read[0], backend.read[1:]...).Output()
+	if err != nil {
+		clear(output)
+		return nil, err
+	}
+	return output, nil
 }
 
 func openLinkInBrowser(url string) error {

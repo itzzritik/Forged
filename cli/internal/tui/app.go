@@ -55,9 +55,15 @@ type Dependencies struct {
 	ClearSSHRoute             func(string) error
 	ClearAllSSHRoutes         func() error
 	CopyText                  func(string) error
+	CopySensitiveText         func(string) (SensitiveClipboardLease, error)
+	CloseClipboard            func() error
 	OpenLink                  func(string) error
 	DefaultServer             string
 	AppVersion                string
+}
+
+type SensitiveClipboardLease interface {
+	ClearIfUnchanged() (bool, error)
 }
 
 type screenMode string
@@ -264,6 +270,8 @@ type model struct {
 	clearSSHRoute             func(string) error
 	clearAllSSHRoutes         func() error
 	copyText                  func(string) error
+	copySensitiveText         func(string) (SensitiveClipboardLease, error)
+	clipboardBusy             bool
 	openLink                  func(string) error
 	defaultServer             string
 	appVersion                string
@@ -336,6 +344,7 @@ type model struct {
 
 	keyBrowser  keyBrowserState
 	keyDetail   keyDetailState
+	privateClip privateClipboardState
 	keyRename   keyRenameState
 	keyDelete   keyDeleteState
 	keyGenerate keyGenerateState
@@ -394,13 +403,21 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 		return Result{}, fmt.Errorf("TUI SSH routes clear-all dependency is required")
 	case deps.CopyText == nil:
 		return Result{}, fmt.Errorf("TUI copy-text dependency is required")
+	case deps.CopySensitiveText == nil:
+		return Result{}, fmt.Errorf("TUI sensitive-copy dependency is required")
+	case deps.CloseClipboard == nil:
+		return Result{}, fmt.Errorf("TUI close-clipboard dependency is required")
 	case deps.OpenLink == nil:
 		return Result{}, fmt.Errorf("TUI open-link dependency is required")
 	}
 
 	final, err := tea.NewProgram(newModel(intent, deps, components.NewSpinner())).Run()
+	closeErr := deps.CloseClipboard()
 	if err != nil {
-		return Result{}, err
+		return Result{}, errors.Join(err, closeErr)
+	}
+	if closeErr != nil {
+		return Result{}, closeErr
 	}
 
 	rendered, ok := final.(*model)
@@ -441,6 +458,7 @@ func newModel(intent Intent, deps Dependencies, spin spinner.Model) *model {
 		clearSSHRoute:             deps.ClearSSHRoute,
 		clearAllSSHRoutes:         deps.ClearAllSSHRoutes,
 		copyText:                  deps.CopyText,
+		copySensitiveText:         deps.CopySensitiveText,
 		openLink:                  deps.OpenLink,
 		defaultServer:             deps.DefaultServer,
 		appVersion:                deps.AppVersion,
@@ -750,6 +768,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyCopyFinishedMsg(msg)
 	case keyPrivateCopyFinishedMsg:
 		return m.handleKeyPrivateCopyFinishedMsg(msg)
+	case keyPrivateClipboardTickMsg:
+		return m.handleKeyPrivateClipboardTickMsg(msg)
+	case keyPrivateClipboardClearedMsg:
+		return m.handleKeyPrivateClipboardClearedMsg(msg)
 	case keyGenerateFinishedMsg:
 		return m.handleKeyGenerateFinishedMsg(msg)
 	case keyImportPreviewMsg:
@@ -789,6 +811,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case labRoutingPollMsg:
 		return m.handleLabRoutingPollMsg(msg)
 	case copyFinishedMsg:
+		m.clipboardBusy = false
 		if msg.err != nil {
 			if m.screen == screenLogin {
 				m.loginScreen.Error = msg.err.Error()
@@ -797,6 +820,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.notice = notice{message: msg.err.Error(), tone: dashboardscreen.ToneDanger}
 			return m, nil
 		}
+		m.cancelPrivateClipboard()
 		m.loginScreen.Copied = true
 		return m, nil
 	case openFinishedMsg:
@@ -1510,6 +1534,9 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		return m, tea.Quit
+	}
+	if m.clipboardBusy {
+		return m, nil
 	}
 
 	switch m.screen {
@@ -2891,6 +2918,7 @@ func (m *model) lockSensitiveCmd(id int) tea.Cmd {
 }
 
 func (m *model) copyToClipboard(value string) tea.Cmd {
+	m.clipboardBusy = true
 	copyText := m.copyText
 	return func() tea.Msg {
 		return copyFinishedMsg{err: copyText(value)}

@@ -31,6 +31,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Master-password screens share one component for create, restore, unlock fallback, export, repair, and change-password flows.
 - Printable keys always reach focused inputs. Ctrl-C is the only global quit shortcut; startup System Auth retry uses Ctrl-A while the password field is empty.
 - Browser login remains cancelable until approval arrives. While the daemon commits the account, screen actions are hidden and ignored; Ctrl-C remains the global force-quit shortcut.
+- Private-key clipboard copies use sensitive platform hints when available, show a 45-second countdown, and clear only while the copied value is still current; normal TUI exit also clears an active copy.
 - While locked, the header uses the welcome product rail instead of live system status.
 - Manage owns user-facing security settings. Doctor shows security capability state.
 - `Master Password Interval` is local to the device, not synced through the vault.
