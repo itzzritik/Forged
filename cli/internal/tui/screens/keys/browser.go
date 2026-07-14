@@ -167,7 +167,6 @@ func renderBrowserTable(screen BrowserScreen, width int) string {
 	lines = append(lines,
 		renderBrowserHeader(nameHeader, typeHeader, detailHeader, selectionWidth, nameWidth, typeWidth, fingerprintWidth, statusWidth, columnGap),
 		renderBrowserDivider(tableWidth),
-		"",
 	)
 
 	if len(screen.Rows) == 0 {

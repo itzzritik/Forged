@@ -2230,7 +2230,7 @@ func (m *model) keyBrowserVisibleRows() []actions.KeySummary {
 }
 
 func (m *model) resizeKeyBrowserPage(bodyHeight int) {
-	m.keyBrowser.pageRows = max(1, min(keyscreen.VisibleRows(), bodyHeight-6))
+	m.keyBrowser.pageRows = max(1, min(keyscreen.VisibleRows(), bodyHeight-5))
 	m.ensureKeyBrowserVisible()
 }
 
