@@ -1006,6 +1006,9 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	source := m.currentImportSource()
+	if m.keyImport.pathVisible && m.keyImport.focus == 1 && len(msg.Runes) > 0 {
+		return m, m.updateKeyImportPath(msg)
+	}
 	switch msg.String() {
 	case "esc":
 		if m.session.Back() {
