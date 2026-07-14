@@ -3,6 +3,7 @@ package agent
 import (
 	"strings"
 
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
 	keyscreen "github.com/itzzritik/forged/cli/internal/tui/screens/keys"
@@ -16,16 +17,21 @@ type SigningScreen struct {
 	BusyMessage   string
 	Error         string
 	Status        actions.CommitSigningStatus
+	Compact       bool
 	Browser       keyscreen.BrowserScreen
 }
 
 func RenderSigning(screen SigningScreen, spinner string, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth+10))
+	contentWidth := max(1, min(width, theme.HeroMaxWidth+10))
 	if screen.Loading && len(screen.Browser.Rows) == 0 && strings.TrimSpace(screen.Browser.Error) == "" {
 		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
 			Title:       "Opening commit signing",
 			Description: "Reading current Git signing state and loading vault keys",
 		}, spinner, contentWidth)
+	}
+	if screen.Compact {
+		screen.Browser.ShowTopBorder = false
+		return keyscreen.RenderBrowser(screen.Browser, spinner, contentWidth)
 	}
 
 	sections := []string{
@@ -61,7 +67,7 @@ func renderStatusCard(screen SigningScreen, spinner string, width int) string {
 		statusLine = theme.Warning.Render("! Commits on this machine are not being signed")
 	}
 	if errText := strings.TrimSpace(screen.Error); errText != "" {
-		statusLine = theme.Danger.Width(width).Render(theme.Glyphs.Cross + " " + errText)
+		statusLine = theme.Danger.Render(theme.Glyphs.Cross + " " + errText)
 		details = nil
 	}
 	if screen.StatusLoading {
@@ -81,6 +87,9 @@ func renderStatusCard(screen SigningScreen, spinner string, width int) string {
 	lines := []string{statusLine}
 	if len(details) > 0 {
 		lines = append(lines, details...)
+	}
+	for index, line := range lines {
+		lines[index] = ansi.Truncate(line, max(1, width), theme.Glyphs.Ellipsis)
 	}
 
 	return strings.Join(lines, "\n")

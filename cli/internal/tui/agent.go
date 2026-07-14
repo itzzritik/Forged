@@ -49,6 +49,7 @@ type agentSigningState struct {
 	rows         []actions.KeySummary
 	selected     int
 	offset       int
+	pageRows     int
 	searchActive bool
 	input        textinput.Model
 	err          string
@@ -177,8 +178,9 @@ func (m *model) renderAgentBody(contentWidth int) string {
 	return shell.DockBottom(top+"\n", strings.Join(bottomSections, "\n\n"))
 }
 
-func (m *model) renderAgentSigningBody(contentWidth int) string {
+func (m *model) renderAgentSigningBody(contentWidth int, bodyHeight int) string {
 	m.ensureAgentSigningInput()
+	m.resizeAgentSigningPage(bodyHeight)
 
 	rows := m.agentSigningVisibleRows()
 	browserRows := make([]keyscreen.BrowserRow, 0, len(rows))
@@ -194,8 +196,15 @@ func (m *model) renderAgentSigningBody(contentWidth int) string {
 		browserRows = append(browserRows, row)
 	}
 
+	compact := bodyHeight < 10
 	warning := ""
-	if m.agent.signing.disableArmed {
+	if compact && m.agent.signing.busy {
+		message := strings.TrimSpace(m.agent.signing.busyMessage)
+		if message == "" {
+			message = "Updating signing configuration"
+		}
+		warning = m.spinner.View() + " " + message
+	} else if m.agent.signing.disableArmed {
 		warning = "Disable automatic commit signing in your global Git config?"
 	}
 	return agentscreen.RenderSigning(agentscreen.SigningScreen{
@@ -205,12 +214,14 @@ func (m *model) renderAgentSigningBody(contentWidth int) string {
 		BusyMessage:   m.agent.signing.busyMessage,
 		Error:         m.signingError,
 		Status:        m.signingStatus,
+		Compact:       compact,
 		Browser: keyscreen.BrowserScreen{
 			SearchView:    theme.AdaptTextInputPlaceholder(m.agent.signing.input.View(), m.agent.signing.input.Value()),
 			SearchQuery:   m.agent.signing.input.Value(),
 			SearchActive:  m.agent.signing.searchActive,
 			SearchNotice:  warning,
 			CountLabel:    m.agentSigningCountLabel(),
+			VisibleRows:   m.agentSigningPageRows(),
 			Rows:          browserRows,
 			SelectedIndex: m.agentSigningSelectedIndex(),
 			Loading:       m.agent.signing.loading,
@@ -298,14 +309,14 @@ func (m *model) moveAgentSigningSelection(delta int) {
 }
 
 func (m *model) ensureAgentSigningVisible() {
+	pageRows := m.agentSigningPageRows()
+	maxOffset := max(0, len(m.agent.signing.rows)-pageRows)
+	m.agent.signing.offset = max(0, min(m.agent.signing.offset, maxOffset))
 	if m.agent.signing.selected < m.agent.signing.offset {
 		m.agent.signing.offset = m.agent.signing.selected
 	}
-	if m.agent.signing.selected >= m.agent.signing.offset+keyscreen.VisibleRows() {
-		m.agent.signing.offset = m.agent.signing.selected - keyscreen.VisibleRows() + 1
-	}
-	if m.agent.signing.offset < 0 {
-		m.agent.signing.offset = 0
+	if m.agent.signing.selected >= m.agent.signing.offset+pageRows {
+		m.agent.signing.offset = m.agent.signing.selected - pageRows + 1
 	}
 }
 
@@ -314,8 +325,24 @@ func (m *model) agentSigningVisibleRows() []actions.KeySummary {
 		return nil
 	}
 	start := min(max(m.agent.signing.offset, 0), len(m.agent.signing.rows))
-	end := min(len(m.agent.signing.rows), start+keyscreen.VisibleRows())
+	end := min(len(m.agent.signing.rows), start+m.agentSigningPageRows())
 	return m.agent.signing.rows[start:end]
+}
+
+func (m *model) resizeAgentSigningPage(bodyHeight int) {
+	reserved := 9
+	if bodyHeight < 10 {
+		reserved = 5
+	}
+	m.agent.signing.pageRows = max(1, min(keyscreen.VisibleRows(), bodyHeight-reserved))
+	m.ensureAgentSigningVisible()
+}
+
+func (m *model) agentSigningPageRows() int {
+	if m.agent.signing.pageRows <= 0 {
+		return keyscreen.VisibleRows()
+	}
+	return m.agent.signing.pageRows
 }
 
 func (m *model) agentSigningSelectedIndex() int {

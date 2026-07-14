@@ -13,7 +13,7 @@ type FullPageLoaderScreen struct {
 }
 
 func RenderFullPageLoader(screen FullPageLoaderScreen, spinner string, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth+10))
+	contentWidth := max(1, min(width, theme.HeroMaxWidth+10))
 
 	title := strings.TrimSpace(screen.Title)
 	if title == "" {
