@@ -270,6 +270,9 @@ func (m *model) doctorCanFixIssues() bool {
 	if !s.ConfigExists {
 		return true
 	}
+	if !s.ConfigValid {
+		return false
+	}
 	if !s.Service.Installed || !s.Service.ConfigValid || !s.Service.Running {
 		return true
 	}
@@ -338,6 +341,20 @@ func (m *model) doctorVaultRow(paths config.Paths) doctorRow {
 }
 
 func (m *model) doctorConfigRow(paths config.Paths) doctorRow {
+	if m.snapshot.ConfigExists && !m.snapshot.ConfigValid {
+		detail := strings.TrimSpace(m.snapshot.ConfigError)
+		if detail == "" {
+			detail = "Edit " + paths.ConfigFile()
+		}
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Config",
+				Status: theme.Glyphs.Cross + " Invalid",
+				Detail: detail,
+				Tone:   doctorscreen.ToneDanger,
+			},
+		}
+	}
 	if m.snapshot.ConfigExists {
 		return doctorRow{
 			screen: doctorscreen.Row{

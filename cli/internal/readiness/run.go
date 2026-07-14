@@ -38,6 +38,10 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 	if err := e.ensureConfigStage(state); err != nil {
 		return state.result, err
 	}
+	if state.result.Snapshot.ConfigExists && !state.result.Snapshot.ConfigValid {
+		state.result.Snapshot.State = classifyState(state.result.Snapshot)
+		return state.result, nil
+	}
 	if err := e.ensureSSHStage(state, opts); err != nil {
 		return state.result, err
 	}
@@ -54,6 +58,9 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 
 func (e *Engine) ensureConfigStage(state *repairState) error {
 	if state.result.Snapshot.ConfigExists {
+		if !state.result.Snapshot.ConfigValid {
+			e.markFailed(&state.result.Summary, "config")
+		}
 		return nil
 	}
 	if err := e.ensureConfigFile(e.Paths); err != nil {

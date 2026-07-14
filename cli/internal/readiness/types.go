@@ -53,6 +53,8 @@ type Snapshot struct {
 	LoggedIn           bool
 	VaultExists        bool
 	ConfigExists       bool
+	ConfigValid        bool
+	ConfigError        string
 	Service            daemon.ServiceStatus
 	DaemonPID          int
 	IPCSocketReady     bool

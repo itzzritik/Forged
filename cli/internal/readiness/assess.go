@@ -70,6 +70,13 @@ func (e *Engine) Assess() (Snapshot, error) {
 		SSHEnabled:         e.isSSH(e.Paths),
 		CurrentBuildID:     buildinfo.CurrentID(),
 	}
+	if snapshot.ConfigExists {
+		if _, err := config.Load(e.Paths.ConfigFile()); err != nil {
+			snapshot.ConfigError = err.Error()
+		} else {
+			snapshot.ConfigValid = true
+		}
+	}
 
 	service, err := e.serviceStatus(e.Paths)
 	if err != nil {
@@ -106,6 +113,9 @@ func (e *Engine) Assess() (Snapshot, error) {
 }
 
 func classifyState(s Snapshot) State {
+	if s.ConfigExists && !s.ConfigValid {
+		return StateBlocked
+	}
 	if !s.VaultExists {
 		return StateUninitialized
 	}
@@ -114,6 +124,7 @@ func classifyState(s Snapshot) State {
 		s.ManagedConfigReady &&
 		s.IdentityAgentOwner.IsForged()
 	healthy := s.ConfigExists &&
+		s.ConfigValid &&
 		s.Service.Installed &&
 		s.Service.ConfigValid &&
 		s.Service.Running &&
@@ -128,7 +139,6 @@ func classifyState(s Snapshot) State {
 		}
 		return StateReady
 	}
-
 	if s.Service.Installed && (!s.Service.ConfigValid || !s.Service.Repairable) {
 		return StateBlocked
 	}

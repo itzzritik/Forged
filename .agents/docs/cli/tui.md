@@ -25,6 +25,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Header status must settle from explicit model messages; startup unlock finalizes health from the current snapshot, runtime sync polls daemon status, and signing load errors render as an issue instead of an endless spinner.
 - Runtime and snapshot health checks accept only their newest generation; daemon transport loss and recovery each trigger one readiness refresh, including for local-only vaults.
 - Doctor marks a daemon as outdated when its IPC build id does not match the current CLI build; Fix Issues restarts the managed service through readiness.
+- Doctor validates `config.toml`, reports parse errors as blocked user action, and does not overwrite an invalid file during repair.
 - Doctor distinguishes unsupported System Auth from a prompt that is unavailable in the current environment.
 - Doctor shows explicit Linux headless mode as file-backed trust and labels desktop System Auth detection as terminal-local rather than daemon readiness.
 - Doctor security refreshes accept only their newest response and render inspection failures instead of staying on Checking or showing stale capability rows.
