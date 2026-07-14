@@ -168,7 +168,11 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 		return false, nil
 	}
 
-	if !daemon.ServiceInstalled() {
+	installed, err := daemon.ServiceInstalled()
+	if err != nil {
+		return false, fmt.Errorf("Checking local service: %w", err)
+	}
+	if !installed {
 		return false, fmt.Errorf("Stop the running Forged daemon and try again.")
 	}
 

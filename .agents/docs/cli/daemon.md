@@ -36,7 +36,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - macOS service start and removal boot out current and legacy launchd labels before deleting legacy plists, so an old KeepAlive job cannot respawn.
 - Persistent Forged state lives under `~/.config/forged` on every OS. Auth/device trust lives under `~/.config/forged/auth`. Linux keeps runtime sockets under `/run/user/<uid>/forged`; macOS and Windows use `~/.config/forged/runtime` for runtime metadata, with Windows sockets using named pipes.
 - Windows support is still partial around socket transport and platform helpers.
-- Windows daemon health uses bounded named-pipe probes plus the native process exit status; Unix continues to use signal-zero liveness.
+- Windows service health reads numeric Task Scheduler state through COM instead of localized command output, and stop/restart/removal propagate control failures. Daemon PID liveness uses native process state; Unix uses signal-zero liveness.
 - A daemon publishes its PID only after both servers start and removes the PID file only while it still owns that record.
 - Unix listeners never unlink a path before binding and remove it on close only while it is still the inode they created; stale cleanup refuses non-socket paths and inode replacements.
 - Unix startup holds a persistent `daemon.lock` sidecar through shutdown and checks a live legacy PID before probing or removing socket paths; the lock file is never unlinked.

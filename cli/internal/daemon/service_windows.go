@@ -4,15 +4,27 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
 	"os/user"
 	"path/filepath"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+)
+
+const (
+	windowsTaskStateUnknown  = 0
+	windowsTaskStateDisabled = 1
+	windowsTaskStateQueued   = 2
+	windowsTaskStateReady    = 3
+	windowsTaskStateRunning  = 4
 )
 
 // currentTaskUser returns "DOMAIN\\username" on Windows. Task Scheduler
@@ -115,9 +127,18 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		xmlEscape(runtime.Binary),
 		xmlEscape(strings.Join(runtime.Args, " ")))
 
-	tmpFile := filepath.Join(os.TempDir(), "forged-task.xml")
-	if err := os.WriteFile(tmpFile, []byte(xmlBody), 0600); err != nil {
-		return fmt.Errorf("Writing task XML: %w", err)
+	tmp, err := os.CreateTemp("", "forged-task-*.xml")
+	if err != nil {
+		return windowsTaskXMLCreationError(paths, xmlBody, err)
+	}
+	tmpFile := tmp.Name()
+	defer os.Remove(tmpFile)
+	if _, err := tmp.WriteString(xmlBody); err != nil {
+		tmp.Close()
+		return fmt.Errorf("writing task XML: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("closing task XML: %w", err)
 	}
 
 	cmd := exec.Command("schtasks", "/Create", "/TN", taskName(), "/XML", tmpFile, "/F")
@@ -126,15 +147,39 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		// Keep the XML on failure so the user can reproduce the schtasks call
 		// manually and see the full error. Truncated TUI display would otherwise
 		// hide schtasks's most useful diagnostics.
-		diagPath := filepath.Join(paths.StateDir, "logs", "task-install-failed.xml")
-		_ = os.MkdirAll(filepath.Dir(diagPath), 0o700)
-		_ = os.WriteFile(diagPath, []byte(xmlBody), 0o600)
-		os.Remove(tmpFile)
+		diagPath, diagErr := writeWindowsTaskDiagnostic(paths, xmlBody)
+		if diagErr != nil {
+			return errors.Join(
+				fmt.Errorf("creating scheduled task failed: %w; output: %q", err, strings.TrimSpace(string(out))),
+				fmt.Errorf("saving task XML diagnostic: %w", diagErr),
+			)
+		}
 		return fmt.Errorf("Creating scheduled task failed: %w; output: %q; xml saved to %s",
 			err, strings.TrimSpace(string(out)), diagPath)
 	}
-	os.Remove(tmpFile)
 	return nil
+}
+
+func windowsTaskXMLCreationError(paths config.Paths, xmlBody string, createErr error) error {
+	diagPath, diagErr := writeWindowsTaskDiagnostic(paths, xmlBody)
+	if diagErr != nil {
+		return errors.Join(
+			fmt.Errorf("creating temporary task XML: %w", createErr),
+			fmt.Errorf("saving task XML diagnostic: %w", diagErr),
+		)
+	}
+	return fmt.Errorf("creating temporary task XML: %w; xml saved to %s", createErr, diagPath)
+}
+
+func writeWindowsTaskDiagnostic(paths config.Paths, xmlBody string) (string, error) {
+	diagPath := filepath.Join(paths.StateDir, "logs", "task-install-failed.xml")
+	if err := os.MkdirAll(filepath.Dir(diagPath), 0o700); err != nil {
+		return "", err
+	}
+	if err := os.WriteFile(diagPath, []byte(xmlBody), 0o600); err != nil {
+		return "", err
+	}
+	return diagPath, nil
 }
 
 func xmlEscape(value string) string {
@@ -146,39 +191,76 @@ func xmlEscape(value string) string {
 }
 
 func StartService() error {
-	cmd := exec.Command("schtasks", "/Run", "/TN", taskName())
-	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("Starting task: %s: %w", string(out), err)
-	}
-	return nil
+	return runScheduledTaskCommand("start", "/Run", "/TN", taskName())
 }
 
 func StopService() error {
-	cmd := exec.Command("schtasks", "/End", "/TN", taskName())
-	cmd.CombinedOutput()
-	return nil
+	state, installed, err := queryWindowsTaskState()
+	if err != nil {
+		return err
+	}
+	if !installed {
+		return nil
+	}
+	if !windowsTaskStateActive(state) {
+		return nil
+	}
+	if err := runScheduledTaskCommand("stop", "/End", "/TN", taskName()); err != nil {
+		state, installed, queryErr := queryWindowsTaskState()
+		if queryErr == nil && (!installed || !windowsTaskStateActive(state)) {
+			return nil
+		}
+		if queryErr != nil {
+			return errors.Join(err, fmt.Errorf("rechecking scheduled task state: %w", queryErr))
+		}
+		return err
+	}
+	return waitForWindowsTaskStop(5 * time.Second)
 }
 
 func RestartService() error {
-	StopService()
+	if err := StopService(); err != nil {
+		return err
+	}
 	return StartService()
 }
 
 func UninstallService() error {
-	StopService()
-	cmd := exec.Command("schtasks", "/Delete", "/TN", taskName(), "/F")
-	cmd.CombinedOutput()
+	if err := StopService(); err != nil {
+		return err
+	}
+	_, installed, err := queryWindowsTaskState()
+	if err != nil {
+		return err
+	}
+	if !installed {
+		return nil
+	}
+	if err := runScheduledTaskCommand("delete", "/Delete", "/TN", taskName(), "/F"); err != nil {
+		_, installed, queryErr := queryWindowsTaskState()
+		if queryErr == nil && !installed {
+			return nil
+		}
+		if queryErr != nil {
+			return errors.Join(err, fmt.Errorf("rechecking scheduled task state: %w", queryErr))
+		}
+		return err
+	}
 	return nil
 }
 
-func ServiceInstalled() bool {
-	cmd := exec.Command("schtasks", "/Query", "/TN", taskName())
-	return cmd.Run() == nil
+func ServiceInstalled() (bool, error) {
+	_, installed, err := queryWindowsTaskState()
+	return installed, err
 }
 
-func InspectService(paths config.Paths) (ServiceStatus, error) {
+func InspectService(_ config.Paths) (ServiceStatus, error) {
 	status := DefaultServiceStatus()
-	if !ServiceInstalled() {
+	state, installed, err := queryWindowsTaskState()
+	if err != nil {
+		return status, err
+	}
+	if !installed {
 		status.Detail = "not installed"
 		return status, nil
 	}
@@ -186,37 +268,134 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	status.Installed = true
 	status.ConfigValid = true
 
-	if binary, err := extractWindowsTaskBinary(taskName()); err == nil && binary != "" {
-		status.BinaryPath = binary
-		if !binaryExecutable(binary) {
-			status.BinaryMissing = true
-			status.ConfigValid = false
-			status.Detail = fmt.Sprintf("service binary missing: %s", binary)
-			return status, nil
-		}
-	}
-
-	cmd := exec.Command("schtasks", "/Query", "/TN", taskName(), "/FO", "LIST")
-	out, err := cmd.CombinedOutput()
+	binary, err := extractWindowsTaskBinary(taskName())
 	if err != nil {
-		status.Detail = string(out)
-		if status.Detail == "" {
-			status.Detail = err.Error()
-		}
+		status.ConfigValid = false
+		status.Detail = fmt.Sprintf("reading scheduled task config: %v", err)
+		return status, nil
+	}
+	if strings.TrimSpace(binary) == "" {
+		status.ConfigValid = false
+		status.Detail = "scheduled task has no executable"
+		return status, nil
+	}
+	status.BinaryPath = binary
+	if !binaryExecutable(binary) {
+		status.BinaryMissing = true
+		status.ConfigValid = false
+		status.Detail = fmt.Sprintf("service binary missing: %s", binary)
 		return status, nil
 	}
 
-	detail := strings.TrimSpace(string(out))
 	status.Loaded = true
-	status.Running = strings.Contains(detail, "Status: Running")
-	if status.Running {
+	status.Running = state == windowsTaskStateRunning
+	switch state {
+	case windowsTaskStateUnknown:
+		status.Detail = "unknown"
+	case windowsTaskStateDisabled:
+		status.Detail = "disabled"
+	case windowsTaskStateQueued:
+		status.Detail = "queued"
+	case windowsTaskStateReady:
+		status.Detail = "ready"
+	case windowsTaskStateRunning:
 		status.Detail = "running"
-	} else {
-		status.Detail = "installed"
 	}
 
 	return status, nil
 }
+
+func queryWindowsTaskState() (int, bool, error) {
+	powershell, err := windowsServicePowerShellPath()
+	if err != nil {
+		return 0, false, fmt.Errorf("finding PowerShell for scheduled task state: %w", err)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, powershell, "-NoProfile", "-NonInteractive", "-Command", windowsTaskStateScript)
+	cmd.Env = append(os.Environ(), "FORGED_TASK_NAME="+taskName())
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
+			return 0, false, nil
+		}
+		message := strings.TrimSpace(string(out))
+		if message == "" {
+			return 0, false, fmt.Errorf("reading scheduled task state: %w", err)
+		}
+		return 0, false, fmt.Errorf("reading scheduled task state: %s: %w", message, err)
+	}
+	state, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, false, fmt.Errorf("parsing scheduled task state %q: %w", strings.TrimSpace(string(out)), err)
+	}
+	if state < windowsTaskStateUnknown || state > windowsTaskStateRunning {
+		return 0, false, fmt.Errorf("scheduled task returned unknown state %d", state)
+	}
+	return state, true, nil
+}
+
+func windowsTaskStateActive(state int) bool {
+	return state == windowsTaskStateQueued || state == windowsTaskStateRunning
+}
+
+func waitForWindowsTaskStop(timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for {
+		state, installed, err := queryWindowsTaskState()
+		if err != nil {
+			return err
+		}
+		if !installed || !windowsTaskStateActive(state) {
+			return nil
+		}
+		if !time.Now().Before(deadline) {
+			return fmt.Errorf("stopping scheduled task: timed out in state %d", state)
+		}
+		time.Sleep(100 * time.Millisecond)
+	}
+}
+
+func runScheduledTaskCommand(action string, args ...string) error {
+	out, err := exec.Command("schtasks", args...).CombinedOutput()
+	if err == nil {
+		return nil
+	}
+	message := strings.TrimSpace(string(out))
+	if message == "" {
+		return fmt.Errorf("scheduled task %s failed: %w", action, err)
+	}
+	return fmt.Errorf("scheduled task %s failed: %s: %w", action, message, err)
+}
+
+func windowsServicePowerShellPath() (string, error) {
+	for _, candidate := range []string{"powershell.exe", "pwsh.exe"} {
+		if path, err := exec.LookPath(candidate); err == nil {
+			return path, nil
+		}
+	}
+	return "", exec.ErrNotFound
+}
+
+const windowsTaskStateScript = `$ErrorActionPreference = 'Stop'
+try {
+  $service = New-Object -ComObject 'Schedule.Service'
+  $service.Connect()
+  $task = $service.GetFolder('\').GetTask($env:FORGED_TASK_NAME)
+  [Console]::Out.Write([int]$task.State)
+  exit 0
+} catch {
+  $exception = $_.Exception
+  while ($null -ne $exception) {
+    if ($exception.HResult -eq -2147024894) {
+      exit 3
+    }
+    $exception = $exception.InnerException
+  }
+  [Console]::Error.Write($_.Exception.Message)
+  exit 1
+}`
 
 func findBinary() (string, error) {
 	self, err := os.Executable()

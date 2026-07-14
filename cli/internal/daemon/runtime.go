@@ -65,7 +65,11 @@ func RefreshInstalledServiceIfStale(paths config.Paths, runtime RuntimeSpec) (bo
 	if err != nil {
 		return false, err
 	}
-	if !ServiceInstalled() {
+	installed, err := ServiceInstalled()
+	if err != nil {
+		return false, fmt.Errorf("checking installed service: %w", err)
+	}
+	if !installed {
 		return false, nil
 	}
 

@@ -77,7 +77,11 @@ func install(binary string) error {
 }
 
 func stop() error {
-	if !daemon.ServiceInstalled() {
+	installed, err := daemon.ServiceInstalled()
+	if err != nil {
+		return fmt.Errorf("checking Forged service: %w", err)
+	}
+	if !installed {
 		fmt.Println("Forged service is not installed")
 		return nil
 	}

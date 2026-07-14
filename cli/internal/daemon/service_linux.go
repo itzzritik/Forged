@@ -105,14 +105,24 @@ func UninstallService() error {
 	return nil
 }
 
-func ServiceInstalled() bool {
+func ServiceInstalled() (bool, error) {
 	_, err := os.Stat(unitPath())
-	return err == nil
+	if err == nil {
+		return true, nil
+	}
+	if os.IsNotExist(err) {
+		return false, nil
+	}
+	return false, fmt.Errorf("checking systemd service: %w", err)
 }
 
 func InspectService(paths config.Paths) (ServiceStatus, error) {
 	status := DefaultServiceStatus()
-	if !ServiceInstalled() {
+	installed, err := ServiceInstalled()
+	if err != nil {
+		return status, err
+	}
+	if !installed {
 		status.Detail = "not installed"
 		return status, nil
 	}

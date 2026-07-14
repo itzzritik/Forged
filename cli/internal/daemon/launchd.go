@@ -218,8 +218,16 @@ func UninstallService() error {
 	return nil
 }
 
-func ServiceInstalled() bool {
-	return len(existingLaunchdServiceFiles()) > 0
+func ServiceInstalled() (bool, error) {
+	paths := append([]string{plistPath()}, legacyPlistPaths()...)
+	for _, path := range paths {
+		if _, err := os.Stat(path); err == nil {
+			return true, nil
+		} else if !os.IsNotExist(err) {
+			return false, fmt.Errorf("checking launchd service %s: %w", path, err)
+		}
+	}
+	return false, nil
 }
 
 func InspectService(paths config.Paths) (ServiceStatus, error) {
