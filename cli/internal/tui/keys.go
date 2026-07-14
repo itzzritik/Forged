@@ -1295,8 +1295,9 @@ func (m *model) listLocalKeys(id int, preserve bool) tea.Cmd {
 
 func (m *model) syncAndListKeys(id int) tea.Cmd {
 	paths := config.DefaultPaths()
+	loggedIn := m.snapshot.LoggedIn
 	return func() tea.Msg {
-		if m.snapshot.LoggedIn {
+		if loggedIn {
 			if err := actions.TriggerSync(paths); err != nil {
 				return keyListMsg{id: id, err: err, preserve: true}
 			}
