@@ -1700,8 +1700,7 @@ func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (
 			if m.isLockedAuthScreen() {
 				return m, nil
 			}
-			m.showPasswordScreen(passwordStartupUnlock, "", "", true)
-			m.passwordContext = "Please authenticate to continue using Forged."
+			m.showPasswordScreen(passwordKeyView, "", "", true)
 			return m, m.passwordInput.Init()
 		}
 		m.keyDetail.status = ""

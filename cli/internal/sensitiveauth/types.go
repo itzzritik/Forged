@@ -8,9 +8,10 @@ import (
 type Action string
 
 const (
-	ActionView     Action = "view"
-	ActionExport   Action = "export"
-	ActionExternal Action = "external"
+	ActionView       Action = "view"
+	ActionPrivateKey Action = "private-key"
+	ActionExport     Action = "export"
+	ActionExternal   Action = "external"
 )
 
 const (
@@ -23,11 +24,12 @@ type AuthorizeResult struct {
 	PasswordRequired bool   `json:"password_required"`
 	Prompt           string `json:"prompt,omitempty"`
 	ExportToken      string `json:"export_token,omitempty"`
+	PrivateKeyToken  string `json:"private_key_token,omitempty"`
 }
 
 func ParseAction(raw string) (Action, error) {
 	switch Action(raw) {
-	case ActionView, ActionExport, ActionExternal:
+	case ActionView, ActionPrivateKey, ActionExport, ActionExternal:
 		return Action(raw), nil
 	default:
 		return "", fmt.Errorf("Unsupported sensitive action %q", raw)
@@ -38,6 +40,8 @@ func (a Action) PasswordPrompt() string {
 	switch a {
 	case ActionExport:
 		return "Enter your master password to export this vault."
+	case ActionPrivateKey:
+		return "Enter your master password to copy this private key."
 	case ActionExternal:
 		return ""
 	default:

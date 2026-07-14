@@ -599,8 +599,9 @@ func (s *Server) handleExport(ctx context.Context, raw json.RawMessage) Response
 }
 
 type viewArgs struct {
-	Name string `json:"name"`
-	Full bool   `json:"full"`
+	Name            string `json:"name"`
+	Full            bool   `json:"full"`
+	PrivateKeyToken string `json:"private_key_token"`
 }
 
 func (s *Server) handleView(ctx context.Context, raw json.RawMessage) Response {
@@ -626,8 +627,8 @@ func (s *Server) handleView(ctx context.Context, raw json.RawMessage) Response {
 	}
 
 	if a.Full {
-		if s.authBroker == nil || !s.authBroker.IsUnlocked() {
-			return ErrorResponse(fmt.Errorf("Sensitive private-key access requires authentication"))
+		if s.authBroker == nil || a.PrivateKeyToken == "" || !s.authBroker.ConsumePrivateKeyToken(a.PrivateKeyToken) {
+			return ErrorResponse(fmt.Errorf("Private-key access requires fresh password authentication"))
 		}
 	}
 

@@ -141,7 +141,7 @@ func (b *Broker) AuthorizeForced(ctx context.Context, action Action) (AuthorizeR
 }
 
 func (b *Broker) authorize(ctx context.Context, action Action, force bool) (AuthorizeResult, error) {
-	if action == ActionExport {
+	if action == ActionExport || action == ActionPrivateKey {
 		return AuthorizeResult{
 			PasswordRequired: true,
 			Prompt:           action.PasswordPrompt(),
@@ -250,22 +250,27 @@ func (b *Broker) authorizeWithPassword(action Action, password []byte, generatio
 		}
 		return AuthorizeResult{}, ErrAuthenticationCanceled
 	}
+	now := time.Now()
 	if action == ActionExport {
-		return b.allowExport(time.Now()), nil
+		return b.allowExport(now), nil
 	}
-	return b.grantLocked(action, time.Now()), nil
+	result := b.grantLocked(action, now)
+	if action == ActionPrivateKey {
+		result.PrivateKeyToken = b.leases.IssuePrivateKeyToken(now)
+	}
+	return result, nil
 }
 
 func (b *Broker) IsUnlocked() bool {
 	return b.hasActiveSession(time.Now())
 }
 
-func (b *Broker) CanViewFull() bool {
-	return b.IsUnlocked()
-}
-
 func (b *Broker) ConsumeExportToken(token string) bool {
 	return b.leases.ConsumeExportToken(token, time.Now())
+}
+
+func (b *Broker) ConsumePrivateKeyToken(token string) bool {
+	return b.leases.ConsumePrivateKeyToken(token, time.Now())
 }
 
 func (b *Broker) Invalidate(reason string) {

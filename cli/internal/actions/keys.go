@@ -123,14 +123,21 @@ func ListLocalKeys(paths config.Paths) ([]KeySummary, error) {
 }
 
 func ViewKey(paths config.Paths, name string) (KeyDetail, error) {
-	return viewKey(paths, name, false)
+	return viewKey(paths, name, false, "")
 }
 
 func ViewFullKey(paths config.Paths, name string, password []byte) (KeyDetail, error) {
-	if _, err := authorizeSensitiveResult(paths, sensitiveauth.ActionView, password); err != nil {
+	if len(password) == 0 {
+		return KeyDetail{}, &SensitiveAuthRequiredError{Prompt: sensitiveauth.ActionPrivateKey.PasswordPrompt()}
+	}
+	authResult, err := authorizeSensitiveResult(paths, sensitiveauth.ActionPrivateKey, password)
+	if err != nil {
 		return KeyDetail{}, err
 	}
-	return viewKey(paths, name, true)
+	if strings.TrimSpace(authResult.PrivateKeyToken) == "" {
+		return KeyDetail{}, fmt.Errorf("Private-key authorization did not return a token")
+	}
+	return viewKey(paths, name, true, authResult.PrivateKeyToken)
 }
 
 func ExportPublicKey(paths config.Paths, name string) (GenerateResult, error) {
@@ -181,11 +188,15 @@ func GenerateKey(paths config.Paths, name, comment string) (GenerateResult, erro
 	return result, nil
 }
 
-func viewKey(paths config.Paths, name string, full bool) (KeyDetail, error) {
-	resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdView, map[string]any{
+func viewKey(paths config.Paths, name string, full bool, privateKeyToken string) (KeyDetail, error) {
+	args := map[string]any{
 		"name": name,
 		"full": full,
-	})
+	}
+	if full {
+		args["private_key_token"] = privateKeyToken
+	}
+	resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdView, args)
 	if err != nil {
 		return KeyDetail{}, err
 	}
