@@ -29,6 +29,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Key deletion and commit-signing disable use an explicit review-and-confirm step. Once submitted, their non-cancelable work hides route navigation until it finishes.
 - Signing-status refreshes are single-flight and identify the configured Forged key by matching one parsed SSH fingerprint against one key list.
 - Runtime sync errors must clear the in-memory syncing flag so stale status cannot leave the header spinner active forever.
+- Idle locking keeps one coalesced deadline timer; keyboard activity moves the deadline instead of spawning another timer.
 - Startup unlock uses the shared auth broker: desktop TUI tries System Auth and falls back to the universal master-password page; headless TUI hydrates enrolled device unlock without prompting.
 - Master-password screens share one component for create, restore, unlock fallback, export, repair, and change-password flows.
 - Valid password submissions reset every field immediately; leaving a password screen discards the component, and background commands clear their owned byte copies when done.

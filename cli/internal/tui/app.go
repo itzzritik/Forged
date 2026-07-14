@@ -198,9 +198,7 @@ type runtimeStatusMsg struct {
 	err    error
 }
 
-type idleLockMsg struct {
-	id int
-}
+type idleLockMsg struct{}
 
 type idleLockFinishedMsg struct {
 	id  int
@@ -374,6 +372,9 @@ type model struct {
 	securityState            SecurityState
 	securityLoaded           bool
 	idleLockID               int
+	idleLockDeadline         time.Time
+	idleLockTimerArmed       bool
+	idleLockInFlight         bool
 
 	keyListID            int
 	keyDetailID          int
@@ -791,20 +792,32 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case idleLockMsg:
-		if msg.id != m.idleLockID || !m.shouldTrackIdleLock() {
+		m.idleLockTimerArmed = false
+		if !m.shouldTrackIdleLock() || m.idleLockDeadline.IsZero() {
+			m.idleLockDeadline = time.Time{}
 			return m, nil
 		}
-		return m, m.lockSensitiveCmd(msg.id)
+		if time.Until(m.idleLockDeadline) > 0 {
+			return m, m.armIdleLockCmd()
+		}
+		if m.idleLockInFlight {
+			return m, nil
+		}
+		m.idleLockInFlight = true
+		m.idleLockID++
+		return m, m.lockSensitiveCmd(m.idleLockID)
 	case idleLockFinishedMsg:
 		if msg.id != m.idleLockID {
 			return m, nil
 		}
+		m.idleLockInFlight = false
 		if msg.err != nil {
 			if m.screen == screenDashboard {
 				m.notice = notice{message: msg.err.Error(), tone: dashboardscreen.ToneDanger}
 			}
 			return m, m.resetIdleLockCmd()
 		}
+		m.idleLockDeadline = time.Time{}
 		wasUnlocked := m.runtimeStatus.SensitiveKnown && m.runtimeStatus.Unlocked
 		m.runtimeStatus.Unlocked = false
 		m.runtimeStatus.SensitiveKnown = true
@@ -2273,13 +2286,28 @@ func (m *model) shouldTrackIdleLock() bool {
 }
 
 func (m *model) resetIdleLockCmd() tea.Cmd {
-	m.idleLockID++
-	if !m.shouldTrackIdleLock() {
+	if m.idleLockInFlight {
 		return nil
 	}
-	id := m.idleLockID
-	return tea.Tick(tuiIdleLockTimeout, func(time.Time) tea.Msg {
-		return idleLockMsg{id: id}
+	if !m.shouldTrackIdleLock() {
+		m.idleLockDeadline = time.Time{}
+		return nil
+	}
+	m.idleLockDeadline = time.Now().Add(tuiIdleLockTimeout)
+	return m.armIdleLockCmd()
+}
+
+func (m *model) armIdleLockCmd() tea.Cmd {
+	if m.idleLockTimerArmed || m.idleLockInFlight || m.idleLockDeadline.IsZero() {
+		return nil
+	}
+	delay := time.Until(m.idleLockDeadline)
+	if delay < 0 {
+		delay = 0
+	}
+	m.idleLockTimerArmed = true
+	return tea.Tick(delay, func(time.Time) tea.Msg {
+		return idleLockMsg{}
 	})
 }
 
