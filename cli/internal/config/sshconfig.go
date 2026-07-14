@@ -258,6 +258,9 @@ func RenderManagedSSHConfig(paths Paths, routes string) string {
 		fmt.Sprintf("    IdentityAgent %q", paths.AgentSocket()),
 	}
 
+	if !platform.SSHRoutingSupported() {
+		routes = ""
+	}
 	routes = strings.TrimSpace(routes)
 	if routes != "" {
 		lines = append(lines, "    PermitLocalCommand yes")
@@ -265,6 +268,23 @@ func RenderManagedSSHConfig(paths Paths, routes string) string {
 	}
 
 	return strings.Join(lines, "\n") + "\n"
+}
+
+// EnsureAgentOnlyManagedSSHConfig removes the product-owned routing section while preserving the managed agent section.
+func EnsureAgentOnlyManagedSSHConfig(paths Paths) error {
+	if err := paths.ValidateRuntimePaths(); err != nil {
+		return err
+	}
+	return withSSHConfigLock(paths, func() error {
+		if err := os.MkdirAll(paths.SSHManagedDir(), 0o700); err != nil {
+			return fmt.Errorf("Creating managed SSH directory: %w", err)
+		}
+		content, err := readConfigFile(paths.SSHManagedConfig())
+		if err != nil {
+			return fmt.Errorf("reading managed SSH config: %w", err)
+		}
+		return ensureAgentOnlyManagedSSHConfigLocked(paths, content)
+	})
 }
 
 func cleanupLegacySSHArtifacts(paths Paths) error {
@@ -281,6 +301,9 @@ func ensureManagedSSHConfigLocked(paths Paths) error {
 	if err != nil {
 		return fmt.Errorf("reading managed SSH config: %w", err)
 	}
+	if !platform.SSHRoutingSupported() {
+		return ensureAgentOnlyManagedSSHConfigLocked(paths, content)
+	}
 	if content == "" {
 		return writeSSHFileAtomic(path, []byte(RenderManagedSSHConfig(paths, "")))
 	}
@@ -293,6 +316,61 @@ func ensureManagedSSHConfigLocked(paths Paths) error {
 		return nil
 	}
 	return writeSSHFileAtomic(path, []byte(updated))
+}
+
+func ensureAgentOnlyManagedSSHConfigLocked(paths Paths, content string) error {
+	path := paths.SSHManagedConfig()
+	if content == "" {
+		return writeSSHFileAtomic(path, []byte(RenderManagedSSHConfig(paths, "")))
+	}
+
+	updated, err := updateManagedSSHIdentityAgent(content, paths.AgentSocket())
+	if err != nil {
+		return fmt.Errorf("updating managed SSH config: %w", err)
+	}
+	updated, err = removeManagedSSHRoutingTail(updated)
+	if err != nil {
+		return err
+	}
+	if updated == content {
+		return nil
+	}
+	return writeSSHFileAtomic(path, []byte(updated))
+}
+
+func removeManagedSSHRoutingTail(content string) (string, error) {
+	lines := strings.Split(content, "\n")
+	end := len(lines)
+	for end > 0 && strings.TrimSpace(lines[end-1]) == "" {
+		end--
+	}
+
+	marker := -1
+	for i := 0; i < end; i++ {
+		if strings.TrimSuffix(lines[i], "\r") != sshRoutesComment {
+			continue
+		}
+		if marker >= 0 {
+			return "", fmt.Errorf("managed SSH routing tail is ambiguous")
+		}
+		marker = i
+	}
+	if marker < 0 {
+		return content, nil
+	}
+	permit := marker - 1
+	for permit >= 0 && strings.TrimSpace(lines[permit]) == "" {
+		permit--
+	}
+	if permit < 0 || strings.TrimSuffix(lines[permit], "\r") != "    PermitLocalCommand yes" {
+		return "", fmt.Errorf("managed SSH routing tail is missing its generated PermitLocalCommand")
+	}
+
+	prefix := trimTrailingBlankLines(strings.Join(lines[:permit], "\n"))
+	if prefix == "" {
+		return "", fmt.Errorf("managed SSH routing tail has no managed config prefix")
+	}
+	return prefix + "\n", nil
 }
 
 func updateManagedSSHIdentityAgent(content, agentSocket string) (string, error) {

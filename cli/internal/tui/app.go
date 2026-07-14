@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/itzzritik/forged/cli/internal/tui/components"
 	accountscreen "github.com/itzzritik/forged/cli/internal/tui/screens/account"
@@ -2939,6 +2940,13 @@ func (m *model) showCurrentRoute() tea.Cmd {
 		}
 		return m.startAgentSigningRoute()
 	case RouteAgentRouting:
+		if !platform.SSHRoutingSupported() {
+			m.session.Reset(Route{ID: RouteAgentHome})
+			m.agent.selected = 0
+			m.agent.statusErr = "SSH routing is unavailable on this platform"
+			m.notice = notice{message: m.agent.statusErr, tone: dashboardscreen.ToneWarning}
+			return nil
+		}
 		if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
 			return nil
 		}

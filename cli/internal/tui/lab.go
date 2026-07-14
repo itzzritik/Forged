@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/actions"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	keyscreen "github.com/itzzritik/forged/cli/internal/tui/screens/keys"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
@@ -49,7 +50,8 @@ type labRoutingPollMsg struct {
 }
 
 func (m *model) isLabRoutingRoute() bool {
-	return m.screen == screenDashboard &&
+	return platform.SSHRoutingSupported() &&
+		m.screen == screenDashboard &&
 		m.snapshot.VaultExists &&
 		m.session.Current().ID == RouteAgentRouting
 }

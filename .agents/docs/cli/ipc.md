@@ -29,6 +29,7 @@ stable: yes
 - If route prepare finds no public route cache because the daemon is cold, IPC runs external auth once and retries prepare after hydration.
 - TUI diagnostics use SSH route list/clear IPC. Clearing routes must call the route service so vault tombstones and sync mutation handling stay correct.
 - On Windows, a failed current-token pipe identity lookup is returned directly to IPC callers; it is not reported as a stopped daemon.
+- On Windows, the daemon does not register a route handler. Stale hidden routing helpers fail before IPC and direct route requests return unavailable rather than accepting an untrusted client PID.
 - Windows IPC support is still incomplete.
 
 ## Decisions

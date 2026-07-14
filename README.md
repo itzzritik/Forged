@@ -71,7 +71,7 @@ No browser. No Electron. No local web server. Just a Unix socket and a CLI.
 
 Forged keeps SSH integration low-touch. It manages its own SSH file under `~/.forged/config/ssh/forged.conf` and adds at most one `Include` line to your main `~/.ssh/config`.
 
-When the same host accepts multiple keys, Forged narrows each SSH or Git connection with per-attempt OpenSSH snippets and public-key hint files, so OpenSSH normally sees one proven key or a tiny ordered fallback set. GitHub and GitLab repo routes are learned with strict host-key provider probes; broader same-owner and same-host history is used only as a hint for ordering.
+On Linux and macOS, when the same host accepts multiple keys, Forged narrows each SSH or Git connection with per-attempt OpenSSH snippets and public-key hint files, so OpenSSH normally sees one proven key or a tiny ordered fallback set. GitHub and GitLab repo routes are learned with strict host-key provider probes; broader same-owner and same-host history is used only as a hint for ordering. Windows keeps the standard `IdentityAgent` integration, but automatic per-connection routing is unavailable.
 
 Forged does not rewrite your existing host blocks or repo-local Git config.
 

@@ -8,6 +8,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 type SSHRoutingDebug struct {
@@ -76,6 +77,9 @@ type SSHRoutePublicHint struct {
 }
 
 func LoadSSHRoutingDebug(paths config.Paths) (SSHRoutingDebug, error) {
+	if !platform.SSHRoutingSupported() {
+		return SSHRoutingDebug{}, fmt.Errorf("SSH routing is unavailable on this platform")
+	}
 	snapshot, err := loadSSHRoutingDebug(paths)
 	if err == nil {
 		return snapshot, nil
@@ -104,11 +108,17 @@ func isUnknownIPCCommand(err error, command string) bool {
 }
 
 func ClearSSHRoute(paths config.Paths, target string) error {
+	if !platform.SSHRoutingSupported() {
+		return fmt.Errorf("SSH routing is unavailable on this platform")
+	}
 	_, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSSHRouteClear, ipc.SSHRouteClearArgs{Target: target})
 	return err
 }
 
 func ClearAllSSHRoutes(paths config.Paths) error {
+	if !platform.SSHRoutingSupported() {
+		return fmt.Errorf("SSH routing is unavailable on this platform")
+	}
 	_, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSSHRoutesClearAll, nil)
 	return err
 }

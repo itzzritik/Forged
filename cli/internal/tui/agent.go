@@ -9,6 +9,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/itzzritik/forged/cli/internal/tui/components"
 	agentscreen "github.com/itzzritik/forged/cli/internal/tui/screens/agent"
@@ -127,11 +128,13 @@ func (m *model) agentItems() []agentItem {
 		signingSummary = "Review the current external signing key or switch commit signing to Forged"
 	}
 
-	return []agentItem{
+	items := []agentItem{
 		{ID: agentItemSSHToggle, Label: sshLabel, Summary: sshSummary},
-		{ID: agentItemSSHRouting, Label: "SSH Routing", Summary: "Inspect and clear learned SSH and Git route memory"},
-		{ID: agentItemCommitSigning, Label: "Commit Signing", Summary: signingSummary},
 	}
+	if platform.SSHRoutingSupported() {
+		items = append(items, agentItem{ID: agentItemSSHRouting, Label: "SSH Routing", Summary: "Inspect and clear learned SSH and Git route memory"})
+	}
+	return append(items, agentItem{ID: agentItemCommitSigning, Label: "Commit Signing", Summary: signingSummary})
 }
 
 func (m *model) agentDashboardPages() []dashboardPage {
@@ -593,6 +596,10 @@ func (m *model) openAgentItem(item agentItem) (tea.Model, tea.Cmd) {
 		}
 		return m, m.showCurrentRoute()
 	case agentItemSSHRouting:
+		if !platform.SSHRoutingSupported() {
+			m.agent.statusErr = "SSH routing is unavailable on this platform"
+			return m, nil
+		}
 		if m.session.Current().ID != RouteAgentRouting {
 			m.session.Push(Route{ID: RouteAgentRouting})
 		}

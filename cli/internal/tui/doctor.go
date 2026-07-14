@@ -9,6 +9,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	dashboardscreen "github.com/itzzritik/forged/cli/internal/tui/screens/dashboard"
 	doctorscreen "github.com/itzzritik/forged/cli/internal/tui/screens/doctor"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
@@ -544,11 +545,15 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 		return row
 	}
 	if m.snapshot.SSHEnabled {
+		detail := "Forged SSH include is configured"
+		if !platform.SSHRoutingSupported() {
+			detail = "Forged SSH agent is active; automatic SSH routing is unavailable on this platform"
+		}
 		return doctorRow{
 			screen: doctorscreen.Row{
 				Check:  "SSH Agent",
 				Status: theme.Glyphs.Check + " Active",
-				Detail: "Forged SSH include is configured",
+				Detail: detail,
 				Tone:   doctorscreen.ToneSuccess,
 			},
 		}

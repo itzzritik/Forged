@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
 
@@ -22,6 +23,9 @@ var sshRoutePrepareCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !platform.SSHRoutingSupported() {
+			return fmt.Errorf("SSH routing is unavailable on this platform")
+		}
 		if os.Getenv("FORGED_SSH_ROUTE_SKIP") == "1" {
 			os.Exit(1)
 		}
@@ -53,6 +57,9 @@ var sshRouteSuccessCmd = &cobra.Command{
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
+		if !platform.SSHRoutingSupported() {
+			return fmt.Errorf("SSH routing is unavailable on this platform")
+		}
 		_, err := ctlClient().Call(ipc.CmdSSHRouteSuccess, ipc.SSHRouteSuccessArgs{
 			Attempt:   sshRouteAttempt,
 			ClientPID: os.Getppid(),

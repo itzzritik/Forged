@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
@@ -24,6 +25,15 @@ func NewManager(paths config.Paths, selfPath string) *Manager {
 }
 
 func (m *Manager) Refresh(keys []vault.Key) error {
+	if !platform.SSHRoutingSupported() {
+		if err := config.EnsureAgentOnlyManagedSSHConfig(m.paths); err != nil {
+			return err
+		}
+		_ = os.RemoveAll(m.paths.SSHRouteRuntimeDir())
+		_ = os.RemoveAll(m.paths.SSHManagedKeysDir())
+		return nil
+	}
+
 	if err := os.MkdirAll(m.paths.SSHManagedDir(), 0o700); err != nil {
 		return err
 	}

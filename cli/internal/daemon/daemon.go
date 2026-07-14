@@ -82,8 +82,10 @@ func (d *Daemon) Run(password []byte) error {
 
 	defer d.shutdown()
 
-	d.routeService = sshrouting.NewService(d.paths, nil)
-	d.routeService.SetOnMutation(d.handleRouteMutation)
+	if platform.SSHRoutingSupported() {
+		d.routeService = sshrouting.NewService(d.paths, nil)
+		d.routeService.SetOnMutation(d.handleRouteMutation)
+	}
 	d.sshRouting = sshrouting.NewManager(d.paths, d.selfBinaryPath())
 	d.authBroker = sensitiveauth.NewBroker(d.paths, d.helperBinaryPath(), d.logger, d)
 
@@ -275,7 +277,9 @@ func (d *Daemon) startIPC() error {
 			d.logger.Warn("refreshing ssh routing after sync failed", "error", err)
 		}
 	})
-	d.ipcServer.SetSSHRouteHandler(d.routeService)
+	if d.routeService != nil {
+		d.ipcServer.SetSSHRouteHandler(d.routeService)
+	}
 	if err := d.ipcServer.Start(); err != nil {
 		return fmt.Errorf("Starting IPC server: %w", err)
 	}
@@ -292,7 +296,9 @@ func (d *Daemon) startAgentLocked() error {
 
 	d.agent = forgedagent.New(d.keyStore)
 	d.agent.SetSyncCoordinator(d.syncBus)
-	d.agent.SetRouteSessions(d.routeService)
+	if d.routeService != nil {
+		d.agent.SetRouteSessions(d.routeService)
+	}
 	d.agent.SetSensitiveAuthorizer(d.authBroker)
 	d.agentServer = forgedagent.NewServer(agentPath, d.agent, d.logger)
 	if err := d.agentServer.Start(); err != nil {
