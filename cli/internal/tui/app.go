@@ -411,7 +411,7 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 	}
 
 	initial := newModel(intent, deps, components.NewSpinner())
-	final, err := tea.NewProgram(initial).Run()
+	final, err := tea.NewProgram(initial, tea.WithAltScreen()).Run()
 	initial.clearRestorePassword()
 	initial.discardPasswordInput()
 	closeErr := deps.CloseClipboard()
