@@ -883,7 +883,7 @@ func systemAuthUnavailableHint(capability string) string {
 func secureStoreUnavailableHint() string {
 	switch runtime.GOOS {
 	case "windows":
-		return "Windows secure device-key storage is not implemented"
+		return "Windows DPAPI is unavailable for this user"
 	case "linux":
 		return "Linux secure device-key storage is not implemented"
 	default:

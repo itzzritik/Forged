@@ -2,11 +2,15 @@
 
 package sensitiveauth
 
-import "context"
+import (
+	"context"
+
+	"github.com/itzzritik/forged/cli/internal/config"
+)
 
 type stubSecureStore struct{}
 
-func newPlatformSecureStore() SecureStore {
+func newPlatformSecureStore(config.Paths) SecureStore {
 	return &stubSecureStore{}
 }
 

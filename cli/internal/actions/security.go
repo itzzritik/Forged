@@ -29,7 +29,7 @@ func LoadSecurityState(paths config.Paths) (SecurityState, error) {
 	return SecurityState{
 		MasterPasswordInterval: config.NormalizeMasterPasswordInterval(cfg.Security.MasterPasswordInterval),
 		SystemAuthCapability:   string(inspectNativeCapability(helperBinaryPath())),
-		SecureStoreCapability:  string(sensitiveauth.NewSecureStore().Capability(context.Background())),
+		SecureStoreCapability:  string(sensitiveauth.NewSecureStore(paths).Capability(context.Background())),
 		HeadlessUnlock:         sensitiveauth.HeadlessModeEnabled(paths),
 	}, nil
 }

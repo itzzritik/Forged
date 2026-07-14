@@ -7,13 +7,15 @@ import (
 	"encoding/base64"
 	"os/exec"
 	"strings"
+
+	"github.com/itzzritik/forged/cli/internal/config"
 )
 
 const darwinSecureStoreService = "com.forged.local-unlock"
 
 type darwinSecureStore struct{}
 
-func newPlatformSecureStore() SecureStore {
+func newPlatformSecureStore(config.Paths) SecureStore {
 	return &darwinSecureStore{}
 }
 

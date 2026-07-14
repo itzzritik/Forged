@@ -112,10 +112,10 @@ func runRootCommand(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("Forged requires an interactive terminal. Use `forged help` or `forged version`")
 	}
 	if cmd.Flags().Changed("headless") {
-		if headlessMode && !sensitiveauth.HeadlessModeSupported() {
+		paths := config.DefaultPaths()
+		if headlessMode && !sensitiveauth.HeadlessModeSupported(paths) {
 			return fmt.Errorf("Headless mode is not supported on this platform")
 		}
-		paths := config.DefaultPaths()
 		if err := config.SetHeadlessUnlock(paths, headlessMode); err != nil {
 			return fmt.Errorf("Saving headless mode: %w", err)
 		}

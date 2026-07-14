@@ -3,6 +3,8 @@ package sensitiveauth
 import (
 	"context"
 	"errors"
+
+	"github.com/itzzritik/forged/cli/internal/config"
 )
 
 var (
@@ -18,6 +20,6 @@ type SecureStore interface {
 	DeleteDeviceKey(ctx context.Context, installID string) error
 }
 
-func NewSecureStore() SecureStore {
-	return newPlatformSecureStore()
+func NewSecureStore(paths config.Paths) SecureStore {
+	return newPlatformSecureStore(paths)
 }

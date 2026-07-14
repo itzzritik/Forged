@@ -8,7 +8,7 @@ applies_to:
   - web/src/workers/**
   - server/internal/api/vault_handlers.go
   - server/migrations/**
-last_verified: 2026-07-14
+last_verified: 2026-07-15
 stable: partial
 ---
 
@@ -22,6 +22,7 @@ Forged is zero-knowledge. The server stores the encrypted vault blob, KDF params
 - Password change rewraps the vault symmetric key. It does not re-encrypt every item and it does not rotate the inner symmetric key.
 - Local unlock trust is per-device:
   - secure-store device key
+  - Windows: a CurrentUser-DPAPI `auth/local-unlock.dpapi` blob bound to the installation ID
   - `~/.config/forged/auth/headless-unlock.key` when no OS secure store exists
   - `~/.config/forged/auth/local-unlock.json`
   - `~/.config/forged/auth/device.id`
