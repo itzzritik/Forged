@@ -72,6 +72,10 @@ func (s *Session) CanGoBack() bool {
 	return len(s.stack)-1 > s.boundary
 }
 
+func (s *Session) ParentIs(id RouteID) bool {
+	return s.CanGoBack() && s.stack[len(s.stack)-2].ID == id
+}
+
 func (s *Session) Back() bool {
 	if !s.CanGoBack() {
 		return false

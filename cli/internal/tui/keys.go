@@ -1934,7 +1934,7 @@ func (m *model) handleKeyRenameFinishedMsg(msg keyRenameFinishedMsg) (tea.Model,
 	}
 	m.renameCachedKey(msg.result.OldName, msg.result.NewName)
 	if current {
-		m.session.ReplaceCurrent(Route{
+		m.replaceCurrentKeyBrowser(Route{
 			ID: RouteKeysBrowser,
 			Params: map[string]string{
 				"query": msg.result.NewName,
@@ -1964,7 +1964,7 @@ func (m *model) handleKeyDeleteFinishedMsg(msg keyDeleteFinishedMsg) (tea.Model,
 	}
 	m.removeCachedKey(msg.name)
 	if current {
-		m.session.ReplaceCurrent(Route{ID: RouteKeysBrowser})
+		m.replaceCurrentKeyBrowser(Route{ID: RouteKeysBrowser})
 	}
 	if visible {
 		return m, tea.Batch(m.showCurrentRoute(), m.invalidateSigningStatusCmd())
@@ -2245,7 +2245,7 @@ func (m *model) handleKeyExportPickerMsg(msg keyExportPickerMsg) (tea.Model, tea
 
 func (m *model) fallbackKeyBrowser(keys []actions.KeySummary, query string, notice string) (tea.Model, tea.Cmd) {
 	searchActive := len(actions.ResolveKeyQuery(keys, query).Matches) == 0
-	m.session.ReplaceCurrent(Route{
+	m.replaceCurrentKeyBrowser(Route{
 		ID: RouteKeysBrowser,
 		Params: map[string]string{
 			"query":  query,
@@ -2258,6 +2258,13 @@ func (m *model) fallbackKeyBrowser(keys []actions.KeySummary, query string, noti
 		return m, textinput.Blink
 	}
 	return m, nil
+}
+
+func (m *model) replaceCurrentKeyBrowser(route Route) {
+	if m.session.Current().Params["source"] == "browser" && m.session.ParentIs(RouteKeysBrowser) {
+		m.session.Back()
+	}
+	m.session.ReplaceCurrent(route)
 }
 
 func (m *model) prepareKeyBrowser(keys []actions.KeySummary, query string, notice string, searchActive bool) {

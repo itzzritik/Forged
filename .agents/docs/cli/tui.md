@@ -51,6 +51,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Post-preview import failures retain sanitized name/fingerprint/reason details, with each untrusted error bounded before redaction. A read-only result view never resubmits successful inputs, pages the selected reason on short terminals, and writes one bounded aggregate diagnostic event.
 - Change-password success returns only while its dashboard success route is still visible, so a stale timer cannot dismiss a new authentication wall.
 - Key-browser refreshes reuse the live search input, treat a successful empty list as loaded, clear transient refresh failures after success without erasing route guidance, and become cache-only after navigation; normal list reads already apply the daemon's freshness policy.
+- Browser-origin key success and fallback transitions collapse their transient child before returning to the Browser; direct routes replace only their own entry.
 - Key-browser row pages shrink with the available body height so the selected row and bottom-docked search controls remain visible on short terminals.
 - Commit Signing uses the same dynamic row paging and drops its redundant status card on short terminals, where signing state already remains visible in the header.
 - Signing-status refreshes are single-flight and identify the configured Forged key by matching one parsed SSH fingerprint against one key list.
