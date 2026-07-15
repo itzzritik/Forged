@@ -309,12 +309,13 @@ func (p *PasswordInput) View(spinner string, labels ...string) string {
 		sections = append(sections, strings.Join(lines, "\n"))
 	}
 
+	feedbackWidth := max(12, p.width)
 	if p.err != "" {
-		sections = append(sections, theme.Danger.Render(theme.Glyphs.Cross+" "+sentenceCase(p.err)))
+		sections = append(sections, theme.Danger.Width(feedbackWidth).Render(theme.Glyphs.Cross+" "+sentenceCase(p.err)))
 	} else if p.ok != "" {
-		sections = append(sections, theme.Success.Render(theme.Glyphs.Check+" "+sentenceCase(p.ok)))
+		sections = append(sections, theme.Success.Width(feedbackWidth).Render(theme.Glyphs.Check+" "+sentenceCase(p.ok)))
 	} else if p.info != "" {
-		sections = append(sections, theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+sentenceCase(p.info)))
+		sections = append(sections, theme.BodyStrong.Width(feedbackWidth).Render(theme.Spinner.Render(spinner)+" "+sentenceCase(p.info)))
 	} else {
 		sections = append(sections, "")
 	}

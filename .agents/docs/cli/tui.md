@@ -67,6 +67,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Doctor's copied report contains only version/platform/build metadata and check statuses; it omits row details, logs, account identity, paths, and key data.
 - Startup unlock uses the shared auth broker: it first accepts a valid shared session; otherwise desktop TUI tries System Auth and falls back to the universal master-password page. Esc, a replacement attempt, and TUI exit cancel the live IPC/native prompt before exposing or leaving that fallback, while headless TUI hydrates enrolled device unlock without prompting.
 - Master-password screens share one component for create, restore, unlock fallback, export, repair, and change-password flows.
+- Password-form error, success, and progress feedback uses the active field width and wraps instead of clipping on narrow terminals.
 - Valid password submissions reset every field immediately; leaving a password screen discards the component, and background commands clear their owned byte copies when done.
 - Printable keys always reach focused inputs. Ctrl-C is the only global quit shortcut, except while master-password rotation is changing local and remote state; startup System Auth retry uses Ctrl-A while the password field is empty.
 - Single-letter footer actions accept either letter case. Separate actions use separate letters instead of Shift-only variants.
