@@ -136,7 +136,7 @@ func (e *Engine) ensureVaultAndCredentialsStage(state *repairState, opts RunOpti
 }
 
 func (e *Engine) restoreLinkedVault(state *repairState, opts RunOptions) error {
-	plan, err := prepareLinkedRestore(e.Paths)
+	_, err := prepareLinkedRestore(e.Paths)
 	switch {
 	case errors.Is(err, errNoRemoteLinkedVault):
 		state.result.Next = NextActionNeedsInteractiveSetup
@@ -159,7 +159,7 @@ func (e *Engine) restoreLinkedVault(state *repairState, opts RunOptions) error {
 		return nil
 	}
 
-	plan, err = prepareLinkedRestore(e.Paths)
+	plan, err := prepareLinkedRestore(e.Paths)
 	switch {
 	case errors.Is(err, errNoRemoteLinkedVault):
 		state.result.Next = NextActionNeedsInteractiveSetup
