@@ -104,7 +104,7 @@ func (m *model) doctorFooterActions(includeTabs bool) []shell.FooterAction {
 		actions = append(actions, shell.FooterAction{Key: theme.Glyphs.LeftRight, Label: "Tabs"})
 	}
 	actions = append(actions, shell.FooterAction{Key: theme.Glyphs.UpDown, Label: "Scroll"})
-	if m.doctorCanFixIssues() && !m.maintenanceBusy {
+	if m.doctorCanFixIssues() && !m.doctorRepairBusy() {
 		actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Fix"})
 	}
 	actions = append(actions, shell.FooterAction{Key: "C", Label: "Copy"})
@@ -136,7 +136,7 @@ func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c", "C":
 		return m, m.copyDoctorReportCmd()
 	case "enter":
-		if !m.doctorCanFixIssues() || m.maintenanceBusy {
+		if !m.doctorCanFixIssues() || m.doctorRepairBusy() {
 			return m, nil
 		}
 		return m, m.startDoctorRepair(nil)
@@ -173,7 +173,7 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "c", "C":
 		return m, m.copyDoctorReportCmd()
 	case "enter":
-		if !m.doctorCanFixIssues() || m.maintenanceBusy {
+		if !m.doctorCanFixIssues() || m.doctorRepairBusy() {
 			return m, nil
 		}
 		return m, m.startDoctorRepair(nil)
@@ -257,6 +257,10 @@ func doctorReportValue(value string) string {
 }
 
 func (m *model) startDoctorRepair(password []byte) tea.Cmd {
+	if m.doctorRepairBusy() {
+		clear(password)
+		return nil
+	}
 	return m.startMaintenance(
 		maintenanceTriggerDoctor,
 		password,
@@ -264,6 +268,10 @@ func (m *model) startDoctorRepair(password []byte) tea.Cmd {
 		"Fixing Issues",
 		"",
 	)
+}
+
+func (m *model) doctorRepairBusy() bool {
+	return m.maintenanceBusy || m.agent.sshBusy
 }
 
 func (m *model) doctorNotice() dashboardscreen.Notice {

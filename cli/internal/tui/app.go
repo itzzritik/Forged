@@ -1609,7 +1609,7 @@ func (m *model) footerActions() []shell.FooterAction {
 			if strings.TrimSpace(m.snapshot.RuntimePathError) != "" && m.snapshot.AgentDisabled {
 				return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 			}
-			if m.agent.sshBusy {
+			if m.agent.sshBusy || (m.maintenanceBusy && m.agentSSHIntegrationSelected()) {
 				return []shell.FooterAction{
 					{Key: theme.Glyphs.UpDown, Label: "Move"},
 					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
@@ -1721,7 +1721,8 @@ func (m *model) footerActions() []shell.FooterAction {
 					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 				}
 			}
-			if m.agent.sshBusy && tabs[m.dashboardTabIndex].Label == "Agent" {
+			if (m.agent.sshBusy && tabs[m.dashboardTabIndex].Label == "Agent") ||
+				(m.maintenanceBusy && m.dashboardAgentSSHIntegrationSelected(tabs)) {
 				return []shell.FooterAction{
 					{Key: theme.Glyphs.LeftRight, Label: "Tabs"},
 					{Key: theme.Glyphs.UpDown, Label: "Pages"},

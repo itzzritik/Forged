@@ -171,6 +171,22 @@ func (m *model) selectedAgentItem() (agentItem, bool) {
 	return items[m.agent.selected], true
 }
 
+func (m *model) agentSSHIntegrationSelected() bool {
+	item, ok := m.selectedAgentItem()
+	return ok && item.ID == agentItemSSHToggle
+}
+
+func (m *model) dashboardAgentSSHIntegrationSelected(tabs []dashboardTab) bool {
+	if m.dashboardTabIndex < 0 || m.dashboardTabIndex >= len(tabs) ||
+		tabs[m.dashboardTabIndex].Label != "Agent" ||
+		m.dashboardTabIndex >= len(m.dashboardPageIndices) {
+		return false
+	}
+	items := m.agentItems()
+	itemIndex := m.dashboardPageIndices[m.dashboardTabIndex]
+	return itemIndex >= 0 && itemIndex < len(items) && items[itemIndex].ID == agentItemSSHToggle
+}
+
 func (m *model) renderAgentBody(contentWidth int) string {
 	items := m.agentItems()
 	if len(items) == 0 {
@@ -635,7 +651,7 @@ func (m *model) startAgentSigningRoute() tea.Cmd {
 }
 
 func (m *model) runAgentSSHToggle() tea.Cmd {
-	if m.agent.sshBusy {
+	if m.agent.sshBusy || m.maintenanceBusy {
 		return nil
 	}
 	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" || m.snapshot.IdentityAgentOwner.IsForged() {
