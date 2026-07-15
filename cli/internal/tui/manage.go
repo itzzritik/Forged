@@ -39,6 +39,7 @@ type manageState struct {
 	masterIntervalSelected int
 	changePasswordID       int
 	autoReturnID           int
+	syncID                 int
 	syncBusy               bool
 	logoutBusy             bool
 	logoutArmed            bool
@@ -57,6 +58,7 @@ type manageSuccessState struct {
 }
 
 type manageSyncFinishedMsg struct {
+	id  int
 	err error
 }
 
@@ -466,12 +468,19 @@ func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) runManageSync() tea.Cmd {
+	if m.manage.syncBusy {
+		return nil
+	}
+	m.manage.syncID++
+	id := m.manage.syncID
 	triggerSync := m.deps.TriggerSync
 	m.manage.syncBusy = true
+	m.manage.settingItem = ""
+	m.manage.settingErr = ""
 	return tea.Batch(
 		m.spinner.Tick,
 		func() tea.Msg {
-			return manageSyncFinishedMsg{err: triggerSync()}
+			return manageSyncFinishedMsg{id: id, err: triggerSync()}
 		},
 	)
 }
@@ -568,6 +577,9 @@ func (m *model) accountDisplayName() string {
 }
 
 func (m *model) manageSummaryText(item manageItem) string {
+	if item.ID == manageItemSync {
+		return m.manageSyncSummary()
+	}
 	if item.ID == manageItemLogout && m.manage.logoutBusy {
 		return "Logging out of your Forged account on this machine"
 	}
@@ -617,8 +629,14 @@ func fallbackAccountNameFromEmail(email string) string {
 }
 
 func (m *model) handleManageSyncFinishedMsg(msg manageSyncFinishedMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.manage.syncID {
+		return m, nil
+	}
 	m.manage.syncBusy = false
-	m.reportError("sync.trigger", msg.err)
+	if msg.err != nil {
+		m.manage.settingItem = manageItemSync
+		m.manage.settingErr = m.reportError("sync.trigger", msg.err)
+	}
 	return m, m.pollRuntimeStatus(0)
 }
 
@@ -685,6 +703,12 @@ func (m *model) handleManageAutoReturnMsg(msg manageAutoReturnMsg) (tea.Model, t
 }
 
 func (m *model) manageSyncSummary() string {
+	if errText := m.manageSyncError(); errText != "" {
+		return "Sync failed. Press Enter to retry: " + errText
+	}
+	if m.manage.syncBusy {
+		return m.spinner.View() + " Syncing vault"
+	}
 	if !m.runtimeLoaded {
 		return "Loading sync state"
 	}
@@ -697,13 +721,20 @@ func (m *model) manageSyncSummary() string {
 	if !m.runtimeStatus.Linked {
 		return "Sync is not linked on this machine yet"
 	}
-	if m.manage.syncBusy || m.runtimeStatus.Syncing {
+	if m.runtimeStatus.Syncing {
 		return m.spinner.View() + " Syncing vault"
 	}
 	if syncedAt := latestSyncTime(m.runtimeStatus); !syncedAt.IsZero() {
 		return "Last synced " + syncedAt.In(time.Local).Format("02 Jan 2006, 3:04 PM MST")
 	}
 	return "Not yet synced on this machine"
+}
+
+func (m *model) manageSyncError() string {
+	if m.manage.settingItem != manageItemSync {
+		return ""
+	}
+	return strings.TrimSpace(m.manage.settingErr)
 }
 
 func latestSyncTime(status RuntimeStatus) time.Time {

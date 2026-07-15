@@ -52,6 +52,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Commit Signing uses the same dynamic row paging and drops its redundant status card on short terminals, where signing state already remains visible in the header.
 - Signing-status refreshes are single-flight and identify the configured Forged key by matching one parsed SSH fingerprint against one key list.
 - Runtime sync errors must clear the in-memory syncing flag so stale status cannot leave the header spinner active forever.
+- Manual Sync is single-flight; a current trigger failure remains visible with a retry action in both Manage and the direct Sync page, while stale replies cannot clear a newer request's state.
 - A sync recovery error takes precedence over the normal “not linked” summary, so Manage and Doctor show that recovery is required even while no sync bus is available.
 - Idle locking keeps one coalesced deadline timer; keyboard activity moves the deadline instead of spawning another timer, and non-quit input pauses while the daemon lock request is in flight.
 - Accepted TUI action failures append throttled route/action/version context to a size-capped TUI log, available through `forged logs tui`; expected cancellations and auth prompts are skipped, and diagnostics redact credentials, URLs, quoted values, emails, and file paths.

@@ -1527,9 +1527,21 @@ func (m *model) footerActions() []shell.FooterAction {
 			if m.manage.logoutBusy {
 				return nil
 			}
+			if m.manage.syncBusy {
+				return []shell.FooterAction{
+					{Key: theme.Glyphs.UpDown, Label: "Move"},
+					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+				}
+			}
+			label := "Open"
+			if item, ok := m.selectedManageItem(); ok &&
+				item.ID == manageItemSync &&
+				m.manageSyncError() != "" {
+				label = "Retry Sync"
+			}
 			return []shell.FooterAction{
 				{Key: theme.Glyphs.UpDown, Label: "Move"},
-				{Key: "Enter", Label: "Open"},
+				{Key: "Enter", Label: label},
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
 		}
@@ -1637,8 +1649,15 @@ func (m *model) footerActions() []shell.FooterAction {
 						{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 					}
 				}
+				if m.manage.syncBusy {
+					return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+				}
+				label := "Sync Now"
+				if m.manageSyncError() != "" {
+					label = "Retry Sync"
+				}
 				return []shell.FooterAction{
-					{Key: "Enter", Label: "Sync Now"},
+					{Key: "Enter", Label: label},
 					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 				}
 			}
@@ -1655,10 +1674,27 @@ func (m *model) footerActions() []shell.FooterAction {
 					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 				}
 			}
+			if m.manage.syncBusy && tabs[m.dashboardTabIndex].Label == "Manage" {
+				return []shell.FooterAction{
+					{Key: theme.Glyphs.LeftRight, Label: "Tabs"},
+					{Key: theme.Glyphs.UpDown, Label: "Pages"},
+					{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+				}
+			}
+			label := "Open"
+			if tabs[m.dashboardTabIndex].Label == "Manage" && m.dashboardTabIndex < len(m.dashboardPageIndices) {
+				items := m.manageItems()
+				itemIndex := m.dashboardPageIndices[m.dashboardTabIndex]
+				if itemIndex >= 0 && itemIndex < len(items) &&
+					items[itemIndex].ID == manageItemSync &&
+					m.manageSyncError() != "" {
+					label = "Retry Sync"
+				}
+			}
 			return []shell.FooterAction{
 				{Key: theme.Glyphs.LeftRight, Label: "Tabs"},
 				{Key: theme.Glyphs.UpDown, Label: "Pages"},
-				{Key: "Enter", Label: "Open"},
+				{Key: "Enter", Label: label},
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 			}
 		}
