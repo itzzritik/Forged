@@ -3,7 +3,6 @@ package sshrouting
 import (
 	"fmt"
 	"os"
-	"path/filepath"
 	"strings"
 	"time"
 
@@ -40,9 +39,6 @@ func (m *Manager) Refresh(keys []vault.Key) error {
 	if err := os.MkdirAll(m.paths.SSHRouteRuntimeDir(), 0o700); err != nil {
 		return err
 	}
-
-	_ = os.Remove(m.paths.SSHLegacyAdvancedConfig())
-	_ = os.Remove(filepath.Join(m.paths.SSHManagedDir(), "routing.json"))
 
 	refs, err := BuildKeyRefs(keys, m.paths.SSHManagedKeysDir())
 	if err != nil {

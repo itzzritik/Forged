@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/platform"
@@ -72,26 +73,25 @@ func EnableSSHAgent(paths Paths) error {
 	}
 	return withSSHConfigLock(paths, func() error {
 		configPath := paths.SSHUserConfig()
+		content, err := readConfigFile(configPath)
+		if err != nil {
+			return fmt.Errorf("Reading SSH config: %w", err)
+		}
+		content, err = removeLegacyForgedBlock(content, paths)
+		if err != nil {
+			return fmt.Errorf("Migrating legacy SSH config: %w", err)
+		}
+		content = removeForgedIncludes(content, paths)
+
 		if err := os.MkdirAll(filepath.Dir(configPath), 0o700); err != nil {
 			return fmt.Errorf("Creating SSH config directory: %w", err)
 		}
 		if err := os.MkdirAll(paths.SSHManagedDir(), 0o700); err != nil {
 			return fmt.Errorf("Creating managed SSH directory: %w", err)
 		}
-
-		if err := cleanupLegacySSHArtifacts(paths); err != nil {
-			return err
-		}
 		if err := ensureManagedSSHConfigLocked(paths); err != nil {
 			return err
 		}
-
-		content, err := readConfigFile(configPath)
-		if err != nil {
-			return fmt.Errorf("Reading SSH config: %w", err)
-		}
-		content = removeForgedIncludes(content, paths)
-		content = removeLegacyForgedBlock(content)
 
 		block := strings.Join([]string{
 			sshIncludeComment,
@@ -106,23 +106,22 @@ func EnableSSHAgent(paths Paths) error {
 
 func DisableSSHAgent(paths Paths) error {
 	return withSSHConfigLock(paths, func() error {
-		if err := cleanupLegacySSHArtifacts(paths); err != nil {
-			return err
-		}
-
 		configPath := paths.SSHUserConfig()
 		content, err := readConfigFile(configPath)
 		if err != nil {
 			return fmt.Errorf("Reading SSH config: %w", err)
 		}
+		cleaned, err := removeLegacyForgedBlock(content, paths)
+		if err != nil {
+			return fmt.Errorf("Migrating legacy SSH config: %w", err)
+		}
+		cleaned = removeForgedIncludes(cleaned, paths)
 		if content == "" {
 			if _, err := os.Stat(paths.SSHManagedConfig()); os.IsNotExist(err) {
 				return SetAgentDisabled(paths, true)
 			}
 		}
 
-		cleaned := removeForgedIncludes(content, paths)
-		cleaned = removeLegacyForgedBlock(cleaned)
 		block := strings.Join([]string{
 			sshIncludeComment,
 			"# " + includeLine(paths.SSHManagedConfig()),
@@ -172,7 +171,8 @@ func removeForgedIncludes(content string, paths Paths) string {
 
 func forgedIncludeLines(paths Paths) map[string]struct{} {
 	includes := make(map[string]struct{})
-	for _, path := range []string{paths.SSHManagedConfig(), paths.LegacySSHBaseInclude()} {
+	pathsToRemove := append(legacyManagedSSHConfigPaths(paths), paths.LegacySSHBaseInclude())
+	for _, path := range pathsToRemove {
 		forward := filepath.ToSlash(path)
 		for _, line := range []string{
 			"Include " + path,
@@ -188,43 +188,166 @@ func forgedIncludeLines(paths Paths) map[string]struct{} {
 	return includes
 }
 
-func removeLegacyForgedBlock(content string) string {
+func removeLegacyForgedBlock(content string, paths Paths) (string, error) {
 	lines := strings.Split(content, "\n")
 	result := make([]string, 0, len(lines))
+	found := false
 
-	for i := 0; i < len(lines); i++ {
+	for i := 0; i < len(lines); {
 		if strings.TrimSpace(lines[i]) != legacySSHConfigMarker {
 			result = append(result, lines[i])
-			continue
-		}
-
-		for i+1 < len(lines) && strings.TrimSpace(lines[i+1]) == "" {
 			i++
-		}
-		if i+1 >= len(lines) {
-			break
-		}
-		if strings.TrimSpace(lines[i+1]) != "Host *" {
 			continue
 		}
 
-		i++
-		for i+1 < len(lines) {
-			next := lines[i+1]
-			trimmed := strings.TrimSpace(next)
-			if trimmed == "" {
-				i++
-				continue
-			}
-			if strings.HasPrefix(next, " ") || strings.HasPrefix(next, "\t") {
-				i++
-				continue
-			}
-			break
+		if found {
+			return "", legacyForgedBlockError(i, paths)
 		}
+		end, ok := legacyForgedBlockEnd(lines, i, paths)
+		if !ok {
+			return "", legacyForgedBlockError(i, paths)
+		}
+		found = true
+		i = end
 	}
 
-	return trimTrailingBlankLines(strings.Join(result, "\n"))
+	return trimTrailingBlankLines(strings.Join(result, "\n")), nil
+}
+
+func legacyForgedBlockError(line int, paths Paths) error {
+	return fmt.Errorf("legacy Forged SSH block at line %d was modified; refusing to change %s", line+1, paths.SSHUserConfig())
+}
+
+func legacyForgedBlockEnd(lines []string, marker int, paths Paths) (int, bool) {
+	next := marker + 1
+	includedBeforeHost := false
+	if next < len(lines) && isLegacyForgedQuotedInclude(lines[next], paths) {
+		includedBeforeHost = true
+		next++
+	}
+	if next+1 >= len(lines) || strings.TrimSpace(lines[next]) != "Host *" || !isLegacyForgedIdentityAgent(lines[next+1], paths) {
+		return 0, false
+	}
+
+	includedAfterHost := false
+	for next += 2; next < len(lines); next++ {
+		trimmed := strings.TrimSpace(lines[next])
+		if trimmed == "" {
+			continue
+		}
+		if isLegacyForgedSectionBoundary(trimmed) {
+			return next, true
+		}
+		if !includedBeforeHost && !includedAfterHost && isLegacyForgedUnquotedInclude(lines[next], paths) {
+			includedAfterHost = true
+			continue
+		}
+		return 0, false
+	}
+	return len(lines), true
+}
+
+func isLegacyForgedIdentityAgent(line string, paths Paths) bool {
+	for _, socket := range legacyForgedAgentSockets(paths) {
+		if socket != "" && line == fmt.Sprintf("    IdentityAgent %q", socket) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLegacyForgedQuotedInclude(line string, paths Paths) bool {
+	for _, path := range legacySSHAdvancedConfigPaths(paths) {
+		if line == fmt.Sprintf("Include %q", path) {
+			return true
+		}
+	}
+	return false
+}
+
+func isLegacyForgedUnquotedInclude(line string, paths Paths) bool {
+	for _, path := range legacySSHAdvancedConfigPaths(paths) {
+		if line == "Include "+path {
+			return true
+		}
+	}
+	return false
+}
+
+func isLegacyForgedSectionBoundary(line string) bool {
+	fields := strings.Fields(line)
+	return len(fields) > 0 && (strings.EqualFold(fields[0], "host") || strings.EqualFold(fields[0], "match"))
+}
+
+func legacyForgedAgentSockets(paths Paths) []string {
+	sockets := []string{paths.AgentSocket()}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return sockets
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		sockets = append(sockets,
+			filepath.Join(home, ".forged", "agent.sock"),
+			filepath.Join(home, ".forged", "runtime", "agent.sock"),
+		)
+	case "linux":
+		sockets = append(sockets, filepath.Join("/run", "user", uidStr(), "forged", "agent.sock"))
+	case "windows":
+		sockets = append(sockets, `\\.\pipe\forged-agent`)
+	}
+	return sockets
+}
+
+func legacyManagedSSHConfigPaths(paths Paths) []string {
+	configs := make([]string, 0, len(legacySSHManagedDirs(paths)))
+	for _, dir := range legacySSHManagedDirs(paths) {
+		configs = append(configs, filepath.Join(dir, "forged.conf"))
+	}
+	return configs
+}
+
+func legacySSHAdvancedConfigPaths(paths Paths) []string {
+	configs := make([]string, 0, len(legacySSHManagedDirs(paths))+1)
+	for _, dir := range legacySSHManagedDirs(paths) {
+		configs = append(configs, filepath.Join(dir, "config"))
+	}
+	configs = append(configs, filepath.Join(paths.LegacySSHManagedDir(), "config"))
+	return configs
+}
+
+func legacySSHManagedDirs(paths Paths) []string {
+	dirs := []string{paths.SSHManagedDir()}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return dirs
+	}
+
+	switch runtime.GOOS {
+	case "darwin":
+		dirs = append(dirs,
+			filepath.Join(home, ".forged", "ssh"),
+			filepath.Join(home, ".forged", "config", "ssh"),
+		)
+	case "linux":
+		configHome := envOrDefault("XDG_CONFIG_HOME", filepath.Join(home, ".config"))
+		dirs = append(dirs,
+			filepath.Join(home, ".forged", "ssh"),
+			filepath.Join(configHome, "forged", "ssh"),
+		)
+	case "windows":
+		appData := os.Getenv("APPDATA")
+		if appData == "" {
+			if profile := os.Getenv("USERPROFILE"); profile != "" {
+				appData = filepath.Join(profile, "AppData", "Roaming")
+			}
+		}
+		if appData != "" {
+			dirs = append(dirs, filepath.Join(appData, "forged", "ssh"))
+		}
+	}
+	return dirs
 }
 
 func trimTrailingBlankLines(content string) string {
@@ -302,14 +425,6 @@ func EnsureAgentOnlyManagedSSHConfig(paths Paths) error {
 		}
 		return ensureAgentOnlyManagedSSHConfigLocked(paths, content)
 	})
-}
-
-func cleanupLegacySSHArtifacts(paths Paths) error {
-	_ = os.RemoveAll(paths.LegacySSHManagedDir())
-	_ = os.Remove(filepath.Join(paths.StateDir, "ssh-routing.json"))
-	_ = os.Remove(paths.SSHLegacyAdvancedConfig())
-	_ = os.Remove(filepath.Join(paths.SSHManagedDir(), "routing.json"))
-	return nil
 }
 
 func ensureManagedSSHConfigLocked(paths Paths) error {

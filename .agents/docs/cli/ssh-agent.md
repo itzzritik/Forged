@@ -36,6 +36,7 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 - Raw SSH agent protocol is still limited in how much error detail it can surface back to callers.
 - SSH route preparation has one 45-second server work budget covering cold-session auth, retry, and either probe type. Provider and direct-SSH probes keep their 20-second total and 4-second per-key child caps; the hook waits 50 seconds and the server connection 55 seconds so work can return a final response before either transport closes.
 - SSH-agent signing accepts only an exact zero, RSA-SHA256, or RSA-SHA512 flag value. Reserved, combined, and unsupported-algorithm requests fail instead of silently default-signing.
+- SSH integration migration removes only exact historical Forged marker blocks and managed include paths. An edited or ambiguous marker fails before the user config changes; inactive legacy files remain in place instead of being deleted recursively.
 - On Windows, agent and control pipes use distinct opaque current-user token-SID hashes. Automatic SSH routing is intentionally unavailable: the daemon starts no route service, removes a uniquely marked product-owned routing section from the private managed config, and preserves its agent prefix. Duplicate route markers or a missing generated `PermitLocalCommand` boundary block migration instead of being overwritten. Normal SSH-agent and commit-signing behavior remains available.
 
 ## Decisions
