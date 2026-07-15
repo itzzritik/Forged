@@ -66,7 +66,7 @@ func Render(screen Screen, width int) string {
 		return renderTabbedDashboard(screen, width)
 	}
 	sections := make([]string, 0, 2)
-	if notice := renderNotice(screen.Notice); notice != "" {
+	if notice := renderNotice(screen.Notice, width); notice != "" {
 		sections = append(sections, notice)
 	}
 	if strings.TrimSpace(screen.Context) != "" {
@@ -77,7 +77,7 @@ func Render(screen Screen, width int) string {
 
 func renderTabbedDashboard(screen Screen, width int) string {
 	topSections := make([]string, 0, 5)
-	if notice := renderNotice(screen.Notice); notice != "" {
+	if notice := renderNotice(screen.Notice, width); notice != "" {
 		topSections = append(topSections, notice, "")
 	}
 
@@ -272,20 +272,20 @@ func renderPages(pages []Page, width int) string {
 	return components.RenderSelectionList(items, width, pageListMinHeight)
 }
 
-func renderNotice(notice Notice) string {
+func renderNotice(notice Notice, width int) string {
 	if strings.TrimSpace(notice.Message) == "" {
 		return ""
 	}
 
 	switch notice.Tone {
 	case ToneSuccess:
-		return theme.Success.Render(theme.Glyphs.Check + " " + notice.Message)
+		return theme.Success.Width(max(1, width)).Render(theme.Glyphs.Check + " " + notice.Message)
 	case ToneWarning:
-		return theme.Warning.Render("! " + notice.Message)
+		return theme.Warning.Width(max(1, width)).Render("! " + notice.Message)
 	case ToneDanger:
-		return theme.Danger.Render(theme.Glyphs.Cross + " " + notice.Message)
+		return theme.Danger.Width(max(1, width)).Render(theme.Glyphs.Cross + " " + notice.Message)
 	default:
-		return theme.BodyStrong.Render(notice.Message)
+		return theme.BodyStrong.Width(max(1, width)).Render(notice.Message)
 	}
 }
 

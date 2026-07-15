@@ -374,6 +374,7 @@ type model struct {
 	maintenanceTrigger      maintenanceTrigger
 	maintenanceUsedPassword bool
 	maintenanceAuthEmail    string
+	doctorRepairError       string
 
 	bootAssessed             bool
 	startupUnlockPending     bool
@@ -1043,6 +1044,9 @@ func (m *model) headerStatusItems() []shell.StatusItem {
 }
 
 func (m *model) systemHeaderItem() shell.StatusItem {
+	if strings.TrimSpace(m.doctorRepairError) != "" {
+		return shell.StatusItem{Label: "Doctor repair failed", Tone: shell.StatusToneDanger}
+	}
 	if m.systemHeader == systemHeaderHealthy && m.snapshot.AgentDisabled {
 		return shell.StatusItem{Label: "Agent disabled", Tone: shell.StatusToneWarning}
 	}
@@ -2539,6 +2543,9 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 		clear(password)
 		return nil
 	}
+	if trigger == maintenanceTriggerDoctor {
+		m.doctorRepairError = ""
+	}
 	m.notice = notice{}
 	m.runtimeStatusID++
 	m.snapshotRefreshID++
@@ -2620,6 +2627,9 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 	m.snapshot = result.Snapshot
 	m.summary = result.Summary
 	m.systemHeader = m.systemHeaderForSnapshot(result.Snapshot)
+	if err == nil && (result.Snapshot.State == readiness.StateReady || result.Snapshot.State == readiness.StateReadyEmpty) {
+		m.doctorRepairError = ""
+	}
 	m.maintenanceBusy = false
 	if unlocked {
 		m.runtimeStatus.Unlocked = true
@@ -2639,9 +2649,14 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 		m.accountEmail = ""
 	}
 	if err != nil {
+		if m.maintenanceTrigger == maintenanceTriggerDoctor {
+			m.doctorRepairError = errorText
+		}
 		m.systemHeader = systemHeaderUnhealthy
 		if m.showPostLoginWarning() {
-			m.showDashboardNotice(m.notice.message+"\n"+errorText, dashboardscreen.ToneDanger)
+			if m.maintenanceTrigger != maintenanceTriggerDoctor {
+				m.showDashboardNotice(m.notice.message+"\n"+errorText, dashboardscreen.ToneDanger)
+			}
 			if m.snapshot.VaultExists {
 				return m.pollRuntimeStatus(time.Second)
 			}
@@ -2655,7 +2670,9 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 			m.passwordInput.SetError(errorText)
 			return nil
 		default:
-			m.showDashboardNotice(errorText, dashboardscreen.ToneDanger)
+			if m.maintenanceTrigger != maintenanceTriggerDoctor {
+				m.showDashboardNotice(errorText, dashboardscreen.ToneDanger)
+			}
 			if m.snapshot.VaultExists {
 				return m.pollRuntimeStatus(time.Second)
 			}

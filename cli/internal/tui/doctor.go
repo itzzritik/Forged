@@ -48,7 +48,7 @@ func (m *model) renderDoctorBody(contentWidth int, bodyHeight int) string {
 	sections := make([]string, 0, 2)
 	if !m.isDoctorDashboardTab() {
 		if status := dashboardscreen.Render(dashboardscreen.Screen{
-			Notice: dashboardscreen.Notice{Message: m.notice.message, Tone: m.notice.tone},
+			Notice: m.doctorNotice(),
 		}, contentWidth); strings.TrimSpace(status) != "" {
 			sections = append(sections, status)
 			bodyHeight -= lipgloss.Height(status) + 1
@@ -66,11 +66,8 @@ func (m *model) renderDoctorBody(contentWidth int, bodyHeight int) string {
 func (m *model) renderDoctorDashboardBody(contentWidth int, bodyHeight int) string {
 	tabs, _, _ := m.dashboardRootScreen()
 	tabBar := dashboardscreen.Render(dashboardscreen.Screen{
-		Tabs: tabs,
-		Notice: dashboardscreen.Notice{
-			Message: m.notice.message,
-			Tone:    m.notice.tone,
-		},
+		Tabs:   tabs,
+		Notice: m.doctorNotice(),
 	}, contentWidth)
 	if strings.TrimSpace(tabBar) != "" {
 		bodyHeight -= lipgloss.Height(tabBar) + 1
@@ -267,6 +264,16 @@ func (m *model) startDoctorRepair(password []byte) tea.Cmd {
 		"Fixing Issues",
 		"",
 	)
+}
+
+func (m *model) doctorNotice() dashboardscreen.Notice {
+	if message := strings.TrimSpace(m.doctorRepairError); message != "" {
+		return dashboardscreen.Notice{Message: "Fix Issues failed: " + message, Tone: dashboardscreen.ToneDanger}
+	}
+	if strings.TrimSpace(m.notice.message) != "" {
+		return dashboardscreen.Notice{Message: m.notice.message, Tone: m.notice.tone}
+	}
+	return dashboardscreen.Notice{}
 }
 
 func (m *model) doctorCanFixIssues() bool {

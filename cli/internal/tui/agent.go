@@ -773,6 +773,9 @@ func (m *model) handleSnapshotRefreshMsg(msg snapshotRefreshMsg) (tea.Model, tea
 		return m, nil
 	}
 	m.systemHeader = m.systemHeaderForSnapshot(msg.snapshot)
+	if msg.snapshot.State == readiness.StateReady || msg.snapshot.State == readiness.StateReadyEmpty {
+		m.doctorRepairError = ""
+	}
 	return m, nil
 }
 
