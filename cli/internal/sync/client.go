@@ -30,6 +30,42 @@ var (
 	ErrStatusUnsupported = errors.New("Status unsupported")
 )
 
+const (
+	maxSyncPullResponseBytes    = 64 << 20
+	maxSyncControlResponseBytes = 64 << 10
+	maxSyncErrorBodyBytes       = 8 << 10
+)
+
+func readBoundedSyncResponse(body io.Reader, limit int64) ([]byte, bool, error) {
+	data, err := io.ReadAll(io.LimitReader(body, limit+1))
+	if err != nil {
+		return nil, false, err
+	}
+	return data, int64(len(data)) > limit, nil
+}
+
+func decodeSyncResponse(body io.Reader, limit int64, result any) error {
+	data, oversized, err := readBoundedSyncResponse(body, limit)
+	if err != nil {
+		return err
+	}
+	if oversized {
+		return fmt.Errorf("response body exceeds %d byte limit", limit)
+	}
+	return json.NewDecoder(bytes.NewReader(data)).Decode(result)
+}
+
+func syncErrorBody(body io.Reader) string {
+	data, oversized, err := readBoundedSyncResponse(body, maxSyncErrorBodyBytes)
+	if err != nil {
+		return fmt.Sprintf("unable to read response: %v", err)
+	}
+	if oversized {
+		return string(data[:maxSyncErrorBodyBytes]) + " (truncated)"
+	}
+	return string(data)
+}
+
 func validateServerVersion(operation string, version int64) error {
 	if version <= 0 {
 		return fmt.Errorf("Invalid %s response version %d", operation, version)
@@ -125,12 +161,11 @@ func (c *Client) PushContext(ctx context.Context, blob []byte, kdf vault.KDFPara
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return PushResult{}, fmt.Errorf("Push failed (%d): %s", resp.StatusCode, string(respBody))
+		return PushResult{}, fmt.Errorf("Push failed (%d): %s", resp.StatusCode, syncErrorBody(resp.Body))
 	}
 
 	var result PushResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	if err := decodeSyncResponse(resp.Body, maxSyncControlResponseBytes, &result); err != nil {
 		return PushResult{}, fmt.Errorf("Parsing push response: %w", err)
 	}
 	if err := validateServerVersion("push", result.Version); err != nil {
@@ -163,8 +198,7 @@ func (c *Client) Rekey(kdf vault.KDFParams, protectedKey string) error {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf("Rekey failed (%d): %s", resp.StatusCode, string(respBody))
+		return fmt.Errorf("Rekey failed (%d): %s", resp.StatusCode, syncErrorBody(resp.Body))
 	}
 	return nil
 }
@@ -204,8 +238,7 @@ func (c *Client) PullContext(ctx context.Context) (PullResult, error) {
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return PullResult{}, fmt.Errorf("Pull failed (%d): %s", resp.StatusCode, string(respBody))
+		return PullResult{}, fmt.Errorf("Pull failed (%d): %s", resp.StatusCode, syncErrorBody(resp.Body))
 	}
 
 	var jsonResp struct {
@@ -214,7 +247,7 @@ func (c *Client) PullContext(ctx context.Context) (PullResult, error) {
 		KDFParams             *kdfParamsJSON `json:"kdf_params"`
 		ProtectedSymmetricKey *string        `json:"protected_symmetric_key"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&jsonResp); err != nil {
+	if err := decodeSyncResponse(resp.Body, maxSyncPullResponseBytes, &jsonResp); err != nil {
 		return PullResult{}, fmt.Errorf("Parsing pull response: %w", err)
 	}
 	if err := validateServerVersion("pull", jsonResp.Version); err != nil {
@@ -264,8 +297,7 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		respBody, _ := io.ReadAll(resp.Body)
-		return StatusResult{}, fmt.Errorf("Status failed (%d): %s", resp.StatusCode, string(respBody))
+		return StatusResult{}, fmt.Errorf("Status failed (%d): %s", resp.StatusCode, syncErrorBody(resp.Body))
 	}
 
 	var jsonResp struct {
@@ -274,7 +306,7 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 		UpdatedAt string         `json:"updated_at"`
 		KDFParams *kdfParamsJSON `json:"kdf_params,omitempty"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&jsonResp); err != nil {
+	if err := decodeSyncResponse(resp.Body, maxSyncControlResponseBytes, &jsonResp); err != nil {
 		return StatusResult{}, fmt.Errorf("Parsing status response: %w", err)
 	}
 	if jsonResp.HasVault == nil {
