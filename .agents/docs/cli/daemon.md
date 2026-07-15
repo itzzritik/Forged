@@ -47,6 +47,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Daemon status exposes a build id. Readiness treats a running daemon with a different or missing build id as degraded and repairs it by reinstalling/restarting the managed service.
 - Linux user-service commands derive `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` when shells omit them, which is common in headless SSH or remote-editor sessions. Service installation also returns `daemon-reload` and enable failures to repair callers.
 - Linux service `ExecStart` operands escape literal percent signs for systemd, and service inspection decodes literal `%%` escapes before validating the binary path.
+- Linux writes a replacement unit beside the active unit and renames it only after rendering and closing succeeds, so a write failure or interruption leaves either the prior or the new complete service definition, never a truncated one.
 - Managed macOS and Windows service installation creates the daemon log directory before replacing service configuration, so a directory error cannot install a known-unbootable service.
 - macOS service start and removal boot out current and legacy launchd labels before deleting legacy plists, so an old KeepAlive job cannot respawn; a fresh bootstrap is not force-killed and relaunched.
 - macOS launchd stderr uses a separate private, unrotated `forged-stderr.log`, so fatal output does not remain attached to a rotated daemon log; `forged logs stderr` follows it.

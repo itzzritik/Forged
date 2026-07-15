@@ -46,11 +46,11 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		return err
 	}
 
-	f, err := os.Create(unitPath())
+	f, err := os.CreateTemp(unitDir, "."+serviceName+".*.service")
 	if err != nil {
-		return fmt.Errorf("Creating unit file: %w", err)
+		return fmt.Errorf("Creating temporary unit file: %w", err)
 	}
-	defer f.Close()
+	defer os.Remove(f.Name())
 
 	data := struct {
 		ExecStart string
@@ -61,7 +61,14 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	}
 
 	if err := unitTemplate.Execute(f, data); err != nil {
+		f.Close()
 		return fmt.Errorf("Writing unit file: %w", err)
+	}
+	if err := f.Close(); err != nil {
+		return fmt.Errorf("Closing unit file: %w", err)
+	}
+	if err := os.Rename(f.Name(), unitPath()); err != nil {
+		return fmt.Errorf("Installing unit file: %w", err)
 	}
 
 	if out, err := systemctlUser("daemon-reload").CombinedOutput(); err != nil {
