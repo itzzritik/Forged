@@ -22,6 +22,7 @@ The local vault is the encrypted source of truth for keys, metadata, and synced 
 - Password verification can recover the vault symmetric key without opening the whole vault for normal use.
 - Unsupported vault headers fail closed. A newer header tells the user to upgrade Forged; an older header tells them to use a compatible release. Neither path suggests recreating or overwriting the vault.
 - Password change rewraps the vault symmetric key. It does not rotate that key today.
+- Password change revokes existing local unlock trust before it writes the new password wrap; if durable revocation fails, the password remains unchanged.
 - A failed password-change save restores the vault's previous in-memory KDF and protected-key header, so any later save cannot silently activate a password reported as failed.
 - Local unlock trust is device-local even though the vault itself is shared.
 - Private keys are now decrypted on demand instead of being kept plaintext in session memory.

@@ -149,10 +149,12 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		return ChangePasswordResult{}, fmt.Errorf("Wrong password or corrupted vault")
 	}
 
+	if err := sensitiveauth.InvalidateLocalEnrollment(paths); err != nil {
+		return ChangePasswordResult{}, fmt.Errorf("Could not revoke local unlock trust; password was not changed: %w", err)
+	}
 	if err := v.ChangePassword(newPassword); err != nil {
 		return ChangePasswordResult{}, fmt.Errorf("Changing password: %w", err)
 	}
-	_ = sensitiveauth.InvalidateLocalEnrollment(paths)
 
 	kdf := v.KDFParams()
 	protectedKey := base64.StdEncoding.EncodeToString(v.ProtectedKeyBytes())

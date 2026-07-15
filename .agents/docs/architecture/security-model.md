@@ -20,6 +20,7 @@ Forged is zero-knowledge. The server stores the encrypted vault blob, KDF params
 
 - Key hierarchy is: password + salt -> master key -> stretched key -> unwrap Protected Symmetric Key -> vault symmetric key.
 - Password change rewraps the vault symmetric key. It does not re-encrypt every item and it does not rotate the inner symmetric key.
+- Password change first durably revokes local unlock enrollment; a revocation failure aborts the password change rather than leaving prior device trust able to unwrap the unchanged vault key.
 - Local unlock trust is per-device:
   - secure-store or headless device-key A/B slots, selected by `local-unlock.json` version 2 under one cross-process lock
   - Windows: CurrentUser-DPAPI `auth/local-unlock-a.dpapi` / `local-unlock-b.dpapi` blobs bound to the installation ID (the original single blob remains migration-only)
