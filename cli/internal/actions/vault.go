@@ -109,6 +109,15 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 				return
 			}
 			result.Detail = strings.TrimSpace(result.Detail + " The fallback service restart also failed. Run Forged Doctor to repair it.")
+			return
+		}
+		if err := daemon.WaitForServiceReady(paths, "", 8*time.Second); err != nil {
+			restartErr := fmt.Errorf("Restarting local service: %w", err)
+			if resultErr != nil {
+				resultErr = errors.Join(resultErr, restartErr)
+				return
+			}
+			result.Detail = strings.TrimSpace(result.Detail + " The fallback service restart also failed. Run Forged Doctor to repair it.")
 		}
 	}()
 	if err != nil {
@@ -160,6 +169,13 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		return result, nil
 	}
 	if err := daemon.EnsureService(paths, runtime); err != nil {
+		result = ChangePasswordResult{
+			Detail: "Local vault updated. The local service needs repair with your new password. Run Forged Doctor to finish setup.",
+		}
+		applyEnrollmentDetail(&result, enrollmentResult, enrollmentErr)
+		return result, nil
+	}
+	if err := daemon.WaitForServiceReady(paths, runtime.BuildID, 8*time.Second); err != nil {
 		result = ChangePasswordResult{
 			Detail: "Local vault updated. The local service needs repair with your new password. Run Forged Doctor to finish setup.",
 		}

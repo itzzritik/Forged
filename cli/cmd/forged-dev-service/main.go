@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
@@ -70,6 +71,9 @@ func install(binary string) error {
 	}
 	if err := daemon.EnsureService(paths, runtime); err != nil {
 		return err
+	}
+	if err := daemon.WaitForServiceReady(paths, "", 8*time.Second); err != nil {
+		return fmt.Errorf("waiting for Forged service: %w", err)
 	}
 
 	fmt.Printf("Forged service now points to %s\n", absBinary)

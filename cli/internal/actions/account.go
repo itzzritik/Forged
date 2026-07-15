@@ -199,6 +199,9 @@ func ensureAccountDaemon(paths config.Paths) error {
 	if err := daemon.EnsureService(paths, runtimeSpec); err != nil {
 		return fmt.Errorf("Starting current daemon: %w", err)
 	}
+	if err := daemon.WaitForServiceReady(paths, runtimeSpec.BuildID, 10*time.Second); err != nil {
+		return fmt.Errorf("Waiting for current daemon: %w", err)
+	}
 	deadline := time.Now().Add(10 * time.Second)
 	for time.Now().Before(deadline) {
 		if protocol, err := runningAccountProtocol(paths); err == nil && protocol >= ipc.AccountChangeProtocol {

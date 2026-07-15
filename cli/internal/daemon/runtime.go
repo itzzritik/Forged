@@ -115,6 +115,9 @@ func RefreshInstalledServiceIfStale(paths config.Paths, runtime RuntimeSpec) (bo
 
 	fresh, err := ServiceFresh(paths, runtime.BuildID)
 	if err == nil && fresh {
+		if err := WaitForServiceReady(paths, runtime.BuildID, 8*time.Second); err != nil {
+			return false, err
+		}
 		return false, nil
 	}
 	if errors.Is(err, ipc.ErrDaemonIdentity) {
@@ -185,24 +188,48 @@ func RunningBuildID(paths config.Paths) (string, error) {
 }
 
 func WaitForBuildID(paths config.Paths, expectedBuildID string, timeout time.Duration) error {
+	return WaitForServiceReady(paths, expectedBuildID, timeout)
+}
+
+func WaitForServiceReady(paths config.Paths, expectedBuildID string, timeout time.Duration) error {
 	expectedBuildID = strings.TrimSpace(expectedBuildID)
 	deadline := time.Now().Add(timeout)
 	var lastErr error
 	for time.Now().Before(deadline) {
-		buildID, err := RunningBuildID(paths)
-		if err == nil && buildID != "" && buildID == expectedBuildID {
-			err = requireServiceOwnershipForFreshness(paths)
-			if err == nil {
-				return nil
-			}
-		}
+		status, err := InspectService(paths)
 		if err != nil {
 			lastErr = err
+			time.Sleep(150 * time.Millisecond)
+			continue
 		}
-		time.Sleep(150 * time.Millisecond)
+		if !status.Installed || !status.ConfigValid || !status.Running ||
+			!platform.IsSocketAlive(paths.CtlSocket()) || !platform.IsSocketAlive(paths.AgentSocket()) {
+			time.Sleep(150 * time.Millisecond)
+			continue
+		}
+
+		buildID, err := RunningBuildID(paths)
+		if err != nil {
+			lastErr = err
+			time.Sleep(150 * time.Millisecond)
+			continue
+		}
+		if buildID == "" || (expectedBuildID != "" && buildID != expectedBuildID) {
+			time.Sleep(150 * time.Millisecond)
+			continue
+		}
+		if err := requireServiceOwnershipForFreshness(paths); err != nil {
+			lastErr = err
+			time.Sleep(150 * time.Millisecond)
+			continue
+		}
+		return nil
 	}
 	if lastErr != nil {
-		return fmt.Errorf("waiting for fresh daemon: %w", lastErr)
+		return fmt.Errorf("waiting for ready daemon: %w", lastErr)
 	}
-	return fmt.Errorf("waiting for fresh daemon build %s", expectedBuildID)
+	if expectedBuildID != "" {
+		return fmt.Errorf("waiting for ready daemon build %s", expectedBuildID)
+	}
+	return fmt.Errorf("waiting for ready daemon service")
 }
