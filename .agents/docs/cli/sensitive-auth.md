@@ -23,6 +23,7 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
   - system lock/sleep
   - explicit TUI idle lock
   - daemon restart
+- Helpers emit that lock event on macOS screen lock/screensaver and will-sleep, Linux ScreenSaver lock and logind `PrepareForSleep(true)`, and Windows session lock and WMI entering suspend. Linux system-bus access and Windows Modern Standby behavior still require native validation.
 - An expired shared-session timestamp remains as cleanup evidence until the broker clears or replaces it; token pruning cannot hide session expiry.
 - Lease expiry, daemon hydration, authorization grants, and session clearing share one broker transition lock; native prompts run outside it.
 - Non-export `sensitive-auth` requests perform expiry cleanup before force can skip the initial active-session fast path, so it cannot revive a stale in-memory vault session.

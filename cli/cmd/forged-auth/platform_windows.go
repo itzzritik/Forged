@@ -217,22 +217,37 @@ func watchWindowsLocks(ctx context.Context, onLock func()) {
 	}
 
 	script := `
-$source = 'ForgedSessionLock'
-Register-WmiEvent -Class Win32_SessionChangeEvent -SourceIdentifier $source | Out-Null
+	$lockSource = 'ForgedSessionLock'
+	$sleepSource = 'ForgedSleep'
+	$registered = @()
 try {
+	try {
+	  Register-WmiEvent -Class Win32_SessionChangeEvent -SourceIdentifier $lockSource -ErrorAction Stop | Out-Null
+	  $registered += $lockSource
+	} catch {}
+	try {
+	  Register-WmiEvent -Class Win32_PowerManagementEvent -SourceIdentifier $sleepSource -ErrorAction Stop | Out-Null
+	  $registered += $sleepSource
+	} catch {}
+	if ($registered.Count -eq 0) { exit 1 }
   while ($true) {
-    $event = Wait-Event -SourceIdentifier $source
+    $event = Wait-Event
     if ($null -eq $event) { continue }
     try {
-      if ($event.SourceEventArgs.NewEvent.Reason -eq 7) {
+	  if ($event.SourceIdentifier -eq $lockSource -and $event.SourceEventArgs.NewEvent.Reason -eq 7) {
         Write-Output 'LOCK'
       }
+	  if ($event.SourceIdentifier -eq $sleepSource -and $event.SourceEventArgs.NewEvent.EventType -eq 4) {
+		Write-Output 'LOCK'
+	  }
     } finally {
       Remove-Event -EventIdentifier $event.EventIdentifier -ErrorAction SilentlyContinue | Out-Null
     }
   }
 } finally {
-  Get-EventSubscriber -SourceIdentifier $source -ErrorAction SilentlyContinue | Unregister-Event -Force -ErrorAction SilentlyContinue
+	foreach ($source in $registered) {
+	  Get-EventSubscriber -SourceIdentifier $source -ErrorAction SilentlyContinue | Unregister-Event -Force -ErrorAction SilentlyContinue
+	}
 }
 `
 

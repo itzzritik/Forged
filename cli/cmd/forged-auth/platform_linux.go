@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
@@ -71,10 +72,34 @@ func startLockLoop(ctx context.Context, onLock func()) {
 	if onLock == nil {
 		return
 	}
-	watchLinuxLocks(ctx, onLock)
+	var watchers sync.WaitGroup
+	for _, monitor := range []struct {
+		args  []string
+		match func(string) bool
+	}{
+		{
+			args: []string{"--session", "--dest", "org.freedesktop.ScreenSaver", "--object-path", "/org/freedesktop/ScreenSaver"},
+			match: func(line string) bool {
+				return strings.Contains(line, "activechanged") && strings.Contains(line, "true")
+			},
+		},
+		{
+			args: []string{"--system", "--dest", "org.freedesktop.login1", "--object-path", "/org/freedesktop/login1"},
+			match: func(line string) bool {
+				return strings.Contains(line, "prepareforsleep") && strings.Contains(line, "true")
+			},
+		},
+	} {
+		watchers.Add(1)
+		go func(args []string, match func(string) bool) {
+			defer watchers.Done()
+			watchLinuxMonitor(ctx, onLock, args, match)
+		}(monitor.args, monitor.match)
+	}
+	watchers.Wait()
 }
 
-func watchLinuxLocks(ctx context.Context, onLock func()) {
+func watchLinuxMonitor(ctx context.Context, onLock func(), args []string, match func(string) bool) {
 	gdbusPath, err := exec.LookPath("gdbus")
 	if err != nil {
 		return
@@ -84,10 +109,7 @@ func watchLinuxLocks(ctx context.Context, onLock func()) {
 		cmd := exec.CommandContext(
 			ctx,
 			gdbusPath,
-			"monitor",
-			"--session",
-			"--dest", "org.freedesktop.ScreenSaver",
-			"--object-path", "/org/freedesktop/ScreenSaver",
+			append([]string{"monitor"}, args...)...,
 		)
 		stdout, err := cmd.StdoutPipe()
 		if err != nil {
@@ -113,7 +135,7 @@ func watchLinuxLocks(ctx context.Context, onLock func()) {
 		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
 		for scanner.Scan() {
 			line := strings.ToLower(scanner.Text())
-			if strings.Contains(line, "activechanged") && strings.Contains(line, "true") {
+			if match(line) {
 				onLock()
 			}
 		}

@@ -51,6 +51,9 @@ final class HelperRuntime {
         center.addObserver(forName: NSNotification.Name("com.apple.screensaver.didstart"), object: nil, queue: nil) { [weak self] _ in
             self?.emit(HelperResponse(id: nil, type: "event", status: "session_locked", provider: "local-authentication", message: nil))
         }
+        NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) { [weak self] _ in
+            self?.emit(HelperResponse(id: nil, type: "event", status: "session_locked", provider: "local-authentication", message: nil))
+        }
 
         let stdinHandle = FileHandle.standardInput
         stdinHandle.readabilityHandler = { [weak self] handle in
