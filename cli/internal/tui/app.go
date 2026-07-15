@@ -407,17 +407,19 @@ type model struct {
 	keyExportPickerID    int
 	keyTransferSuccessID int
 
-	keyBrowser  keyBrowserState
-	keyDetail   keyDetailState
-	privateClip privateClipboardState
-	keyRename   keyRenameState
-	keyDelete   keyDeleteState
-	keyGenerate keyGenerateState
-	keyImport   keyImportState
-	keyExport   keyExportState
-	manage      manageState
-	agent       agentState
-	lab         labState
+	keyBrowser         keyBrowserState
+	keyDetail          keyDetailState
+	privateCopyID      int
+	privateCopyPending bool
+	privateClip        privateClipboardState
+	keyRename          keyRenameState
+	keyDelete          keyDeleteState
+	keyGenerate        keyGenerateState
+	keyImport          keyImportState
+	keyExport          keyExportState
+	manage             manageState
+	agent              agentState
+	lab                labState
 }
 
 func Run(intent Intent, deps Dependencies) (Result, error) {
@@ -765,11 +767,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 			healthCmd = m.refreshSnapshotCmd()
 		}
-		if cmd := m.handleSensitiveSessionLoss(wasUnlocked); cmd != nil {
-			return m, tea.Batch(cmd, healthCmd)
-		}
+		lossCmd := m.handleSensitiveSessionLoss(wasUnlocked)
 		if m.snapshot.VaultExists {
 			cmds := []tea.Cmd{m.pollRuntimeStatus(time.Second)}
+			if lossCmd != nil {
+				cmds = append(cmds, lossCmd)
+			}
 			if healthCmd != nil {
 				cmds = append(cmds, healthCmd)
 			}
@@ -782,6 +785,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				cmds = append([]tea.Cmd{m.spinner.Tick}, cmds...)
 			}
 			return m, tea.Batch(cmds...)
+		}
+		if lossCmd != nil && healthCmd != nil {
+			return m, tea.Batch(lossCmd, healthCmd)
+		}
+		if lossCmd != nil {
+			return m, lossCmd
 		}
 		return m, healthCmd
 	case idleLockMsg:
@@ -798,7 +807,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.idleLockInFlight = true
 		m.idleLockID++
-		return m, m.lockSensitiveCmd(m.idleLockID)
+		m.cancelPrivateKeyCopy()
+		return m, tea.Batch(m.clearPrivateClipboardForLock(), m.lockSensitiveCmd(m.idleLockID))
 	case idleLockFinishedMsg:
 		if msg.id != m.idleLockID {
 			return m, nil
@@ -838,6 +848,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleKeyPrivateClipboardTickMsg(msg)
 	case keyPrivateClipboardClearedMsg:
 		return m.handleKeyPrivateClipboardClearedMsg(msg)
+	case keyStalePrivateClipboardClearedMsg:
+		return m.handleKeyStalePrivateClipboardClearedMsg(msg)
+	case keyStalePrivateClipboardRetryMsg:
+		return m, clearStalePrivateClipboard(msg.lease, msg.tries)
 	case keyGenerateFinishedMsg:
 		return m.handleKeyGenerateFinishedMsg(msg)
 	case keyImportPreviewMsg:
@@ -2652,19 +2666,28 @@ func (m *model) useStartupMasterPassword() tea.Cmd {
 }
 
 func (m *model) handleSensitiveSessionLoss(wasUnlocked bool) tea.Cmd {
+	if m.runtimeStatus.SensitiveKnown && m.runtimeStatus.Unlocked {
+		m.privateClip.lockClear = false
+	}
+	locked := m.runtimeStatus.SensitiveKnown && !m.runtimeStatus.Unlocked
+	var clipboardCmd tea.Cmd
+	if locked && (wasUnlocked || m.privateCopyPending || m.privateClip.lease != nil) {
+		m.cancelPrivateKeyCopy()
+		clipboardCmd = m.clearPrivateClipboardForLock()
+	}
 	if !wasUnlocked || !m.snapshot.VaultExists {
-		return nil
+		return clipboardCmd
 	}
 	if m.screen == screenPassword && m.passwordFlow == passwordStartupUnlock {
-		return nil
+		return clipboardCmd
 	}
 	if m.runtimeStatus.Unlocked || !m.runtimeStatus.SensitiveKnown {
-		return nil
+		return clipboardCmd
 	}
 	if !m.deps.HasLocalUnlockTrust() {
 		m.showPasswordScreen(passwordStartupUnlock, "", "", true)
 		m.passwordContext = "Enter your master password to continue using Forged."
-		return m.passwordInput.Init()
+		return tea.Batch(clipboardCmd, m.passwordInput.Init())
 	}
 	m.showPasswordScreen(passwordStartupUnlock, "", "", true)
 	m.passwordContext = "Please authenticate to continue using Forged."
@@ -2672,7 +2695,7 @@ func (m *model) handleSensitiveSessionLoss(wasUnlocked bool) tea.Cmd {
 	m.passwordBusy = false
 	m.passwordBusyMessage = ""
 	m.passwordInput.ClearStatus()
-	return nil
+	return clipboardCmd
 }
 
 func (m *model) submitStartupUnlock(password []byte) tea.Cmd {

@@ -56,9 +56,11 @@ type keyCopyFinishedMsg struct {
 }
 
 type keyPrivateCopyFinishedMsg struct {
-	name  string
-	lease SensitiveClipboardLease
-	err   error
+	id       int
+	detailID int
+	name     string
+	lease    SensitiveClipboardLease
+	err      error
 }
 
 type keyPrivateClipboardTickMsg struct {
@@ -70,6 +72,17 @@ type keyPrivateClipboardClearedMsg struct {
 	id      int
 	cleared bool
 	err     error
+}
+
+type keyStalePrivateClipboardClearedMsg struct {
+	lease SensitiveClipboardLease
+	tries int
+	err   error
+}
+
+type keyStalePrivateClipboardRetryMsg struct {
+	lease SensitiveClipboardLease
+	tries int
 }
 
 type keyGenerateFinishedMsg struct {
@@ -147,12 +160,14 @@ type keyDetailState struct {
 }
 
 type privateClipboardState struct {
-	id       int
-	detailID int
-	name     string
-	deadline time.Time
-	lease    SensitiveClipboardLease
-	tries    int
+	id        int
+	detailID  int
+	name      string
+	deadline  time.Time
+	lease     SensitiveClipboardLease
+	tries     int
+	clearing  bool
+	lockClear bool
 }
 
 type keyRenameState struct {
@@ -860,6 +875,7 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 func (m *model) updateKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.keyDetail.loading || m.keyDetail.busy {
 		if msg.String() == "esc" {
+			m.cancelPrivateKeyCopy()
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
 			}
@@ -1434,8 +1450,12 @@ func (m *model) copyKeyText(value string, status string) tea.Cmd {
 
 func (m *model) copyPrivateKey(password []byte) tea.Cmd {
 	m.clipboardBusy = true
+	m.privateCopyID++
+	id := m.privateCopyID
+	m.privateCopyPending = true
 	copySensitiveText := m.deps.CopySensitiveText
 	name := strings.TrimSpace(m.keyDetail.key.Name)
+	detailID := m.keyDetailID
 	paths := config.DefaultPaths()
 	passwordCopy := append([]byte(nil), password...)
 	clear(password)
@@ -1443,16 +1463,16 @@ func (m *model) copyPrivateKey(password []byte) tea.Cmd {
 		defer clear(passwordCopy)
 		detail, err := actions.ViewFullKey(paths, name, passwordCopy)
 		if err != nil {
-			return keyPrivateCopyFinishedMsg{err: err}
+			return keyPrivateCopyFinishedMsg{id: id, detailID: detailID, name: name, err: err}
 		}
 		if strings.TrimSpace(detail.PrivateKey) == "" {
-			return keyPrivateCopyFinishedMsg{err: fmt.Errorf("Private key is unavailable")}
+			return keyPrivateCopyFinishedMsg{id: id, detailID: detailID, name: name, err: fmt.Errorf("Private key is unavailable")}
 		}
 		lease, err := copySensitiveText(detail.PrivateKey)
 		if err != nil {
-			return keyPrivateCopyFinishedMsg{err: err}
+			return keyPrivateCopyFinishedMsg{id: id, detailID: detailID, name: name, err: err}
 		}
-		return keyPrivateCopyFinishedMsg{name: name, lease: lease}
+		return keyPrivateCopyFinishedMsg{id: id, detailID: detailID, name: name, lease: lease}
 	}
 }
 
@@ -1681,7 +1701,15 @@ func (m *model) handleKeyCopyFinishedMsg(msg keyCopyFinishedMsg) (tea.Model, tea
 }
 
 func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.privateCopyID || !m.privateCopyPending {
+		return m, clearStalePrivateClipboard(msg.lease, 0)
+	}
+	m.privateCopyPending = false
 	m.clipboardBusy = false
+	m.keyDetail.busy = false
+	if !m.privateCopyDestinationActive(msg) {
+		return m, clearStalePrivateClipboard(msg.lease, 0)
+	}
 	if m.screen == screenPassword && m.passwordFlow == passwordKeyView {
 		m.passwordBusy = false
 		if msg.err != nil {
@@ -1692,11 +1720,9 @@ func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (
 		m.passwordAuth = ""
 		m.discardPasswordInput()
 		m.screen = screenDashboard
-		m.keyDetail.busy = false
 		return m, m.startPrivateClipboard(msg.name, msg.lease)
 	}
 
-	m.keyDetail.busy = false
 	if msg.err != nil {
 		if actions.IsSensitiveAuthRequired(msg.err) {
 			if m.isLockedAuthScreen() {
@@ -1712,13 +1738,23 @@ func (m *model) handleKeyPrivateCopyFinishedMsg(msg keyPrivateCopyFinishedMsg) (
 	return m, m.startPrivateClipboard(msg.name, msg.lease)
 }
 
+func (m *model) privateCopyDestinationActive(msg keyPrivateCopyFinishedMsg) bool {
+	if msg.detailID != m.keyDetailID ||
+		m.session.Current().ID != RouteKeysDetail ||
+		strings.TrimSpace(m.keyDetail.key.Name) != msg.name {
+		return false
+	}
+	return m.screen == screenDashboard || (m.screen == screenPassword && m.passwordFlow == passwordKeyView)
+}
+
 func (m *model) startPrivateClipboard(name string, lease SensitiveClipboardLease) tea.Cmd {
-	m.privateClip.id++
-	m.privateClip.detailID = m.keyDetailID
-	m.privateClip.name = name
-	m.privateClip.deadline = time.Now().Add(privateClipboardLifetime)
-	m.privateClip.lease = lease
-	m.privateClip.tries = 0
+	m.privateClip = privateClipboardState{
+		id:       m.privateClip.id + 1,
+		detailID: m.keyDetailID,
+		name:     name,
+		deadline: time.Now().Add(privateClipboardLifetime),
+		lease:    lease,
+	}
 	m.setPrivateClipboardStatus(privateClipboardSecondsRemaining(m.privateClip.deadline, time.Now()))
 	return privateClipboardTick(m.privateClip.id, m.privateClip.deadline)
 }
@@ -1736,17 +1772,14 @@ func (m *model) handleKeyPrivateClipboardTickMsg(msg keyPrivateClipboardTickMsg)
 		m.keyDetail.status = "Clearing private key from clipboard"
 		m.keyDetail.statusErr = ""
 	}
-	lease := m.privateClip.lease
-	return m, func() tea.Msg {
-		cleared, err := lease.ClearIfUnchanged()
-		return keyPrivateClipboardClearedMsg{id: msg.id, cleared: cleared, err: err}
-	}
+	return m, m.clearCurrentPrivateClipboard()
 }
 
 func (m *model) handleKeyPrivateClipboardClearedMsg(msg keyPrivateClipboardClearedMsg) (tea.Model, tea.Cmd) {
 	if msg.id != m.privateClip.id {
 		return m, nil
 	}
+	m.privateClip.clearing = false
 	activeDetail := m.privateClipboardDetailActive()
 	if msg.err != nil {
 		errorText := m.reportError("clipboard.clear-private", msg.err)
@@ -1776,6 +1809,70 @@ func (m *model) handleKeyPrivateClipboardClearedMsg(msg keyPrivateClipboardClear
 
 func (m *model) cancelPrivateClipboard() {
 	m.privateClip = privateClipboardState{id: m.privateClip.id + 1}
+}
+
+func (m *model) cancelPrivateKeyCopy() {
+	m.privateCopyID++
+	if !m.privateCopyPending {
+		return
+	}
+	m.privateCopyPending = false
+	m.clipboardBusy = false
+	m.keyDetail.busy = false
+}
+
+func (m *model) clearPrivateClipboardForLock() tea.Cmd {
+	if m.privateClip.lease == nil || m.privateClip.clearing || m.privateClip.lockClear {
+		return nil
+	}
+	lease := m.privateClip.lease
+	m.privateClip.id++
+	m.privateClip.detailID = 0
+	m.privateClip.name = ""
+	m.privateClip.deadline = time.Time{}
+	m.privateClip.clearing = true
+	m.privateClip.lockClear = true
+	return clearPrivateClipboard(m.privateClip.id, lease)
+}
+
+func (m *model) clearCurrentPrivateClipboard() tea.Cmd {
+	if m.privateClip.lease == nil || m.privateClip.clearing {
+		return nil
+	}
+	m.privateClip.clearing = true
+	return clearPrivateClipboard(m.privateClip.id, m.privateClip.lease)
+}
+
+func clearPrivateClipboard(id int, lease SensitiveClipboardLease) tea.Cmd {
+	return func() tea.Msg {
+		cleared, err := lease.ClearIfUnchanged()
+		return keyPrivateClipboardClearedMsg{id: id, cleared: cleared, err: err}
+	}
+}
+
+func clearStalePrivateClipboard(lease SensitiveClipboardLease, tries int) tea.Cmd {
+	if lease == nil {
+		return nil
+	}
+	return func() tea.Msg {
+		_, err := lease.ClearIfUnchanged()
+		return keyStalePrivateClipboardClearedMsg{lease: lease, tries: tries, err: err}
+	}
+}
+
+func (m *model) handleKeyStalePrivateClipboardClearedMsg(msg keyStalePrivateClipboardClearedMsg) (tea.Model, tea.Cmd) {
+	if msg.err == nil {
+		return m, nil
+	}
+	m.reportError("clipboard.clear-stale-private", msg.err)
+	tries := msg.tries + 1
+	delay := 5 * time.Second
+	if tries >= privateClipboardFastClearTries {
+		delay = 30 * time.Second
+	}
+	return m, tea.Tick(delay, func(time.Time) tea.Msg {
+		return keyStalePrivateClipboardRetryMsg{lease: msg.lease, tries: tries}
+	})
 }
 
 func (m *model) setPrivateClipboardStatus(remaining int) {
