@@ -64,8 +64,12 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		return fmt.Errorf("Writing unit file: %w", err)
 	}
 
-	systemctlUser("daemon-reload").Run()
-	systemctlUser("enable", serviceName).Run()
+	if out, err := systemctlUser("daemon-reload").CombinedOutput(); err != nil {
+		return fmt.Errorf("Reloading systemd user services: %s: %w", string(out), err)
+	}
+	if out, err := systemctlUser("enable", serviceName).CombinedOutput(); err != nil {
+		return fmt.Errorf("Enabling service: %s: %w", string(out), err)
+	}
 
 	return nil
 }
