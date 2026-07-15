@@ -2122,6 +2122,15 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 
 func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.passwordBusy {
+		if msg.String() == "esc" && m.passwordFlow == passwordKeyView && m.privateCopyPending {
+			m.cancelPrivateKeyCopy()
+			m.passwordOverlay = false
+			m.passwordBusy = false
+			m.passwordAuth = ""
+			m.discardPasswordInput()
+			m.screen = screenDashboard
+			return m, nil
+		}
 		if msg.String() == "esc" && m.passwordFlow == passwordStartupUnlock && m.passwordHideInput {
 			return m, m.useStartupMasterPassword()
 		}
