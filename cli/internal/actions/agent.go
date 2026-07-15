@@ -98,10 +98,10 @@ func EnableCommitSigning(paths config.Paths, keyName string) (CommitSigningStatu
 	if err != nil {
 		return CommitSigningStatus{}, err
 	}
-	if err := applyGitSigningConfig(exported.PublicKey, signPath); err != nil {
+	if err := writeAllowedSigners(exported.PublicKey); err != nil {
 		return CommitSigningStatus{}, err
 	}
-	if err := writeAllowedSigners(exported.PublicKey); err != nil {
+	if err := applyGitSigningConfig(exported.PublicKey, signPath); err != nil {
 		return CommitSigningStatus{}, err
 	}
 
