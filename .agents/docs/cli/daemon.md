@@ -25,6 +25,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - It now boots cold by default. Installed services and foreground `forged daemon` no longer depend on a stored plaintext master password.
 - A live vault session exists only after sensitive auth or password fallback hydrates it.
 - A foreground startup password hydrates through the broker, so it establishes the same active session as an interactive password unlock.
+- A delivered master-password authorization refreshes local unlock enrollment from the active vault session; a canceled or failed response does not change that durable trust.
 - When the shared session is cleared, the daemon drops back to cold state.
 - Session clear waits for admitted sync work to finish before zeroing and closing the vault.
 - Sync only exists while account credentials are present and a live vault session is available.

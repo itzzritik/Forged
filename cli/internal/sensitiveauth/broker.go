@@ -60,25 +60,28 @@ type passwordUnlockCall struct {
 }
 
 type deliveryAuthorization struct {
-	broker     *Broker
-	ctx        context.Context
-	generation uint64
-	epoch      uint64
-	hydrated   bool
-	result     AuthorizeResult
-	once       sync.Once
-	err        error
+	broker            *Broker
+	ctx               context.Context
+	generation        uint64
+	epoch             uint64
+	hydrated          bool
+	refreshEnrollment bool
+	result            AuthorizeResult
+	once              sync.Once
+	err               error
 }
 
 func (a *deliveryAuthorization) Finalize(delivered bool) error {
+	refreshEnrollment := false
 	a.once.Do(func() {
 		a.broker.sessionMu.Lock()
-		defer a.broker.sessionMu.Unlock()
 		if a.broker.pendingAuthorization == a {
 			a.broker.pendingAuthorization = nil
 		}
 
 		if delivered && a.ctx.Err() == nil && a.broker.authGeneration == a.generation {
+			refreshEnrollment = a.refreshEnrollment
+			a.broker.sessionMu.Unlock()
 			return
 		}
 		if a.hydrated && a.broker.authGeneration == a.generation && a.broker.sessionEpoch == a.epoch {
@@ -92,7 +95,11 @@ func (a *deliveryAuthorization) Finalize(delivered bool) error {
 		} else {
 			a.err = ErrAuthenticationCanceled
 		}
+		a.broker.sessionMu.Unlock()
 	})
+	if refreshEnrollment && a.broker.session != nil {
+		a.broker.session.RefreshLocalEnrollment()
+	}
 	return a.err
 }
 
@@ -114,6 +121,7 @@ type SessionController interface {
 	HasActiveSession() bool
 	HydrateFromEnrollment() error
 	HydrateFromPassword(password []byte) error
+	RefreshLocalEnrollment()
 	ClearActiveSession(reason string)
 }
 
@@ -122,7 +130,7 @@ func NewBroker(paths config.Paths, helperPath string, logger *slog.Logger, sessi
 	b := &Broker{
 		paths:      paths,
 		logger:     logger,
-		password:   NewPasswordVerifier(paths, logger),
+		password:   NewPasswordVerifier(paths),
 		leases:     newLeaseState(),
 		session:    session,
 		native:     CapabilityUnavailableByEnv,
@@ -380,17 +388,18 @@ func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, 
 	if action == ActionPrivateKey {
 		result.PrivateKeyToken = b.leases.IssuePrivateKeyToken(now)
 	}
-	return b.newDeliveryAuthorizationLocked(ctx, generation, hydrated, result, watchDelivery), nil
+	return b.newDeliveryAuthorizationLocked(ctx, generation, hydrated, true, result, watchDelivery), nil
 }
 
-func (b *Broker) newDeliveryAuthorizationLocked(ctx context.Context, generation uint64, hydrated bool, result AuthorizeResult, watchDelivery bool) *deliveryAuthorization {
+func (b *Broker) newDeliveryAuthorizationLocked(ctx context.Context, generation uint64, hydrated, refreshEnrollment bool, result AuthorizeResult, watchDelivery bool) *deliveryAuthorization {
 	auth := &deliveryAuthorization{
-		broker:     b,
-		ctx:        ctx,
-		generation: generation,
-		epoch:      b.sessionEpoch,
-		hydrated:   hydrated,
-		result:     result,
+		broker:            b,
+		ctx:               ctx,
+		generation:        generation,
+		epoch:             b.sessionEpoch,
+		hydrated:          hydrated,
+		refreshEnrollment: refreshEnrollment,
+		result:            result,
 	}
 	b.pendingAuthorization = auth
 	if watchDelivery {
@@ -758,7 +767,7 @@ func (b *Broker) beginGrantWithEnrollment(ctx context.Context, action Action, no
 		return nil, ErrAuthorizationInProgress
 	}
 	if b.session == nil || b.session.HasActiveSession() {
-		return b.newDeliveryAuthorizationLocked(ctx, generation, false, b.grantLocked(action, now), watchDelivery), nil
+		return b.newDeliveryAuthorizationLocked(ctx, generation, false, false, b.grantLocked(action, now), watchDelivery), nil
 	}
 	if err := b.session.HydrateFromEnrollment(); err != nil {
 		return nil, err
@@ -771,7 +780,7 @@ func (b *Broker) beginGrantWithEnrollment(ctx context.Context, action Action, no
 		b.clearSharedSessionLocked("authorization_invalidated")
 		return nil, ErrAuthenticationCanceled
 	}
-	return b.newDeliveryAuthorizationLocked(ctx, generation, true, b.grantLocked(action, now), watchDelivery), nil
+	return b.newDeliveryAuthorizationLocked(ctx, generation, true, false, b.grantLocked(action, now), watchDelivery), nil
 }
 
 func (b *Broker) authorizationInterrupted(action Action) (AuthorizeResult, error) {

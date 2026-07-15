@@ -1020,6 +1020,28 @@ func (d *Daemon) HydrateFromPassword(password []byte) error {
 	return d.hydrateWithPassword(password)
 }
 
+func (d *Daemon) RefreshLocalEnrollment() {
+	d.sessionMu.Lock()
+	if d.vault == nil || d.keyStore == nil {
+		d.sessionMu.Unlock()
+		return
+	}
+	symmetricKey := d.vault.Key()
+	d.sessionMu.Unlock()
+	defer zeroSecret(symmetricKey)
+
+	result, err := sensitiveauth.RefreshLocalEnrollment(d.paths, symmetricKey)
+	if err != nil {
+		if d.logger != nil {
+			d.logger.Warn("local unlock enrollment not refreshed", "error", err)
+		}
+		return
+	}
+	if !result.Refreshed && d.logger != nil && result.Reason != "" {
+		d.logger.Warn("local unlock enrollment not refreshed", "capability", result.Capability, "reason", result.Reason)
+	}
+}
+
 func (d *Daemon) ClearActiveSession(reason string) {
 	d.clearActiveSession(reason)
 }

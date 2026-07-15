@@ -85,16 +85,6 @@ func HasLocalEnrollment(paths config.Paths) bool {
 	return LocalEnrollmentUsable(paths)
 }
 
-func VerifyAndRefreshLocalEnrollment(paths config.Paths, password []byte) (EnrollmentResult, error) {
-	symmetricKey, err := vault.RecoverSymmetricKey(paths.VaultFile(), password)
-	if err != nil {
-		return EnrollmentResult{}, err
-	}
-	defer zeroSensitiveBytes(symmetricKey)
-
-	return RefreshLocalEnrollment(paths, symmetricKey)
-}
-
 func RefreshLocalEnrollment(paths config.Paths, symmetricKey []byte) (EnrollmentResult, error) {
 	if len(symmetricKey) == 0 {
 		return EnrollmentResult{}, fmt.Errorf("Vault symmetric key required")
