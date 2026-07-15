@@ -153,7 +153,7 @@ func StartService() error {
 		return err
 	}
 	if err := launchctlRun(
-		[]string{"kickstart", "-k", launchdServiceTarget()},
+		[]string{"kickstart", launchdServiceTarget()},
 		nil,
 	); err != nil {
 		return err
