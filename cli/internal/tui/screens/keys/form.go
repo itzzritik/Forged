@@ -6,6 +6,7 @@ import (
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
@@ -212,7 +213,7 @@ func RenderImport(screen ImportScreen, spinner string, width int) string {
 }
 
 func RenderImportReview(screen ImportReviewScreen, spinner string, width int, height int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth+10))
+	contentWidth := max(1, min(width, theme.HeroMaxWidth+10))
 	items := append([]ImportReviewItem(nil), screen.Items...)
 	active := 0
 	for index, item := range items {
@@ -292,16 +293,17 @@ func renderImportReviewTop(screen ImportReviewScreen, items []ImportReviewItem, 
 
 	lines := make([]string, 0, len(items)+3)
 	if showSource {
-		lines = append(lines, theme.BodyMuted.Render(fmt.Sprintf("%s %s %d keys", screen.SourceLabel, theme.Glyphs.Separator, screen.Count)))
+		source := fmt.Sprintf("%s %s %d keys", screen.SourceLabel, theme.Glyphs.Separator, screen.Count)
+		lines = append(lines, theme.BodyMuted.Render(ansi.Truncate(source, width, theme.Glyphs.Ellipsis)))
 	}
 	if showMarkers && hasAbove {
 		lines = append(lines, theme.BodyMuted.Render(theme.Glyphs.Up+" more"))
 	}
 	for _, item := range items {
 		if compactRows {
-			lines = append(lines, renderImportReviewCompactRow(item))
+			lines = append(lines, renderImportReviewCompactRow(item, width))
 		} else {
-			lines = append(lines, renderImportReviewRow(item))
+			lines = append(lines, renderImportReviewRow(item, width))
 		}
 	}
 	if showMarkers && hasBelow {
@@ -320,7 +322,7 @@ func renderImportReviewBottom(screen ImportReviewScreen, spinner string, width i
 		lines = append(lines, theme.SectionTitle.Render("Summary"))
 	}
 	for _, line := range summary {
-		lines = append(lines, theme.BodyMuted.Render(line))
+		lines = append(lines, theme.BodyMuted.Render(ansi.Truncate(line, width, theme.Glyphs.Ellipsis)))
 	}
 	if guidance := strings.TrimSpace(screen.Guidance); showGuidance && guidance != "" {
 		lines = append(lines, theme.BodyMuted.Width(width).Render(guidance))
@@ -410,19 +412,20 @@ func renderTextField(view string, focused bool, width int) string {
 	}, "\n")
 }
 
-func renderImportReviewRow(item ImportReviewItem) string {
+func renderImportReviewRow(item ImportReviewItem, width int) string {
 	return strings.Join([]string{
-		renderImportReviewCompactRow(item),
-		"    " + renderImportMetadataLine(item),
+		renderImportReviewCompactRow(item, width),
+		ansi.Truncate("    "+renderImportMetadataLine(item), width, theme.Glyphs.Ellipsis),
 	}, "\n")
 }
 
-func renderImportReviewCompactRow(item ImportReviewItem) string {
+func renderImportReviewCompactRow(item ImportReviewItem, width int) string {
 	prefix := " "
 	if item.Active {
 		prefix = theme.Kicker.Render(theme.Glyphs.Selection)
 	}
-	return fmt.Sprintf("%s %s %s", prefix, renderImportCheckbox(item), theme.SanitizeText(item.Name))
+	prefix = fmt.Sprintf("%s %s ", prefix, renderImportCheckbox(item))
+	return prefix + ansi.Truncate(theme.SanitizeText(item.Name), max(0, width-lipgloss.Width(prefix)), theme.Glyphs.Ellipsis)
 }
 
 func renderImportCheckbox(item ImportReviewItem) string {

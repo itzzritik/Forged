@@ -2706,7 +2706,7 @@ func (m *model) selectedKeyImportFailure() (actions.ImportFailure, bool) {
 }
 
 func importReviewContentWidth(width int) int {
-	return max(28, min(width, theme.HeroMaxWidth+10))
+	return max(1, min(width, theme.HeroMaxWidth+10))
 }
 
 func importFailureReasonPage(reason string, offset int, width int) (string, int) {
