@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/sha256"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -33,30 +34,32 @@ import (
 type Daemon struct {
 	// syncTransitionMu serializes account and sync-state transitions. It is
 	// never held by link network work or manual/session locking.
-	syncTransitionMu sync.Mutex
-	sessionMu        sync.Mutex
-	paths            config.Paths
-	vault            *vault.Vault
-	keyStore         *vault.KeyStore
-	activityLog      *activity.ActivityLog
-	agent            *forgedagent.ForgedAgent
-	agentServer      *forgedagent.Server
-	ipcServer        *ipc.Server
-	syncBus          *forgedsync.Bus
-	syncDraining     *forgedsync.Bus
-	authBroker       *sensitiveauth.Broker
-	sshRouting       *sshrouting.Manager
-	routeService     *sshrouting.Service
-	syncGeneration   uint64
-	syncPending      bool
-	syncSuppressed   bool
-	syncRetryDelay   time.Duration
-	syncError        string
-	linkRun          *linkRun
-	logger           *slog.Logger
-	stop             chan struct{}
-	stopOnce         sync.Once
-	shutdownOnce     sync.Once
+	syncTransitionMu        sync.Mutex
+	sessionMu               sync.Mutex
+	paths                   config.Paths
+	vault                   *vault.Vault
+	keyStore                *vault.KeyStore
+	activityLog             *activity.ActivityLog
+	agent                   *forgedagent.ForgedAgent
+	agentServer             *forgedagent.Server
+	ipcServer               *ipc.Server
+	syncBus                 *forgedsync.Bus
+	syncDraining            *forgedsync.Bus
+	authBroker              *sensitiveauth.Broker
+	sshRouting              *sshrouting.Manager
+	routeService            *sshrouting.Service
+	syncGeneration          uint64
+	syncPending             bool
+	syncSuppressed          bool
+	accountTransition       uint64
+	activeAccountTransition uint64
+	syncRetryDelay          time.Duration
+	syncError               string
+	linkRun                 *linkRun
+	logger                  *slog.Logger
+	stop                    chan struct{}
+	stopOnce                sync.Once
+	shutdownOnce            sync.Once
 }
 
 func New(paths config.Paths) *Daemon {
@@ -357,6 +360,34 @@ type linkRun struct {
 	done      chan struct{}
 }
 
+// syncStateSnapshot is a stable, parsed view of both account-transition
+// state files. It is loaded without sessionMu, then its encrypted history is
+// validated during a short live-session section before a credential commit.
+type syncStateSnapshot struct {
+	active syncStateFileSnapshot
+	backup syncStateFileSnapshot
+}
+
+type syncStateFileSnapshot struct {
+	path   string
+	state  *forgedsync.SyncState
+	exists bool
+	hash   [sha256.Size]byte
+}
+
+type syncStateFileError struct {
+	path string
+	err  error
+}
+
+func (e *syncStateFileError) Error() string {
+	return fmt.Sprintf("sync state %s: %v", e.path, e.err)
+}
+
+func (e *syncStateFileError) Unwrap() error {
+	return e.err
+}
+
 const (
 	syncLinkTimeout       = 25 * time.Second
 	syncStateRecoveryHint = "Sync is paused because its local history needs recovery. Restore a verified sync-state.json backup before removing the recovery marker."
@@ -375,7 +406,7 @@ func (d *Daemon) initialSyncContext() (context.Context, context.CancelFunc) {
 }
 
 func (d *Daemon) initSyncLocked() {
-	if d.syncSuppressed || d.syncPending || d.syncDraining != nil {
+	if d.activeAccountTransition != 0 || d.syncSuppressed || d.syncPending || d.syncDraining != nil {
 		return
 	}
 	if d.syncBus != nil {
@@ -502,7 +533,7 @@ func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
-	run, bus, err := d.beginAccountChangeLocked()
+	run, bus, transition, err := d.beginAccountChangeLocked()
 	d.sessionMu.Unlock()
 	if err != nil {
 		return err
@@ -513,12 +544,10 @@ func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
 	d.sessionMu.Lock()
 	defer d.sessionMu.Unlock()
 	if _, err := d.requireSyncIdentity(args.ServerURL, args.UserID); err != nil {
-		d.syncSuppressed = false
-		d.initSyncLocked()
+		d.finishAccountTransitionLocked(transition, true, err)
 		return err
 	}
-	d.syncSuppressed = false
-	d.initSyncLocked()
+	d.finishAccountTransitionLocked(transition, true, nil)
 	d.logger.Info("sync link scheduled", "user_id", args.UserID)
 	return nil
 }
@@ -546,7 +575,7 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
-	run, bus, err := d.beginAccountChangeLocked()
+	run, bus, transition, err := d.beginAccountChangeLocked()
 	d.sessionMu.Unlock()
 	if err != nil {
 		return err
@@ -554,45 +583,53 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
 	waitForLinkRun(run)
 	waitForSyncBus(bus)
 
-	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
-	err = accountauth.WithCredentialsLock(d.paths, func() error {
-		if current, err := accountauth.LoadLocked(d.paths); err == nil {
-			if err := d.recoverSyncStateLocked(current); err != nil {
-				return err
+	snapshot, err := d.preflightSyncState()
+	if err == nil {
+		err = accountauth.WithCredentialsLock(d.paths, func() error {
+			var verifyErr error
+			snapshot, verifyErr = snapshot.reloadIfUnchanged(d.paths)
+			if verifyErr != nil {
+				d.quarantineSyncStateFailure(verifyErr)
+				return verifyErr
 			}
-		}
-		preserveState, err := d.syncStateMatchesAccountLocked(creds)
-		if err != nil {
-			return err
-		}
-		staged := false
-		if !preserveState {
-			staged, err = d.stageSyncStateLocked()
+			if current, err := accountauth.LoadLocked(d.paths); err == nil {
+				if err := snapshot.recover(current); err != nil {
+					return err
+				}
+			}
+			preserveState, err := snapshot.matchesAccount(creds)
 			if err != nil {
 				return err
 			}
-		}
-		if err := accountauth.SaveLocked(d.paths, creds); err != nil {
-			if restoreErr := d.restoreSyncStateLocked(staged); restoreErr != nil {
-				return errors.Join(err, restoreErr)
+			staged := false
+			if !preserveState {
+				staged, err = snapshot.stage()
+				if err != nil {
+					return err
+				}
 			}
-			return err
-		}
-		if staged {
-			if err := d.removeSyncStateBackupLocked(); err != nil {
-				d.logger.Warn("removing staged sync state after account replacement failed", "error", err)
+			if err := accountauth.SaveLocked(d.paths, creds); err != nil {
+				if restoreErr := snapshot.restore(staged); restoreErr != nil {
+					return errors.Join(err, restoreErr)
+				}
+				return err
 			}
-		}
-		return nil
-	})
+			if staged {
+				if err := snapshot.removeBackup(); err != nil {
+					d.logger.Warn("removing staged sync state after account replacement failed", "error", err)
+				}
+			}
+			return nil
+		})
+	}
+
+	d.sessionMu.Lock()
+	d.finishAccountTransitionLocked(transition, true, err)
 	if err != nil {
-		d.syncSuppressed = false
-		d.initSyncLocked()
+		d.sessionMu.Unlock()
 		return err
 	}
-	d.syncSuppressed = false
-	d.initSyncLocked()
+	d.sessionMu.Unlock()
 	d.logger.Info("account replacement committed", "user_id", args.UserID)
 	return nil
 }
@@ -616,7 +653,7 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
-	run, bus, err := d.beginAccountChangeLocked()
+	run, bus, transition, err := d.beginAccountChangeLocked()
 	d.sessionMu.Unlock()
 	if err != nil {
 		return accountauth.Credentials{}, err
@@ -624,121 +661,280 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
 	waitForLinkRun(run)
 	waitForSyncBus(bus)
 
-	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
+	snapshot, stateErr := d.preflightSyncState()
 	var creds accountauth.Credentials
+	stateRemoved := false
 	err = accountauth.WithCredentialsLock(d.paths, func() error {
 		creds, _ = accountauth.LoadLocked(d.paths)
 		if err := accountauth.DeleteLocked(d.paths); err != nil {
 			return err
 		}
-		if err := d.removeSyncStateLocked(); err != nil {
-			d.logger.Warn("removing sync state after logout failed", "error", err)
-		} else {
-			d.clearSyncStateRecoveryLocked()
+		if stateErr == nil {
+			var verifyErr error
+			snapshot, verifyErr = snapshot.reloadIfUnchanged(d.paths)
+			if verifyErr != nil {
+				d.quarantineSyncStateFailure(verifyErr)
+				stateErr = verifyErr
+			} else if removeErr := snapshot.remove(); removeErr != nil {
+				stateErr = removeErr
+			} else {
+				stateRemoved = true
+			}
+		}
+		if stateErr != nil {
+			d.logger.Warn("removing sync state after logout failed", "error", stateErr)
 		}
 		if err := os.Remove(d.paths.SyncDirtyFile()); err != nil && !os.IsNotExist(err) {
 			d.logger.Warn("removing sync dirty marker after logout failed", "error", err)
 		}
 		return nil
 	})
+	d.sessionMu.Lock()
+	if stateRemoved {
+		d.clearSyncStateRecoveryLocked()
+	}
 	if err != nil {
-		d.syncSuppressed = false
-		d.initSyncLocked()
+		d.finishAccountTransitionLocked(transition, true, stateErr)
+		d.sessionMu.Unlock()
 		return accountauth.Credentials{}, err
 	}
+	d.finishAccountTransitionLocked(transition, false, stateErr)
+	d.sessionMu.Unlock()
 	return creds, nil
 }
 
-func (d *Daemon) beginAccountChangeLocked() (*linkRun, *forgedsync.Bus, error) {
+func (d *Daemon) beginAccountChangeLocked() (*linkRun, *forgedsync.Bus, uint64, error) {
 	if d.vault != nil && d.keyStore != nil {
+		// Keep the dirty marker and bus state durable before detaching. A
+		// stopped clean bus must not win this transition after a crash.
 		if err := d.markSyncDirtyLocked(); err != nil {
-			return nil, nil, err
+			return nil, nil, 0, err
 		}
 		if d.syncBus != nil {
 			d.syncBus.LocalMutation("account_link_transition")
 		}
 	}
+	d.accountTransition++
+	transition := d.accountTransition
+	d.activeAccountTransition = transition
 	run := d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
 	d.syncSuppressed = true
 	d.syncRetryDelay = 0
-	return run, d.detachSyncBusLocked(), nil
+	return run, d.detachSyncBusLocked(), transition, nil
 }
 
-func (d *Daemon) removeSyncStateLocked() error {
-	activePath := d.paths.SyncStateFile()
-	backupPath := d.syncStateBackupPath()
-	if _, err := d.loadSyncStateLocked(forgedsync.NewStateStore(activePath)); err != nil {
+func (d *Daemon) finishAccountTransitionLocked(transition uint64, resumeSync bool, stateErr error) bool {
+	if d.activeAccountTransition != transition {
+		return false
+	}
+	d.activeAccountTransition = 0
+	d.recordSyncStateFailureLocked(stateErr)
+	if resumeSync {
+		d.syncSuppressed = false
+		d.initSyncLocked()
+	}
+	return true
+}
+
+func (d *Daemon) preflightSyncState() (syncStateSnapshot, error) {
+	snapshot, err := loadSyncStateSnapshot(d.paths)
+	if err != nil {
+		d.quarantineSyncStateFailure(err)
+		return syncStateSnapshot{}, err
+	}
+
+	d.sessionMu.Lock()
+	err = d.validateSyncStateSnapshotLocked(snapshot)
+	d.sessionMu.Unlock()
+	if err != nil {
+		d.quarantineSyncStateFailure(err)
+	}
+	return snapshot, err
+}
+
+func (d *Daemon) validateSyncStateSnapshotLocked(snapshot syncStateSnapshot) error {
+	for _, file := range []syncStateFileSnapshot{snapshot.active, snapshot.backup} {
+		if file.state == nil {
+			continue
+		}
+		if len(file.state.LastSyncedBaseBlob) > 0 && d.vault == nil {
+			return &syncStateFileError{path: file.path, err: fmt.Errorf("vault is locked; unlock Forged before changing sync state")}
+		}
+		if err := forgedsync.ValidateStateHistory(d.vault, file.state); err != nil {
+			return &syncStateFileError{path: file.path, err: err}
+		}
+	}
+	return nil
+}
+
+func loadSyncStateSnapshot(paths config.Paths) (syncStateSnapshot, error) {
+	active, err := loadSyncStateFileSnapshot(paths.SyncStateFile())
+	if err != nil {
+		return syncStateSnapshot{}, err
+	}
+	backup, err := loadSyncStateFileSnapshot(paths.SyncStateFile() + ".account-change")
+	if err != nil {
+		return syncStateSnapshot{}, err
+	}
+	return syncStateSnapshot{active: active, backup: backup}, nil
+}
+
+func loadSyncStateFileSnapshot(path string) (syncStateFileSnapshot, error) {
+	for range 2 {
+		before, beforeExists, err := syncStateFileHash(path)
+		if err != nil {
+			return syncStateFileSnapshot{}, &syncStateFileError{path: path, err: err}
+		}
+
+		state, err := forgedsync.NewStateStore(path).Load()
+		if err != nil {
+			return syncStateFileSnapshot{}, &syncStateFileError{path: path, err: err}
+		}
+
+		after, afterExists, err := syncStateFileHash(path)
+		if err != nil {
+			return syncStateFileSnapshot{}, &syncStateFileError{path: path, err: err}
+		}
+		if beforeExists == afterExists && (!afterExists || before == after) && (state != nil) == afterExists {
+			return syncStateFileSnapshot{
+				path:   path,
+				state:  state,
+				exists: afterExists,
+				hash:   after,
+			}, nil
+		}
+	}
+	return syncStateFileSnapshot{}, &syncStateFileError{
+		path: path,
+		err:  fmt.Errorf("%w: sync state changed while reading", forgedsync.ErrStateRecoveryRequired),
+	}
+}
+
+func syncStateFileHash(path string) ([sha256.Size]byte, bool, error) {
+	data, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return [sha256.Size]byte{}, false, nil
+	}
+	if err != nil {
+		return [sha256.Size]byte{}, false, fmt.Errorf("reading sync state: %w", err)
+	}
+	return sha256.Sum256(data), true, nil
+}
+
+func (s syncStateSnapshot) reloadIfUnchanged(paths config.Paths) (syncStateSnapshot, error) {
+	current, err := loadSyncStateSnapshot(paths)
+	if err != nil {
+		return syncStateSnapshot{}, err
+	}
+	if s.active.sameFile(current.active) && s.backup.sameFile(current.backup) {
+		return current, nil
+	}
+	path := s.active.path
+	if !s.backup.sameFile(current.backup) {
+		path = s.backup.path
+	}
+	return syncStateSnapshot{}, &syncStateFileError{
+		path: path,
+		err:  fmt.Errorf("%w: sync state changed during account transition", forgedsync.ErrStateRecoveryRequired),
+	}
+}
+
+func (s syncStateFileSnapshot) sameFile(other syncStateFileSnapshot) bool {
+	return s.exists == other.exists && (!s.exists || s.hash == other.hash)
+}
+
+func (s *syncStateSnapshot) recover(creds accountauth.Credentials) error {
+	if !s.backup.exists {
+		return nil
+	}
+	if s.active.exists {
+		return syncStateRecoveryError("active and staged sync state both exist")
+	}
+	if s.backup.state.LinkedUserID != creds.UserID || !sameSyncServer(s.backup.state.ServerURL, creds.ServerURL) {
+		return syncStateRecoveryError("staged sync state does not match the saved account")
+	}
+	activePath := s.active.path
+	backupPath := s.backup.path
+	if err := moveSyncStateFileNoReplace(s.backup.path, s.active.path, "restoring staged sync state"); err != nil {
 		return err
 	}
-	if _, err := d.loadSyncStateLocked(forgedsync.NewStateStore(backupPath)); err != nil {
-		return err
+	s.active = s.backup
+	s.active.path = activePath
+	s.backup = syncStateFileSnapshot{path: backupPath}
+	return nil
+}
+
+func (s syncStateSnapshot) matchesAccount(creds accountauth.Credentials) (bool, error) {
+	if s.backup.exists {
+		return false, syncStateRecoveryError("staged sync state requires recovery")
 	}
-	if err := removeSyncStateFile(activePath, "stale"); err != nil {
-		return err
+	return s.active.exists && s.active.state.LinkedUserID == creds.UserID && sameSyncServer(s.active.state.ServerURL, creds.ServerURL), nil
+}
+
+func (s *syncStateSnapshot) stage() (bool, error) {
+	if s.backup.exists {
+		return false, syncStateRecoveryError("staged sync state requires recovery")
 	}
-	return removeSyncStateFile(backupPath, "staged")
+	if !s.active.exists {
+		return false, nil
+	}
+	activePath := s.active.path
+	backupPath := s.backup.path
+	if err := moveSyncStateFileNoReplace(s.active.path, s.backup.path, "staging sync state"); err != nil {
+		return false, err
+	}
+	s.backup = s.active
+	s.backup.path = backupPath
+	s.active = syncStateFileSnapshot{path: activePath}
+	return true, nil
+}
+
+func (s syncStateSnapshot) restore(staged bool) error {
+	if !staged {
+		return nil
+	}
+	if _, err := os.Lstat(s.active.path); err == nil {
+		return syncStateRecoveryError("active sync state appeared while restoring staged state")
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("reading active sync state before restore: %w", err)
+	}
+	return moveSyncStateFileNoReplace(s.backup.path, s.active.path, "restoring sync state")
+}
+
+func (s syncStateSnapshot) remove() error {
+	if s.active.exists {
+		if err := removeSyncStateFile(s.active.path, "stale"); err != nil {
+			return err
+		}
+	}
+	if !s.backup.exists {
+		return nil
+	}
+	return removeSyncStateFile(s.backup.path, "staged")
+}
+
+func (s syncStateSnapshot) removeBackup() error {
+	if !s.backup.exists {
+		return nil
+	}
+	return removeSyncStateFile(s.backup.path, "staged")
+}
+
+func syncStateRecoveryError(reason string) error {
+	return fmt.Errorf("%w: %s", forgedsync.ErrStateRecoveryRequired, reason)
+}
+
+func moveSyncStateFileNoReplace(source, destination, action string) error {
+	if err := forgedsync.NewStateStore(source).MoveTo(destination); err != nil {
+		return fmt.Errorf("%w: %s: %v", forgedsync.ErrStateRecoveryRequired, action, err)
+	}
+	return nil
 }
 
 func (d *Daemon) syncStateBackupPath() string {
 	return d.paths.SyncStateFile() + ".account-change"
-}
-
-func (d *Daemon) removeSyncStateBackupLocked() error {
-	return d.removeSyncStateFileLocked(d.syncStateBackupPath(), "staged")
-}
-
-func (d *Daemon) stageSyncStateLocked() (bool, error) {
-	state, err := d.loadSyncStateLocked(forgedsync.NewStateStore(d.paths.SyncStateFile()))
-	if err != nil {
-		return false, err
-	}
-	backup, err := d.loadSyncStateLocked(forgedsync.NewStateStore(d.syncStateBackupPath()))
-	if err != nil {
-		return false, err
-	}
-	if backup != nil {
-		return false, d.syncStateRecoveryRequiredLocked("staged sync state requires recovery")
-	}
-	if state == nil {
-		return false, nil
-	}
-	if err := d.moveSyncStateNoReplace(d.paths.SyncStateFile(), d.syncStateBackupPath(), "staging sync state"); err != nil {
-		return false, err
-	}
-	return true, nil
-}
-
-func (d *Daemon) syncStateMatchesAccountLocked(creds accountauth.Credentials) (bool, error) {
-	state, err := d.loadSyncStateLocked(forgedsync.NewStateStore(d.paths.SyncStateFile()))
-	if err != nil {
-		return false, err
-	}
-	backup, err := d.loadSyncStateLocked(forgedsync.NewStateStore(d.syncStateBackupPath()))
-	if err != nil {
-		return false, err
-	}
-	if backup != nil {
-		return false, d.syncStateRecoveryRequiredLocked("staged sync state requires recovery")
-	}
-	return state != nil && state.LinkedUserID == creds.UserID && sameSyncServer(state.ServerURL, creds.ServerURL), nil
-}
-
-func (d *Daemon) restoreSyncStateLocked(staged bool) error {
-	if !staged {
-		return nil
-	}
-	if _, err := os.Lstat(d.paths.SyncStateFile()); err == nil {
-		return d.syncStateRecoveryRequiredLocked("active sync state appeared while restoring staged state")
-	} else if !os.IsNotExist(err) {
-		return fmt.Errorf("reading active sync state before restore: %w", err)
-	}
-	if err := d.moveSyncStateNoReplace(d.syncStateBackupPath(), d.paths.SyncStateFile(), "restoring sync state"); err != nil {
-		return err
-	}
-	return nil
 }
 
 func (d *Daemon) recoverSyncStateLocked(creds accountauth.Credentials) error {
@@ -764,17 +960,6 @@ func (d *Daemon) recoverSyncStateLocked(creds accountauth.Credentials) error {
 		return err
 	}
 	return nil
-}
-
-func (d *Daemon) removeSyncStateFileLocked(path, label string) error {
-	state, err := d.loadSyncStateLocked(forgedsync.NewStateStore(path))
-	if err != nil {
-		return err
-	}
-	if state == nil {
-		return nil
-	}
-	return removeSyncStateFile(path, label)
 }
 
 func removeSyncStateFile(path, label string) error {
@@ -812,23 +997,43 @@ func (d *Daemon) loadSyncStateLocked(store *forgedsync.StateStore) (*forgedsync.
 }
 
 func (d *Daemon) handleSyncStateFailureLocked(store *forgedsync.StateStore, err error) bool {
+	if !handleSyncStateFailure(store, d.logger, err) {
+		return false
+	}
+	d.setSyncStateRecoveryLocked()
+	return true
+}
+
+func handleSyncStateFailure(store *forgedsync.StateStore, logger *slog.Logger, err error) bool {
 	if !errors.Is(err, forgedsync.ErrStateCorrupt) && !errors.Is(err, forgedsync.ErrStateRecoveryRequired) {
 		return false
 	}
 	if errors.Is(err, forgedsync.ErrStateCorrupt) {
 		recoveryRequired, markerErr := store.RecoveryRequired()
 		if markerErr != nil {
-			if d.logger != nil {
-				d.logger.Warn("reading sync recovery marker failed", "error", markerErr)
+			if logger != nil {
+				logger.Warn("reading sync recovery marker failed", "error", markerErr)
 			}
 		} else if !recoveryRequired {
-			if quarantineErr := store.Quarantine(); quarantineErr != nil && d.logger != nil {
-				d.logger.Warn("quarantining corrupt sync state failed", "error", quarantineErr)
+			if quarantineErr := store.Quarantine(); quarantineErr != nil && logger != nil {
+				logger.Warn("quarantining corrupt sync state failed", "error", quarantineErr)
 			}
 		}
 	}
-	d.setSyncStateRecoveryLocked()
 	return true
+}
+
+func (d *Daemon) quarantineSyncStateFailure(err error) {
+	var fileErr *syncStateFileError
+	if errors.As(err, &fileErr) {
+		handleSyncStateFailure(forgedsync.NewStateStore(fileErr.path), d.logger, fileErr.err)
+	}
+}
+
+func (d *Daemon) recordSyncStateFailureLocked(err error) {
+	if errors.Is(err, forgedsync.ErrStateCorrupt) || errors.Is(err, forgedsync.ErrStateRecoveryRequired) {
+		d.setSyncStateRecoveryLocked()
+	}
 }
 
 func (d *Daemon) syncStateRecoveryRequiredLocked(reason string) error {
@@ -881,15 +1086,32 @@ func (d *Daemon) handleSyncUnlink() error {
 	waitForLinkRun(run)
 	waitForSyncBus(bus)
 
-	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
-
-	if err := d.removeSyncStateLocked(); err != nil {
-		return err
+	snapshot, err := d.preflightSyncState()
+	stateRemoved := false
+	if err == nil {
+		snapshot, err = snapshot.reloadIfUnchanged(d.paths)
 	}
-	d.clearSyncStateRecoveryLocked()
-	if err := os.Remove(d.paths.SyncDirtyFile()); err != nil && !os.IsNotExist(err) {
-		return fmt.Errorf("Removing sync dirty flag: %w", err)
+	if err == nil {
+		err = snapshot.remove()
+		stateRemoved = err == nil
+	}
+	if err != nil {
+		d.quarantineSyncStateFailure(err)
+	}
+	if err == nil {
+		if removeErr := os.Remove(d.paths.SyncDirtyFile()); removeErr != nil && !os.IsNotExist(removeErr) {
+			err = fmt.Errorf("Removing sync dirty flag: %w", removeErr)
+		}
+	}
+
+	d.sessionMu.Lock()
+	d.recordSyncStateFailureLocked(err)
+	if stateRemoved {
+		d.clearSyncStateRecoveryLocked()
+	}
+	d.sessionMu.Unlock()
+	if err != nil {
+		return err
 	}
 
 	d.logger.Info("sync unlinked")
