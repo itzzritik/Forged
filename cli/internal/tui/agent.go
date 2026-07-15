@@ -204,13 +204,14 @@ func (m *model) renderAgentBody(contentWidth int) string {
 		})
 	}
 
+	textWidth := max(1, min(contentWidth, theme.HeroMaxWidth))
 	sections := []string{components.RenderSelectionList(listItems, contentWidth, agentListMinHeight)}
 	bottomSections := make([]string, 0, 2)
 	if item, ok := m.selectedAgentItem(); ok && strings.TrimSpace(item.Summary) != "" {
-		bottomSections = append(bottomSections, theme.BodyMuted.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(item.Summary))
+		bottomSections = append(bottomSections, theme.BodyMuted.Width(textWidth).Render(item.Summary))
 	}
 	if errText := strings.TrimSpace(m.agent.statusErr); errText != "" {
-		bottomSections = append(bottomSections, theme.Danger.Render(theme.Glyphs.Cross+" "+errText))
+		bottomSections = append(bottomSections, theme.Danger.Width(max(1, contentWidth)).Render(theme.Glyphs.Cross+" "+errText))
 	}
 
 	top := strings.Join(sections, "\n")

@@ -70,7 +70,7 @@ func Render(screen Screen, width int) string {
 		sections = append(sections, notice)
 	}
 	if strings.TrimSpace(screen.Context) != "" {
-		sections = append(sections, theme.Body.Width(max(28, min(width, theme.HeroMaxWidth))).Render(screen.Context))
+		sections = append(sections, theme.Body.Width(max(1, min(width, theme.HeroMaxWidth))).Render(screen.Context))
 	}
 	return strings.Join(sections, "\n")
 }
@@ -94,7 +94,7 @@ func renderTabbedDashboard(screen Screen, width int) string {
 		return top
 	}
 
-	bottom := theme.BodyMuted.Width(max(24, min(width, theme.HeroMaxWidth))).Render(screen.Summary)
+	bottom := theme.BodyMuted.Width(max(1, min(width, theme.HeroMaxWidth))).Render(screen.Summary)
 	if strings.TrimSpace(top) != "" {
 		top += "\n"
 	}
@@ -303,7 +303,7 @@ func renderWelcome(screen Screen, width int) string {
 		return split
 	}
 
-	contentWidth := max(20, width-stackedLeftInset-stackedRightInset)
+	contentWidth := max(1, width-stackedLeftInset-stackedRightInset)
 	sections := []string{
 		"",
 		leftAlignBlock(width, theme.HeroTitle.Render(title), stackedLeftInset),
@@ -373,8 +373,8 @@ func renderWelcomeSplit(title string, context string, options []Option, width in
 
 func renderWelcomeCards(options []Option, width int, leftInset int) string {
 	blocks := make([]string, 0, len(options)*2)
-	availableWidth := max(24, width-leftInset-4)
-	cardWidth := max(24, availableWidth-1)
+	availableWidth := max(1, width-leftInset-4)
+	cardWidth := max(1, availableWidth-1)
 	cardBodyHeight := 0
 	for _, option := range options {
 		cardBodyHeight = max(cardBodyHeight, measureWelcomeCardBodyHeight(option, cardWidth))
@@ -418,7 +418,7 @@ func renderWelcomeCard(option Option, cardWidth int, bodyHeight int) string {
 		Padding(padding[0], padding[1]).
 		Width(cardWidth)
 
-	innerWidth := max(16, cardWidth-padding[1]*2)
+	innerWidth := max(1, cardWidth-padding[1]*2)
 	body := renderWelcomeCardBody(option, titleStyle, descriptionStyle, innerWidth)
 	if bodyHeight > 0 {
 		body = lipgloss.Place(innerWidth, bodyHeight, lipgloss.Left, lipgloss.Top, body)
@@ -444,12 +444,12 @@ func leftAlignBlock(width int, block string, inset int) string {
 
 func measureWelcomeCardBodyHeight(option Option, cardWidth int) int {
 	paddingRightLeft := 4
-	innerWidth := max(16, cardWidth-paddingRightLeft)
+	innerWidth := max(1, cardWidth-paddingRightLeft)
 	return lipgloss.Height(renderWelcomeCardBody(option, theme.BodyStrong, theme.Body, innerWidth))
 }
 
 func renderWelcomeCardBody(option Option, titleStyle lipgloss.Style, descriptionStyle lipgloss.Style, innerWidth int) string {
-	body := []string{titleStyle.Render(option.Label)}
+	body := []string{titleStyle.Width(innerWidth).Render(option.Label)}
 	if strings.TrimSpace(option.Description) != "" {
 		body = append(body, "")
 		body = append(body, descriptionStyle.Width(innerWidth).Render(option.Description))

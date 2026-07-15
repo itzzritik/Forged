@@ -236,7 +236,7 @@ func (m *model) renderManageBody(contentWidth int) string {
 			if item.ID == m.manage.settingItem && strings.TrimSpace(m.manage.settingErr) != "" {
 				style = theme.Warning
 			}
-			bottom = style.Width(max(24, min(contentWidth, theme.HeroMaxWidth))).Render(summary)
+			bottom = style.Width(max(1, min(contentWidth, theme.HeroMaxWidth))).Render(summary)
 		}
 	}
 
@@ -261,7 +261,7 @@ func (m *model) renderManageMasterIntervalBody(contentWidth int) string {
 		}, m.spinner.View(), contentWidth)
 	}
 	if m.securityLoadErr != "" {
-		width := max(28, min(contentWidth, theme.HeroMaxWidth))
+		width := max(1, min(contentWidth, theme.HeroMaxWidth))
 		return strings.Join([]string{
 			theme.Danger.Width(width).Render("Couldn't load security settings: " + m.securityLoadErr),
 			"",
@@ -269,7 +269,7 @@ func (m *model) renderManageMasterIntervalBody(contentWidth int) string {
 		}, "\n")
 	}
 
-	descriptionWidth := max(28, min(contentWidth, theme.HeroMaxWidth))
+	descriptionWidth := max(1, min(contentWidth, theme.HeroMaxWidth))
 	description := theme.Body.Width(descriptionWidth).Render(
 		"Choose how often Forged asks for your master password again on this device.",
 	)

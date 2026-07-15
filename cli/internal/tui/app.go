@@ -1561,7 +1561,7 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 }
 
 func (m *model) renderDashboardSection(contentWidth int, section dashboardSection) string {
-	return theme.Body.Width(max(28, min(contentWidth, theme.HeroMaxWidth))).Render(strings.TrimSpace(section.Context))
+	return theme.Body.Width(max(1, min(contentWidth, theme.HeroMaxWidth))).Render(strings.TrimSpace(section.Context))
 }
 
 func (m *model) footerActions() []shell.FooterAction {
