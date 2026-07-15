@@ -195,7 +195,7 @@ func (a *ForgedAgent) signWithFlagsForClient(ctx context.Context, key ssh.Public
 	}
 
 	signer, name, fingerprint, err := a.keyStore.SignerByPublicKey(key)
-	if err != nil {
+	if errors.Is(err, vault.ErrKeyNotFound) {
 		a.mu.RUnlock()
 		refreshErr := a.refreshMissingKey(ctx, "sign_missing_key")
 		a.mu.RLock()
@@ -205,10 +205,13 @@ func (a *ForgedAgent) signWithFlagsForClient(ctx context.Context, key ssh.Public
 		if refreshErr == nil && a.keyStore != nil {
 			signer, name, fingerprint, err = a.keyStore.SignerByPublicKey(key)
 		}
-		if err != nil {
-			recordSSHSignActivity(ctx, activityLog, "failed", "", clientPID)
-			return nil, err
+	}
+	if err != nil {
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
 		}
+		recordSSHSignActivity(ctx, activityLog, "failed", "", clientPID)
+		return nil, err
 	}
 
 	var algo string

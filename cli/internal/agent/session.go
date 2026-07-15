@@ -2,8 +2,10 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
+	"github.com/itzzritik/forged/cli/internal/vault"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
 )
@@ -113,7 +115,7 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	}
 
 	signer, name, fingerprint, err := s.base.keyStore.SignerByPublicKey(key)
-	if err != nil {
+	if errors.Is(err, vault.ErrKeyNotFound) {
 		s.base.mu.RUnlock()
 		refreshErr := s.base.refreshMissingKey(s.ctx, "sign_missing_key")
 		s.base.mu.RLock()
@@ -123,10 +125,13 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 		if refreshErr == nil && s.base.keyStore != nil {
 			signer, name, fingerprint, err = s.base.keyStore.SignerByPublicKey(key)
 		}
-		if err != nil {
-			recordSSHSignActivity(s.ctx, activityLog, "failed", "", s.clientPID)
-			return nil, err
+	}
+	if err != nil {
+		if ctxErr := s.ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
 		}
+		recordSSHSignActivity(s.ctx, activityLog, "failed", "", s.clientPID)
+		return nil, err
 	}
 
 	if _, ok := allowed[fingerprint]; !ok {

@@ -24,6 +24,7 @@ The local vault is the encrypted source of truth for keys, metadata, and synced 
 - A failed password-change save restores the vault's previous in-memory KDF and protected-key header, so any later save cannot silently activate a password reported as failed.
 - Local unlock trust is device-local even though the vault itself is shared.
 - Private keys are now decrypted on demand instead of being kept plaintext in session memory.
+- Public-key signer lookup distinguishes a true absent vault-signable raw key from vault, decrypt, requested-key/private-key parse, certificate, or hardware-key failures so only an actual remote-key miss may trigger a bounded sync refresh.
 - Key removal validates any reviewed fingerprint while holding the vault transaction lock, before writing its tombstone.
 - New key names reject terminal control characters. Import names strip them; legacy or synced values remain render-sanitized until renamed.
 - SSH route entries include proof metadata, operation class, success timestamps, bounded attempt history, and route tombstones; the vault remains the synced source of truth for learned routes.

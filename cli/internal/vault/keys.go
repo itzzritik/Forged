@@ -6,6 +6,7 @@ import (
 	"crypto/rand"
 	"encoding/base64"
 	"encoding/pem"
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -17,6 +18,8 @@ import (
 	"github.com/itzzritik/forged/cli/internal/platform"
 	"golang.org/x/crypto/ssh"
 )
+
+var ErrKeyNotFound = errors.New("Key not found in vault")
 
 type KeyStore struct {
 	vault *Vault
@@ -432,7 +435,17 @@ func (ks *KeyStore) SignerByPublicKey(pub ssh.PublicKey) (ssh.Signer, string, st
 		return nil, "", "", fmt.Errorf("Vault is locked")
 	}
 
-	wanted := pub.Marshal()
+	requested, err := ssh.ParsePublicKey(pub.Marshal())
+	if err != nil {
+		return nil, "", "", fmt.Errorf("Parsing requested public key: %w", err)
+	}
+	switch requested.Type() {
+	case ssh.KeyAlgoRSA, ssh.InsecureKeyAlgoDSA, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521, ssh.KeyAlgoED25519:
+	default:
+		return nil, "", "", fmt.Errorf("Unsupported public key type %q", requested.Type())
+	}
+
+	wanted := requested.Marshal()
 	for i := range ks.vault.data.Keys {
 		key := &ks.vault.data.Keys[i]
 		parsed, err := parseAuthorizedPublicKey(key.PublicKey)
@@ -458,7 +471,7 @@ func (ks *KeyStore) SignerByPublicKey(pub ssh.PublicKey) (ssh.Signer, string, st
 		}
 		return signer, key.Name, key.Fingerprint, nil
 	}
-	return nil, "", "", fmt.Errorf("Key not found in vault")
+	return nil, "", "", ErrKeyNotFound
 }
 
 func (ks *KeyStore) Signers() ([]ssh.Signer, error) {
