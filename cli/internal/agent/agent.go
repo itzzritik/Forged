@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"strings"
@@ -16,10 +17,11 @@ import (
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
+var errAgentLockUnsupported = errors.New("ssh agent locking is not supported")
+
 type ForgedAgent struct {
 	mu       sync.RWMutex
 	keyStore *vault.KeyStore
-	locked   bool
 	auth     SensitiveAuthorizer
 	syncBus  SyncCoordinator
 	routes   RouteSessions
@@ -80,13 +82,6 @@ func (a *ForgedAgent) ForClientPID(clientPID int) agent.ExtendedAgent {
 func (a *ForgedAgent) List() ([]*agent.Key, error) {
 	a.recordAgentAccess("ssh_agent_list")
 
-	a.mu.RLock()
-	if a.locked {
-		a.mu.RUnlock()
-		return nil, nil
-	}
-	a.mu.RUnlock()
-
 	if err := a.ensurePrivateKeyAccess(); err != nil {
 		return nil, err
 	}
@@ -130,10 +125,6 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 	a.recordAgentAccess("ssh_agent_sign")
 
 	a.mu.RLock()
-	if a.locked {
-		a.mu.RUnlock()
-		return nil, fmt.Errorf("Agent is locked")
-	}
 	if a.keyStore == nil {
 		a.mu.RUnlock()
 		if err := a.ensurePrivateKeyAccess(); err != nil {
@@ -150,9 +141,6 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	if a.locked {
-		return nil, fmt.Errorf("Agent is locked")
-	}
 	if a.keyStore == nil {
 		return nil, fmt.Errorf("Vault is locked")
 	}
@@ -211,28 +199,18 @@ func (a *ForgedAgent) RemoveAll() error {
 	return fmt.Errorf("Use the Forged Key tab to remove keys")
 }
 
-func (a *ForgedAgent) Lock(passphrase []byte) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.locked = true
-	return nil
+func (a *ForgedAgent) Lock([]byte) error {
+	return errAgentLockUnsupported
 }
 
-func (a *ForgedAgent) Unlock(passphrase []byte) error {
-	a.mu.Lock()
-	defer a.mu.Unlock()
-	a.locked = false
-	return nil
+func (a *ForgedAgent) Unlock([]byte) error {
+	return errAgentLockUnsupported
 }
 
 func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
 	a.recordAgentAccess("ssh_agent_signers")
 
 	a.mu.RLock()
-	if a.locked {
-		a.mu.RUnlock()
-		return nil, nil
-	}
 	if a.keyStore == nil {
 		a.mu.RUnlock()
 		if err := a.ensurePrivateKeyAccess(); err != nil {
@@ -249,9 +227,6 @@ func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
 	a.mu.RLock()
 	defer a.mu.RUnlock()
 
-	if a.locked {
-		return nil, nil
-	}
 	if a.keyStore == nil {
 		return nil, fmt.Errorf("Vault is locked")
 	}

@@ -33,6 +33,6 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 
 ## Decisions
 
-- Agent mutation operations stay unsupported; the TUI is the write surface.
+- Agent mutation operations stay unsupported; the TUI is the write surface. Protocol `Lock` and `Unlock` also fail explicitly because Forged does not persist or verify an agent passphrase; real locking is handled by the sensitive-session broker.
 - Agent and control traffic stay on separate sockets.
 - Private keys are never written for routing. Stable hint files under the managed SSH config and runtime route slots contain public keys only.

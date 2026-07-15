@@ -39,9 +39,6 @@ func (s *sessionAgent) List() ([]*agent.Key, error) {
 
 	s.base.mu.RLock()
 	defer s.base.mu.RUnlock()
-	if s.base.locked {
-		return nil, nil
-	}
 	if s.base.keyStore == nil {
 		return nil, fmt.Errorf("Vault is locked")
 	}
@@ -84,13 +81,6 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 		return nil, fmt.Errorf("No key is allowed for this SSH route")
 	}
 
-	s.base.mu.RLock()
-	if s.base.locked {
-		s.base.mu.RUnlock()
-		return nil, fmt.Errorf("Agent is locked")
-	}
-	s.base.mu.RUnlock()
-
 	if err := s.base.ensurePrivateKeyAccess(); err != nil {
 		return nil, err
 	}
@@ -98,9 +88,6 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	s.base.mu.RLock()
 	defer s.base.mu.RUnlock()
 
-	if s.base.locked {
-		return nil, fmt.Errorf("Agent is locked")
-	}
 	if s.base.keyStore == nil {
 		return nil, fmt.Errorf("Vault is locked")
 	}
