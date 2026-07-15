@@ -344,6 +344,8 @@ type model struct {
 	summary  readiness.RepairSummary
 	notice   notice
 
+	postLoginWarning string
+
 	onboardingCursor     int
 	dashboardTabIndex    int
 	dashboardPageIndices []int
@@ -650,7 +652,12 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.canceled {
 			return m, nil
 		}
-		if msg.err != nil {
+		m.postLoginWarning = ""
+		if errors.Is(msg.err, actions.ErrAccountChangeSyncCleanupPending) {
+			m.postLoginWarning = "Account saved, but Forged could not remove prior sync state. Sync is paused to protect it. Open Doctor to review it."
+		} else if errors.Is(msg.err, actions.ErrAccountChangeCommittedUnconfirmed) {
+			m.postLoginWarning = "Account saved, but Forged could not confirm sync cleanup. Open Doctor to review it."
+		} else if msg.err != nil {
 			errorText := m.reportError("login.finish", msg.err)
 			m.loginScreen.Waiting = false
 			m.loginScreen.Error = errorText
@@ -674,6 +681,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loginScreen.Waiting = true
 		m.loginScreen.Status = "Finishing account setup"
 		m.loginScreen.Error = ""
+		if m.showPostLoginWarning() {
+			return m, nil
+		}
+
 		if !m.snapshot.VaultExists {
 			m.showPasswordScreen(passwordRestore, msg.creds.Email, "", false)
 			return m, m.passwordInput.Init()
@@ -2599,6 +2610,13 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 	}
 	if err != nil {
 		m.systemHeader = systemHeaderUnhealthy
+		if m.showPostLoginWarning() {
+			m.showDashboardNotice(m.notice.message+"\n"+errorText, dashboardscreen.ToneDanger)
+			if m.snapshot.VaultExists {
+				return m.pollRuntimeStatus(time.Second)
+			}
+			return nil
+		}
 		switch {
 		case m.screen == screenPassword && m.maintenanceTrigger == maintenanceTriggerSetup:
 			m.passwordInput.SetError(errorText)
@@ -2638,6 +2656,7 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 		m.popWizardRoutes()
 		m.discardPasswordInput()
 		m.screen = screenDashboard
+		m.showPostLoginWarning()
 		if m.maintenanceTrigger == maintenanceTriggerDoctor {
 			return m.loadSecurityStateCmd()
 		}
@@ -2771,6 +2790,7 @@ func (m *model) finishVaultBoot() tea.Cmd {
 	m.passwordHideInput = false
 	m.passwordBusyMessage = ""
 	m.passwordOverlay = false
+	m.showPostLoginWarning()
 	if !m.snapshot.VaultExists {
 		return nil
 	}
@@ -2785,6 +2805,21 @@ func (m *model) finishVaultBoot() tea.Cmd {
 		cmds = append([]tea.Cmd{m.showCurrentRoute()}, cmds...)
 	}
 	return tea.Batch(cmds...)
+}
+
+func (m *model) showPostLoginWarning() bool {
+	message := strings.TrimSpace(m.postLoginWarning)
+	if message == "" {
+		return false
+	}
+	m.postLoginWarning = ""
+	m.discardPasswordInput()
+	m.screen = screenDashboard
+	m.session.Reset(Route{ID: RouteDashboardHome})
+	m.dashboardTabIndex = 0
+	m.dashboardPageIndices = nil
+	m.showDashboardNotice(message, dashboardscreen.ToneWarning)
+	return true
 }
 
 func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea.Cmd {

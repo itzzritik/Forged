@@ -22,6 +22,11 @@ import (
 
 type AccountCredentials = accountauth.Credentials
 
+var (
+	ErrAccountChangeSyncCleanupPending   = errors.New("account saved, but sync cleanup is pending")
+	ErrAccountChangeCommittedUnconfirmed = errors.New("account saved, but sync cleanup could not be confirmed")
+)
+
 type LoginSession struct {
 	VerificationCode string
 	URL              string
@@ -76,12 +81,22 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 	creds.ChangeID = changeID
 	args := accountCredentialsArgs(creds)
 	resp, err := callDaemonAccountCommand(paths, ipc.CmdAccountReplace, args)
-	if err != nil && resp.Status == "" {
+	if err != nil {
 		if saved, loadErr := accountauth.Load(paths); loadErr == nil && saved.ChangeID == creds.ChangeID {
-			return nil
+			return ErrAccountChangeCommittedUnconfirmed
+		}
+		return err
+	}
+	var result ipc.AccountChangeResult
+	if len(resp.Data) > 0 {
+		if err := json.Unmarshal(resp.Data, &result); err != nil {
+			return fmt.Errorf("Reading account change result: %w", err)
 		}
 	}
-	return err
+	if result.SyncCleanupPending {
+		return ErrAccountChangeSyncCleanupPending
+	}
+	return nil
 }
 
 func accountCredentialsArgs(creds AccountCredentials) ipc.AccountCredentialsArgs {

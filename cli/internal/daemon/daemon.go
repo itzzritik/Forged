@@ -861,7 +861,7 @@ func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
 	return nil
 }
 
-func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
+func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.AccountChangeResult, error) {
 	creds := accountauth.Credentials{
 		ServerURL:        args.ServerURL,
 		Token:            args.Token,
@@ -875,10 +875,10 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
 		ChangeID:         args.ChangeID,
 	}
 	if err := accountauth.ValidateCredentials(creds); err != nil {
-		return err
+		return nil, err
 	}
 	if strings.TrimSpace(creds.ChangeID) == "" {
-		return fmt.Errorf("Account change ID is required")
+		return nil, fmt.Errorf("Account change ID is required")
 	}
 
 	d.syncTransitionMu.Lock()
@@ -887,13 +887,14 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
 	run, bus, applyGate, transition, err := d.beginAccountChangeLocked()
 	d.sessionMu.Unlock()
 	if err != nil {
-		return err
+		return nil, err
 	}
 	revokeSyncApplies(run, applyGate)
 	waitForLinkRun(run)
 	waitForSyncBus(bus)
 
 	snapshot, err := d.preflightSyncState()
+	var cleanupErr error
 	if err == nil {
 		err = accountauth.WithCredentialsLock(d.paths, func() error {
 			var verifyErr error
@@ -925,8 +926,9 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
 				return err
 			}
 			if staged {
-				if err := snapshot.removeBackup(); err != nil {
-					d.logger.Warn("removing staged sync state after account replacement failed", "error", err)
+				if removeErr := snapshot.removeBackup(); removeErr != nil {
+					cleanupErr = fmt.Errorf("%w: removing staged sync state after account replacement: %v", forgedsync.ErrStateRecoveryRequired, removeErr)
+					d.logger.Warn("removing staged sync state after account replacement failed", "error", removeErr)
 				}
 			}
 			return nil
@@ -934,20 +936,27 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
 	}
 
 	d.sessionMu.Lock()
-	d.finishAccountTransitionLocked(transition, true, err)
+	transitionErr := err
+	if transitionErr == nil {
+		transitionErr = cleanupErr
+	}
+	d.finishAccountTransitionLocked(transition, true, transitionErr)
 	if err != nil {
 		d.sessionMu.Unlock()
-		return err
+		return nil, err
 	}
 	d.sessionMu.Unlock()
 	d.logger.Info("account replacement committed", "user_id", args.UserID)
-	return nil
+	if cleanupErr != nil {
+		return &ipc.AccountChangeResult{SyncCleanupPending: true}, nil
+	}
+	return nil, nil
 }
 
-func (d *Daemon) handleAccountClear() error {
+func (d *Daemon) handleAccountClear() (*ipc.AccountChangeResult, error) {
 	creds, err := d.commitAccountClear()
 	if err != nil {
-		return err
+		return nil, err
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
@@ -956,7 +965,7 @@ func (d *Daemon) handleAccountClear() error {
 		d.logger.Warn("revoking remote session after logout failed", "error", err)
 	}
 	d.logger.Info("account cleared")
-	return nil
+	return nil, nil
 }
 
 func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {

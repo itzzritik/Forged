@@ -3,7 +3,7 @@ package ipc
 import "time"
 
 const (
-	AccountChangeProtocol = 1
+	AccountChangeProtocol = 2
 
 	SSHRoutePrepareWorkTimeout = 45 * time.Second
 	SSHRoutePrepareCallTimeout = SSHRoutePrepareWorkTimeout + 5*time.Second
@@ -23,7 +23,7 @@ const (
 	CmdSyncTrigger       = "sync-trigger"
 	CmdSyncLink          = "sync-link"
 	CmdSyncUnlink        = "sync-unlink"
-	CmdAccountReplace    = "account-replace-v2"
+	CmdAccountReplace    = "account-replace-v3"
 	CmdAccountClear      = "account-clear-v2"
 	CmdStatus            = "status"
 	CmdSSHRoutePrepare   = "ssh-route-prepare"
@@ -47,6 +47,10 @@ type AccountCredentialsArgs struct {
 	Email            string    `json:"email"`
 	Name             string    `json:"name,omitempty"`
 	ChangeID         string    `json:"change_id"`
+}
+
+type AccountChangeResult struct {
+	SyncCleanupPending bool `json:"sync_cleanup_pending,omitempty"`
 }
 
 type SyncLinkArgs struct {

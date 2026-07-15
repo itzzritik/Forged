@@ -44,8 +44,8 @@ type Server struct {
 	syncError      string
 	syncLink       func(SyncLinkArgs) error
 	syncUnlink     func() error
-	accountReplace func(AccountCredentialsArgs) error
-	accountClear   func() error
+	accountReplace func(AccountCredentialsArgs) (*AccountChangeResult, error)
+	accountClear   func() (*AccountChangeResult, error)
 	authBroker     *sensitiveauth.Broker
 	onKeyChange    func()
 	onVaultChange  func(string)
@@ -73,11 +73,11 @@ func (s *Server) SetSyncUnlinkHandler(handler func() error) {
 	s.syncUnlink = handler
 }
 
-func (s *Server) SetAccountReplaceHandler(handler func(AccountCredentialsArgs) error) {
+func (s *Server) SetAccountReplaceHandler(handler func(AccountCredentialsArgs) (*AccountChangeResult, error)) {
 	s.accountReplace = handler
 }
 
-func (s *Server) SetAccountClearHandler(handler func() error) {
+func (s *Server) SetAccountClearHandler(handler func() (*AccountChangeResult, error)) {
 	s.accountClear = handler
 }
 
@@ -846,20 +846,28 @@ func (s *Server) handleAccountReplace(raw json.RawMessage) Response {
 	if s.accountReplace == nil {
 		return ErrorResponse(fmt.Errorf("Account replace handler unavailable"))
 	}
-	if err := s.accountReplace(args); err != nil {
+	result, err := s.accountReplace(args)
+	if err != nil {
 		return ErrorResponse(err)
 	}
-	return OkResponse(nil)
+	if result == nil {
+		return OkResponse(nil)
+	}
+	return OkResponse(result)
 }
 
 func (s *Server) handleAccountClear() Response {
 	if s.accountClear == nil {
 		return ErrorResponse(fmt.Errorf("Account clear handler unavailable"))
 	}
-	if err := s.accountClear(); err != nil {
+	result, err := s.accountClear()
+	if err != nil {
 		return ErrorResponse(err)
 	}
-	return OkResponse(nil)
+	if result == nil {
+		return OkResponse(nil)
+	}
+	return OkResponse(result)
 }
 
 type sensitiveAuthArgs struct {

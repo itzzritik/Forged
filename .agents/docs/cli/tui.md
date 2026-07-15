@@ -70,6 +70,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Foreground colors adapt to the terminal background; `FORGED_COLOR_SCHEME=light|dark` overrides incorrect detection.
 - On supported terminals, the TUI uses the alternate screen so account and key data do not remain in shell scrollback after exit.
 - Browser login remains cancelable from session creation through approval polling; canceling stops retries and in-flight HTTP before it can open a late browser. While the daemon commits the account, screen actions are hidden and ignored; Ctrl-C remains the global force-quit shortcut.
+- When account persistence succeeds but sync-state cleanup is pending, or delivery cannot confirm cleanup after commit, the TUI completes login, returns to the dashboard root, and shows a recovery warning instead of falsely presenting login as failed.
 - Private-key clipboard copies use sensitive platform hints when available, show a 45-second countdown, and clear when the TUI begins an idle lock or observes a sensitive-session lock. Clearing is best-effort and only proceeds when the copied value still matches at the check; delayed copy results are fenced to the active key-detail operation, with stale leases cleared instead of installed. Normal TUI exit also clears an active copy.
 - While locked, the header uses the welcome product rail instead of live system status.
 - Manage owns user-facing security settings. Doctor shows security capability state.
