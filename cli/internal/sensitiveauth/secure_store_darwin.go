@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 const darwinSecureStoreService = "com.forged.local-unlock"
@@ -36,14 +37,7 @@ func (s *darwinSecureStore) SaveDeviceKey(ctx context.Context, installID, slot s
 	}
 
 	encoded := base64.StdEncoding.EncodeToString(key)
-	cmd := exec.CommandContext(ctx, "security",
-		"add-generic-password",
-		"-U",
-		"-s", darwinSecureStoreService,
-		"-a", account,
-		"-w", encoded,
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := platform.SecurityAddGenericPassword(ctx, darwinSecureStoreService, account, encoded); err != nil {
 		if strings.Contains(string(out), "User interaction is not allowed") {
 			return ErrSecureStoreUnavailable
 		}

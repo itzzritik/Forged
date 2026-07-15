@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 const (
@@ -36,14 +37,7 @@ func (s darwinCredentialStore) Save(ctx context.Context, credentialID string, se
 		return err
 	}
 	encoded := base64.StdEncoding.EncodeToString(body)
-	cmd := exec.CommandContext(ctx, "security",
-		"add-generic-password",
-		"-U",
-		"-s", darwinCredentialService,
-		"-a", credentialID,
-		"-w", encoded,
-	)
-	if out, err := cmd.CombinedOutput(); err != nil {
+	if out, err := platform.SecurityAddGenericPassword(ctx, darwinCredentialService, credentialID, encoded); err != nil {
 		return darwinCredentialError(out)
 	}
 	return nil
