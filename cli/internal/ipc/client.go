@@ -80,7 +80,7 @@ func (c *Client) CallContext(ctx context.Context, command string, args any) (Res
 	}
 
 	req := Request{Command: command, Args: rawArgs}
-	err = WriteMessage(conn, req)
+	err = WriteMessage(conn, req, maxRequestMessageBytes)
 	clear(rawArgs)
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
@@ -90,7 +90,7 @@ func (c *Client) CallContext(ctx context.Context, command string, args any) (Res
 	}
 
 	var resp Response
-	if err := ReadMessage(conn, &resp); err != nil {
+	if err := ReadMessage(conn, &resp, maxResponseMessageBytes); err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Response{}, fmt.Errorf("Reading response: %w", ctxErr)
 		}

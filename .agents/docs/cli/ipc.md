@@ -14,6 +14,7 @@ stable: yes
 
 - Socket ownership and `0600` perms are the main access control. On Linux and macOS, the daemon also requires the kernel-reported peer UID and clients compare the kernel peer UID/PID with a stable `daemon.pid` record before marshaling or sending a request. A verified endpoint mismatch blocks readiness repair, service freshening, and account-service restart instead of restarting against a live untrusted socket. Sensitive operations still add broker checks on top. Windows control-pipe server identity still needs a trusted executable-identity design.
 - Mutable JSON and framing buffers are cleared after use to shorten sensitive-data lifetime; the compatible wire format still uses transient JSON strings.
+- IPC accepts bounded directional frames: requests are capped at 100 MiB so a 16 MiB imported textual key remains transportable after JSON escaping, while responses are capped at 64 MiB. Full-vault export validates that response bound after atomically reserving its one-use token and restores it when the local preflight rejects the response.
 - Vault-backed handlers can be called while the daemon is cold; they should return a locked error, not panic.
 - Ordinary vault handlers require an active broker session. A fresh export authorization establishes that session and issues its separate one-use export token.
 - The listener retries temporary accept failures with bounded backoff, exits quietly when closed, and logs terminal failures. Shutdown first closes admission and every tracked connection, then waits for admitted handlers.

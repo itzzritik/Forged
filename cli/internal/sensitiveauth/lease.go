@@ -12,6 +12,13 @@ type leaseState struct {
 	activeUntil      time.Time
 	exportTokens     map[string]time.Time
 	privateKeyTokens map[string]time.Time
+	generation       uint64
+}
+
+type exportTokenReservation struct {
+	token      string
+	expiresAt  time.Time
+	generation uint64
 }
 
 func newLeaseState() *leaseState {
@@ -64,7 +71,7 @@ func (s *leaseState) IssueExportToken(now time.Time) string {
 	return token
 }
 
-func (s *leaseState) ConsumeExportToken(token string, now time.Time) bool {
+func (s *leaseState) ReserveExportToken(token string, now time.Time) (exportTokenReservation, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -72,10 +79,30 @@ func (s *leaseState) ConsumeExportToken(token string, now time.Time) bool {
 
 	expiresAt, ok := s.exportTokens[token]
 	if !ok {
-		return false
+		return exportTokenReservation{}, false
 	}
 	delete(s.exportTokens, token)
-	return now.Before(expiresAt)
+	return exportTokenReservation{
+		token:      token,
+		expiresAt:  expiresAt,
+		generation: s.generation,
+	}, now.Before(expiresAt)
+}
+
+func (s *leaseState) RestoreExportToken(reservation exportTokenReservation, now time.Time) {
+	if reservation.token == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	s.pruneLocked(now)
+	if reservation.generation != s.generation || !now.Before(reservation.expiresAt) {
+		return
+	}
+	if _, exists := s.exportTokens[reservation.token]; !exists {
+		s.exportTokens[reservation.token] = reservation.expiresAt
+	}
 }
 
 func (s *leaseState) RevokeExportToken(token string) {
@@ -125,6 +152,7 @@ func (s *leaseState) Clear() {
 	defer s.mu.Unlock()
 
 	s.activeUntil = time.Time{}
+	s.generation++
 	s.exportTokens = make(map[string]time.Time)
 	s.privateKeyTokens = make(map[string]time.Time)
 }

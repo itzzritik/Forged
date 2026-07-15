@@ -249,7 +249,7 @@ func (s *Server) handleConn(conn net.Conn) {
 	conn.SetDeadline(deadline)
 
 	var req Request
-	if err := ReadMessage(conn, &req); err != nil {
+	if err := ReadMessage(conn, &req, maxRequestMessageBytes); err != nil {
 		return
 	}
 	defer clear(req.Args)
@@ -277,7 +277,7 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	resp := s.dispatch(ctx, req)
 	defer clear(resp.Data)
-	writeErr := WriteMessage(conn, resp)
+	writeErr := WriteMessage(conn, resp, maxResponseMessageBytes)
 	if err := resp.finalizeDelivery(writeErr == nil && ctx.Err() == nil); err != nil && writeErr == nil {
 		s.logger.Debug("sensitive authorization not delivered", "error", err)
 	}
@@ -736,6 +736,10 @@ func (s *Server) handleExportAll(ctx context.Context, raw json.RawMessage) Respo
 	if _, _, err := s.requireVaultAndKeyStore(); err != nil {
 		return ErrorResponse(err)
 	}
+	restoreExportToken, ok := s.authBroker.ReserveExportToken(a.Token)
+	if !ok {
+		return ErrorResponse(fmt.Errorf("Sensitive export requires fresh authentication"))
+	}
 	s.refreshForRead(ctx, "export_vault")
 	if err := ctx.Err(); err != nil {
 		return ErrorResponse(err)
@@ -745,10 +749,6 @@ func (s *Server) handleExportAll(ctx context.Context, raw json.RawMessage) Respo
 	if err != nil {
 		return ErrorResponse(err)
 	}
-	if !s.authBroker.ConsumeExportToken(a.Token) {
-		return ErrorResponse(fmt.Errorf("Sensitive export requires fresh authentication"))
-	}
-
 	type exportedKey struct {
 		Name        string `json:"name"`
 		Type        string `json:"type"`
@@ -785,7 +785,13 @@ func (s *Server) handleExportAll(ctx context.Context, raw json.RawMessage) Respo
 		})
 	}
 
-	return OkResponse(exported)
+	resp := OkResponse(exported)
+	if err := validateMessageSize(resp, maxResponseMessageBytes); err != nil {
+		clear(resp.Data)
+		restoreExportToken()
+		return ErrorResponse(fmt.Errorf("Export exceeds IPC response limit: %w", err))
+	}
+	return resp
 }
 
 type activityArgs struct {

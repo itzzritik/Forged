@@ -416,8 +416,14 @@ func (b *Broker) IsUnlocked() bool {
 	return b.hasActiveSession(time.Now())
 }
 
-func (b *Broker) ConsumeExportToken(token string) bool {
-	return b.leases.ConsumeExportToken(token, time.Now())
+func (b *Broker) ReserveExportToken(token string) (func(), bool) {
+	reservation, ok := b.leases.ReserveExportToken(token, time.Now())
+	if !ok {
+		return nil, false
+	}
+	return func() {
+		b.leases.RestoreExportToken(reservation, time.Now())
+	}, true
 }
 
 func (b *Broker) ConsumePrivateKeyToken(token string) bool {
