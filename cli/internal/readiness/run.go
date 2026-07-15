@@ -4,6 +4,7 @@ import (
 	"errors"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/daemon"
 )
 
 type repairState struct {
@@ -201,6 +202,13 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 	}
 
 	if err := e.ensureServiceInstalled(); err != nil {
+		if errors.Is(err, daemon.ErrDaemonServiceOwnership) {
+			state.result.Snapshot.Service.Repairable = false
+			state.result.Snapshot.Service.OwnershipBlocked = true
+			state.result.Snapshot.Service.Detail = "Stop the running Forged daemon or service, then refresh Doctor."
+			e.markFailed(&state.result.Summary, "service")
+			return nil
+		}
 		if updated, waitErr := e.waitForServiceReady(); waitErr == nil {
 			state.result.Snapshot = updated
 			if serviceHealthy(updated) {
@@ -235,6 +243,9 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 }
 
 func (e *Engine) ensureSocketStage(state *repairState) error {
+	if !state.result.Snapshot.Service.Repairable {
+		return nil
+	}
 	if state.result.Snapshot.IPCSocketReady && state.result.Snapshot.AgentSocketReady {
 		return nil
 	}

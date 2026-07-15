@@ -10,6 +10,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 type RuntimeSpec struct {
@@ -17,6 +18,8 @@ type RuntimeSpec struct {
 	Args    []string
 	BuildID string
 }
+
+var ErrDaemonServiceOwnership = errors.New("running Forged daemon is not owned by the installed service")
 
 func DefaultRuntimeSpec() (RuntimeSpec, error) {
 	binary, err := findBinary()
@@ -38,10 +41,35 @@ func EnsureService(paths config.Paths, runtime RuntimeSpec) error {
 	if err != nil {
 		return err
 	}
+	if err := RequireServiceOwnership(paths); err != nil {
+		return err
+	}
 	if err := InstallService(paths, runtime); err != nil {
 		return err
 	}
+	if err := RequireServiceOwnership(paths); err != nil {
+		return err
+	}
 	return RestartService()
+}
+
+func RequireServiceOwnership(paths config.Paths) error {
+	daemonPID, running := IsRunning(paths)
+	if !running {
+		if platform.IsSocketAlive(paths.CtlSocket()) {
+			return fmt.Errorf("%w; stop the running Forged daemon or service and try again", ErrDaemonServiceOwnership)
+		}
+		return nil
+	}
+
+	status, err := InspectService(paths)
+	if err != nil {
+		return fmt.Errorf("Inspecting local service: %w", err)
+	}
+	if status.Installed && status.PIDKnown && status.PID == daemonPID {
+		return nil
+	}
+	return fmt.Errorf("%w; stop the running Forged daemon or service and try again", ErrDaemonServiceOwnership)
 }
 
 func normalizeRuntimeSpec(runtime RuntimeSpec) (RuntimeSpec, error) {

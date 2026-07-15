@@ -93,6 +93,15 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		if !restartRequired {
 			return
 		}
+		if err := daemon.RequireServiceOwnership(paths); err != nil {
+			restartErr := fmt.Errorf("Restarting local service: %w", err)
+			if resultErr != nil {
+				resultErr = errors.Join(resultErr, restartErr)
+				return
+			}
+			result.Detail = strings.TrimSpace(result.Detail + " The fallback service restart was blocked. Stop the running Forged daemon or service and run Forged Doctor.")
+			return
+		}
 		if err := daemon.StartService(); err != nil {
 			restartErr := fmt.Errorf("Restarting local service: %w", err)
 			if resultErr != nil {
@@ -197,9 +206,12 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 	if !installed {
 		return false, fmt.Errorf("Stop the running Forged daemon and try again.")
 	}
+	if err := daemon.RequireServiceOwnership(paths); err != nil {
+		return false, err
+	}
 
 	if err := daemon.StopService(); err != nil {
-		return true, fmt.Errorf("Stopping local service: %w", err)
+		return false, fmt.Errorf("Stopping local service: %w", err)
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -210,7 +222,7 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return true, fmt.Errorf("Waiting for local service to stop")
+	return false, fmt.Errorf("Waiting for local service to stop")
 }
 
 func applyEnrollmentDetail(result *ChangePasswordResult, enrollment sensitiveauth.EnrollmentResult, err error) {

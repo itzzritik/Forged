@@ -143,9 +143,6 @@ func StartService() error {
 	if err := removeLegacyLaunchdPlists(); err != nil {
 		return err
 	}
-	if err := stopExistingDaemon(paths); err != nil {
-		return err
-	}
 	if err := bootstrapLaunchdService(); err != nil {
 		return err
 	}
@@ -281,6 +278,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 
 		status.Loaded = true
 		status.PID = launchdPrintPID(string(out))
+		status.PIDKnown = true
 		status.Running = status.PID > 0
 		switch {
 		case service.Legacy && status.Running:
@@ -314,45 +312,6 @@ func launchdServiceTarget() string {
 
 func launchdServiceTargetForLabel(label string) string {
 	return launchdDomain() + "/" + label
-}
-
-func stopExistingDaemon(paths config.Paths) error {
-	if waitForDaemonExit(paths, 2*time.Second) {
-		return nil
-	}
-
-	pid, running := IsRunning(paths)
-	if !running {
-		return nil
-	}
-	process, err := os.FindProcess(pid)
-	if err != nil {
-		return nil
-	}
-	if err := process.Signal(os.Interrupt); err != nil {
-		return fmt.Errorf("Stopping existing daemon PID %d: %w", pid, err)
-	}
-	if waitForDaemonExit(paths, 3*time.Second) {
-		return nil
-	}
-
-	_ = process.Signal(os.Kill)
-	if waitForDaemonExit(paths, time.Second) {
-		return nil
-	}
-	return fmt.Errorf("Stopping existing daemon PID %d: timed out", pid)
-}
-
-func waitForDaemonExit(paths config.Paths, timeout time.Duration) bool {
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if _, running := IsRunning(paths); !running {
-			return true
-		}
-		time.Sleep(100 * time.Millisecond)
-	}
-	_, running := IsRunning(paths)
-	return !running
 }
 
 func findBinary() (string, error) {

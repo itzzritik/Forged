@@ -144,7 +144,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 		}
 	}
 
-	cmd := systemctlUser("show", serviceName, "--property=LoadState,ActiveState,SubState", "--value")
+	cmd := systemctlUser("show", serviceName, "--property=LoadState,ActiveState,SubState,MainPID", "--value")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		status.Detail = strings.TrimSpace(string(out))
@@ -169,6 +169,12 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 		sub := strings.TrimSpace(lines[2])
 		if sub != "" {
 			status.Detail = sub
+		}
+	}
+	if len(lines) > 3 {
+		if pid, err := strconv.Atoi(strings.TrimSpace(lines[3])); err == nil && pid >= 0 {
+			status.PID = pid
+			status.PIDKnown = true
 		}
 	}
 	if status.Detail == "" {

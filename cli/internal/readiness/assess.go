@@ -163,7 +163,7 @@ func classifyState(s Snapshot) State {
 }
 
 func serviceOwnsDaemon(s Snapshot) bool {
-	if s.Service.PID == 0 {
+	if !s.Service.PIDKnown {
 		return true
 	}
 	return s.DaemonPID > 0 && s.Service.PID == s.DaemonPID

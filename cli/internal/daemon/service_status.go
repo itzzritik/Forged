@@ -1,15 +1,17 @@
 package daemon
 
 type ServiceStatus struct {
-	Installed     bool
-	ConfigValid   bool
-	Loaded        bool
-	Running       bool
-	PID           int
-	Repairable    bool
-	Detail        string
-	BinaryPath    string
-	BinaryMissing bool
+	Installed        bool
+	ConfigValid      bool
+	Loaded           bool
+	Running          bool
+	PID              int
+	PIDKnown         bool
+	OwnershipBlocked bool
+	Repairable       bool
+	Detail           string
+	BinaryPath       string
+	BinaryMissing    bool
 }
 
 func DefaultServiceStatus() ServiceStatus {

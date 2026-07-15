@@ -283,6 +283,9 @@ func (m *model) doctorCanFixIssues() bool {
 	if !s.ConfigValid {
 		return false
 	}
+	if !s.Service.Repairable {
+		return false
+	}
 	if !s.Service.Installed || !s.Service.ConfigValid || !s.Service.Running {
 		return true
 	}
@@ -409,6 +412,34 @@ func (m *model) doctorServiceRow() doctorRow {
 	if row, unavailable := m.doctorRuntimePathUnavailableRow("Service"); unavailable {
 		return row
 	}
+	if m.snapshot.Service.OwnershipBlocked {
+		detail := strings.TrimSpace(m.snapshot.Service.Detail)
+		if detail == "" {
+			detail = "Stop the running Forged daemon or service, then refresh Doctor."
+		}
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Service",
+				Status: theme.Glyphs.Cross + " Needs manual stop",
+				Detail: m.doctorRepairDetail(detail),
+				Tone:   doctorscreen.ToneDanger,
+			},
+		}
+	}
+	if !m.snapshot.Service.Repairable {
+		detail := strings.TrimSpace(m.snapshot.Service.Detail)
+		if detail == "" {
+			detail = "Service needs manual repair."
+		}
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Service",
+				Status: theme.Glyphs.Cross + " Blocked",
+				Detail: m.doctorRepairDetail(detail),
+				Tone:   doctorscreen.ToneDanger,
+			},
+		}
+	}
 	if m.snapshot.Service.Installed && m.snapshot.Service.ConfigValid {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -444,6 +475,20 @@ func (m *model) doctorServiceRow() doctorRow {
 func (m *model) doctorDaemonRow() doctorRow {
 	if row, unavailable := m.doctorRuntimePathUnavailableRow("Daemon"); unavailable {
 		return row
+	}
+	if m.snapshot.Service.OwnershipBlocked {
+		detail := "Running daemon or service owns the runtime"
+		if m.snapshot.DaemonPID > 0 {
+			detail = fmt.Sprintf("PID %d is not service-owned", m.snapshot.DaemonPID)
+		}
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Daemon",
+				Status: theme.Glyphs.Cross + " Needs manual stop",
+				Detail: detail,
+				Tone:   doctorscreen.ToneDanger,
+			},
+		}
 	}
 	if m.snapshot.Service.Running {
 		detail := "Running"
