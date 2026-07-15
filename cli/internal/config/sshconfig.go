@@ -107,6 +107,9 @@ func EnableSSHAgent(paths Paths) error {
 	if err := paths.ValidateRuntimePaths(); err != nil {
 		return err
 	}
+	if _, err := Load(paths.ConfigFile()); err != nil {
+		return err
+	}
 	return withSSHConfigLock(paths, func() error {
 		configPath := paths.SSHUserConfig()
 		content, err := readConfigFile(configPath)
@@ -141,6 +144,9 @@ func EnableSSHAgent(paths Paths) error {
 }
 
 func DisableSSHAgent(paths Paths) error {
+	if _, err := Load(paths.ConfigFile()); err != nil {
+		return err
+	}
 	return withSSHConfigLock(paths, func() error {
 		configPath := paths.SSHUserConfig()
 		content, err := readConfigFile(configPath)
