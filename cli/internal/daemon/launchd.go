@@ -248,28 +248,26 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	}
 
 	status.Installed = true
-
-	for _, service := range services {
-		if err := validateLaunchdPlist(service.Path); err != nil {
-			status.Detail = err.Error()
-			return status, nil
-		}
-	}
 	status.ConfigValid = true
 
 	for _, service := range services {
-		if service.Legacy {
+		if err := validateLaunchdPlist(service.Path); err != nil {
+			invalidateServiceConfig(&status, err.Error())
 			continue
 		}
-		if binary, err := extractLaunchdBinary(service.Path); err == nil && binary != "" {
+		binary, args, err := extractLaunchdCommand(service.Path)
+		if err != nil {
+			invalidateServiceConfig(&status, fmt.Sprintf("reading launchd command: %v", err))
+			continue
+		}
+		if status.BinaryPath == "" {
 			status.BinaryPath = binary
-			if !binaryExecutable(binary) {
-				status.BinaryMissing = true
-				status.ConfigValid = false
-				status.Detail = fmt.Sprintf("service binary missing: %s", binary)
-				return status, nil
-			}
-			break
+		}
+		if err := validateDaemonServiceCommand(binary, args); err != nil {
+			invalidateServiceConfig(&status, fmt.Sprintf("invalid launchd command: %v", err))
+		} else if !binaryExecutable(binary) {
+			status.BinaryMissing = true
+			invalidateServiceConfig(&status, fmt.Sprintf("service binary missing: %s", binary))
 		}
 	}
 
@@ -284,7 +282,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 			if strings.Contains(lower, "could not find service") || strings.Contains(lower, "not found") {
 				continue
 			}
-			status.Detail = message
+			setServiceDetail(&status, message)
 			return status, nil
 		}
 
@@ -294,21 +292,21 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 		status.Running = status.PID > 0
 		switch {
 		case service.Legacy && status.Running:
-			status.Detail = "legacy service running"
+			setServiceDetail(&status, "legacy service running")
 		case service.Legacy:
-			status.Detail = "legacy service loaded but not running"
+			setServiceDetail(&status, "legacy service loaded but not running")
 		case status.Running:
-			status.Detail = "running"
+			setServiceDetail(&status, "running")
 		default:
-			status.Detail = "loaded but not running"
+			setServiceDetail(&status, "loaded but not running")
 		}
 		return status, nil
 	}
 
 	if services[0].Legacy {
-		status.Detail = "legacy service installed; will migrate on next start"
+		setServiceDetail(&status, "legacy service installed; will migrate on next start")
 	} else {
-		status.Detail = "installed but not loaded"
+		setServiceDetail(&status, "installed but not loaded")
 	}
 
 	return status, nil
@@ -379,8 +377,9 @@ func isIgnorableLaunchdError(message string, ignorable []string) bool {
 func existingLaunchdServiceFiles() []launchdServiceFile {
 	var services []launchdServiceFile
 
+	// Keep unreadable paths so inspection fails closed instead of hiding them.
 	current := plistPath()
-	if _, err := os.Stat(current); err == nil {
+	if _, err := os.Stat(current); err == nil || !os.IsNotExist(err) {
 		services = append(services, launchdServiceFile{
 			Label: launchdLabel,
 			Path:  current,
@@ -389,7 +388,7 @@ func existingLaunchdServiceFiles() []launchdServiceFile {
 
 	for _, label := range legacyLaunchdLabels {
 		path := plistPathForLabel(label)
-		if _, err := os.Stat(path); err == nil {
+		if _, err := os.Stat(path); err == nil || !os.IsNotExist(err) {
 			services = append(services, launchdServiceFile{
 				Label:  label,
 				Path:   path,
@@ -449,26 +448,22 @@ func validateLaunchdPlist(path string) error {
 	return nil
 }
 
-// extractLaunchdBinary reads the first entry of ProgramArguments from a plist
-// at path. Uses `plutil -convert json -o -` so we don't ship our own plist
-// parser. Returns the absolute binary path or an empty string if the plist
-// cannot be decoded.
-func extractLaunchdBinary(path string) (string, error) {
+func extractLaunchdCommand(path string) (string, []string, error) {
 	cmd := exec.Command("plutil", "-convert", "json", "-o", "-", path)
 	out, err := cmd.Output()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var decoded struct {
 		ProgramArguments []string `json:"ProgramArguments"`
 	}
 	if err := json.Unmarshal(out, &decoded); err != nil {
-		return "", err
+		return "", nil, err
 	}
 	if len(decoded.ProgramArguments) == 0 {
-		return "", nil
+		return "", nil, fmt.Errorf("ProgramArguments is empty")
 	}
-	return strings.TrimSpace(decoded.ProgramArguments[0]), nil
+	return strings.TrimSpace(decoded.ProgramArguments[0]), decoded.ProgramArguments[1:], nil
 }
 
 func binaryExecutable(path string) bool {

@@ -100,6 +100,16 @@ func normalizeRuntimeSpec(runtime RuntimeSpec) (RuntimeSpec, error) {
 	return runtime, nil
 }
 
+func validateDaemonServiceCommand(binary string, args []string) error {
+	if strings.TrimSpace(binary) == "" {
+		return errors.New("service has no executable")
+	}
+	if len(args) != 1 || args[0] != "daemon" {
+		return errors.New("service does not invoke daemon exactly")
+	}
+	return nil
+}
+
 func RefreshInstalledServiceIfStale(paths config.Paths, runtime RuntimeSpec) (bool, error) {
 	runtime, err := normalizeRuntimeSpec(runtime)
 	if err != nil {

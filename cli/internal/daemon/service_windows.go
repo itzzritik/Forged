@@ -270,22 +270,19 @@ func InspectService(_ config.Paths) (ServiceStatus, error) {
 	status.Installed = true
 	status.ConfigValid = true
 
-	binary, err := extractWindowsTaskBinary(taskName())
+	binary, args, err := extractWindowsTaskCommand(taskName())
 	if err != nil {
-		status.ConfigValid = false
-		status.Detail = fmt.Sprintf("reading scheduled task config: %v", err)
+		invalidateServiceConfig(&status, fmt.Sprintf("reading scheduled task config: %v", err))
 		return status, nil
 	}
-	if strings.TrimSpace(binary) == "" {
-		status.ConfigValid = false
-		status.Detail = "scheduled task has no executable"
+	if err := validateDaemonServiceCommand(binary, args); err != nil {
+		invalidateServiceConfig(&status, fmt.Sprintf("invalid scheduled task command: %v", err))
 		return status, nil
 	}
 	status.BinaryPath = binary
 	if !binaryExecutable(binary) {
 		status.BinaryMissing = true
-		status.ConfigValid = false
-		status.Detail = fmt.Sprintf("service binary missing: %s", binary)
+		invalidateServiceConfig(&status, fmt.Sprintf("service binary missing: %s", binary))
 		return status, nil
 	}
 
@@ -407,30 +404,27 @@ func findBinary() (string, error) {
 	return filepath.Abs(self)
 }
 
-// extractWindowsTaskBinary returns the executable declared in the Actions/Exec
-// block of the registered scheduled task. Returns an empty string if the task
-// has no Exec action.
-func extractWindowsTaskBinary(name string) (string, error) {
+func extractWindowsTaskCommand(name string) (string, []string, error) {
 	out, err := exec.Command("schtasks", "/Query", "/TN", name, "/XML").Output()
 	if err != nil {
-		return "", err
+		return "", nil, err
 	}
 	var task struct {
 		Actions struct {
 			Exec []struct {
-				Command string `xml:"Command"`
+				Command   string `xml:"Command"`
+				Arguments string `xml:"Arguments"`
 			} `xml:"Exec"`
 		} `xml:"Actions"`
 	}
 	if err := xml.Unmarshal(out, &task); err != nil {
-		return "", err
+		return "", nil, err
 	}
-	for _, action := range task.Actions.Exec {
-		if cmd := strings.TrimSpace(action.Command); cmd != "" {
-			return cmd, nil
-		}
+	if len(task.Actions.Exec) != 1 {
+		return "", nil, fmt.Errorf("expected one Exec action")
 	}
-	return "", nil
+	action := task.Actions.Exec[0]
+	return strings.TrimSpace(action.Command), strings.Fields(action.Arguments), nil
 }
 
 func binaryExecutable(path string) bool {

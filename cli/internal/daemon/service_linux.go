@@ -141,23 +141,27 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	status.Installed = true
 	status.ConfigValid = true
 
-	if binary, err := extractSystemdBinary(unitPath()); err == nil && binary != "" {
+	binary, args, err := extractSystemdCommand(unitPath())
+	if err != nil {
+		invalidateServiceConfig(&status, fmt.Sprintf("reading service command: %v", err))
+	} else {
 		status.BinaryPath = binary
-		if !binaryExecutable(binary) {
+		if err := validateDaemonServiceCommand(binary, args); err != nil {
+			invalidateServiceConfig(&status, fmt.Sprintf("invalid service command: %v", err))
+		} else if !binaryExecutable(binary) {
 			status.BinaryMissing = true
-			status.ConfigValid = false
-			status.Detail = fmt.Sprintf("service binary missing: %s", binary)
-			return status, nil
+			invalidateServiceConfig(&status, fmt.Sprintf("service binary missing: %s", binary))
 		}
 	}
 
 	cmd := systemctlUser("show", serviceName, "--property=LoadState,ActiveState,SubState,MainPID", "--value")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		status.Detail = strings.TrimSpace(string(out))
-		if status.Detail == "" {
-			status.Detail = err.Error()
+		detail := strings.TrimSpace(string(out))
+		if detail == "" {
+			detail = err.Error()
 		}
+		setServiceDetail(&status, detail)
 		return status, nil
 	}
 
@@ -168,14 +172,16 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	if len(lines) > 1 {
 		active := strings.TrimSpace(lines[1])
 		status.Running = active == "active"
-		if status.Detail == "" {
-			status.Detail = active
-		}
+		setServiceDetail(&status, active)
 	}
 	if len(lines) > 2 {
 		sub := strings.TrimSpace(lines[2])
 		if sub != "" {
-			status.Detail = sub
+			if status.ConfigValid {
+				status.Detail = sub
+			} else {
+				setServiceDetail(&status, sub)
+			}
 		}
 	}
 	if len(lines) > 3 {
@@ -184,9 +190,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 			status.PIDKnown = true
 		}
 	}
-	if status.Detail == "" {
-		status.Detail = "installed"
-	}
+	setServiceDetail(&status, "installed")
 
 	return status, nil
 }
@@ -199,35 +203,110 @@ func findBinary() (string, error) {
 	return filepath.Abs(self)
 }
 
-// extractSystemdBinary returns the binary path declared by the ExecStart= line
-// in the given unit file. The path is the first quoted-or-unquoted token after
-// the '='. Returns an empty string if the unit has no ExecStart line.
-func extractSystemdBinary(path string) (string, error) {
-	data, err := os.ReadFile(path)
-	if err != nil {
-		return "", err
+func extractSystemdCommand(path string) (string, []string, error) {
+	command := ""
+	if err := readSystemdCommand(path, &command); err != nil {
+		return "", nil, err
 	}
-	for _, line := range strings.Split(string(data), "\n") {
-		trimmed := strings.TrimSpace(line)
-		if !strings.HasPrefix(trimmed, "ExecStart=") {
+	// Read drop-ins from disk so stale manager cache cannot hide an override.
+	dropIns, err := os.ReadDir(path + ".d")
+	if err != nil && !os.IsNotExist(err) {
+		return "", nil, err
+	}
+	for _, dropIn := range dropIns {
+		if dropIn.IsDir() || !strings.HasSuffix(dropIn.Name(), ".conf") {
 			continue
 		}
-		value := strings.TrimSpace(strings.TrimPrefix(trimmed, "ExecStart="))
-		value = strings.TrimLeft(value, "-@:!|+")
-		if value == "" {
-			return "", nil
+		if err := readSystemdCommand(filepath.Join(path+".d", dropIn.Name()), &command); err != nil {
+			return "", nil, err
 		}
-		if value[0] == '"' {
-			if end := strings.Index(value[1:], "\""); end >= 0 {
-				return strings.ReplaceAll(value[1:1+end], "%%", "%"), nil
-			}
-		}
-		if idx := strings.IndexAny(value, " \t"); idx > 0 {
-			return strings.ReplaceAll(value[:idx], "%%", "%"), nil
-		}
-		return strings.ReplaceAll(value, "%%", "%"), nil
 	}
-	return "", nil
+	if command == "" {
+		return "", nil, fmt.Errorf("missing ExecStart")
+	}
+	return parseSystemdCommand(command)
+}
+
+func readSystemdCommand(path string, command *string) error {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return err
+	}
+	inService := false
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") && strings.HasSuffix(trimmed, "]") {
+			inService = trimmed == "[Service]"
+			continue
+		}
+		key, rawValue, found := strings.Cut(trimmed, "=")
+		if !inService || !found || strings.TrimSpace(key) != "ExecStart" {
+			continue
+		}
+		raw := strings.TrimSpace(rawValue)
+		if raw == "" {
+			*command = ""
+			continue
+		}
+		value := strings.TrimLeft(raw, "-@:!|+")
+		if value == "" {
+			return fmt.Errorf("%s: empty ExecStart command", path)
+		}
+		if *command != "" {
+			return fmt.Errorf("%s: multiple ExecStart commands", path)
+		}
+		*command = value
+	}
+	return nil
+}
+
+func parseSystemdCommand(value string) (string, []string, error) {
+	var command []string
+	for value = strings.TrimSpace(value); value != ""; value = strings.TrimSpace(value) {
+		operand, rest, err := parseSystemdOperand(value)
+		if err != nil {
+			return "", nil, err
+		}
+		command = append(command, strings.ReplaceAll(operand, "%%", "%"))
+		value = rest
+	}
+	if len(command) == 0 {
+		return "", nil, fmt.Errorf("empty ExecStart")
+	}
+	return command[0], command[1:], nil
+}
+
+func parseSystemdOperand(value string) (string, string, error) {
+	if value[0] == '\'' {
+		end := strings.IndexByte(value[1:], '\'')
+		if end < 0 {
+			return "", "", fmt.Errorf("invalid single-quoted ExecStart operand")
+		}
+		rest := value[end+2:]
+		if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
+			return "", "", fmt.Errorf("missing whitespace after quoted ExecStart operand")
+		}
+		return value[1 : end+1], rest, nil
+	}
+	if value[0] != '"' {
+		if end := strings.IndexAny(value, " \t"); end >= 0 {
+			return value[:end], value[end:], nil
+		}
+		return value, "", nil
+	}
+	quoted, err := strconv.QuotedPrefix(value)
+	if err != nil {
+		return "", "", fmt.Errorf("invalid quoted ExecStart operand: %w", err)
+	}
+	operand, err := strconv.Unquote(quoted)
+	if err != nil {
+		return "", "", fmt.Errorf("unquoting ExecStart operand: %w", err)
+	}
+	rest := value[len(quoted):]
+	if rest != "" && rest[0] != ' ' && rest[0] != '\t' {
+		return "", "", fmt.Errorf("missing whitespace after quoted ExecStart operand")
+	}
+	return operand, rest, nil
 }
 
 func binaryExecutable(path string) bool {

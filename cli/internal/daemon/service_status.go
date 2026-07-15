@@ -17,3 +17,14 @@ type ServiceStatus struct {
 func DefaultServiceStatus() ServiceStatus {
 	return ServiceStatus{Repairable: true}
 }
+
+func setServiceDetail(status *ServiceStatus, detail string) {
+	if status.Detail == "" {
+		status.Detail = detail
+	}
+}
+
+func invalidateServiceConfig(status *ServiceStatus, detail string) {
+	status.ConfigValid = false
+	setServiceDetail(status, detail)
+}
