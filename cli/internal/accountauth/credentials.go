@@ -27,6 +27,48 @@ var (
 	ErrCredentialSecretCleanupPending = errors.New("credential secret cleanup pending")
 )
 
+const (
+	credentialStoreUnavailableDiagnostic = "Saved account credentials are unavailable. Unlock or restore the credential store, then refresh."
+	credentialStoreBrokenDiagnostic      = "Saved account credentials are unreadable. Log in again to restore sync."
+	credentialVerificationDiagnostic     = "Saved account credentials could not be verified. Log in again to restore sync."
+)
+
+// IsCredentialLoadFailure reports whether a saved-account read failed because
+// its local credential storage cannot be used safely.
+func IsCredentialLoadFailure(err error) bool {
+	return errors.Is(err, ErrCredentialStoreUnavailable) || errors.Is(err, ErrCredentialStoreBroken)
+}
+
+// CredentialLoadDiagnostic returns safe user guidance for a known saved-account
+// storage failure. It never includes a local path, keychain error, or secret.
+func CredentialLoadDiagnostic(err error) string {
+	switch {
+	case errors.Is(err, ErrCredentialStoreUnavailable):
+		return credentialStoreUnavailableDiagnostic
+	case errors.Is(err, ErrCredentialStoreBroken):
+		return credentialStoreBrokenDiagnostic
+	default:
+		return ""
+	}
+}
+
+// CredentialVerificationDiagnostic returns safe guidance when a newly saved
+// account record cannot be verified before sync resumes.
+func CredentialVerificationDiagnostic() string {
+	return credentialVerificationDiagnostic
+}
+
+// IsCredentialDiagnostic reports whether diagnostic is fixed safe guidance
+// for a saved-account credential failure.
+func IsCredentialDiagnostic(diagnostic string) bool {
+	switch strings.TrimSpace(diagnostic) {
+	case credentialStoreUnavailableDiagnostic, credentialStoreBrokenDiagnostic, credentialVerificationDiagnostic:
+		return true
+	default:
+		return false
+	}
+}
+
 // refreshMu serializes the load → refresh → save sequence in EnsureFresh so
 // two callers in the same process never present the same refresh token to the
 // server. The server has a 30s grace window for honest replays, but
@@ -102,11 +144,16 @@ func CredentialsPath(paths config.Paths) string {
 
 func Load(paths config.Paths) (Credentials, error) {
 	var creds Credentials
+	readStarted := false
 	err := WithCredentialsLock(paths, func() error {
+		readStarted = true
 		var loadErr error
 		creds, loadErr = LoadLocked(paths)
 		return loadErr
 	})
+	if err != nil && !readStarted {
+		return Credentials{}, credentialReadLockError(err)
+	}
 	return creds, err
 }
 
@@ -115,7 +162,21 @@ func LoadLocked(paths config.Paths) (Credentials, error) {
 	return loadCredentials(paths)
 }
 
+// LoadPersistedLocked reads stored credentials without using the in-memory
+// refresh cache while the caller holds WithCredentialsLock.
+func LoadPersistedLocked(paths config.Paths) (Credentials, error) {
+	return loadPersistedCredentials(paths)
+}
+
 func loadCredentials(paths config.Paths) (Credentials, error) {
+	return loadCredentialsWithCache(paths, true)
+}
+
+func loadPersistedCredentials(paths config.Paths) (Credentials, error) {
+	return loadCredentialsWithCache(paths, false)
+}
+
+func loadCredentialsWithCache(paths config.Paths, useCache bool) (Credentials, error) {
 	metadata, err := readMetadata(CredentialsPath(paths))
 	if err != nil {
 		return Credentials{}, err
@@ -124,13 +185,15 @@ func loadCredentials(paths config.Paths) (Credentials, error) {
 	if _, err := os.Stat(accountIdentityMarkerPath(paths)); err == nil {
 		requireIdentity = true
 	} else if !os.IsNotExist(err) {
-		return Credentials{}, fmt.Errorf("Reading account identity marker: %w", err)
+		return Credentials{}, fmt.Errorf("Reading account identity marker: %w", errors.Join(ErrCredentialStoreBroken, err))
 	}
 	if requireIdentity && metadata.Version < accountIdentityVersion {
 		return Credentials{}, fmt.Errorf("Account credentials use an outdated identity format: %w", ErrCredentialStoreBroken)
 	}
-	if cached := memCreds.Load(); cached != nil && cached.Path == CredentialsPath(paths) && credsAreFresher(*cached, metadata) {
-		return cached.Credentials, nil
+	if useCache {
+		if cached := memCreds.Load(); cached != nil && cached.Path == CredentialsPath(paths) && credsAreFresher(*cached, metadata) {
+			return cached.Credentials, nil
+		}
 	}
 
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -138,9 +201,12 @@ func loadCredentials(paths config.Paths) (Credentials, error) {
 
 	secret, err := storeForBackend(paths, metadata.CredentialBackend).Load(ctx, metadata.CredentialID)
 	if errors.Is(err, ErrCredentialSecretNotFound) {
-		return Credentials{}, ErrLoginRequired
+		return Credentials{}, fmt.Errorf("Account credential secret is missing: %w", ErrCredentialStoreBroken)
 	}
 	if err != nil {
+		if !IsCredentialLoadFailure(err) {
+			err = errors.Join(ErrCredentialStoreBroken, err)
+		}
 		return Credentials{}, fmt.Errorf("Loading account secret: %w", err)
 	}
 	if requireIdentity {
@@ -168,6 +234,9 @@ func loadCredentials(paths config.Paths) (Credentials, error) {
 		ChangeID:         metadata.ChangeID,
 	}
 	normalizeCredentials(&creds)
+	if CurrentToken(creds) == "" && !CanRefresh(creds, time.Now()) {
+		return Credentials{}, fmt.Errorf("Account credentials are missing a usable token: %w", ErrCredentialStoreBroken)
+	}
 	return creds, nil
 }
 
@@ -343,11 +412,16 @@ func EnsureFresh(ctx context.Context, paths config.Paths) (Credentials, error) {
 	defer refreshMu.Unlock()
 
 	var refreshed Credentials
+	readStarted := false
 	err := WithCredentialsLock(paths, func() error {
+		readStarted = true
 		var err error
 		refreshed, err = ensureFreshLocked(ctx, paths)
 		return err
 	})
+	if err != nil && !readStarted {
+		return Credentials{}, credentialReadLockError(err)
+	}
 	return refreshed, err
 }
 
@@ -360,7 +434,7 @@ func ensureFreshLocked(ctx context.Context, paths config.Paths) (Credentials, er
 	if !NeedsRefresh(creds, time.Now()) {
 		return creds, nil
 	}
-	if creds.RefreshToken == "" || (!creds.RefreshExpiresAt.IsZero() && time.Now().After(creds.RefreshExpiresAt)) {
+	if !CanRefresh(creds, time.Now()) {
 		return Credentials{}, ErrLoginRequired
 	}
 
@@ -405,6 +479,13 @@ func NeedsRefresh(creds Credentials, now time.Time) bool {
 		return false
 	}
 	return !creds.AccessExpiresAt.After(now.Add(time.Minute))
+}
+
+// CanRefresh reports whether credentials have a refresh token that has not
+// expired and can be used to obtain a new access token.
+func CanRefresh(creds Credentials, now time.Time) bool {
+	return strings.TrimSpace(creds.RefreshToken) != "" &&
+		(creds.RefreshExpiresAt.IsZero() || creds.RefreshExpiresAt.After(now))
 }
 
 func CurrentToken(creds Credentials) string {
@@ -499,12 +580,15 @@ func clearCachedCredentials(paths config.Paths) {
 func readMetadata(path string) (accountMetadata, error) {
 	data, err := os.ReadFile(path)
 	if err != nil {
+		if !os.IsNotExist(err) {
+			err = fmt.Errorf("Reading account metadata: %w", errors.Join(ErrCredentialStoreBroken, err))
+		}
 		return accountMetadata{}, err
 	}
 
 	var metadata accountMetadata
 	if err := json.Unmarshal(data, &metadata); err != nil {
-		return accountMetadata{}, fmt.Errorf("Parsing account metadata: %w", err)
+		return accountMetadata{}, fmt.Errorf("Parsing account metadata: %w", errors.Join(ErrCredentialStoreBroken, err))
 	}
 	metadata.ServerURL = strings.TrimSpace(metadata.ServerURL)
 	metadata.CredentialID = strings.TrimSpace(metadata.CredentialID)
@@ -514,7 +598,7 @@ func readMetadata(path string) (accountMetadata, error) {
 	metadata.Name = strings.TrimSpace(metadata.Name)
 	metadata.ChangeID = strings.TrimSpace(metadata.ChangeID)
 	if metadata.ServerURL == "" || metadata.CredentialID == "" || metadata.UserID == "" {
-		return accountMetadata{}, ErrLoginRequired
+		return accountMetadata{}, fmt.Errorf("Account metadata is incomplete: %w", ErrCredentialStoreBroken)
 	}
 	return metadata, nil
 }
@@ -535,7 +619,7 @@ func credentialIDForSave(paths config.Paths) (string, *accountMetadata, error) {
 	var oldMetadata *accountMetadata
 	if metadata, err := readMetadata(CredentialsPath(paths)); err == nil {
 		oldMetadata = &metadata
-	} else if !os.IsNotExist(err) && !errors.Is(err, ErrLoginRequired) {
+	} else if !os.IsNotExist(err) && !errors.Is(err, ErrLoginRequired) && !errors.Is(err, ErrCredentialStoreBroken) {
 		return "", nil, err
 	}
 
@@ -572,13 +656,23 @@ func WithCredentialsLock(paths config.Paths, fn func() error) error {
 }
 
 func WithCredentials(paths config.Paths, fn func(Credentials) error) error {
-	return WithCredentialsLock(paths, func() error {
+	readStarted := false
+	err := WithCredentialsLock(paths, func() error {
+		readStarted = true
 		creds, err := loadCredentials(paths)
 		if err != nil {
 			return err
 		}
 		return fn(creds)
 	})
+	if err != nil && !readStarted {
+		return credentialReadLockError(err)
+	}
+	return err
+}
+
+func credentialReadLockError(err error) error {
+	return fmt.Errorf("Accessing account credentials: %w", errors.Join(ErrCredentialStoreBroken, err))
 }
 
 func credentialIDsForDelete(paths config.Paths, metadata *accountMetadata) []string {

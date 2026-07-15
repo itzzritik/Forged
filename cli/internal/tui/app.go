@@ -13,6 +13,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/x/ansi"
+	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/readiness"
@@ -379,28 +380,29 @@ type model struct {
 	maintenanceAuthEmail    string
 	doctorRepairError       string
 
-	bootAssessed             bool
-	startupUnlockPending     bool
-	startupUnlockNeedsRepair bool
-	startupUnlockID          int
-	startupUnlockCancel      context.CancelFunc
-	systemHeader             systemHeaderState
-	runtimeStatus            RuntimeStatus
-	runtimeLoaded            bool
-	runtimeStatusID          int
-	runtimeStatusFailures    int
-	runtimeUnavailable       bool
-	snapshotRefreshID        int
-	securityState            SecurityState
-	securityLoaded           bool
-	securityLoadID           int
-	securityLoadErr          string
-	doctorOffset             int
-	doctorPageRows           int
-	idleLockID               int
-	idleLockDeadline         time.Time
-	idleLockTimerArmed       bool
-	idleLockInFlight         bool
+	bootAssessed                          bool
+	startupUnlockPending                  bool
+	startupUnlockNeedsRepair              bool
+	startupUnlockID                       int
+	startupUnlockCancel                   context.CancelFunc
+	systemHeader                          systemHeaderState
+	runtimeStatus                         RuntimeStatus
+	runtimeLoaded                         bool
+	runtimeStatusID                       int
+	runtimeStatusFailures                 int
+	runtimeUnavailable                    bool
+	refreshCredentialAttentionAfterUnlock bool
+	snapshotRefreshID                     int
+	securityState                         SecurityState
+	securityLoaded                        bool
+	securityLoadID                        int
+	securityLoadErr                       string
+	doctorOffset                          int
+	doctorPageRows                        int
+	idleLockID                            int
+	idleLockDeadline                      time.Time
+	idleLockTimerArmed                    bool
+	idleLockInFlight                      bool
 
 	keyListID            int
 	keyDetailID          int
@@ -569,7 +571,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, m.startLoginFlow()
 		}
 		if !msg.snapshot.VaultExists {
-			m.notice = notice{}
+			if credentialErr := m.accountCredentialError(); credentialErr != "" {
+				m.notice = notice{message: credentialErr, tone: dashboardscreen.ToneDanger}
+			} else {
+				m.notice = notice{}
+			}
 			m.summary = readiness.RepairSummary{}
 			m.maintenanceAuthEmail = ""
 			m.maintenanceUsedPassword = false
@@ -579,7 +585,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.systemHeader = m.systemHeaderForSnapshot(msg.snapshot)
 				return m, tea.Batch(m.loadSecurityStateCmd(), m.invalidateSigningStatusCmd())
 			}
-			m.systemHeader = systemHeaderHealthy
+			if m.accountCredentialsNeedAttention() {
+				m.systemHeader = systemHeaderUnhealthy
+			} else {
+				m.systemHeader = systemHeaderHealthy
+			}
 			return m, nil
 		}
 		m.discardPasswordInput()
@@ -603,6 +613,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.id != m.loginID || m.screen != screenLogin {
 			return m, nil
 		}
+		if m.activeRuntimeSyncIssue() != "" {
+			m.cancelLoginFlow()
+			return m, m.openSyncIssueDoctor()
+		}
 		m.loginProgress = nil
 		if msg.err != nil {
 			m.cancelLoginFlow()
@@ -612,9 +626,15 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.loginScreen.Status = ""
 			return m, nil
 		}
+		title := "Log In to Sync Vault"
+		contextText := "Verify this code in your browser before approving."
+		if m.accountCredentialsNeedAttention() {
+			title = m.loginScreen.Title
+			contextText = m.loginScreen.Context
+		}
 		m.loginScreen = accountscreen.LoginScreen{
-			Title:            "Log In to Sync Vault",
-			Context:          "Verify this code in your browser before approving.",
+			Title:            title,
+			Context:          contextText,
 			Status:           "Waiting for browser approval",
 			VerificationCode: msg.session.VerificationCode,
 			URL:              msg.session.URL,
@@ -640,6 +660,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case loginApprovedMsg:
 		if msg.id != m.loginID || m.screen != screenLogin {
 			return m, nil
+		}
+		if m.activeRuntimeSyncIssue() != "" {
+			m.cancelLoginFlow()
+			return m, m.openSyncIssueDoctor()
 		}
 		m.cancelClipboardCopy()
 		m.cancelLoginFlow()
@@ -685,6 +709,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 
 		m.snapshot.LoggedIn = true
+		m.snapshot.LoginCheckError = ""
+		if accountauth.IsCredentialDiagnostic(m.runtimeStatus.Error) {
+			m.runtimeStatus.Error = ""
+		}
 		m.accountEmail = msg.creds.Email
 		m.accountName = msg.creds.Name
 		m.passwordAuth = msg.creds.Email
@@ -764,6 +792,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		lastSuccessfulPullAt := m.runtimeStatus.LastSuccessfulPullAt
 		lastSuccessfulPushAt := m.runtimeStatus.LastSuccessfulPushAt
 		refreshHealth := false
+		refreshCredentialAttention := false
 		if msg.err == nil {
 			refreshHealth = m.runtimeUnavailable
 			m.runtimeStatusFailures = 0
@@ -776,6 +805,10 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.runtimeStatus = msg.status
 			m.runtimeLoaded = true
 			m.reportErrorText("sync.status", msg.status.Error)
+			refreshCredentialAttention = m.refreshCredentialAttentionAfterUnlock && !m.maintenanceBusy && m.snapshot.VaultExists
+			if refreshCredentialAttention {
+				m.refreshCredentialAttentionAfterUnlock = false
+			}
 		} else {
 			m.reportError("runtime.status", msg.err)
 			m.runtimeStatusFailures++
@@ -790,6 +823,8 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.systemHeader != systemHeaderFixing {
 				m.systemHeader = systemHeaderChecking
 			}
+		}
+		if refreshHealth || refreshCredentialAttention {
 			healthCmd = m.refreshSnapshotCmd()
 		}
 		lossCmd := m.handleSensitiveSessionLoss(wasUnlocked)
@@ -1119,8 +1154,12 @@ func (m *model) vaultSyncHeaderItem() shell.StatusItem {
 		}
 		return shell.StatusItem{Label: "Vault unavailable", Tone: shell.StatusToneDanger}
 	}
-	if m.runtimeLoaded && strings.TrimSpace(m.runtimeStatus.Error) != "" {
+	credentialErr := m.accountCredentialError()
+	if m.activeRuntimeSyncIssue() != "" {
 		return shell.StatusItem{Label: "Sync issue", Tone: shell.StatusToneDanger}
+	}
+	if credentialErr != "" {
+		return shell.StatusItem{Label: "Account credentials need attention", Tone: shell.StatusToneDanger}
 	}
 	if !m.snapshot.LoggedIn {
 		return shell.StatusItem{Label: "Local vault healthy", Tone: shell.StatusToneSuccess}
@@ -1265,14 +1304,10 @@ func (m *model) headerBreadcrumbs() []shell.Breadcrumb {
 			}
 		}
 		if m.session.Current().ID == RouteSyncHome {
-			label := "Sync"
-			if !m.snapshot.LoggedIn {
-				label = "Enable Sync"
-			}
 			return []shell.Breadcrumb{
 				{Label: "Home"},
 				{Label: "Manage"},
-				{Label: label, Current: true},
+				{Label: m.syncRouteLabel(), Current: true},
 			}
 		}
 		if section := m.currentDashboardSection(); section != nil {
@@ -1584,10 +1619,13 @@ func (m *model) footerActions() []shell.FooterAction {
 				}
 			}
 			label := "Open"
-			if item, ok := m.selectedManageItem(); ok &&
-				item.ID == manageItemSync &&
-				m.manageSyncError() != "" {
-				label = "Retry Sync"
+			if item, ok := m.selectedManageItem(); ok && item.ID == manageItemSync {
+				switch {
+				case m.activeRuntimeSyncIssue() != "":
+					label = "Review Sync"
+				case m.manageSyncError() != "":
+					label = "Retry Sync"
+				}
 			}
 			return []shell.FooterAction{
 				{Key: theme.Glyphs.UpDown, Label: "Move"},
@@ -1699,12 +1737,22 @@ func (m *model) footerActions() []shell.FooterAction {
 		}
 		if m.currentDashboardSection() != nil {
 			if m.session.Current().ID == RouteSyncHome {
-				if !m.snapshot.LoggedIn {
+				if m.activeRuntimeSyncIssue() != "" {
+					return []shell.FooterAction{
+						{Key: "Enter", Label: "Open Doctor"},
+						{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
+					}
+				}
+				if !m.snapshot.LoggedIn || m.accountCredentialsNeedAttention() {
 					if m.maintenanceBusy {
 						return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
 					}
+					label := "Log In"
+					if m.accountCredentialsNeedAttention() {
+						label = "Repair Account"
+					}
 					return []shell.FooterAction{
-						{Key: "Enter", Label: "Log In"},
+						{Key: "Enter", Label: label},
 						{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 					}
 				}
@@ -1752,10 +1800,13 @@ func (m *model) footerActions() []shell.FooterAction {
 			if tabs[m.dashboardTabIndex].Label == "Manage" && m.dashboardTabIndex < len(m.dashboardPageIndices) {
 				items := m.manageItems()
 				itemIndex := m.dashboardPageIndices[m.dashboardTabIndex]
-				if itemIndex >= 0 && itemIndex < len(items) &&
-					items[itemIndex].ID == manageItemSync &&
-					m.manageSyncError() != "" {
-					label = "Retry Sync"
+				if itemIndex >= 0 && itemIndex < len(items) && items[itemIndex].ID == manageItemSync {
+					switch {
+					case m.activeRuntimeSyncIssue() != "":
+						label = "Review Sync"
+					case m.manageSyncError() != "":
+						label = "Retry Sync"
+					}
 				}
 			}
 			return []shell.FooterAction{
@@ -1870,7 +1921,10 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "enter":
 			if m.session.Current().ID == RouteSyncHome {
-				if !m.snapshot.LoggedIn {
+				if m.activeRuntimeSyncIssue() != "" {
+					return m, m.openSyncIssueDoctor()
+				}
+				if !m.snapshot.LoggedIn || m.accountCredentialsNeedAttention() {
 					if m.maintenanceBusy {
 						return m, nil
 					}
@@ -1974,6 +2028,9 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, nil
+	}
+	if options := m.dashboardOptions(); len(options) > 0 {
+		m.onboardingCursor = min(max(m.onboardingCursor, 0), len(options)-1)
 	}
 
 	switch msg.String() {
@@ -2186,6 +2243,9 @@ func (m *model) dashboardBodyTitle() string {
 
 func (m *model) dashboardLead() string {
 	if m.isWelcomeState() {
+		if credentialErr := m.accountCredentialError(); credentialErr != "" {
+			return credentialErr
+		}
 		return "Restore your synced vault or start fresh on this device"
 	}
 	return ""
@@ -2372,7 +2432,19 @@ func (m *model) currentDashboardSection() *dashboardSection {
 
 	switch m.session.Current().ID {
 	case RouteSyncHome:
-		if !m.snapshot.LoggedIn {
+		if syncIssue := m.activeRuntimeSyncIssue(); syncIssue != "" {
+			return &dashboardSection{
+				Title:   "Sync Needs Attention",
+				Context: syncIssue,
+			}
+		}
+		if !m.snapshot.LoggedIn || m.accountCredentialsNeedAttention() {
+			if credentialErr := m.accountCredentialError(); credentialErr != "" {
+				return &dashboardSection{
+					Title:   "Account Needs Attention",
+					Context: credentialErr,
+				}
+			}
 			return &dashboardSection{
 				Title: "Enable Sync",
 				Context: strings.Join([]string{
@@ -2390,9 +2462,72 @@ func (m *model) currentDashboardSection() *dashboardSection {
 	}
 }
 
+func (m *model) accountCredentialError() string {
+	if m.activeRuntimeSyncIssue() != "" {
+		return ""
+	}
+	if diagnostic := strings.TrimSpace(m.snapshot.LoginCheckError); diagnostic != "" {
+		return diagnostic
+	}
+	return m.runtimeCredentialDiagnostic()
+}
+
+func (m *model) activeRuntimeSyncIssue() string {
+	if !m.runtimeLoaded {
+		return ""
+	}
+	diagnostic := strings.TrimSpace(m.runtimeStatus.Error)
+	if diagnostic == "" || accountauth.IsCredentialDiagnostic(diagnostic) {
+		return ""
+	}
+	return diagnostic
+}
+
+func (m *model) runtimeCredentialDiagnostic() string {
+	if !m.runtimeLoaded {
+		return ""
+	}
+	diagnostic := strings.TrimSpace(m.runtimeStatus.Error)
+	if accountauth.IsCredentialDiagnostic(diagnostic) {
+		return diagnostic
+	}
+	return ""
+}
+
+func (m *model) accountCredentialsNeedAttention() bool {
+	return m.accountCredentialError() != ""
+}
+
+func (m *model) hasCredentialDiagnostic() bool {
+	return strings.TrimSpace(m.snapshot.LoginCheckError) != "" || m.runtimeCredentialDiagnostic() != ""
+}
+
+func (m *model) syncRouteLabel() string {
+	if m.activeRuntimeSyncIssue() != "" {
+		return "Sync Needs Attention"
+	}
+	if m.accountCredentialsNeedAttention() {
+		return "Account Needs Attention"
+	}
+	if !m.snapshot.LoggedIn {
+		return "Enable Sync"
+	}
+	return "Sync"
+}
+
 func (m *model) dashboardOptions() []dashboardscreen.Option {
 	if m.snapshot.VaultExists || strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
 		return nil
+	}
+	if credentialErr := m.accountCredentialError(); credentialErr != "" {
+		return []dashboardscreen.Option{
+			{
+				Label:       "Repair Account",
+				Description: credentialErr,
+				Primary:     true,
+				Selected:    true,
+			},
+		}
 	}
 	return []dashboardscreen.Option{
 		{
@@ -2477,15 +2612,25 @@ func (m *model) assessCurrentState() tea.Cmd {
 }
 
 func (m *model) startLoginFlow() tea.Cmd {
+	if m.activeRuntimeSyncIssue() != "" {
+		m.cancelLoginFlow()
+		return m.openSyncIssueDoctor()
+	}
 	m.cancelClipboardCopy()
 	m.cancelLoginFlow()
 	m.discardPasswordInput()
 	m.screen = screenLogin
 	m.notice = notice{}
 	m.loginCommitting = false
+	title := "Log In to Sync Vault"
+	contextText := "Preparing secure browser approval."
+	if credentialErr := m.accountCredentialError(); credentialErr != "" {
+		title = "Repair Account Credentials"
+		contextText = credentialErr
+	}
 	m.loginScreen = accountscreen.LoginScreen{
-		Title:   "Log In to Sync Vault",
-		Context: "Preparing secure browser approval.",
+		Title:   title,
+		Context: contextText,
 		Status:  "Opening approval link",
 		Waiting: true,
 	}
@@ -2651,6 +2796,7 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 }
 
 func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error, unlocked bool, unlockErr error) tea.Cmd {
+	credentialAttentionVisible := m.hasCredentialDiagnostic()
 	action := "maintenance." + string(m.maintenanceTrigger)
 	errorText := m.reportError(action, err)
 	m.reportError(action+".unlock", unlockErr)
@@ -2664,6 +2810,9 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 	if unlocked {
 		m.runtimeStatus.Unlocked = true
 		m.runtimeStatus.SensitiveKnown = true
+		if credentialAttentionVisible {
+			m.refreshCredentialAttentionAfterUnlock = true
+		}
 	}
 	if m.screen == screenPassword {
 		m.passwordBusy = false
@@ -2711,6 +2860,15 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 	}
 
 	switch result.Next {
+	case readiness.NextActionNeedsCredentialRepair:
+		m.showDashboardNotice(result.Snapshot.LoginCheckError, dashboardscreen.ToneDanger)
+		m.popWizardRoutes()
+		m.discardPasswordInput()
+		m.screen = screenDashboard
+		if m.maintenanceTrigger == maintenanceTriggerDoctor {
+			return m.loadSecurityStateCmd()
+		}
+		return nil
 	case readiness.NextActionNeedsPassword:
 		errorText := ""
 		if m.maintenanceUsedPassword {
@@ -2934,6 +3092,9 @@ func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea
 
 	m.runtimeStatus.Unlocked = true
 	m.runtimeStatus.SensitiveKnown = true
+	if m.hasCredentialDiagnostic() {
+		m.refreshCredentialAttentionAfterUnlock = true
+	}
 	m.passwordHideInput = false
 	m.notice = notice{}
 	pending := m.startupUnlockPending
@@ -3155,6 +3316,13 @@ func (m *model) showCurrentRoute() tea.Cmd {
 	}
 }
 
+func (m *model) openSyncIssueDoctor() tea.Cmd {
+	if m.session.Current().ID != RouteDoctorOverview {
+		m.session.Push(Route{ID: RouteDoctorOverview})
+	}
+	return m.showCurrentRoute()
+}
+
 func (m *model) pendingDashboardRouteTitle() string {
 	if m.screen != screenDashboard {
 		return ""
@@ -3190,10 +3358,7 @@ func (m *model) pendingDashboardRouteTitle() string {
 	case RouteAccountStatus:
 		return "Profile"
 	case RouteSyncHome:
-		if !m.snapshot.LoggedIn {
-			return "Enable Sync"
-		}
-		return "Sync"
+		return m.syncRouteLabel()
 	case RouteDoctorOverview:
 		return "Doctor"
 	default:
@@ -3285,14 +3450,10 @@ func (m *model) pendingDashboardRouteBreadcrumbs() []shell.Breadcrumb {
 			{Label: "Profile", Current: true},
 		}
 	case RouteSyncHome:
-		label := "Sync"
-		if !m.snapshot.LoggedIn {
-			label = "Enable Sync"
-		}
 		return []shell.Breadcrumb{
 			{Label: "Home"},
 			{Label: "Manage"},
-			{Label: label, Current: true},
+			{Label: m.syncRouteLabel(), Current: true},
 		}
 	case RouteDoctorOverview:
 		return []shell.Breadcrumb{

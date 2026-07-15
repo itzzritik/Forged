@@ -29,28 +29,29 @@ type SSHRouteHandler interface {
 }
 
 type Server struct {
-	socketPath     string
-	stateMu        sync.RWMutex
-	lifecycleMu    sync.Mutex
-	vault          *vault.Vault
-	keyStore       *vault.KeyStore
-	activityLog    *activity.ActivityLog
-	listener       net.Listener
-	connections    map[net.Conn]struct{}
-	stopping       bool
-	logger         *slog.Logger
-	wg             sync.WaitGroup
-	syncBus        *forgedsync.Bus
-	syncError      string
-	syncLink       func(SyncLinkArgs) error
-	syncUnlink     func() error
-	accountReplace func(AccountCredentialsArgs) (*AccountChangeResult, error)
-	accountClear   func() (*AccountChangeResult, error)
-	authBroker     *sensitiveauth.Broker
-	onKeyChange    func()
-	onVaultChange  func(string)
-	onReadSync     func()
-	sshRoutes      SSHRouteHandler
+	socketPath          string
+	stateMu             sync.RWMutex
+	lifecycleMu         sync.Mutex
+	vault               *vault.Vault
+	keyStore            *vault.KeyStore
+	activityLog         *activity.ActivityLog
+	listener            net.Listener
+	connections         map[net.Conn]struct{}
+	stopping            bool
+	logger              *slog.Logger
+	wg                  sync.WaitGroup
+	syncBus             *forgedsync.Bus
+	syncError           string
+	syncCredentialError string
+	syncLink            func(SyncLinkArgs) error
+	syncUnlink          func() error
+	accountReplace      func(AccountCredentialsArgs) (*AccountChangeResult, error)
+	accountClear        func() (*AccountChangeResult, error)
+	authBroker          *sensitiveauth.Broker
+	onKeyChange         func()
+	onVaultChange       func(string)
+	onReadSync          func()
+	sshRoutes           SSHRouteHandler
 }
 
 func (s *Server) SetSyncBus(bus *forgedsync.Bus) {
@@ -63,6 +64,12 @@ func (s *Server) SetSyncError(err string) {
 	s.stateMu.Lock()
 	defer s.stateMu.Unlock()
 	s.syncError = err
+}
+
+func (s *Server) SetSyncCredentialError(err string) {
+	s.stateMu.Lock()
+	defer s.stateMu.Unlock()
+	s.syncCredentialError = err
 }
 
 func (s *Server) SetSyncLinkHandler(handler func(SyncLinkArgs) error) {
@@ -818,18 +825,34 @@ func (s *Server) handleSyncTrigger(ctx context.Context, raw json.RawMessage) Res
 	}
 
 	bus := s.currentSyncBus()
-	if bus == nil {
-		if syncErr := s.currentSyncError(); syncErr != "" {
-			return ErrorResponse(errors.New(syncErr))
-		}
-		return ErrorResponse(fmt.Errorf("Sync is unavailable; restart Forged and try again"))
+	if err := s.syncTriggerUnavailable(bus); err != nil {
+		return ErrorResponse(err)
 	}
 
 	if err := bus.ForceSync(ctx, "manual_sync"); err != nil {
+		if unavailable := s.syncTriggerUnavailable(bus); unavailable != nil {
+			return ErrorResponse(unavailable)
+		}
 		return ErrorResponse(fmt.Errorf("Sync failed: %w", err))
+	}
+	if err := s.syncTriggerUnavailable(bus); err != nil {
+		return ErrorResponse(err)
 	}
 	state := bus.SnapshotState()
 	return OkResponse(map[string]any{"version": state.LastKnownServerVersion})
+}
+
+func (s *Server) syncTriggerUnavailable(bus *forgedsync.Bus) error {
+	if syncErr := s.currentSyncError(); syncErr != "" {
+		return errors.New(syncErr)
+	}
+	if credentialErr := s.currentSyncCredentialError(); credentialErr != "" {
+		return errors.New(credentialErr)
+	}
+	if bus == nil || s.currentSyncBus() != bus {
+		return errors.New("Sync is unavailable; try again")
+	}
+	return nil
 }
 
 func (s *Server) handleSyncLink(raw json.RawMessage) Response {
@@ -982,6 +1005,9 @@ func (s *Server) handleStatus() Response {
 	if bus := s.currentSyncBus(); bus != nil {
 		syncState := bus.SnapshotState()
 		lastErr := syncState.LastError
+		if credentialErr := s.currentSyncCredentialError(); credentialErr != "" {
+			lastErr = credentialErr
+		}
 		if recoveryErr := s.currentSyncError(); recoveryErr != "" {
 			lastErr = recoveryErr
 		}
@@ -1000,6 +1026,8 @@ func (s *Server) handleStatus() Response {
 		}
 	} else if syncErr := s.currentSyncError(); syncErr != "" {
 		status["sync"] = map[string]any{"last_error": syncErr}
+	} else if credentialErr := s.currentSyncCredentialError(); credentialErr != "" {
+		status["sync"] = map[string]any{"last_error": credentialErr}
 	}
 
 	return OkResponse(status)
@@ -1058,6 +1086,12 @@ func (s *Server) currentSyncError() string {
 	s.stateMu.RLock()
 	defer s.stateMu.RUnlock()
 	return s.syncError
+}
+
+func (s *Server) currentSyncCredentialError() string {
+	s.stateMu.RLock()
+	defer s.stateMu.RUnlock()
+	return s.syncCredentialError
 }
 
 func (s *Server) requireKeyStore() (*vault.KeyStore, error) {

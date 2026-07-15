@@ -2,6 +2,7 @@ package readiness
 
 import (
 	"errors"
+	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/daemon"
 )
@@ -115,6 +116,10 @@ func sshHealthy(snapshot Snapshot) bool {
 
 func (e *Engine) ensureVaultAndCredentialsStage(state *repairState, opts RunOptions) error {
 	if state.result.Snapshot.VaultExists {
+		return nil
+	}
+	if strings.TrimSpace(state.result.Snapshot.LoginCheckError) != "" {
+		state.result.Next = NextActionNeedsCredentialRepair
 		return nil
 	}
 	if state.result.Snapshot.LoggedIn {

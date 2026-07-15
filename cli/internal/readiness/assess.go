@@ -81,6 +81,8 @@ func (e *Engine) Assess() (Snapshot, error) {
 	}
 	if loggedIn, err := e.credentials(e.Paths); err == nil {
 		snapshot.LoggedIn = loggedIn
+	} else {
+		snapshot.LoginCheckError = accountauth.CredentialLoadDiagnostic(err)
 	}
 
 	if err := e.Paths.ValidateRuntimePaths(); err != nil {
@@ -132,6 +134,9 @@ func classifyState(s Snapshot) State {
 		return StateBlocked
 	}
 	if !s.VaultExists {
+		if strings.TrimSpace(s.LoginCheckError) != "" {
+			return StateBlocked
+		}
 		return StateUninitialized
 	}
 
@@ -260,7 +265,8 @@ func defaultCredentialsValid(paths config.Paths) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return strings.TrimSpace(creds.ServerURL) != "" && accountauth.CurrentToken(creds) != "", nil
+	return strings.TrimSpace(creds.ServerURL) != "" &&
+		(accountauth.CurrentToken(creds) != "" || accountauth.CanRefresh(creds, time.Now())), nil
 }
 
 func defaultDaemonRuntimeStatus(socketPath string) (DaemonRuntimeStatus, error) {

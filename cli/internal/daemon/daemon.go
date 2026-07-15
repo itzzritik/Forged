@@ -57,6 +57,8 @@ type Daemon struct {
 	syncInitRun             *syncInitRun
 	syncRetryDelay          time.Duration
 	syncError               string
+	syncCredentialError     string
+	syncCredentialBlocked   bool
 	linkRun                 *linkRun
 	logger                  *slog.Logger
 	stop                    chan struct{}
@@ -284,6 +286,7 @@ func (d *Daemon) startIPC() error {
 	d.ipcServer.SetAccountClearHandler(d.handleAccountClear)
 	d.ipcServer.SetSensitiveAuthBroker(d.authBroker)
 	d.ipcServer.SetSyncError(d.syncError)
+	d.ipcServer.SetSyncCredentialError(d.syncCredentialError)
 	if d.syncBus != nil {
 		d.ipcServer.SetSyncBus(d.syncBus)
 	}
@@ -431,7 +434,7 @@ func (d *Daemon) expireInitialLink(run *linkRun) {
 }
 
 func (d *Daemon) initSyncLocked() {
-	if d.activeAccountTransition != 0 || d.syncSuppressed || d.syncPending || d.syncDraining != nil {
+	if d.activeAccountTransition != 0 || d.syncSuppressed || d.syncCredentialBlocked || d.syncPending || d.syncDraining != nil {
 		return
 	}
 	if d.syncBus != nil || d.vault == nil {
@@ -482,13 +485,27 @@ func (d *Daemon) finishSyncInit(run *syncInitRun) {
 func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials, credentialErr error) (*syncCandidate, bool) {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
+	recoveryMarked := credentialErr != nil && d.syncStateRecoveryMarked()
 
 	d.sessionMu.Lock()
 	if !d.syncInitRunCurrentLocked(run) {
 		d.sessionMu.Unlock()
 		return nil, false
 	}
-	if credentialErr != nil || creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
+	if credentialErr != nil {
+		d.clearSyncInitRunLocked(run)
+		if accountauth.IsCredentialLoadFailure(credentialErr) {
+			d.blockSyncForCredentialErrorLocked(credentialErr)
+			d.logger.Warn("sync paused because saved account credentials cannot be read", "error", credentialErr)
+		}
+		if recoveryMarked {
+			d.setSyncStateRecoveryLocked()
+		}
+		d.sessionMu.Unlock()
+		return nil, false
+	}
+	d.clearSyncCredentialFailureLocked()
+	if creds.ServerURL == "" {
 		d.clearSyncInitRunLocked(run)
 		d.sessionMu.Unlock()
 		return nil, false
@@ -498,7 +515,7 @@ func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials
 	if !d.admitSyncInitState(run) {
 		return nil, false
 	}
-	recoveryMarked := d.syncStateRecoveryMarked()
+	recoveryMarked = d.syncStateRecoveryMarked()
 	var recoveryErr error
 	var candidate *syncCandidate
 	var candidateErr error
@@ -617,6 +634,12 @@ func (d *Daemon) finishInitialLink(run *syncInitRun, candidate *syncCandidate, c
 	}
 	if authErr != nil {
 		d.clearSyncInitRunLocked(run)
+		if accountauth.IsCredentialLoadFailure(authErr) {
+			d.blockSyncForCredentialErrorLocked(authErr)
+			d.logger.Warn("sync paused because saved account credentials cannot be read", "error", authErr)
+			d.sessionMu.Unlock()
+			return false
+		}
 		d.logger.Warn("link reconcile failed", "error", authErr)
 		d.scheduleSyncRetryLocked(candidate.generation)
 		d.sessionMu.Unlock()
@@ -659,6 +682,12 @@ func (d *Daemon) finishDirectSyncInit(run *syncInitRun, candidate *syncCandidate
 	}
 	if identityErr != nil {
 		d.clearSyncInitRunLocked(run)
+		if accountauth.IsCredentialLoadFailure(identityErr) {
+			d.blockSyncForCredentialErrorLocked(identityErr)
+			d.logger.Warn("sync paused because saved account credentials cannot be read", "error", identityErr)
+			d.sessionMu.Unlock()
+			return
+		}
 		d.logger.Warn("initializing sync failed", "error", identityErr)
 		d.sessionMu.Unlock()
 		return
@@ -703,7 +732,7 @@ func (d *Daemon) finishDirectSyncInit(run *syncInitRun, candidate *syncCandidate
 func (d *Daemon) syncInitRunCurrentLocked(run *syncInitRun) bool {
 	return run != nil && d.syncInitRun == run && run.generation == d.syncGeneration &&
 		run.vault != nil && d.vault == run.vault && d.activeAccountTransition == 0 &&
-		!d.syncSuppressed && d.syncPending && d.syncBus == nil && d.syncDraining == nil && d.linkRun == nil
+		!d.syncSuppressed && !d.syncCredentialBlocked && d.syncPending && d.syncBus == nil && d.syncDraining == nil && d.linkRun == nil
 }
 
 func (d *Daemon) clearSyncInitRunLocked(run *syncInitRun) bool {
@@ -802,7 +831,7 @@ func (d *Daemon) prepareSyncCandidate(v *vault.Vault, creds syncCredentials) (*s
 	}
 	state.ServerURL = creds.ServerURL
 
-	client := forgedsync.NewClientWithTokenSource(creds.ServerURL, state.DeviceID, d.syncTokenSource(creds.ServerURL, state.LinkedUserID))
+	client := forgedsync.NewClientWithTokenSource(creds.ServerURL, state.DeviceID, d.syncTokenSource(0, creds.ServerURL, state.LinkedUserID))
 	if creds.Token != "" {
 		client = forgedsync.NewClient(creds.ServerURL, creds.Token, state.DeviceID)
 	}
@@ -880,6 +909,7 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 
 	snapshot, err := d.preflightSyncState()
 	var cleanupErr error
+	var credentialVerifyErr error
 	credentialSecretCleanupPending := false
 	if err == nil {
 		err = accountauth.WithCredentialsLock(d.paths, func() error {
@@ -915,6 +945,11 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 					return saveErr
 				}
 			}
+			if saved, verifyErr := accountauth.LoadPersistedLocked(d.paths); verifyErr != nil {
+				credentialVerifyErr = verifyErr
+			} else if verifyErr := verifySavedAccountCredentials(saved, creds); verifyErr != nil {
+				credentialVerifyErr = verifyErr
+			}
 			if staged {
 				if removeErr := snapshot.removeBackup(); removeErr != nil {
 					cleanupErr = fmt.Errorf("%w: removing staged sync state after account replacement: %v", forgedsync.ErrStateRecoveryRequired, removeErr)
@@ -926,6 +961,15 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 	}
 
 	d.sessionMu.Lock()
+	var credentialVerificationErr error
+	if err == nil && credentialVerifyErr == nil {
+		d.clearSyncCredentialFailureLocked()
+	} else if credentialVerifyErr != nil {
+		credentialVerificationErr = errors.New(d.blockSyncForCredentialVerificationLocked(credentialVerifyErr))
+		if d.logger != nil {
+			d.logger.Warn("saved account credential verification failed", "error", credentialVerifyErr)
+		}
+	}
 	transitionErr := err
 	if transitionErr == nil {
 		transitionErr = cleanupErr
@@ -934,6 +978,10 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 	if err != nil {
 		d.sessionMu.Unlock()
 		return nil, err
+	}
+	if credentialVerificationErr != nil {
+		d.sessionMu.Unlock()
+		return nil, credentialVerificationErr
 	}
 	d.sessionMu.Unlock()
 	d.logger.Info("account replacement committed", "user_id", args.UserID)
@@ -944,6 +992,19 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 		}, nil
 	}
 	return nil, nil
+}
+
+func verifySavedAccountCredentials(saved, expected accountauth.Credentials) error {
+	if !sameSyncServer(saved.ServerURL, expected.ServerURL) ||
+		strings.TrimSpace(saved.UserID) != strings.TrimSpace(expected.UserID) ||
+		accountauth.CurrentToken(saved) != accountauth.CurrentToken(expected) ||
+		strings.TrimSpace(saved.RefreshToken) != strings.TrimSpace(expected.RefreshToken) ||
+		!saved.AccessExpiresAt.Equal(expected.AccessExpiresAt) ||
+		!saved.RefreshExpiresAt.Equal(expected.RefreshExpiresAt) ||
+		strings.TrimSpace(saved.ChangeID) != strings.TrimSpace(expected.ChangeID) {
+		return fmt.Errorf("Saved account credentials did not match the committed account")
+	}
+	return nil
 }
 
 func (d *Daemon) handleAccountClear() (*ipc.AccountChangeResult, error) {
@@ -1024,6 +1085,7 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, bool, bool, erro
 		d.sessionMu.Unlock()
 		return accountauth.Credentials{}, false, false, err
 	}
+	d.clearSyncCredentialFailureLocked()
 	transitionErr := stateErr
 	if transitionErr != nil && !errors.Is(transitionErr, forgedsync.ErrStateCorrupt) && !errors.Is(transitionErr, forgedsync.ErrStateRecoveryRequired) {
 		transitionErr = fmt.Errorf("%w: retaining sync state after logout: %v", forgedsync.ErrStateRecoveryRequired, transitionErr)
@@ -1366,6 +1428,51 @@ func (d *Daemon) clearSyncStateRecoveryLocked() {
 	}
 }
 
+func (d *Daemon) setSyncCredentialErrorLocked(err error) bool {
+	diagnostic := accountauth.CredentialLoadDiagnostic(err)
+	if diagnostic == "" {
+		return false
+	}
+	d.setSyncCredentialDiagnosticLocked(diagnostic)
+	return true
+}
+
+func (d *Daemon) blockSyncForCredentialErrorLocked(err error) {
+	if d.setSyncCredentialErrorLocked(err) {
+		d.syncCredentialBlocked = true
+	}
+}
+
+func (d *Daemon) blockSyncForCredentialVerificationLocked(err error) string {
+	diagnostic := accountauth.CredentialLoadDiagnostic(err)
+	if diagnostic == "" {
+		diagnostic = accountauth.CredentialVerificationDiagnostic()
+	}
+	d.syncCredentialBlocked = true
+	d.setSyncCredentialDiagnosticLocked(diagnostic)
+	return diagnostic
+}
+
+func (d *Daemon) clearSyncCredentialErrorLocked() {
+	d.setSyncCredentialDiagnosticLocked("")
+}
+
+func (d *Daemon) setSyncCredentialDiagnosticLocked(diagnostic string) {
+	d.syncCredentialError = diagnostic
+	if d.ipcServer != nil {
+		d.ipcServer.SetSyncCredentialError(diagnostic)
+	}
+}
+
+func (d *Daemon) clearSyncCredentialBlockLocked() {
+	d.syncCredentialBlocked = false
+}
+
+func (d *Daemon) clearSyncCredentialFailureLocked() {
+	d.clearSyncCredentialBlockLocked()
+	d.clearSyncCredentialErrorLocked()
+}
+
 func (d *Daemon) syncStateRecoveryMarked() bool {
 	for _, path := range []string{d.paths.SyncStateFile(), d.syncStateBackupPath()} {
 		recoveryRequired, err := forgedsync.NewStateStore(path).RecoveryRequired()
@@ -1575,7 +1682,7 @@ func revokeSyncApplies(run *linkRun, applyGate *syncApplyGate) {
 }
 
 func (d *Daemon) scheduleSyncRetryLocked(generation uint64) {
-	if generation != d.syncGeneration || d.syncSuppressed || d.vault == nil {
+	if generation != d.syncGeneration || d.syncSuppressed || d.syncCredentialBlocked || d.vault == nil {
 		return
 	}
 	delay := d.syncRetryDelay
@@ -1596,7 +1703,7 @@ func (d *Daemon) scheduleSyncRetryLocked(generation uint64) {
 		}
 		d.sessionMu.Lock()
 		defer d.sessionMu.Unlock()
-		if generation != d.syncGeneration || d.syncSuppressed || d.syncBus != nil {
+		if generation != d.syncGeneration || d.syncSuppressed || d.syncCredentialBlocked || d.syncBus != nil {
 			return
 		}
 		d.syncPending = false
@@ -1625,7 +1732,7 @@ func (d *Daemon) persistSyncCandidate(candidate *syncCandidate) error {
 }
 
 func (d *Daemon) installSyncCandidateLocked(candidate *syncCandidate) (*forgedsync.Bus, error) {
-	if candidate.generation != d.syncGeneration || d.syncSuppressed {
+	if candidate.generation != d.syncGeneration || d.syncSuppressed || d.syncCredentialBlocked {
 		return nil, fmt.Errorf("Sync link was superseded")
 	}
 	if d.vault == nil || d.vault != candidate.vault {
@@ -1635,7 +1742,7 @@ func (d *Daemon) installSyncCandidateLocked(candidate *syncCandidate) (*forgedsy
 		return nil, fmt.Errorf("previous sync work is still stopping")
 	}
 
-	client := forgedsync.NewClientWithTokenSource(candidate.serverURL, candidate.state.DeviceID, d.syncTokenSource(candidate.serverURL, candidate.state.LinkedUserID))
+	client := forgedsync.NewClientWithTokenSource(candidate.serverURL, candidate.state.DeviceID, d.syncTokenSource(candidate.generation, candidate.serverURL, candidate.state.LinkedUserID))
 	applyGate := &syncApplyGate{}
 	engine := forgedsync.NewEngineWithVaultApply(candidate.vault, client, d.logger, func(ctx context.Context, update func(*vault.VaultData) error) error {
 		return d.applyActiveSyncUpdate(candidate, applyGate, ctx, update)
@@ -1719,13 +1826,17 @@ func (d *Daemon) waitForSyncDrain() {
 	waitForSyncBus(bus)
 }
 
-func (d *Daemon) syncTokenSource(serverURL, userID string) func(context.Context) (string, error) {
+func (d *Daemon) syncTokenSource(generation uint64, serverURL, userID string) func(context.Context) (string, error) {
 	return func(ctx context.Context) (string, error) {
 		if err := ctx.Err(); err != nil {
 			return "", err
 		}
 		creds, err := accountauth.EnsureFresh(ctx, d.paths)
 		if err != nil {
+			if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
+				d.pauseActiveSyncForCredentialError(generation, err)
+				return "", errors.New(diagnostic)
+			}
 			return "", fmt.Errorf("Refreshing account credentials: %w", err)
 		}
 		if !sameSyncServer(creds.ServerURL, serverURL) || (userID != "" && creds.UserID != userID) {
@@ -1735,9 +1846,37 @@ func (d *Daemon) syncTokenSource(serverURL, userID string) func(context.Context)
 	}
 }
 
+func (d *Daemon) pauseActiveSyncForCredentialError(generation uint64, err error) {
+	if !accountauth.IsCredentialLoadFailure(err) {
+		return
+	}
+
+	d.sessionMu.Lock()
+	if generation == 0 || generation != d.syncGeneration || d.syncBus == nil {
+		d.sessionMu.Unlock()
+		return
+	}
+	d.blockSyncForCredentialErrorLocked(err)
+	d.syncGeneration++
+	d.syncPending = false
+	d.syncRetryDelay = 0
+	_, applyGate := d.detachSyncBusLocked()
+	d.sessionMu.Unlock()
+
+	if applyGate != nil {
+		applyGate.revoke()
+	}
+	if d.logger != nil {
+		d.logger.Warn("sync paused because saved account credentials cannot be read", "error", err)
+	}
+}
+
 func (d *Daemon) requireSyncIdentity(serverURL, userID string) (accountauth.Credentials, error) {
 	creds, err := accountauth.Load(d.paths)
 	if err != nil {
+		if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
+			return accountauth.Credentials{}, errors.New(diagnostic)
+		}
 		return accountauth.Credentials{}, fmt.Errorf("Loading linked account credentials: %w", err)
 	}
 	if err := validateSyncIdentity(creds, serverURL, userID); err != nil {
@@ -1853,6 +1992,7 @@ func (d *Daemon) activateVaultLocked(v *vault.Vault, source string) error {
 
 	d.vault = v
 	d.keyStore = keyStore
+	d.clearSyncCredentialBlockLocked()
 	if d.ipcServer != nil {
 		d.initSyncLocked()
 	}

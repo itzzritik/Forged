@@ -72,6 +72,9 @@ func prepareLinkedRestore(paths config.Paths) (linkedRestorePlan, error) {
 		})
 	})
 	if err != nil {
+		if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
+			return linkedRestorePlan{}, errors.New(diagnostic)
+		}
 		return linkedRestorePlan{}, err
 	}
 
@@ -131,6 +134,9 @@ func linkedRestoreAccountMatches(current accountauth.Credentials, plan linkedCre
 func loadLinkedCredentials(paths config.Paths) (linkedCredentials, error) {
 	creds, err := accountauth.EnsureFresh(context.Background(), paths)
 	if err != nil {
+		if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
+			return linkedCredentials{}, errors.New(diagnostic)
+		}
 		return linkedCredentials{}, fmt.Errorf("Loading linked account credentials: %w", err)
 	}
 	if creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
@@ -152,7 +158,7 @@ func applyLinkedRestore(paths config.Paths, plan linkedRestorePlan, password []b
 	defer wipeBytes(syncKey)
 
 	raw := vault.MarshalVault(header, ciphertext)
-	return accountauth.WithCredentials(paths, func(current accountauth.Credentials) error {
+	err = accountauth.WithCredentials(paths, func(current accountauth.Credentials) error {
 		if !linkedRestoreAccountMatches(current, plan.creds) {
 			return fmt.Errorf("linked account changed while restoring")
 		}
@@ -196,6 +202,10 @@ func applyLinkedRestore(paths config.Paths, plan linkedRestorePlan, password []b
 			return nil
 		})
 	})
+	if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
+		return errors.New(diagnostic)
+	}
+	return err
 }
 
 // restoreTargetAbsent is called while holding vault's persistent writer lock.

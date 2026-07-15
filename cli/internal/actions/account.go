@@ -57,6 +57,9 @@ func LoadCredentials(paths config.Paths) (AccountCredentials, error) {
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, accountauth.ErrLoginRequired) {
 		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Manage > Log In")
 	}
+	if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
+		return AccountCredentials{}, errors.New(diagnostic)
+	}
 	if err != nil {
 		return AccountCredentials{}, fmt.Errorf("Could not load saved login: %w", err)
 	}
@@ -67,6 +70,9 @@ func LoadFreshCredentials(ctx context.Context, paths config.Paths) (AccountCrede
 	creds, err := accountauth.EnsureFresh(ctx, paths)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, accountauth.ErrLoginRequired) {
 		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Manage > Log In")
+	}
+	if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
+		return AccountCredentials{}, errors.New(diagnostic)
 	}
 	if err != nil {
 		return AccountCredentials{}, err
@@ -86,8 +92,10 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 	args := accountCredentialsArgs(creds)
 	resp, err := callDaemonAccountCommand(paths, ipc.CmdAccountReplace, args)
 	if err != nil {
-		if saved, loadErr := accountauth.Load(paths); loadErr == nil && saved.ChangeID == creds.ChangeID {
-			return ErrAccountChangeCommittedUnconfirmed
+		if resp.Status != "error" {
+			if saved, loadErr := accountauth.Load(paths); loadErr == nil && saved.ChangeID == creds.ChangeID {
+				return ErrAccountChangeCommittedUnconfirmed
+			}
 		}
 		return err
 	}

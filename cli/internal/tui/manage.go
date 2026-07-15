@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/tui/components"
@@ -110,29 +111,45 @@ func (m *model) manageSuccessTitle() string {
 
 func (m *model) manageItems() []manageItem {
 	items := make([]manageItem, 0, 5)
-	if m.snapshot.LoggedIn {
+	if syncIssue := m.activeRuntimeSyncIssue(); syncIssue != "" {
 		items = append(items, manageItem{
-			ID:      manageItemProfile,
-			Label:   "Profile",
-			Summary: "View your Forged profile and account settings",
+			ID:      manageItemSync,
+			Label:   "Sync Needs Attention",
+			Summary: syncIssue,
 		})
 	} else {
+		if m.snapshot.LoggedIn && !m.accountCredentialsNeedAttention() {
+			items = append(items, manageItem{
+				ID:      manageItemProfile,
+				Label:   "Profile",
+				Summary: "View your Forged profile and account settings",
+			})
+		} else {
+			label := "Log In"
+			summary := "Log in to enable your Forged profile and synced vault features"
+			if credentialErr := m.accountCredentialError(); credentialErr != "" {
+				label = "Repair Account"
+				summary = credentialErr
+			}
+			items = append(items, manageItem{
+				ID:      manageItemSignIn,
+				Label:   label,
+				Summary: summary,
+			})
+		}
+
+		syncLabel := "Sync Now"
+		if m.accountCredentialsNeedAttention() {
+			syncLabel = "Sync Needs Attention"
+		} else if !m.snapshot.LoggedIn {
+			syncLabel = "Enable Sync"
+		}
 		items = append(items, manageItem{
-			ID:      manageItemSignIn,
-			Label:   "Log In",
-			Summary: "Log in to enable your Forged profile and synced vault features",
+			ID:      manageItemSync,
+			Label:   syncLabel,
+			Summary: m.manageSyncSummary(),
 		})
 	}
-
-	syncLabel := "Sync Now"
-	if !m.snapshot.LoggedIn {
-		syncLabel = "Enable Sync"
-	}
-	items = append(items, manageItem{
-		ID:      manageItemSync,
-		Label:   syncLabel,
-		Summary: m.manageSyncSummary(),
-	})
 
 	items = append(items,
 		manageItem{
@@ -419,13 +436,16 @@ func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
 		return m, m.showCurrentRoute()
 	case manageItemSignIn:
 		m.manage.logoutArmed = false
+		if m.activeRuntimeSyncIssue() != "" {
+			return m, m.openSyncIssueDoctor()
+		}
 		if m.session.Current().ID != RouteAccountLogin {
 			m.session.Push(Route{ID: RouteAccountLogin})
 		}
 		return m, m.startLoginFlow()
 	case manageItemSync:
 		m.manage.logoutArmed = false
-		if !m.snapshot.LoggedIn {
+		if m.activeRuntimeSyncIssue() != "" || !m.snapshot.LoggedIn || m.accountCredentialsNeedAttention() {
 			if m.session.Current().ID != RouteSyncHome {
 				m.session.Push(Route{ID: RouteSyncHome})
 			}
@@ -470,7 +490,7 @@ func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) runManageSync() tea.Cmd {
-	if m.manage.syncBusy {
+	if m.manage.syncBusy || m.activeRuntimeSyncIssue() != "" {
 		return nil
 	}
 	m.manage.syncID++
@@ -636,8 +656,15 @@ func (m *model) handleManageSyncFinishedMsg(msg manageSyncFinishedMsg) (tea.Mode
 	}
 	m.manage.syncBusy = false
 	if msg.err != nil {
-		m.manage.settingItem = manageItemSync
-		m.manage.settingErr = m.reportError("sync.trigger", msg.err)
+		errorText := m.reportError("sync.trigger", msg.err)
+		if accountauth.IsCredentialDiagnostic(errorText) {
+			m.snapshot.LoginCheckError = errorText
+			m.manage.settingItem = ""
+			m.manage.settingErr = ""
+		} else {
+			m.manage.settingItem = manageItemSync
+			m.manage.settingErr = errorText
+		}
 	}
 	return m, m.pollRuntimeStatus(0)
 }
@@ -663,6 +690,7 @@ func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.
 	}
 
 	m.snapshot.LoggedIn = false
+	m.snapshot.LoginCheckError = ""
 	m.accountName = ""
 	m.accountEmail = ""
 	m.manage.syncBusy = false
@@ -730,17 +758,20 @@ func (m *model) handleManageAutoReturnMsg(msg manageAutoReturnMsg) (tea.Model, t
 }
 
 func (m *model) manageSyncSummary() string {
+	if syncIssue := m.activeRuntimeSyncIssue(); syncIssue != "" {
+		return syncIssue
+	}
 	if errText := m.manageSyncError(); errText != "" {
 		return "Sync failed. Press Enter to retry: " + errText
 	}
 	if m.manage.syncBusy {
 		return m.spinner.View() + " Syncing vault"
 	}
+	if credentialErr := m.accountCredentialError(); credentialErr != "" {
+		return credentialErr
+	}
 	if !m.runtimeLoaded {
 		return "Loading sync state"
-	}
-	if errText := strings.TrimSpace(m.runtimeStatus.Error); errText != "" {
-		return errText
 	}
 	if !m.snapshot.LoggedIn {
 		return "Keep your encrypted vault in sync across the devices you trust"

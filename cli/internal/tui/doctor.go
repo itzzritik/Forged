@@ -382,7 +382,9 @@ func (m *model) doctorVaultRow(paths config.Paths) doctorRow {
 	}
 
 	detail := "Resolve the daemon endpoint identity before setup or restore"
-	if strings.TrimSpace(m.snapshot.RuntimePathError) == "" && m.snapshot.LoggedIn {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) == "" && m.accountCredentialsNeedAttention() {
+		detail = "Repair saved account credentials before setting up or restoring this device"
+	} else if strings.TrimSpace(m.snapshot.RuntimePathError) == "" && m.snapshot.LoggedIn {
 		detail = "Fix Issues can restore this device"
 	} else if strings.TrimSpace(m.snapshot.RuntimePathError) == "" {
 		detail = "Set up or restore this device"
@@ -760,17 +762,27 @@ func (m *model) doctorSyncAccountRow() doctorRow {
 	if row, unavailable := m.doctorRuntimePathUnavailableRow("Sync Account"); unavailable {
 		return row
 	}
-	if m.runtimeLoaded {
-		if syncErr := strings.TrimSpace(m.runtimeStatus.Error); syncErr != "" {
-			return doctorRow{
-				screen: doctorscreen.Row{
-					Check:  "Sync Account",
-					Status: theme.Glyphs.Cross + " Sync error",
-					Detail: syncErr,
-					Tone:   doctorscreen.ToneDanger,
-				},
-			}
+	if syncIssue := m.activeRuntimeSyncIssue(); syncIssue != "" {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Sync Account",
+				Status: theme.Glyphs.Cross + " Sync error",
+				Detail: syncIssue,
+				Tone:   doctorscreen.ToneDanger,
+			},
 		}
+	}
+	if credentialErr := m.accountCredentialError(); credentialErr != "" {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "Sync Account",
+				Status: theme.Glyphs.Cross + " Credentials unavailable",
+				Detail: credentialErr,
+				Tone:   doctorscreen.ToneDanger,
+			},
+		}
+	}
+	if m.runtimeLoaded {
 		if m.runtimeStatus.Syncing {
 			return doctorRow{
 				screen: doctorscreen.Row{

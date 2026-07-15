@@ -41,6 +41,7 @@ const (
 	NextActionNone                  NextAction = "none"
 	NextActionNeedsPassword         NextAction = "needs_password"
 	NextActionNeedsInteractiveSetup NextAction = "needs_interactive_setup"
+	NextActionNeedsCredentialRepair NextAction = "needs_credential_repair"
 )
 
 type PasswordPrompt func(reason string) ([]byte, error)
@@ -52,6 +53,7 @@ type Snapshot struct {
 	CurrentBuildID        string
 	DaemonBuildID         string
 	LoggedIn              bool
+	LoginCheckError       string
 	VaultExists           bool
 	ConfigExists          bool
 	ConfigValid           bool
