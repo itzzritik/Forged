@@ -67,6 +67,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Accepted TUI action failures append throttled route/action/version context to a size-capped TUI log, available through `forged logs tui`; expected cancellations and auth prompts are skipped, and diagnostics redact credentials, URLs, quoted values, emails, and file paths.
 - TUI log writers coordinate through the persistent `.lock` sidecar; do not unlink it while a CLI or TUI process may still be writing.
 - Doctor's copied report contains only version/platform/build metadata and check statuses; it omits row details, logs, account identity, paths, and key data.
+- Doctor report copy completion uses the shared clipboard generation, so runtime-path recovery cancels a pending copy and a late result cannot replace its recovery guidance.
 - Startup unlock uses the shared auth broker: it first accepts a valid shared session; otherwise desktop TUI tries System Auth and falls back to the universal master-password page. Esc, a replacement attempt, and TUI exit cancel the live IPC/native prompt before exposing or leaving that fallback, while headless TUI hydrates enrolled device unlock without prompting.
 - Master-password screens share one component for create, restore, unlock fallback, export, repair, and change-password flows.
 - Password-form error, success, and progress feedback uses the active field width and wraps instead of clipping on narrow terminals.

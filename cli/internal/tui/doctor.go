@@ -21,6 +21,7 @@ type doctorRow struct {
 }
 
 type doctorReportCopiedMsg struct {
+	id  int
 	err error
 }
 
@@ -183,16 +184,24 @@ func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) copyDoctorReportCmd() tea.Cmd {
+	m.clipboardID++
+	id := m.clipboardID
 	m.clipboardBusy = true
 	m.notice = notice{}
 	report := m.doctorReport()
 	copyText := m.deps.CopyText
 	return func() tea.Msg {
-		return doctorReportCopiedMsg{err: copyText(report)}
+		return doctorReportCopiedMsg{id: id, err: copyText(report)}
 	}
 }
 
 func (m *model) handleDoctorReportCopiedMsg(msg doctorReportCopiedMsg) (tea.Model, tea.Cmd) {
+	if msg.id != m.clipboardID {
+		if msg.err != nil {
+			m.reportError("doctor.copy-report", msg.err)
+		}
+		return m, nil
+	}
 	m.clipboardBusy = false
 	if msg.err != nil {
 		message := m.reportError("doctor.copy-report", msg.err)
