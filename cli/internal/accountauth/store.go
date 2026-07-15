@@ -58,5 +58,5 @@ func (s unsupportedCredentialStore) Load(context.Context, string) (credentialSec
 	return credentialSecret{}, ErrCredentialStoreUnavailable
 }
 func (s unsupportedCredentialStore) Delete(context.Context, string) error {
-	return nil
+	return ErrCredentialStoreUnavailable
 }

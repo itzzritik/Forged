@@ -954,7 +954,7 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 }
 
 func (d *Daemon) handleAccountClear() (*ipc.AccountChangeResult, error) {
-	creds, cleanupPending, err := d.commitAccountClear()
+	creds, syncCleanupPending, credentialSecretCleanupPending, err := d.commitAccountClear()
 	if err != nil {
 		return nil, err
 	}
@@ -965,20 +965,23 @@ func (d *Daemon) handleAccountClear() (*ipc.AccountChangeResult, error) {
 		d.logger.Warn("revoking remote session after logout failed", "error", err)
 	}
 	d.logger.Info("account cleared")
-	if cleanupPending {
-		return &ipc.AccountChangeResult{SyncCleanupPending: true}, nil
+	if syncCleanupPending || credentialSecretCleanupPending {
+		return &ipc.AccountChangeResult{
+			SyncCleanupPending:             syncCleanupPending,
+			CredentialSecretCleanupPending: credentialSecretCleanupPending,
+		}, nil
 	}
 	return nil, nil
 }
 
-func (d *Daemon) commitAccountClear() (accountauth.Credentials, bool, error) {
+func (d *Daemon) commitAccountClear() (accountauth.Credentials, bool, bool, error) {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
 	run, bus, applyGate, transition, err := d.beginAccountChangeLocked()
 	d.sessionMu.Unlock()
 	if err != nil {
-		return accountauth.Credentials{}, false, err
+		return accountauth.Credentials{}, false, false, err
 	}
 	revokeSyncApplies(run, applyGate)
 	waitForLinkRun(run)
@@ -988,10 +991,15 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, bool, error) {
 	var creds accountauth.Credentials
 	stateRemoved := false
 	var dirtyErr error
+	credentialSecretCleanupPending := false
 	err = accountauth.WithCredentialsLock(d.paths, func() error {
 		creds, _ = accountauth.LoadLocked(d.paths)
-		if err := accountauth.DeleteLocked(d.paths); err != nil {
-			return err
+		if deleteErr := accountauth.DeleteLocked(d.paths); deleteErr != nil {
+			if errors.Is(deleteErr, accountauth.ErrCredentialSecretCleanupPending) {
+				credentialSecretCleanupPending = true
+			} else {
+				return deleteErr
+			}
 		}
 		if stateErr == nil {
 			var verifyErr error
@@ -1021,7 +1029,7 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, bool, error) {
 	if err != nil {
 		d.finishAccountTransitionLocked(transition, true, stateErr)
 		d.sessionMu.Unlock()
-		return accountauth.Credentials{}, false, err
+		return accountauth.Credentials{}, false, false, err
 	}
 	transitionErr := stateErr
 	if transitionErr != nil && !errors.Is(transitionErr, forgedsync.ErrStateCorrupt) && !errors.Is(transitionErr, forgedsync.ErrStateRecoveryRequired) {
@@ -1029,7 +1037,7 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, bool, error) {
 	}
 	d.finishAccountTransitionLocked(transition, false, transitionErr)
 	d.sessionMu.Unlock()
-	return creds, stateErr != nil || dirtyErr != nil, nil
+	return creds, stateErr != nil || dirtyErr != nil, credentialSecretCleanupPending, nil
 }
 
 func (d *Daemon) beginAccountChangeLocked() (*linkRun, *forgedsync.Bus, *syncApplyGate, uint64, error) {

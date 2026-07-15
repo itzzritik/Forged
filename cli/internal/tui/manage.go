@@ -645,11 +645,17 @@ func (m *model) handleManageSyncFinishedMsg(msg manageSyncFinishedMsg) (tea.Mode
 func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.Model, tea.Cmd) {
 	m.manage.logoutBusy = false
 	warning := ""
+	syncCleanupPending := errors.Is(msg.err, actions.ErrAccountClearSyncCleanupPending)
+	credentialSecretCleanupPending := errors.Is(msg.err, actions.ErrAccountClearCredentialSecretCleanupPending)
 	switch {
-	case errors.Is(msg.err, actions.ErrAccountClearSyncCleanupPending):
+	case syncCleanupPending && credentialSecretCleanupPending:
+		warning = "Signed out. Local sync cleanup is incomplete and a retired credential could not be removed. Resolve both before switching accounts."
+	case syncCleanupPending:
 		warning = "Signed out. Local sync cleanup is incomplete. Review it before switching accounts."
+	case credentialSecretCleanupPending:
+		warning = "Signed out. A retired local credential artifact could not be removed. Resolve it before switching accounts."
 	case errors.Is(msg.err, actions.ErrAccountClearCommittedUnconfirmed):
-		warning = "Signed out locally, but Forged could not confirm sync cleanup. Restart Forged before switching accounts."
+		warning = "Signed out locally, but Forged could not confirm local cleanup. Restart Forged before switching accounts."
 	case msg.err != nil:
 		m.manage.settingItem = manageItemLogout
 		m.manage.settingErr = m.reportError("account.logout", msg.err)

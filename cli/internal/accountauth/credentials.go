@@ -22,7 +22,10 @@ import (
 	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
-var ErrLoginRequired = errors.New("log-in required")
+var (
+	ErrLoginRequired                  = errors.New("log-in required")
+	ErrCredentialSecretCleanupPending = errors.New("credential secret cleanup pending")
+)
 
 // refreshMu serializes the load → refresh → save sequence in EnsureFresh so
 // two callers in the same process never present the same refresh token to the
@@ -307,8 +310,7 @@ func deleteCredentials(paths config.Paths) error {
 	for _, store := range stores {
 		for _, id := range ids {
 			if err := store.Delete(ctx, id); err != nil &&
-				!errors.Is(err, ErrCredentialSecretNotFound) &&
-				!errors.Is(err, ErrCredentialStoreUnavailable) {
+				!errors.Is(err, ErrCredentialSecretNotFound) {
 				cleanupErr = errors.Join(cleanupErr, err)
 			}
 		}
@@ -321,6 +323,7 @@ func deleteCredentials(paths config.Paths) error {
 	}
 	if cleanupErr != nil {
 		slog.Error("deleting retired account secrets failed", "error", cleanupErr)
+		return ErrCredentialSecretCleanupPending
 	}
 	return nil
 }
