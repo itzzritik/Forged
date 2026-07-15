@@ -26,6 +26,7 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 - Agent signing and routing expose only RSA, ECDSA, and Ed25519 keys. Legacy DSA keys remain available for vault recovery actions but never appear in agent lists, signer sets, or routing hints.
 - Route-success recording expires snippets older than five minutes before learning a delayed proof. Current in-memory route authorization is not independently expired while an SSH connection remains alive, so runtime snippet cleanup is not revocation.
 - GitHub/GitLab repo routes are considered proven only after a provider repo probe. Exact proven repo routes emit only the proven key; same-owner and same-host history only rank candidates.
+- Clearing all routes writes tombstones one at a time and schedules sync after any successful write, including when a later clear fails.
 - Bracketed scp-style IPv6 Git remotes are split after the closing bracket and normalized into a valid bracketed canonical URL, so they do not corrupt route matching.
 - Direct OpenSSH `%h` values can retain IPv6 brackets; routing strips one outer pair before building both its canonical URL and probe dial address.
 - Explicit `ssh` client commands resolve as plain SSH targets even when launched from inside a Git working tree.

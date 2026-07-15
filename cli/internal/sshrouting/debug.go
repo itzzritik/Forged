@@ -146,13 +146,17 @@ func (s *Service) ClearAll() error {
 	sort.Strings(targets)
 
 	now := s.now()
+	cleared := false
+	defer func() {
+		if cleared {
+			s.notifyMutation("ssh_routes_cleared")
+		}
+	}()
 	for _, target := range targets {
 		if err := keyStore.ClearSSHRoute(target, now); err != nil {
 			return err
 		}
-	}
-	if len(targets) > 0 {
-		s.notifyMutation("ssh_routes_cleared")
+		cleared = true
 	}
 	return nil
 }
