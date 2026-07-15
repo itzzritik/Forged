@@ -363,8 +363,9 @@ type linkRun struct {
 	applyGate *syncApplyGate
 }
 
-// syncApplyGate serializes a bounded local commit. Revocation waits for an
-// admitted commit, then prevents later commits without holding sessionMu.
+// syncApplyGate serializes a bounded local state operation. Revocation waits
+// for an admitted operation, then prevents later operations without holding
+// sessionMu.
 type syncApplyGate struct {
 	mu      sync.Mutex
 	revoked bool
@@ -461,48 +462,70 @@ func (d *Daemon) finishSyncInit(run *syncInitRun) {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
 
-	creds, err := accountauth.Load(d.paths)
+	creds, credentialErr := accountauth.Load(d.paths)
 
 	d.sessionMu.Lock()
 	if !d.syncInitRunCurrentLocked(run) {
 		d.sessionMu.Unlock()
 		return
 	}
-	if err != nil || creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
+	if credentialErr != nil || creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
 		d.clearSyncInitRunLocked(run)
 		d.sessionMu.Unlock()
 		return
 	}
-	if d.syncStateRecoveryMarkedLocked() {
-		d.clearSyncInitRunLocked(run)
+	d.sessionMu.Unlock()
+
+	if !d.admitSyncInitState(run) {
+		return
+	}
+	recoveryMarked := d.syncStateRecoveryMarked()
+	var recoveryErr error
+	var candidate *syncCandidate
+	var candidateErr error
+	if !recoveryMarked {
+		recoveryErr = d.recoverSyncState(run.vault, creds)
+		if recoveryErr == nil {
+			candidate, candidateErr = d.prepareSyncCandidate(run.vault, syncCredentials{
+				ServerURL: creds.ServerURL,
+				UserID:    creds.UserID,
+				Token:     accountauth.CurrentToken(creds),
+			})
+		}
+	}
+	run.stateGate.end()
+
+	d.sessionMu.Lock()
+	if !d.syncInitRunCurrentLocked(run) {
 		d.sessionMu.Unlock()
 		return
 	}
-	if err := d.recoverSyncStateLocked(creds); err != nil {
+	if recoveryMarked {
 		d.clearSyncInitRunLocked(run)
-		if errors.Is(err, forgedsync.ErrStateCorrupt) || errors.Is(err, forgedsync.ErrStateRecoveryRequired) {
+		d.setSyncStateRecoveryLocked()
+		d.sessionMu.Unlock()
+		return
+	}
+	if recoveryErr != nil {
+		d.clearSyncInitRunLocked(run)
+		if errors.Is(recoveryErr, forgedsync.ErrStateCorrupt) || errors.Is(recoveryErr, forgedsync.ErrStateRecoveryRequired) {
 			d.setSyncStateRecoveryLocked()
 			d.sessionMu.Unlock()
 			return
 		}
-		d.logger.Warn("recovering sync state transaction failed", "error", err)
+		d.logger.Warn("recovering sync state transaction failed", "error", recoveryErr)
 		d.scheduleSyncRetryLocked(run.generation)
 		d.sessionMu.Unlock()
 		return
 	}
-
-	candidate, err := d.prepareSyncCandidate(syncCredentials{
-		ServerURL: creds.ServerURL,
-		UserID:    creds.UserID,
-		Token:     accountauth.CurrentToken(creds),
-	})
-	if err != nil {
+	if candidateErr != nil {
 		d.clearSyncInitRunLocked(run)
-		if d.handleSyncStateFailureLocked(forgedsync.NewStateStore(d.paths.SyncStateFile()), err) {
+		if errors.Is(candidateErr, forgedsync.ErrStateCorrupt) || errors.Is(candidateErr, forgedsync.ErrStateRecoveryRequired) {
+			d.setSyncStateRecoveryLocked()
 			d.sessionMu.Unlock()
 			return
 		}
-		d.logger.Warn("initializing sync failed", "error", err)
+		d.logger.Warn("initializing sync failed", "error", candidateErr)
 		d.sessionMu.Unlock()
 		return
 	}
@@ -532,7 +555,7 @@ func (d *Daemon) finishSyncInit(run *syncInitRun) {
 	}
 
 	d.sessionMu.Unlock()
-	err = accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
+	err := accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
 		if err := validateSyncIdentity(stored, candidate.serverURL, candidate.userID); err != nil {
 			return err
 		}
@@ -596,13 +619,20 @@ func (d *Daemon) cancelSyncInitRunLocked() *syncInitRun {
 	return run
 }
 
-func (d *Daemon) persistSyncInitCandidate(run *syncInitRun, candidate *syncCandidate) error {
+func (d *Daemon) admitSyncInitState(run *syncInitRun) bool {
 	d.sessionMu.Lock()
 	if !d.syncInitRunCurrentLocked(run) || run.stateGate == nil || !run.stateGate.begin() {
 		d.sessionMu.Unlock()
-		return context.Canceled
+		return false
 	}
 	d.sessionMu.Unlock()
+	return true
+}
+
+func (d *Daemon) persistSyncInitCandidate(run *syncInitRun, candidate *syncCandidate) error {
+	if !d.admitSyncInitState(run) {
+		return context.Canceled
+	}
 	defer run.stateGate.end()
 	return d.persistSyncCandidate(candidate)
 }
@@ -631,18 +661,20 @@ func (d *Daemon) persistInitialLinkCandidate(run *linkRun) error {
 	return d.persistSyncCandidate(run.candidate)
 }
 
-func (d *Daemon) prepareSyncCandidate(creds syncCredentials) (*syncCandidate, error) {
-	if d.vault == nil {
+func (d *Daemon) prepareSyncCandidate(v *vault.Vault, creds syncCredentials) (*syncCandidate, error) {
+	if v == nil {
 		return nil, fmt.Errorf("Vault is locked; open Forged to unlock")
 	}
 
 	stateStore := forgedsync.NewStateStore(d.paths.SyncStateFile())
 	state, err := stateStore.Load()
 	if err != nil {
+		handleSyncStateFailure(stateStore, d.logger, err)
 		return nil, fmt.Errorf("Loading sync state: %w", err)
 	}
 	if state != nil {
-		if err := forgedsync.ValidateStateHistory(d.vault, state); err != nil {
+		if err := forgedsync.ValidateStateHistory(v, state); err != nil {
+			handleSyncStateFailure(stateStore, d.logger, err)
 			return nil, fmt.Errorf("validating sync state: %w", err)
 		}
 	}
@@ -666,9 +698,9 @@ func (d *Daemon) prepareSyncCandidate(creds syncCredentials) (*syncCandidate, er
 	if creds.Token != "" {
 		client = forgedsync.NewClient(creds.ServerURL, creds.Token, state.DeviceID)
 	}
-	engine := forgedsync.NewEngine(d.vault, client, d.logger)
+	engine := forgedsync.NewEngine(v, client, d.logger)
 	return &syncCandidate{
-		vault:      d.vault,
+		vault:      v,
 		serverURL:  creds.ServerURL,
 		userID:     creds.UserID,
 		state:      state,
@@ -1095,13 +1127,13 @@ func (d *Daemon) syncStateBackupPath() string {
 	return d.paths.SyncStateFile() + ".account-change"
 }
 
-func (d *Daemon) recoverSyncStateLocked(creds accountauth.Credentials) error {
-	active, err := d.loadSyncStateLocked(forgedsync.NewStateStore(d.paths.SyncStateFile()))
+func (d *Daemon) recoverSyncState(v *vault.Vault, creds accountauth.Credentials) error {
+	active, err := d.loadSyncState(v, forgedsync.NewStateStore(d.paths.SyncStateFile()))
 	if err != nil {
 		return err
 	}
 	backupPath := d.syncStateBackupPath()
-	backup, err := d.loadSyncStateLocked(forgedsync.NewStateStore(backupPath))
+	backup, err := d.loadSyncState(v, forgedsync.NewStateStore(backupPath))
 	if err != nil {
 		return err
 	}
@@ -1109,12 +1141,12 @@ func (d *Daemon) recoverSyncStateLocked(creds accountauth.Credentials) error {
 		return nil
 	}
 	if active != nil {
-		return d.syncStateRecoveryRequiredLocked("active and staged sync state both exist")
+		return syncStateRecoveryError("active and staged sync state both exist")
 	}
 	if backup.LinkedUserID != creds.UserID || !sameSyncServer(backup.ServerURL, creds.ServerURL) {
-		return d.syncStateRecoveryRequiredLocked("staged sync state does not match the saved account")
+		return syncStateRecoveryError("staged sync state does not match the saved account")
 	}
-	if err := d.moveSyncStateNoReplace(backupPath, d.paths.SyncStateFile(), "restoring staged sync state"); err != nil {
+	if err := moveSyncStateFileNoReplace(backupPath, d.paths.SyncStateFile(), "restoring staged sync state"); err != nil {
 		return err
 	}
 	return nil
@@ -1127,39 +1159,23 @@ func removeSyncStateFile(path, label string) error {
 	return nil
 }
 
-func (d *Daemon) moveSyncStateNoReplace(source, destination, action string) error {
-	if err := forgedsync.NewStateStore(source).MoveTo(destination); err != nil {
-		d.setSyncStateRecoveryLocked()
-		return fmt.Errorf("%w: %s: %v", forgedsync.ErrStateRecoveryRequired, action, err)
-	}
-	return nil
-}
-
-func (d *Daemon) loadSyncStateLocked(store *forgedsync.StateStore) (*forgedsync.SyncState, error) {
+func (d *Daemon) loadSyncState(v *vault.Vault, store *forgedsync.StateStore) (*forgedsync.SyncState, error) {
 	state, err := store.Load()
 	if err != nil {
-		d.handleSyncStateFailureLocked(store, err)
+		handleSyncStateFailure(store, d.logger, err)
 		return nil, err
 	}
 	if state == nil {
 		return nil, nil
 	}
-	if len(state.LastSyncedBaseBlob) > 0 && d.vault == nil {
+	if len(state.LastSyncedBaseBlob) > 0 && v == nil {
 		return nil, fmt.Errorf("vault is locked; unlock Forged before changing sync state")
 	}
-	if err := forgedsync.ValidateStateHistory(d.vault, state); err != nil {
-		d.handleSyncStateFailureLocked(store, err)
+	if err := forgedsync.ValidateStateHistory(v, state); err != nil {
+		handleSyncStateFailure(store, d.logger, err)
 		return nil, err
 	}
 	return state, nil
-}
-
-func (d *Daemon) handleSyncStateFailureLocked(store *forgedsync.StateStore, err error) bool {
-	if !handleSyncStateFailure(store, d.logger, err) {
-		return false
-	}
-	d.setSyncStateRecoveryLocked()
-	return true
 }
 
 func handleSyncStateFailure(store *forgedsync.StateStore, logger *slog.Logger, err error) bool {
@@ -1194,11 +1210,6 @@ func (d *Daemon) recordSyncStateFailureLocked(err error) {
 	}
 }
 
-func (d *Daemon) syncStateRecoveryRequiredLocked(reason string) error {
-	d.setSyncStateRecoveryLocked()
-	return fmt.Errorf("%w: %s", forgedsync.ErrStateRecoveryRequired, reason)
-}
-
 func (d *Daemon) setSyncStateRecoveryLocked() {
 	d.syncError = syncStateRecoveryHint
 	if d.ipcServer != nil {
@@ -1213,7 +1224,7 @@ func (d *Daemon) clearSyncStateRecoveryLocked() {
 	}
 }
 
-func (d *Daemon) syncStateRecoveryMarkedLocked() bool {
+func (d *Daemon) syncStateRecoveryMarked() bool {
 	for _, path := range []string{d.paths.SyncStateFile(), d.syncStateBackupPath()} {
 		recoveryRequired, err := forgedsync.NewStateStore(path).RecoveryRequired()
 		if err != nil {
@@ -1223,7 +1234,6 @@ func (d *Daemon) syncStateRecoveryMarkedLocked() bool {
 			continue
 		}
 		if recoveryRequired {
-			d.setSyncStateRecoveryLocked()
 			return true
 		}
 	}
