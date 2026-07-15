@@ -36,26 +36,59 @@ type pullContextAPI interface {
 }
 
 type Engine struct {
-	vault  *vault.Vault
-	client API
-	logger *slog.Logger
+	vault      *vault.Vault
+	client     API
+	logger     *slog.Logger
+	vaultApply VaultApply
 }
 
+// VaultApply commits a local vault update while honoring the operation context.
+type VaultApply func(context.Context, func(*vault.VaultData) error) error
+
 func NewEngine(v *vault.Vault, client API, logger *slog.Logger) *Engine {
-	return &Engine{
-		vault:  v,
-		client: client,
-		logger: logger,
+	return NewEngineWithVaultApply(v, client, logger, nil)
+}
+
+func NewEngineWithVaultApply(v *vault.Vault, client API, logger *slog.Logger, vaultApply VaultApply) *Engine {
+	if vaultApply == nil {
+		vaultApply = func(ctx context.Context, update func(*vault.VaultData) error) error {
+			if err := ctx.Err(); err != nil {
+				return err
+			}
+			return v.UpdateData(update)
+		}
 	}
+	return &Engine{
+		vault:      v,
+		client:     client,
+		logger:     logger,
+		vaultApply: vaultApply,
+	}
+}
+
+func (e *Engine) updateLocal(ctx context.Context, update func(*vault.VaultData) error) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	if err := e.vaultApply(ctx, update); err != nil {
+		return err
+	}
+	return nil
 }
 
 func (e *Engine) PushCurrent(ctx context.Context, state *SyncState) error {
 	if state == nil {
 		return fmt.Errorf("Sync state required")
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	blob, kdf, protectedKeyBytes, err := e.vault.ExportForSync()
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 
@@ -78,6 +111,9 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 	if state == nil {
 		return vault.VaultData{}, PullResult{}, fmt.Errorf("Sync state required")
 	}
+	if err := ctx.Err(); err != nil {
+		return vault.VaultData{}, PullResult{}, err
+	}
 
 	var result PullResult
 	var err error
@@ -87,6 +123,9 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 		result, err = e.client.Pull()
 	}
 	if err != nil {
+		return vault.VaultData{}, PullResult{}, err
+	}
+	if err := ctx.Err(); err != nil {
 		return vault.VaultData{}, PullResult{}, err
 	}
 
@@ -102,7 +141,7 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 
 	now := time.Now().UTC()
 	if !state.Dirty {
-		if err := e.vault.UpdateData(func(local *vault.VaultData) error {
+		if err := e.updateLocal(ctx, func(local *vault.VaultData) error {
 			*local = MergeVaults(*local, remote)
 			return nil
 		}); err != nil {
@@ -140,7 +179,7 @@ func (e *Engine) MergeAndRetry(ctx context.Context, state *SyncState) error {
 		return err
 	}
 
-	if err := e.vault.UpdateData(func(local *vault.VaultData) error {
+	if err := e.updateLocal(ctx, func(local *vault.VaultData) error {
 		*local = MergeThreeWay(base, *local, remote, local.Metadata.DeviceID, remote.Metadata.DeviceID)
 		return nil
 	}); err != nil {
@@ -162,7 +201,7 @@ func (e *Engine) ReconcileOnLink(ctx context.Context, state *SyncState, userID, 
 	}
 
 	var action FirstLinkAction
-	if err := e.vault.UpdateData(func(local *vault.VaultData) error {
+	if err := e.updateLocal(ctx, func(local *vault.VaultData) error {
 		merged, nextAction, err := DecideFirstLinkAction(*state, userID, *local, remote, remoteExists)
 		if err != nil {
 			return err
@@ -262,6 +301,10 @@ func hashBlob(blob []byte) string {
 }
 
 func (e *Engine) fetchRemote(ctx context.Context) (vault.VaultData, PullResult, bool, error) {
+	if err := ctx.Err(); err != nil {
+		return vault.VaultData{}, PullResult{}, false, err
+	}
+
 	var result PullResult
 	var err error
 	if client, ok := e.client.(pullContextAPI); ok {
@@ -273,6 +316,9 @@ func (e *Engine) fetchRemote(ctx context.Context) (vault.VaultData, PullResult, 
 		return vault.VaultData{}, PullResult{}, false, nil
 	}
 	if err != nil {
+		return vault.VaultData{}, PullResult{}, false, err
+	}
+	if err := ctx.Err(); err != nil {
 		return vault.VaultData{}, PullResult{}, false, err
 	}
 
