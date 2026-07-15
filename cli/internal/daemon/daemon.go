@@ -72,6 +72,7 @@ func New(paths config.Paths) *Daemon {
 }
 
 func (d *Daemon) Run(password []byte) error {
+	defer zeroSecret(password)
 	if err := d.paths.ValidateRuntimePaths(); err != nil {
 		return fmt.Errorf("resolving runtime socket paths: %w", err)
 	}
@@ -115,6 +116,7 @@ func (d *Daemon) Run(password []byte) error {
 		if _, err := d.authBroker.AuthorizeWithPassword(context.Background(), sensitiveauth.ActionView, password); err != nil {
 			return err
 		}
+		zeroSecret(password)
 	}
 
 	d.activityLog = activity.NewActivityLog(1000)
