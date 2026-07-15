@@ -459,25 +459,41 @@ func (d *Daemon) initSyncLocked() {
 }
 
 func (d *Daemon) finishSyncInit(run *syncInitRun) {
+	// Credential-store calls can block in OS/keychain code. Keep them outside
+	// syncTransitionMu; both transition-held phases revalidate this run.
+	creds, credentialErr := accountauth.Load(d.paths)
+	candidate := d.prepareSyncInit(run, creds, credentialErr)
+	if candidate == nil {
+		return
+	}
+
+	err := accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
+		if err := validateSyncIdentity(stored, candidate.serverURL, candidate.userID); err != nil {
+			return err
+		}
+		return nil
+	})
+	d.finishDirectSyncInit(run, candidate, err)
+}
+
+func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials, credentialErr error) *syncCandidate {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
-
-	creds, credentialErr := accountauth.Load(d.paths)
 
 	d.sessionMu.Lock()
 	if !d.syncInitRunCurrentLocked(run) {
 		d.sessionMu.Unlock()
-		return
+		return nil
 	}
 	if credentialErr != nil || creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
 		d.clearSyncInitRunLocked(run)
 		d.sessionMu.Unlock()
-		return
+		return nil
 	}
 	d.sessionMu.Unlock()
 
 	if !d.admitSyncInitState(run) {
-		return
+		return nil
 	}
 	recoveryMarked := d.syncStateRecoveryMarked()
 	var recoveryErr error
@@ -498,36 +514,36 @@ func (d *Daemon) finishSyncInit(run *syncInitRun) {
 	d.sessionMu.Lock()
 	if !d.syncInitRunCurrentLocked(run) {
 		d.sessionMu.Unlock()
-		return
+		return nil
 	}
 	if recoveryMarked {
 		d.clearSyncInitRunLocked(run)
 		d.setSyncStateRecoveryLocked()
 		d.sessionMu.Unlock()
-		return
+		return nil
 	}
 	if recoveryErr != nil {
 		d.clearSyncInitRunLocked(run)
 		if errors.Is(recoveryErr, forgedsync.ErrStateCorrupt) || errors.Is(recoveryErr, forgedsync.ErrStateRecoveryRequired) {
 			d.setSyncStateRecoveryLocked()
 			d.sessionMu.Unlock()
-			return
+			return nil
 		}
 		d.logger.Warn("recovering sync state transaction failed", "error", recoveryErr)
 		d.scheduleSyncRetryLocked(run.generation)
 		d.sessionMu.Unlock()
-		return
+		return nil
 	}
 	if candidateErr != nil {
 		d.clearSyncInitRunLocked(run)
 		if errors.Is(candidateErr, forgedsync.ErrStateCorrupt) || errors.Is(candidateErr, forgedsync.ErrStateRecoveryRequired) {
 			d.setSyncStateRecoveryLocked()
 			d.sessionMu.Unlock()
-			return
+			return nil
 		}
 		d.logger.Warn("initializing sync failed", "error", candidateErr)
 		d.sessionMu.Unlock()
-		return
+		return nil
 	}
 	candidate.generation = run.generation
 
@@ -536,7 +552,7 @@ func (d *Daemon) finishSyncInit(run *syncInitRun) {
 			d.clearSyncInitRunLocked(run)
 			d.logger.Warn("initializing sync failed", "error", err)
 			d.sessionMu.Unlock()
-			return
+			return nil
 		}
 		d.syncInitRun = nil
 		ctx, cancel := context.WithCancel(context.Background())
@@ -551,19 +567,31 @@ func (d *Daemon) finishSyncInit(run *syncInitRun) {
 		d.sessionMu.Unlock()
 		go d.expireInitialLink(link)
 		go d.finishInitialSync(link, creds.UserID)
-		return
+		return nil
 	}
 
 	d.sessionMu.Unlock()
-	err := accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
-		if err := validateSyncIdentity(stored, candidate.serverURL, candidate.userID); err != nil {
-			return err
-		}
-		return nil
-	})
-	if err == nil {
-		err = d.persistSyncInitCandidate(run, candidate)
+	return candidate
+}
+
+func (d *Daemon) finishDirectSyncInit(run *syncInitRun, candidate *syncCandidate, identityErr error) {
+	d.syncTransitionMu.Lock()
+	defer d.syncTransitionMu.Unlock()
+
+	d.sessionMu.Lock()
+	if !d.syncInitRunCurrentLocked(run) {
+		d.sessionMu.Unlock()
+		return
 	}
+	if identityErr != nil {
+		d.clearSyncInitRunLocked(run)
+		d.logger.Warn("initializing sync failed", "error", identityErr)
+		d.sessionMu.Unlock()
+		return
+	}
+	d.sessionMu.Unlock()
+
+	err := d.persistSyncInitCandidate(run, candidate)
 
 	var bus *forgedsync.Bus
 	d.sessionMu.Lock()
