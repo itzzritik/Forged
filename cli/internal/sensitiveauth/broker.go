@@ -23,7 +23,11 @@ type Broker struct {
 	sessionMu sync.Mutex
 	// authGeneration is guarded by sessionMu. It serializes a lock event with
 	// the final session grant, so a pre-lock prompt cannot restore a session.
-	authGeneration   uint64
+	authGeneration uint64
+	// sessionEpoch is guarded by sessionMu and identifies the latest grant or
+	// clear, so a canceled request cannot clear a later session.
+	sessionEpoch     uint64
+	pendingPassword  *passwordAuthorization
 	nativeMu         sync.RWMutex
 	native           CapabilityState
 	helperTerminated bool
@@ -53,6 +57,43 @@ type systemAuthCall struct {
 
 type passwordUnlockCall struct {
 	cancel context.CancelFunc
+}
+
+type passwordAuthorization struct {
+	broker     *Broker
+	ctx        context.Context
+	generation uint64
+	epoch      uint64
+	hydrated   bool
+	result     AuthorizeResult
+	once       sync.Once
+	err        error
+}
+
+func (a *passwordAuthorization) Finalize(delivered bool) error {
+	a.once.Do(func() {
+		a.broker.sessionMu.Lock()
+		defer a.broker.sessionMu.Unlock()
+		if a.broker.pendingPassword == a {
+			a.broker.pendingPassword = nil
+		}
+
+		if delivered && a.ctx.Err() == nil && a.broker.authGeneration == a.generation {
+			return
+		}
+		if a.hydrated && a.broker.authGeneration == a.generation && a.broker.sessionEpoch == a.epoch {
+			a.broker.clearSharedSessionLocked("authorization_canceled")
+		} else {
+			a.broker.leases.RevokeExportToken(a.result.ExportToken)
+			a.broker.leases.RevokePrivateKeyToken(a.result.PrivateKeyToken)
+		}
+		if err := a.ctx.Err(); err != nil {
+			a.err = err
+		} else {
+			a.err = ErrAuthenticationCanceled
+		}
+	})
+	return a.err
 }
 
 type systemAuthResult struct {
@@ -235,45 +276,91 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 	return b.authorizeWithoutSystemAuth(action, b.nativeCapability(), generation)
 }
 
-func (b *Broker) AuthorizeWithPassword(action Action, password []byte) (AuthorizeResult, error) {
-	return b.authorizeWithPassword(action, password, b.authorizationGeneration())
+func (b *Broker) AuthorizeWithPassword(ctx context.Context, action Action, password []byte) (AuthorizeResult, error) {
+	return b.authorizeWithPassword(ctx, action, password, b.authorizationGeneration())
 }
 
-func (b *Broker) authorizeWithPassword(action Action, password []byte, generation uint64) (AuthorizeResult, error) {
+func (b *Broker) authorizeWithPassword(ctx context.Context, action Action, password []byte, generation uint64) (AuthorizeResult, error) {
+	auth, err := b.beginAuthorizeWithPassword(ctx, action, password, generation, false)
+	if err != nil {
+		return AuthorizeResult{}, err
+	}
+	if err := auth.Finalize(true); err != nil {
+		return AuthorizeResult{}, err
+	}
+	return auth.result, nil
+}
+
+func (b *Broker) BeginAuthorizeWithPassword(ctx context.Context, action Action, password []byte) (AuthorizeResult, func(bool) error, error) {
+	auth, err := b.beginAuthorizeWithPassword(ctx, action, password, b.authorizationGeneration(), true)
+	if err != nil {
+		return AuthorizeResult{}, nil, err
+	}
+	return auth.result, auth.Finalize, nil
+}
+
+func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, password []byte, generation uint64, watchDelivery bool) (*passwordAuthorization, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if !b.authorizationCurrent(generation) {
-		return AuthorizeResult{}, ErrAuthenticationCanceled
+		return nil, ErrAuthenticationCanceled
 	}
 	if err := b.password.Verify(password); err != nil {
-		return AuthorizeResult{}, fmt.Errorf("Authentication failed")
+		return nil, fmt.Errorf("Authentication failed")
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	b.sessionMu.Lock()
 	defer b.sessionMu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if b.authGeneration != generation {
-		return AuthorizeResult{}, ErrAuthenticationCanceled
+		return nil, ErrAuthenticationCanceled
+	}
+	if b.pendingPassword != nil {
+		return nil, fmt.Errorf("Password authorization already in progress")
 	}
 	hydrated := false
 	if b.session != nil && !b.session.HasActiveSession() {
 		if err := b.session.HydrateFromPassword(password); err != nil {
-			return AuthorizeResult{}, fmt.Errorf("Unlocking vault session: %w", err)
+			return nil, fmt.Errorf("Unlocking vault session: %w", err)
 		}
 		hydrated = true
+	}
+	if err := ctx.Err(); err != nil {
+		if hydrated {
+			b.clearSharedSessionLocked("authorization_canceled")
+		}
+		return nil, err
 	}
 	if b.authGeneration != generation {
 		if hydrated {
 			b.clearSharedSessionLocked("authorization_invalidated")
 		}
-		return AuthorizeResult{}, ErrAuthenticationCanceled
+		return nil, ErrAuthenticationCanceled
 	}
 	now := time.Now()
-	if action == ActionExport {
-		return b.grantLocked(action, now), nil
-	}
 	result := b.grantLocked(action, now)
 	if action == ActionPrivateKey {
 		result.PrivateKeyToken = b.leases.IssuePrivateKeyToken(now)
 	}
-	return result, nil
+	auth := &passwordAuthorization{
+		broker:     b,
+		ctx:        ctx,
+		generation: generation,
+		epoch:      b.sessionEpoch,
+		hydrated:   hydrated,
+		result:     result,
+	}
+	b.pendingPassword = auth
+	if watchDelivery {
+		context.AfterFunc(ctx, func() { _ = auth.Finalize(false) })
+	}
+	return auth, nil
 }
 
 func (b *Broker) IsUnlocked() bool {
@@ -367,6 +454,8 @@ func (b *Broker) allowActiveSession(action Action, now time.Time, generation uin
 }
 
 func (b *Broker) clearSharedSessionLocked(reason string) {
+	b.sessionEpoch++
+	b.pendingPassword = nil
 	b.leases.Clear()
 	if b.session != nil {
 		b.session.ClearActiveSession(reason)
@@ -377,6 +466,7 @@ func (b *Broker) clearSharedSessionLocked(reason string) {
 }
 
 func (b *Broker) grantLocked(action Action, now time.Time) AuthorizeResult {
+	b.sessionEpoch++
 	b.leases.GrantView(now)
 	result := AuthorizeResult{Authorized: true}
 	if action == ActionExport {
@@ -460,8 +550,9 @@ func (b *Broker) runPasswordUnlock(ctx context.Context, generation uint64) bool 
 	// Verifies against the vault, hydrates the shared session, and (via
 	// PasswordVerifier) refreshes the device-unlock enrollment — restarting the
 	// sliding window and hard cap. Subsequent SSH connections then pass.
-	if _, err := b.authorizeWithPassword(ActionExternal, password, generation); err != nil &&
-		b.logger != nil && !errors.Is(err, ErrAuthenticationCanceled) {
+	if _, err := b.authorizeWithPassword(ctx, ActionExternal, password, generation); err != nil &&
+		b.logger != nil && !errors.Is(err, ErrAuthenticationCanceled) &&
+		!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		b.logger.Warn("master-password unlock failed", "error", err)
 	}
 	return true

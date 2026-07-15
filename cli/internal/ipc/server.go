@@ -260,7 +260,10 @@ func (s *Server) handleConn(conn net.Conn) {
 
 	resp := s.dispatch(ctx, req)
 	defer clear(resp.Data)
-	WriteMessage(conn, resp)
+	writeErr := WriteMessage(conn, resp)
+	if err := resp.finalizeDelivery(writeErr == nil && ctx.Err() == nil); err != nil && writeErr == nil {
+		s.logger.Debug("sensitive authorization not delivered", "error", err)
+	}
 }
 
 func requestContext(conn net.Conn, deadline time.Time) (context.Context, context.CancelFunc, <-chan struct{}) {
@@ -321,7 +324,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	case CmdSensitiveAuth:
 		return s.handleSensitiveAuth(ctx, req.Args)
 	case CmdSensitivePassword:
-		return s.handleSensitivePassword(req.Args)
+		return s.handleSensitivePassword(ctx, req.Args)
 	case CmdSensitiveLock:
 		return s.handleSensitiveLock()
 	case "status":
@@ -871,7 +874,7 @@ func (s *Server) handleSensitiveAuth(ctx context.Context, raw json.RawMessage) R
 	return OkResponse(result)
 }
 
-func (s *Server) handleSensitivePassword(raw json.RawMessage) Response {
+func (s *Server) handleSensitivePassword(ctx context.Context, raw json.RawMessage) Response {
 	if s.authBroker == nil {
 		return ErrorResponse(fmt.Errorf("Sensitive auth broker unavailable"))
 	}
@@ -890,11 +893,13 @@ func (s *Server) handleSensitivePassword(raw json.RawMessage) Response {
 		return ErrorResponse(err)
 	}
 
-	result, err := s.authBroker.AuthorizeWithPassword(action, password)
+	result, finalize, err := s.authBroker.BeginAuthorizeWithPassword(ctx, action, password)
 	if err != nil {
 		return ErrorResponse(err)
 	}
-	return OkResponse(result)
+	resp := OkResponse(result)
+	resp.finalize = finalize
+	return resp
 }
 
 func (s *Server) handleSensitiveLock() Response {

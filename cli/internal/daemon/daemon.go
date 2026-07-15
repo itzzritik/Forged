@@ -99,7 +99,7 @@ func (d *Daemon) Run(password []byte) error {
 				return err
 			}
 		}
-		if _, err := d.authBroker.AuthorizeWithPassword(sensitiveauth.ActionView, password); err != nil {
+		if _, err := d.authBroker.AuthorizeWithPassword(context.Background(), sensitiveauth.ActionView, password); err != nil {
 			return err
 		}
 	}

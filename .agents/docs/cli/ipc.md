@@ -18,6 +18,7 @@ stable: yes
 - Ordinary vault handlers require an active broker session. A fresh export authorization establishes that session and issues its separate one-use export token.
 - The listener retries temporary accept failures with bounded backoff, exits quietly when closed, and logs terminal failures. Shutdown first closes admission and every tracked connection, then waits for admitted handlers.
 - Client calls have a context-aware API. Closing or timing out the one-request connection cancels the matching server request; dispatch stays synchronous so shutdown still waits for admitted work.
+- Password authorization carries that request context through verification and hydration. A disconnect, timeout, or write failure rolls back a newly hydrated session and scoped token before it can persist.
 - `proto/ipc.md` is not current. Code is the source of truth for the command set.
 - `sensitive-auth` takes an `action` and optional `force`. Its shared-session actions expire stale state first; `force=true` then skips the initial active-session fast path and follows normal reauthorization policy. `private-key` and `export` are password-only. Normal TUI launch sends `view` with `false` and reuses a valid shared session.
 - Full private-key views require a separate one-use, short-lived token issued only after verified master-password authorization. A shared SSH/signing session alone never authorizes PEM delivery.

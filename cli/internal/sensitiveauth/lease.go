@@ -78,6 +78,15 @@ func (s *leaseState) ConsumeExportToken(token string, now time.Time) bool {
 	return now.Before(expiresAt)
 }
 
+func (s *leaseState) RevokeExportToken(token string) {
+	if token == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.exportTokens, token)
+}
+
 func (s *leaseState) IssuePrivateKeyToken(now time.Time) string {
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -100,6 +109,15 @@ func (s *leaseState) ConsumePrivateKeyToken(token string, now time.Time) bool {
 	}
 	delete(s.privateKeyTokens, token)
 	return now.Before(expiresAt)
+}
+
+func (s *leaseState) RevokePrivateKeyToken(token string) {
+	if token == "" {
+		return
+	}
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	delete(s.privateKeyTokens, token)
 }
 
 func (s *leaseState) Clear() {

@@ -16,9 +16,19 @@ type Request struct {
 }
 
 type Response struct {
-	Status string          `json:"status"`
-	Data   json.RawMessage `json:"data,omitempty"`
-	Error  string          `json:"error,omitempty"`
+	Status   string          `json:"status"`
+	Data     json.RawMessage `json:"data,omitempty"`
+	Error    string          `json:"error,omitempty"`
+	finalize func(bool) error
+}
+
+func (r *Response) finalizeDelivery(delivered bool) error {
+	if r.finalize == nil {
+		return nil
+	}
+	finalize := r.finalize
+	r.finalize = nil
+	return finalize(delivered)
 }
 
 func OkResponse(data any) Response {

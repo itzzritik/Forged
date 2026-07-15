@@ -44,6 +44,8 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
 - Daemon shutdown stops new prompts and cancels broker-owned prompt contexts before waiting. It closes the helper after admitted auth work drains, while retaining the shared vault session until admitted agent and IPC work has finished.
 - An unexpected System Auth helper exit marks native auth broken and immediately clears the shared session; an intentional daemon shutdown is handled by its normal lock path.
 - IPC cancellation sends the helper a one-way request-ID cancel. macOS invalidates the matching `LAContext` or password alert, Linux/Windows cancel the matching child process, helper lock monitors share the helper shutdown context, late results are suppressed, and one canceled broker waiter cannot abort a prompt still needed by another waiter.
+- Password verification and vault hydration cannot be interrupted mid-derivation. For IPC, cancellation or a write failure clears a newly hydrated session and revokes scoped tokens before the authorization can persist.
+- A password authorization stays single-flight until its IPC response resolves, so one canceled submission cannot leave another provisional submission behind.
 
 ## Decisions
 
