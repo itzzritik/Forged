@@ -34,6 +34,7 @@ type SyncState struct {
 	LastSuccessfulPullAt   time.Time `json:"last_successful_pull_at"`
 	LastSuccessfulPushAt   time.Time `json:"last_successful_push_at"`
 	LastError              string    `json:"last_error"`
+	RemoteMissing          bool      `json:"remote_missing,omitempty"`
 	NextRetryAt            time.Time `json:"next_retry_at"`
 	Syncing                bool      `json:"-"`
 }
@@ -65,6 +66,7 @@ func (s *SyncState) MarkClean(version int64, baseBlob []byte, hash string) {
 	s.LastRemoteCheckAt = now
 	s.LastSuccessfulPushAt = now
 	s.LastError = ""
+	s.RemoteMissing = false
 	s.NextRetryAt = time.Time{}
 }
 
@@ -296,6 +298,9 @@ func validateState(state *SyncState) error {
 		if !strings.EqualFold(state.LastSyncedHash, hex.EncodeToString(sum[:])) {
 			return corruptStateError("merge history hash mismatch")
 		}
+	}
+	if state.RemoteMissing && !hasBase {
+		return corruptStateError("remote missing without merge history")
 	}
 	return nil
 }

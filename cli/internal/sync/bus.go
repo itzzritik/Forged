@@ -132,8 +132,12 @@ func (b *Bus) LocalMutation(reason string) {
 		b.mu.Unlock()
 		return
 	}
+	missingRemote := b.remoteMissingLocked()
 	b.mutationVersion++
 	b.state.MarkDirty("", time.Time{})
+	if missingRemote {
+		b.state.LastError = ErrNoRemoteVault.Error()
+	}
 	b.persistLocked()
 
 	if b.retryTimer != nil {
@@ -315,10 +319,20 @@ func (b *Bus) ForceSync(ctx context.Context, reason string) error {
 		}
 
 		dirty := b.state.Dirty
+		missingRemote := b.remoteMissingLocked()
 		b.beginSyncLocked()
 		b.mu.Unlock()
 
 		if dirty {
+			if missingRemote {
+				pushed, err := b.confirmRemoteThenPush(ctx, reason)
+				if pushed {
+					b.finishPush(err)
+				} else {
+					b.finishPull(err, errors.Is(ctx.Err(), context.Canceled))
+				}
+				return err
+			}
 			err := b.executePush(ctx, reason)
 			b.finishPush(err)
 			return err
@@ -362,8 +376,12 @@ func (b *Bus) CheckDirtyFlag() {
 		b.mu.Unlock()
 		return
 	}
+	missingRemote := b.remoteMissingLocked()
 	b.mutationVersion++
 	b.state.MarkDirty("", time.Time{})
+	if missingRemote {
+		b.state.LastError = ErrNoRemoteVault.Error()
+	}
 	b.persistLocked()
 	b.mu.Unlock()
 }
@@ -379,8 +397,18 @@ func (b *Bus) enqueuePush(reason string) {
 		b.queuedPush = true
 		return
 	}
+	missingRemote := b.remoteMissingLocked()
 	b.beginSyncLocked()
 	go func() {
+		if missingRemote {
+			pushed, err := b.confirmRemoteThenPush(context.Background(), reason)
+			if pushed {
+				b.finishPush(err)
+			} else {
+				b.finishPull(err, false)
+			}
+			return
+		}
 		err := b.executePush(context.Background(), reason)
 		b.finishPush(err)
 	}()
@@ -435,6 +463,9 @@ func (b *Bus) executePush(ctx context.Context, reason string) error {
 			}
 		}
 	}
+	if errors.Is(err, ErrNoRemoteVault) && hasLinkedHistory(&state) {
+		state.RemoteMissing = true
+	}
 	b.applyEngineState(state, mutationVersion)
 	if b.logger != nil {
 		b.logger.Debug("push failed", "reason", reason, "error", err)
@@ -447,6 +478,9 @@ func (b *Bus) executePull(ctx context.Context, reason string) error {
 	defer cancel()
 	state, mutationVersion := b.engineStateSnapshot()
 	_, _, err := b.engine.PullLatest(ctx, &state)
+	if errors.Is(err, ErrNoRemoteVault) && hasLinkedHistory(&state) {
+		state.RemoteMissing = true
+	}
 	b.applyEngineState(state, mutationVersion)
 	if err != nil && b.logger != nil {
 		b.logger.Debug("pull failed", "reason", reason, "error", err)
@@ -470,6 +504,27 @@ func (b *Bus) executeRefresh(ctx context.Context, reason string) error {
 		return nil
 	}
 	return b.executePull(ctx, reason)
+}
+
+func (b *Bus) confirmRemoteThenPush(ctx context.Context, reason string) (bool, error) {
+	ctx, cancel := b.withStopContext(ctx)
+	defer cancel()
+	checker, ok := b.engine.(remoteStatusRuntime)
+	if !ok {
+		return true, b.executePush(ctx, reason)
+	}
+	if _, err := b.remoteNeedsPull(ctx, checker, reason); err != nil {
+		return false, err
+	}
+
+	b.mu.Lock()
+	dirty := b.state.Dirty
+	stopped := b.stopped
+	b.mu.Unlock()
+	if stopped || !dirty {
+		return false, nil
+	}
+	return true, b.executePush(ctx, reason)
 }
 
 func (b *Bus) remoteNeedsPull(ctx context.Context, checker remoteStatusRuntime, reason string) (bool, error) {
@@ -497,7 +552,21 @@ func (b *Bus) remoteNeedsPull(ctx context.Context, checker remoteStatusRuntime, 
 		return false, err
 	}
 
-	if b.state.Dirty || b.stopped {
+	if b.stopped {
+		return false, nil
+	}
+	if !status.HasVault && b.hasLinkedHistoryLocked() {
+		b.state.RemoteMissing = true
+		b.persistLocked()
+		return false, ErrNoRemoteVault
+	}
+	if status.HasVault && b.state.RemoteMissing {
+		b.state.RemoteMissing = false
+		if b.state.Dirty {
+			b.persistLocked()
+		}
+	}
+	if b.state.Dirty {
 		return false, nil
 	}
 
@@ -507,6 +576,19 @@ func (b *Bus) remoteNeedsPull(ctx context.Context, checker remoteStatusRuntime, 
 	shouldPull := status.HasVault && status.Version != b.state.LastKnownServerVersion
 	b.persistLocked()
 	return shouldPull, nil
+}
+
+func (b *Bus) hasLinkedHistoryLocked() bool {
+	return hasLinkedHistory(b.state)
+}
+
+func hasLinkedHistory(state *SyncState) bool {
+	return state != nil && state.LinkedUserID != "" &&
+		(state.LastKnownServerVersion > 0 || len(state.LastSyncedBaseBlob) > 0)
+}
+
+func (b *Bus) remoteMissingLocked() bool {
+	return b.state.RemoteMissing && b.hasLinkedHistoryLocked()
 }
 
 func (b *Bus) finishPush(err error) {
@@ -588,6 +670,9 @@ func (b *Bus) finishPull(err error, callerCanceled bool) {
 	b.syncing = false
 	queuedPush := b.queuedPush
 	queuedRefresh := b.queuedRefresh
+	if b.remoteMissingLocked() {
+		queuedPush = false
+	}
 	if b.stopped {
 		queuedPush = false
 		queuedRefresh = false
@@ -598,7 +683,9 @@ func (b *Bus) finishPull(err error, callerCanceled bool) {
 	if retry {
 		delay := b.nextRetryDelayLocked()
 		if !callerCanceled || b.state.LastError == "" {
-			b.state.LastError = err.Error()
+			if !b.remoteMissingLocked() || errors.Is(err, ErrNoRemoteVault) {
+				b.state.LastError = err.Error()
+			}
 		}
 		b.state.NextRetryAt = time.Now().UTC().Add(delay)
 		b.persistLocked()

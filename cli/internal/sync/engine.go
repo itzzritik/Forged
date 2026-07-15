@@ -141,6 +141,7 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 	if err := json.Unmarshal(plaintext, &remote); err != nil {
 		return vault.VaultData{}, PullResult{}, err
 	}
+	state.RemoteMissing = false
 
 	now := time.Now().UTC()
 	if !state.Dirty {

@@ -27,6 +27,7 @@ stable: yes
 - Key removal uses the exact reviewed name and can bind the request to its reviewed fingerprint so a stale confirmation cannot remove a different key.
 - Manual sync captures the encrypted blob, KDF parameters, and protected key from one vault snapshot.
 - Manual sync fails closed when the stateful sync bus is unavailable; it never performs a stateless push over unknown remote data.
+- A missing remote vault after prior linked history is a retryable status error; local sync state retains that condition across restart and the client never recreates the remote automatically.
 - When sync history is quarantined, `status` still exposes its safe recovery error without a sync bus and manual sync returns that error instead of suggesting a restart.
 - `status` advertises `account_change_protocol`. Account actions repair or restart the managed service until it supports the required protocol, then use versioned replace and clear commands with no direct-write fallback. The commands serialize credential and sync publication state; remote reconciliation runs afterward as bounded background work.
 - Account replace v4 and clear v4 can return successful cleanup-pending data after credentials commit. `sync_cleanup_pending` and `credential_secret_cleanup_pending` are independent; the latter covers credential secrets and related local artifacts. Clients treat either as committed, show guidance, and do not retry retained state or reusable credential slots. Versioned commands prevent older clients from silently ignoring a new result.
