@@ -86,14 +86,15 @@ func signFile(keyFile, bufferFile, namespace string) error {
 		signingPubKey = pub
 	}
 
-	paths := config.DefaultPaths()
-	if err := actions.AuthorizeExternalUse(paths); err != nil {
-		return err
-	}
-
 	data, err := os.ReadFile(bufferFile)
 	if err != nil {
 		return fmt.Errorf("Reading buffer file: %w", err)
+	}
+	defer clear(data)
+
+	paths := config.DefaultPaths()
+	if err := actions.AuthorizeExternalUse(paths); err != nil {
+		return err
 	}
 
 	socketPath := paths.AgentSocket()
