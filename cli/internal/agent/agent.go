@@ -218,26 +218,11 @@ func (a *ForgedAgent) signWithFlagsForClient(ctx context.Context, key ssh.Public
 		return nil, err
 	}
 
-	var algo string
-	if flags&agent.SignatureFlagRsaSha256 != 0 {
-		algo = ssh.KeyAlgoRSASHA256
-	} else if flags&agent.SignatureFlagRsaSha512 != 0 {
-		algo = ssh.KeyAlgoRSASHA512
-	}
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
-	var sig *ssh.Signature
-	if algo != "" {
-		if as, ok := signer.(ssh.AlgorithmSigner); ok {
-			sig, err = as.SignWithAlgorithm(nil, data, algo)
-		} else {
-			sig, err = signer.Sign(nil, data)
-		}
-	} else {
-		sig, err = signer.Sign(nil, data)
-	}
+	sig, err := signWithFlags(signer, data, flags)
 
 	if err != nil {
 		recordSSHSignActivity(ctx, activityLog, "failed", fingerprint, clientPID)

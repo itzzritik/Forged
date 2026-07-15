@@ -181,16 +181,18 @@ func (s *sessionAgent) Extension(name string, payload []byte) ([]byte, error) {
 
 func signWithFlags(signer ssh.Signer, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
 	var algorithm string
-	if flags&agent.SignatureFlagRsaSha256 != 0 {
-		algorithm = ssh.KeyAlgoRSASHA256
-	} else if flags&agent.SignatureFlagRsaSha512 != 0 {
-		algorithm = ssh.KeyAlgoRSASHA512
-	}
-	if algorithm == "" {
+	switch flags {
+	case 0:
 		return signer.Sign(nil, data)
+	case agent.SignatureFlagRsaSha256:
+		algorithm = ssh.KeyAlgoRSASHA256
+	case agent.SignatureFlagRsaSha512:
+		algorithm = ssh.KeyAlgoRSASHA512
+	default:
+		return nil, fmt.Errorf("Unsupported SSH agent signature flags: %d", flags)
 	}
 	if algorithmSigner, ok := signer.(ssh.AlgorithmSigner); ok {
 		return algorithmSigner.SignWithAlgorithm(nil, data, algorithm)
 	}
-	return signer.Sign(nil, data)
+	return nil, fmt.Errorf("SSH agent signer does not support %s signatures", algorithm)
 }
