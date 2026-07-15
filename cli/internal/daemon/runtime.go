@@ -120,6 +120,12 @@ func RefreshInstalledServiceIfStale(paths config.Paths, runtime RuntimeSpec) (bo
 	if errors.Is(err, ipc.ErrDaemonIdentity) {
 		return false, fmt.Errorf("verifying daemon identity: %w", err)
 	}
+	if errors.Is(err, ErrDaemonServiceOwnership) {
+		if err := WaitForBuildID(paths, runtime.BuildID, 8*time.Second); err != nil {
+			return false, err
+		}
+		return false, nil
+	}
 
 	if err := EnsureService(paths, runtime); err != nil {
 		return false, err
@@ -188,9 +194,6 @@ func WaitForBuildID(paths config.Paths, expectedBuildID string, timeout time.Dur
 			err = requireServiceOwnershipForFreshness(paths)
 			if err == nil {
 				return nil
-			}
-			if errors.Is(err, ErrDaemonServiceOwnership) {
-				return err
 			}
 		}
 		if err != nil {
