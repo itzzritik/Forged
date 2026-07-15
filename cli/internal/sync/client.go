@@ -30,6 +30,13 @@ var (
 	ErrStatusUnsupported = errors.New("Status unsupported")
 )
 
+func validateServerVersion(operation string, version int64) error {
+	if version <= 0 {
+		return fmt.Errorf("Invalid %s response version %d", operation, version)
+	}
+	return nil
+}
+
 func NewClient(serverURL, token, deviceID string) *Client {
 	return &Client{
 		ServerURL: serverURL,
@@ -123,7 +130,12 @@ func (c *Client) PushContext(ctx context.Context, blob []byte, kdf vault.KDFPara
 	}
 
 	var result PushResult
-	json.NewDecoder(resp.Body).Decode(&result)
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return PushResult{}, fmt.Errorf("Parsing push response: %w", err)
+	}
+	if err := validateServerVersion("push", result.Version); err != nil {
+		return PushResult{}, err
+	}
 	return result, nil
 }
 
@@ -205,6 +217,9 @@ func (c *Client) PullContext(ctx context.Context) (PullResult, error) {
 	if err := json.NewDecoder(resp.Body).Decode(&jsonResp); err != nil {
 		return PullResult{}, fmt.Errorf("Parsing pull response: %w", err)
 	}
+	if err := validateServerVersion("pull", jsonResp.Version); err != nil {
+		return PullResult{}, err
+	}
 
 	blob, err := base64.StdEncoding.DecodeString(jsonResp.Blob)
 	if err != nil {
@@ -253,9 +268,30 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 		return StatusResult{}, fmt.Errorf("Status failed (%d): %s", resp.StatusCode, string(respBody))
 	}
 
-	var result StatusResult
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+	var jsonResp struct {
+		HasVault  *bool          `json:"has_vault"`
+		Version   int64          `json:"version"`
+		UpdatedAt string         `json:"updated_at"`
+		KDFParams *kdfParamsJSON `json:"kdf_params,omitempty"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&jsonResp); err != nil {
 		return StatusResult{}, fmt.Errorf("Parsing status response: %w", err)
+	}
+	if jsonResp.HasVault == nil {
+		return StatusResult{}, fmt.Errorf("Parsing status response: missing has_vault")
+	}
+	result := StatusResult{
+		HasVault:  *jsonResp.HasVault,
+		Version:   jsonResp.Version,
+		UpdatedAt: jsonResp.UpdatedAt,
+		KDFParams: jsonResp.KDFParams,
+	}
+	if result.HasVault {
+		if err := validateServerVersion("status", result.Version); err != nil {
+			return StatusResult{}, err
+		}
+	} else if result.Version != 0 {
+		return StatusResult{}, fmt.Errorf("Invalid status response version %d without a vault", result.Version)
 	}
 	return result, nil
 }
