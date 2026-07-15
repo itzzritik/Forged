@@ -58,6 +58,7 @@ func Render(screen Screen, width int) string {
 }
 
 func renderRow(row Row, checkWidth, statusWidth, detailWidth, gap int) string {
+	row = sanitizedRow(row)
 	check := padRight(theme.BodyStrong.Render(truncateRunes(strings.TrimSpace(row.Check), checkWidth)), checkWidth+gap)
 	status := statusStyle(row.Tone).Render(truncateRunes(strings.TrimSpace(row.Status), statusWidth))
 	if detailWidth == 0 {
@@ -69,6 +70,7 @@ func renderRow(row Row, checkWidth, statusWidth, detailWidth, gap int) string {
 }
 
 func renderCompactRow(row Row, width int) []string {
+	row = sanitizedRow(row)
 	check := theme.BodyStrong.Render(truncateRunes(strings.TrimSpace(row.Check), width))
 	status := statusStyle(row.Tone).Render(truncateRunes(strings.TrimSpace(row.Status), width))
 	statusWidth := lipgloss.Width(status)
@@ -79,6 +81,13 @@ func renderCompactRow(row Row, width int) []string {
 		}
 	}
 	return []string{padRight(check, width), padRight(status, width)}
+}
+
+func sanitizedRow(row Row) Row {
+	row.Check = theme.SanitizeText(row.Check)
+	row.Status = theme.SanitizeText(row.Status)
+	row.Detail = theme.SanitizeText(row.Detail)
+	return row
 }
 
 func statusStyle(tone Tone) lipgloss.Style {

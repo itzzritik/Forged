@@ -768,6 +768,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			refreshHealth = m.runtimeUnavailable
 			m.runtimeStatusFailures = 0
 			m.runtimeUnavailable = false
+			msg.status.Error = strings.TrimSpace(theme.SanitizeText(msg.status.Error))
 			if !msg.status.SensitiveReported {
 				msg.status.Unlocked = m.runtimeStatus.Unlocked
 				msg.status.SensitiveKnown = m.runtimeStatus.SensitiveKnown

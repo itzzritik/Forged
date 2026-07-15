@@ -446,12 +446,12 @@ func (m *model) labFooterActions() []shell.FooterAction {
 
 func routeLabel(route actions.SSHRouteDebug) string {
 	if route.Kind == "git" && route.Owner != "" && route.Repo != "" {
-		return fmt.Sprintf("%s/%s", route.Owner, route.Repo)
+		return theme.SanitizeText(fmt.Sprintf("%s/%s", route.Owner, route.Repo))
 	}
 	if route.User != "" && route.Host != "" {
-		return fmt.Sprintf("%s@%s:%d", route.User, route.Host, route.Port)
+		return theme.SanitizeText(fmt.Sprintf("%s@%s:%d", route.User, route.Host, route.Port))
 	}
-	return route.Target
+	return theme.SanitizeText(route.Target)
 }
 
 func labRouteKeyLabel(route actions.SSHRouteDebug) string {
@@ -489,7 +489,7 @@ func labRouteServiceLabel(route actions.SSHRouteDebug) string {
 	}
 	switch route.Kind {
 	case "git":
-		return labFirstNonEmpty(route.Host, "Git")
+		return theme.SanitizeText(labFirstNonEmpty(route.Host, "Git"))
 	case "ssh":
 		return "SSH"
 	default:
@@ -556,7 +556,7 @@ func labOperationLabel(value string) string {
 	case "":
 		return "unknown operation"
 	default:
-		return strings.ReplaceAll(value, "_", " ")
+		return theme.SanitizeText(strings.ReplaceAll(value, "_", " "))
 	}
 }
 

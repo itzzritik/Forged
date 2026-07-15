@@ -9,6 +9,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/picker"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
+	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
 const tuiErrorDedupeWindow = 30 * time.Second
@@ -23,11 +24,12 @@ func (m *model) reportError(action string, err error) string {
 		return ""
 	}
 	message := err.Error()
+	displayMessage := theme.SanitizeText(message)
 	if errors.Is(err, context.Canceled) ||
 		errors.Is(err, picker.ErrCanceled) ||
 		errors.Is(err, sensitiveauth.ErrAuthenticationCanceled) ||
 		actions.IsSensitiveAuthRequired(err) {
-		return message
+		return displayMessage
 	}
 
 	route := "unknown"
@@ -47,7 +49,7 @@ func (m *model) reportError(action string, err error) string {
 	if previous, ok := m.reportedErrors[key]; ok &&
 		previous.fingerprint == fingerprint &&
 		now.Sub(previous.loggedAt) < tuiErrorDedupeWindow {
-		return message
+		return displayMessage
 	}
 	m.reportedErrors[key] = reportedError{fingerprint: fingerprint, loggedAt: now}
 	m.deps.LogError(actions.DiagnosticErrorEvent{
@@ -56,7 +58,7 @@ func (m *model) reportError(action string, err error) string {
 		Version: m.deps.AppVersion,
 		Message: message,
 	})
-	return message
+	return displayMessage
 }
 
 func (m *model) reportErrorText(action string, message string) string {
