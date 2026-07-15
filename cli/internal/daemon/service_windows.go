@@ -60,7 +60,9 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	}
 
 	logDir := filepath.Dir(paths.LogFile())
-	os.MkdirAll(logDir, 0700)
+	if err := os.MkdirAll(logDir, 0o700); err != nil {
+		return fmt.Errorf("creating log directory: %w", err)
+	}
 
 	userID := currentTaskUser()
 	userBlock := ""
