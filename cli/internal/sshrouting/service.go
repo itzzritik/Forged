@@ -94,6 +94,9 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 	if err := validateAttemptToken(req.Attempt); err != nil {
 		return err
 	}
+	if req.ClientPID <= 0 {
+		return fmt.Errorf("SSH route client PID must be positive")
+	}
 
 	now := s.now()
 	attemptKey := routeAttemptKey(req.Attempt, req.ClientPID)
@@ -230,6 +233,9 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 }
 
 func (s *Service) Success(attempt string, clientPID int) error {
+	if clientPID <= 0 {
+		return fmt.Errorf("SSH route client PID must be positive")
+	}
 	keyStore, _, keys := s.routingSnapshot()
 	refs, err := BuildKeyRefs(keys, s.paths.SSHManagedKeysDir())
 	if err != nil {
@@ -313,18 +319,8 @@ func (s *Service) attemptByPIDLocked(clientPID int) (Attempt, bool) {
 }
 
 func (s *Service) attemptBySuccessLocked(token string, clientPID int) (Attempt, bool) {
-	if clientPID > 0 {
-		if attempt, ok := s.attemptByPIDLocked(clientPID); ok && attempt.Token == token {
-			return attempt, true
-		}
-		return Attempt{}, false
-	}
-	for _, attempt := range s.attempts {
-		if attempt.Token == token {
-			return attempt, true
-		}
-	}
-	return Attempt{}, false
+	attempt, ok := s.attemptByPIDLocked(clientPID)
+	return attempt, ok && attempt.Token == token
 }
 
 func (s *Service) ExpireBefore(cutoff time.Time) {
