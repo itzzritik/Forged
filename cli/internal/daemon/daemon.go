@@ -214,9 +214,8 @@ func (d *Daemon) setupLogging() error {
 		MaxAge:     30,
 	}
 
-	// Don't MultiWriter to os.Stderr: when running under launchd/systemd the
-	// service config already redirects stderr into this same log file, which
-	// would double every line.
+	// Don't MultiWriter to os.Stderr: service managers own it separately, and
+	// structured logs already go directly to the rotating daemon log.
 	d.logger = slog.New(slog.NewTextHandler(lj, &slog.HandlerOptions{
 		Level: slog.LevelInfo,
 	}))

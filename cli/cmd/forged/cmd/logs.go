@@ -21,10 +21,10 @@ const (
 )
 
 var logsCmd = &cobra.Command{
-	Use:       "logs [daemon|tui]",
-	Short:     "Follow daemon or TUI logs",
+	Use:       "logs [daemon|stderr|tui]",
+	Short:     "Follow daemon, stderr, or TUI logs",
 	Args:      cobra.MaximumNArgs(1),
-	ValidArgs: []string{"daemon", "tui"},
+	ValidArgs: []string{"daemon", "stderr", "tui"},
 	RunE:      runLogsCommand,
 }
 
@@ -37,10 +37,12 @@ func runLogsCommand(cmd *cobra.Command, args []string) error {
 	if len(args) > 0 {
 		switch args[0] {
 		case "daemon":
+		case "stderr":
+			path = paths.DaemonStderrLogFile()
 		case "tui":
 			path = paths.TUILogFile()
 		default:
-			return fmt.Errorf("Unknown log source %q (use daemon or tui)", args[0])
+			return fmt.Errorf("Unknown log source %q (use daemon, stderr, or tui)", args[0])
 		}
 	}
 

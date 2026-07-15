@@ -23,10 +23,11 @@ const launchdLabel = "me.ritik.forged.daemon"
 var legacyLaunchdLabels = []string{"me.ritik.forged"}
 
 type launchdTemplateData struct {
-	Label   string
-	Binary  string
-	Args    []string
-	LogFile string
+	Label         string
+	Binary        string
+	Args          []string
+	LogFile       string
+	StderrLogFile string
 }
 
 type launchdServiceFile struct {
@@ -57,7 +58,7 @@ var plistTemplate = template.Must(template.New("plist").Funcs(template.FuncMap{
     <key>StandardOutPath</key>
     <string>{{ xml .LogFile }}</string>
     <key>StandardErrorPath</key>
-    <string>{{ xml .LogFile }}</string>
+    <string>{{ xml .StderrLogFile }}</string>
 </dict>
 </plist>
 `))
@@ -89,6 +90,16 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	if err := os.MkdirAll(logDir, 0700); err != nil {
 		return fmt.Errorf("Creating log directory: %w", err)
 	}
+	stderrLog, err := os.OpenFile(paths.DaemonStderrLogFile(), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		return fmt.Errorf("Creating daemon stderr log: %w", err)
+	}
+	if err := stderrLog.Close(); err != nil {
+		return fmt.Errorf("Closing daemon stderr log: %w", err)
+	}
+	if err := os.Chmod(paths.DaemonStderrLogFile(), 0o600); err != nil {
+		return fmt.Errorf("Restricting daemon stderr log: %w", err)
+	}
 
 	plist := plistPath()
 	if err := os.MkdirAll(filepath.Dir(plist), 0755); err != nil {
@@ -96,10 +107,11 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	}
 
 	data := launchdTemplateData{
-		Label:   launchdLabel,
-		Binary:  runtime.Binary,
-		Args:    runtime.Args,
-		LogFile: paths.LogFile(),
+		Label:         launchdLabel,
+		Binary:        runtime.Binary,
+		Args:          runtime.Args,
+		LogFile:       paths.LogFile(),
+		StderrLogFile: paths.DaemonStderrLogFile(),
 	}
 
 	raw, err := renderLaunchdPlist(data)
