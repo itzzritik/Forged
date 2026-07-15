@@ -61,7 +61,7 @@ func (m *model) renderDoctorBody(contentWidth int, bodyHeight int) string {
 		screenRows = append(screenRows, row.screen)
 	}
 	sections = append(sections, doctorscreen.Render(doctorscreen.Screen{Rows: screenRows}, contentWidth))
-	return shell.IndentBlock(strings.Join(sections, "\n\n"), 2)
+	return strings.Join(sections, "\n\n")
 }
 
 func (m *model) renderDoctorDashboardBody(contentWidth int, bodyHeight int) string {
