@@ -315,6 +315,13 @@ func hasGitAdvertisement(output string, operation OperationClass) bool {
 	if output == "" {
 		return false
 	}
+	hasError, hasVersion2 := gitPktLineStatus(output)
+	if hasError {
+		return false
+	}
+	if hasVersion2 {
+		return true
+	}
 	if strings.Contains(output, "# service=git-upload-pack") {
 		return true
 	}
@@ -324,7 +331,35 @@ func hasGitAdvertisement(output string, operation OperationClass) bool {
 	if operation == OperationWrite && (strings.Contains(output, "\x00report-status") || strings.Contains(output, "\x00delete-refs")) {
 		return true
 	}
-	return strings.HasPrefix(output, "00") || strings.Contains(output, " refs/")
+	return strings.Contains(output, " refs/")
+}
+
+func gitPktLineStatus(output string) (hasError, hasVersion2 bool) {
+	for len(output) > 0 {
+		if len(output) < 4 {
+			return false, false
+		}
+		length, err := strconv.ParseUint(output[:4], 16, 16)
+		if err != nil {
+			return false, false
+		}
+		size := int(length)
+		if size == 0 || size == 1 || size == 2 {
+			output = output[4:]
+			continue
+		}
+		if size < 4 || size > len(output) {
+			return false, false
+		}
+		if strings.HasPrefix(output[4:size], "ERR ") {
+			return true, false
+		}
+		if strings.TrimSuffix(output[4:size], "\n") == "version 2" {
+			hasVersion2 = true
+		}
+		output = output[size:]
+	}
+	return false, hasVersion2
 }
 
 func looksLikeGitPktLine(output string) bool {
