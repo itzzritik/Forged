@@ -313,6 +313,7 @@ const (
 )
 
 type copyFinishedMsg struct {
+	id  int
 	err error
 }
 
@@ -323,6 +324,7 @@ type model struct {
 	lifetimeCtx    context.Context
 	lifetimeCancel context.CancelFunc
 	clipboardBusy  bool
+	clipboardID    int
 	reportedErrors map[string]reportedError
 
 	signingStatus        actions.CommitSigningStatus
@@ -638,6 +640,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.id != m.loginID || m.screen != screenLogin {
 			return m, nil
 		}
+		m.cancelClipboardCopy()
 		m.cancelLoginFlow()
 		m.loginCommitting = true
 		m.loginScreen.Waiting = true
@@ -913,18 +916,27 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case doctorReportCopiedMsg:
 		return m.handleDoctorReportCopiedMsg(msg)
 	case copyFinishedMsg:
-		m.clipboardBusy = false
-		if msg.err != nil {
-			errorText := m.reportError("clipboard.copy", msg.err)
-			if m.screen == screenLogin {
-				m.loginScreen.Error = errorText
-				return m, nil
+		if msg.id != m.clipboardID {
+			if msg.err != nil {
+				m.reportError("clipboard.copy", msg.err)
 			}
-			m.notice = notice{message: errorText, tone: dashboardscreen.ToneDanger}
+			return m, nil
+		}
+		m.clipboardBusy = false
+		if m.screen != screenLogin || m.loginCommitting {
+			if msg.err != nil {
+				m.reportError("clipboard.copy", msg.err)
+			}
+			return m, nil
+		}
+		if msg.err != nil {
+			m.reportError("clipboard.copy", msg.err)
+			m.loginScreen.Status = "Could not copy the approval link. Press C to try again or Enter to open it."
 			return m, nil
 		}
 		m.cancelPrivateClipboard()
 		m.loginScreen.Copied = true
+		m.loginScreen.Status = "Waiting for browser approval"
 		return m, nil
 	case tea.KeyMsg:
 		nextModel, cmd := m.updateKeys(msg)
@@ -1523,7 +1535,9 @@ func (m *model) footerActions() []shell.FooterAction {
 			actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Retry"})
 		} else if m.loginScreen.URL != "" {
 			actions = append(actions, shell.FooterAction{Key: "Enter", Label: "Open Link"})
-			actions = append(actions, shell.FooterAction{Key: "C", Label: "Copy URL"})
+			if !m.clipboardBusy {
+				actions = append(actions, shell.FooterAction{Key: "C", Label: "Copy URL"})
+			}
 		}
 		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscCancel)})
 		return actions
@@ -1769,7 +1783,7 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.idleLockInFlight {
 		return m, nil
 	}
-	if m.clipboardBusy {
+	if m.clipboardBusy && m.screen != screenLogin {
 		return m, nil
 	}
 
@@ -2012,6 +2026,7 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
+		m.cancelClipboardCopy()
 		m.loginID++
 		m.loginProgress = nil
 		m.cancelLoginFlow()
@@ -2020,9 +2035,11 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "c", "C":
-		if m.loginScreen.URL == "" || m.loginScreen.Error != "" {
+		if m.clipboardBusy || m.loginScreen.URL == "" || m.loginScreen.Error != "" {
 			return m, nil
 		}
+		m.loginScreen.Copied = false
+		m.loginScreen.Status = "Copying approval link"
 		return m, m.copyToClipboard(m.loginScreen.URL)
 	case "enter":
 		if m.loginScreen.Error != "" {
@@ -2030,8 +2047,10 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		if m.loginScreen.URL != "" {
 			if err := m.openCurrentLoginURL(); err != nil {
-				m.loginScreen.Error = m.reportError("browser.open", err)
-				m.loginScreen.Status = ""
+				m.reportError("browser.open", err)
+				m.loginScreen.Status = "Could not open the approval link. Press Enter to try again or C to copy it."
+			} else {
+				m.loginScreen.Status = "Waiting for browser approval"
 			}
 		}
 	}
@@ -2449,6 +2468,7 @@ func (m *model) assessCurrentState() tea.Cmd {
 }
 
 func (m *model) startLoginFlow() tea.Cmd {
+	m.cancelClipboardCopy()
 	m.cancelLoginFlow()
 	m.discardPasswordInput()
 	m.screen = screenLogin
@@ -3339,11 +3359,18 @@ func (m *model) lockSensitiveCmd(id int) tea.Cmd {
 }
 
 func (m *model) copyToClipboard(value string) tea.Cmd {
+	m.clipboardID++
+	id := m.clipboardID
 	m.clipboardBusy = true
 	copyText := m.deps.CopyText
 	return func() tea.Msg {
-		return copyFinishedMsg{err: copyText(value)}
+		return copyFinishedMsg{id: id, err: copyText(value)}
 	}
+}
+
+func (m *model) cancelClipboardCopy() {
+	m.clipboardID++
+	m.clipboardBusy = false
 }
 
 func (m *model) openCurrentLoginURL() error {
