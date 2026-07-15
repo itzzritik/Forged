@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/bubbles/textinput"
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/readiness"
@@ -1428,11 +1429,19 @@ func (m *model) renderPasswordBody(contentWidth int) string {
 	sections := make([]string, 0, 5)
 	textWidth := max(28, min(contentWidth, theme.HeroMaxWidth))
 
-	if m.passwordAuth != "" {
-		sections = append(sections,
-			theme.Success.Render(theme.Glyphs.Check)+" "+theme.BodyMuted.Render(" Logged in as")+" "+theme.Body.Render(m.passwordAuth),
-			"",
-		)
+	if auth := strings.TrimSpace(theme.SanitizeText(m.passwordAuth)); auth != "" {
+		prefix := theme.Success.Render(theme.Glyphs.Check) + " " + theme.BodyMuted.Render("Logged in as") + " "
+		identityWidth := max(1, min(contentWidth, theme.HeroMaxWidth))
+		valueWidth := max(1, identityWidth-lipgloss.Width(prefix))
+		identityLines := strings.Split(ansi.Hardwrap(auth, valueWidth, false), "\n")
+		for index, line := range identityLines {
+			if index == 0 {
+				identityLines[index] = prefix + theme.Body.Render(line)
+				continue
+			}
+			identityLines[index] = strings.Repeat(" ", lipgloss.Width(prefix)) + theme.Body.Render(line)
+		}
+		sections = append(sections, strings.Join(identityLines, "\n"), "")
 	}
 
 	if context := strings.TrimSpace(m.passwordContext); context != "" {

@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -182,7 +183,8 @@ func renderBreadcrumbs(items []Breadcrumb) string {
 }
 
 func renderTitleNote(note string) string {
-	if strings.TrimSpace(note) == "" {
+	note = strings.TrimSpace(theme.SanitizeText(note))
+	if note == "" {
 		return ""
 	}
 	return theme.BodyMuted.Render(note)
@@ -201,6 +203,11 @@ func renderTitleRow(width int, title string, breadcrumbs []Breadcrumb, note stri
 		return ""
 	}
 	innerWidth := max(0, width-ContentLeftInset-ContentRightInset)
+	left = ansi.Truncate(left, innerWidth, theme.Glyphs.Ellipsis)
+	right = ansi.Truncate(right, innerWidth, theme.Glyphs.Ellipsis)
+	if left == "" && right == "" {
+		return ""
+	}
 	row := ""
 	if left != "" && right != "" && lipgloss.Width(left)+lipgloss.Width(right)+4 > innerWidth {
 		row = left + "\n" + right

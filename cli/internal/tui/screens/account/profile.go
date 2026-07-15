@@ -4,6 +4,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -13,7 +14,7 @@ type ProfileScreen struct {
 }
 
 func RenderProfile(screen ProfileScreen, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+	contentWidth := max(16, min(width, theme.HeroMaxWidth))
 	rows := []profileRow{
 		{Label: "Name", Value: screen.Name},
 		{Label: "Email", Value: screen.Email},
@@ -28,15 +29,16 @@ type profileRow struct {
 }
 
 func renderProfileTable(rows []profileRow, width int) string {
+	if width < 28 {
+		return renderStackedProfileRows(rows, width)
+	}
+
 	labelWidth := 8
-	valueWidth := max(16, width-labelWidth-2)
+	valueWidth := width - labelWidth - 2
 	lines := make([]string, 0, len(rows)*2)
 
 	for _, row := range rows {
-		value := strings.TrimSpace(row.Value)
-		if value == "" {
-			value = theme.Glyphs.Empty
-		}
+		value := profileValue(row.Value)
 
 		label := padProfileRight(theme.RowLabel.Render(strings.ToUpper(row.Label)), labelWidth+2)
 		wrapped := wrapProfileText(value, valueWidth)
@@ -51,6 +53,28 @@ func renderProfileTable(rows []profileRow, width int) string {
 	}
 
 	return strings.Join(lines, "\n")
+}
+
+func renderStackedProfileRows(rows []profileRow, width int) string {
+	lines := make([]string, 0, len(rows)*3)
+	for index, row := range rows {
+		lines = append(lines, theme.RowLabel.Render(strings.ToUpper(row.Label)))
+		for _, line := range wrapProfileText(profileValue(row.Value), max(1, width)) {
+			lines = append(lines, theme.BodyStrong.Render(line))
+		}
+		if index < len(rows)-1 {
+			lines = append(lines, "")
+		}
+	}
+	return strings.Join(lines, "\n")
+}
+
+func profileValue(value string) string {
+	value = strings.TrimSpace(theme.SanitizeText(value))
+	if value == "" {
+		return theme.Glyphs.Empty
+	}
+	return value
 }
 
 func padProfileRight(value string, width int) string {
@@ -73,22 +97,5 @@ func wrapProfileText(value string, width int) []string {
 		return []string{value}
 	}
 
-	words := strings.Fields(value)
-	if len(words) == 0 {
-		return []string{value}
-	}
-
-	lines := make([]string, 0, 2)
-	current := words[0]
-	for _, word := range words[1:] {
-		candidate := current + " " + word
-		if lipgloss.Width(candidate) <= width {
-			current = candidate
-			continue
-		}
-		lines = append(lines, current)
-		current = word
-	}
-	lines = append(lines, current)
-	return lines
+	return strings.Split(ansi.Hardwrap(value, width, false), "\n")
 }
