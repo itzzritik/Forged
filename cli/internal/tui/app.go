@@ -315,10 +315,6 @@ type copyFinishedMsg struct {
 	err error
 }
 
-type openFinishedMsg struct {
-	err error
-}
-
 type model struct {
 	intent         Intent
 	session        *Session
@@ -615,6 +611,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			URL:              msg.session.URL,
 			Waiting:          true,
 		}
+		if err := m.openCurrentLoginURL(); err != nil {
+			m.loginScreen.Status = "Open the approval link with Enter or copy it with C."
+		}
 
 		return m, m.waitForLogin(msg.ctx, msg.id, msg.session)
 	case startupUnlockFinishedMsg:
@@ -892,16 +891,6 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		m.cancelPrivateClipboard()
 		m.loginScreen.Copied = true
-		return m, nil
-	case openFinishedMsg:
-		if msg.err != nil {
-			errorText := m.reportError("browser.open", msg.err)
-			if m.screen == screenLogin {
-				m.loginScreen.Error = errorText
-				return m, nil
-			}
-			m.notice = notice{message: errorText, tone: dashboardscreen.ToneDanger}
-		}
 		return m, nil
 	case tea.KeyMsg:
 		nextModel, cmd := m.updateKeys(msg)
@@ -1939,7 +1928,10 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.startLoginFlow()
 		}
 		if m.loginScreen.URL != "" {
-			return m, m.openCurrentLoginURL()
+			if err := m.openCurrentLoginURL(); err != nil {
+				m.loginScreen.Error = m.reportError("browser.open", err)
+				m.loginScreen.Status = ""
+			}
 		}
 	}
 	return m, nil
@@ -2369,7 +2361,7 @@ func (m *model) startLoginFlow() tea.Cmd {
 	}
 	m.loginID++
 	id := m.loginID
-	ctx, cancel := context.WithCancel(context.Background())
+	ctx, cancel := context.WithCancel(m.lifetimeCtx)
 	m.loginCancel = cancel
 	startLogin := m.deps.StartLogin
 	server := m.serverURL()
@@ -3196,15 +3188,12 @@ func (m *model) copyToClipboard(value string) tea.Cmd {
 	}
 }
 
-func (m *model) openCurrentLoginURL() tea.Cmd {
+func (m *model) openCurrentLoginURL() error {
 	url := strings.TrimSpace(m.loginScreen.URL)
-	openLink := m.deps.OpenLink
-	return func() tea.Msg {
-		if url == "" {
-			return openFinishedMsg{}
-		}
-		return openFinishedMsg{err: openLink(url)}
+	if url == "" {
+		return nil
 	}
+	return m.deps.OpenLink(url)
 }
 
 func (m *model) passwordFlowForSnapshot(snapshot readiness.Snapshot) passwordFlow {

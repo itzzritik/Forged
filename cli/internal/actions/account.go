@@ -11,8 +11,6 @@ import (
 	"fmt"
 	"net/http"
 	"os"
-	"os/exec"
-	"runtime"
 	"strings"
 	"time"
 
@@ -331,24 +329,6 @@ func exchangeLogin(ctx context.Context, server, code, codeVerifier string) (Acco
 		Email:            result.Email,
 		Name:             strings.TrimSpace(result.Name),
 	}, nil
-}
-
-func OpenBrowser(url string) {
-	var cmd *exec.Cmd
-	switch runtime.GOOS {
-	case "darwin":
-		cmd = exec.Command("open", url)
-	case "linux":
-		cmd = exec.Command("xdg-open", url)
-	case "windows":
-		cmd = exec.Command("rundll32", "url.dll,FileProtocolHandler", url)
-	default:
-		return
-	}
-
-	if err := cmd.Start(); err == nil {
-		go cmd.Wait()
-	}
 }
 
 func createAuthSessionWithRetry(ctx context.Context, server string, payload []byte, progress func(LoginProgress)) (*http.Response, error) {
