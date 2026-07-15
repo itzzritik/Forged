@@ -1784,7 +1784,7 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.idleLockInFlight {
 		return m, nil
 	}
-	if m.clipboardBusy && m.screen != screenLogin {
+	if m.clipboardBusy && m.screen != screenLogin && !(m.privateCopyPending && msg.String() == "esc") {
 		return m, nil
 	}
 
