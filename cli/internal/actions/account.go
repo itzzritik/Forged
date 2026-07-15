@@ -319,6 +319,15 @@ func pollLogin(ctx context.Context, server, code, pollURL, codeVerifier string) 
 			interval = min(interval*2, 10*time.Second)
 			continue
 		}
+		if resp.StatusCode != http.StatusOK {
+			statusCode := resp.StatusCode
+			resp.Body.Close()
+			if shouldRetryLoginAttempt(nil, statusCode) {
+				interval = min(interval*2, 10*time.Second)
+				continue
+			}
+			return AccountCredentials{}, fmt.Errorf("Checking login status (status %d)", statusCode)
+		}
 
 		var result struct {
 			Status string `json:"status"`
@@ -327,8 +336,11 @@ func pollLogin(ctx context.Context, server, code, pollURL, codeVerifier string) 
 			Email  string `json:"email"`
 			Name   string `json:"name"`
 		}
-		_ = json.NewDecoder(resp.Body).Decode(&result)
+		decodeErr := json.NewDecoder(resp.Body).Decode(&result)
 		resp.Body.Close()
+		if decodeErr != nil {
+			return AccountCredentials{}, fmt.Errorf("Decoding login status response: %w", decodeErr)
+		}
 
 		interval = 2 * time.Second
 
@@ -347,6 +359,8 @@ func pollLogin(ctx context.Context, server, code, pollURL, codeVerifier string) 
 			return AccountCredentials{}, fmt.Errorf("Authentication failed")
 		case "pending":
 			continue
+		default:
+			return AccountCredentials{}, fmt.Errorf("Authentication server returned an invalid login status")
 		}
 	}
 
