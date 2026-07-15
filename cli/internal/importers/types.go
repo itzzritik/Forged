@@ -14,6 +14,13 @@ type ImportedKey struct {
 
 const DefaultImportedName = "Imported"
 
+func stripUTF8BOM(data []byte) []byte {
+	if len(data) >= 3 && data[0] == 0xef && data[1] == 0xbb && data[2] == 0xbf {
+		return data[3:]
+	}
+	return data
+}
+
 func SanitizeName(name string) string {
 	name = strings.Map(func(r rune) rune {
 		if unicode.IsControl(r) {

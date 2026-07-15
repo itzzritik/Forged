@@ -31,7 +31,7 @@ type ForgedSSHKey struct {
 
 func ParseForged(data []byte) ([]ImportedKey, error) {
 	var export ForgedExport
-	if err := json.Unmarshal(data, &export); err != nil {
+	if err := json.Unmarshal(stripUTF8BOM(data), &export); err != nil {
 		return nil, fmt.Errorf("Parsing Forged export: %w", err)
 	}
 	if export.Format != "forged-export" {

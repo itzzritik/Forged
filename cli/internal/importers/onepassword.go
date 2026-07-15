@@ -43,7 +43,7 @@ func Parse1Password(data []byte) ([]ImportedKey, error) {
 	if isZipArchive(trimmed) {
 		return parse1Password1PUX(trimmed)
 	}
-	return parse1PasswordCSV(trimmed)
+	return parse1PasswordCSV(stripUTF8BOM(trimmed))
 }
 
 func parse1Password1PUX(data []byte) ([]ImportedKey, error) {
@@ -78,7 +78,7 @@ func parse1Password1PUX(data []byte) ([]ImportedKey, error) {
 	}
 
 	var export onePasswordExport
-	if err := json.Unmarshal(exportData, &export); err != nil {
+	if err := json.Unmarshal(stripUTF8BOM(exportData), &export); err != nil {
 		return nil, fmt.Errorf("Parsing export.data: %w", err)
 	}
 

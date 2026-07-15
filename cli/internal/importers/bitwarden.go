@@ -22,7 +22,7 @@ type bitwardenItem struct {
 
 func ParseBitwarden(data []byte) ([]ImportedKey, error) {
 	var export bitwardenExport
-	if err := json.Unmarshal(data, &export); err != nil {
+	if err := json.Unmarshal(stripUTF8BOM(data), &export); err != nil {
 		return nil, fmt.Errorf("Parsing Bitwarden export: %w", err)
 	}
 	if export.Encrypted {
