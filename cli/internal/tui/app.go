@@ -628,7 +628,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case startupUnlockFinishedMsg:
 		return m, m.handleStartupUnlockFinishedMsg(msg)
 	case loginProgressMsg:
-		if msg.id != m.loginID || m.screen != screenLogin {
+		if msg.id != m.loginID || m.screen != screenLogin || m.loginProgress == nil || m.loginCommitting {
 			return m, nil
 		}
 		if strings.TrimSpace(msg.progress.Status) != "" {
