@@ -179,6 +179,7 @@ func applyLinkedRestore(paths config.Paths, plan linkedRestorePlan, password []b
 			state.LinkedUserID = plan.creds.UserID
 			state.ServerURL = plan.creds.ServerURL
 			state.Dirty = false
+			state.RemoteMissing = false
 			state.LastKnownServerVersion = plan.result.Version
 			state.LastSyncedBaseBlob = append([]byte(nil), plan.result.Blob...)
 			state.LastSyncedHash = hashSyncBlob(plan.result.Blob)
@@ -188,6 +189,9 @@ func applyLinkedRestore(paths config.Paths, plan linkedRestorePlan, password []b
 
 			if err := stateStore.Save(state); err != nil {
 				return fmt.Errorf("Saving restored sync state: %w", err)
+			}
+			if err := os.Remove(paths.SyncDirtyFile()); err != nil && !errors.Is(err, os.ErrNotExist) {
+				return fmt.Errorf("linked vault restored, but clearing sync dirty marker failed: %w", err)
 			}
 			return nil
 		})
