@@ -17,6 +17,14 @@ const (
 	sshRoutesComment      = "# Forged SSH Routing"
 )
 
+var managedSSHRoutingDirectives = [...]string{
+	"    PermitLocalCommand yes",
+	"    ControlMaster no",
+	"    ControlPath none",
+	"    IdentitiesOnly yes",
+	"    IdentityFile none",
+}
+
 func SSHConfigPath() string {
 	return DefaultPaths().SSHUserConfig()
 }
@@ -445,13 +453,7 @@ func RenderManagedSSHConfig(paths Paths, routes string) string {
 	}
 	routes = strings.TrimSpace(routes)
 	if routes != "" {
-		lines = append(lines,
-			"    PermitLocalCommand yes",
-			"    ControlMaster no",
-			"    ControlPath none",
-			"    IdentitiesOnly yes",
-			"    IdentityFile none",
-		)
+		lines = append(lines, managedSSHRoutingDirectives[:]...)
 		lines = append(lines, "", sshRoutesComment, routes)
 	}
 
@@ -538,19 +540,35 @@ func removeManagedSSHRoutingTail(content string) (string, error) {
 	if marker < 0 {
 		return content, nil
 	}
-	permit := marker - 1
-	for permit >= 0 && strings.TrimSpace(lines[permit]) == "" {
-		permit--
+	routingStart := previousNonBlankSSHConfigLine(lines, marker)
+	if routingStart < 0 {
+		return "", fmt.Errorf("managed SSH routing tail is missing its generated routing directives")
 	}
-	if permit < 0 || strings.TrimSuffix(lines[permit], "\r") != "    PermitLocalCommand yes" {
-		return "", fmt.Errorf("managed SSH routing tail is missing its generated PermitLocalCommand")
+	if strings.TrimSuffix(lines[routingStart], "\r") != managedSSHRoutingDirectives[0] {
+		for i := len(managedSSHRoutingDirectives) - 1; i >= 0; i-- {
+			if routingStart < 0 || strings.TrimSuffix(lines[routingStart], "\r") != managedSSHRoutingDirectives[i] {
+				return "", fmt.Errorf("managed SSH routing tail has modified generated routing directives")
+			}
+			if i > 0 {
+				routingStart = previousNonBlankSSHConfigLine(lines, routingStart)
+			}
+		}
 	}
 
-	prefix := trimTrailingBlankLines(strings.Join(lines[:permit], "\n"))
+	prefix := trimTrailingBlankLines(strings.Join(lines[:routingStart], "\n"))
 	if prefix == "" {
 		return "", fmt.Errorf("managed SSH routing tail has no managed config prefix")
 	}
 	return prefix + "\n", nil
+}
+
+func previousNonBlankSSHConfigLine(lines []string, before int) int {
+	for i := before - 1; i >= 0; i-- {
+		if strings.TrimSpace(lines[i]) != "" {
+			return i
+		}
+	}
+	return -1
 }
 
 func updateManagedSSHIdentityAgent(content, agentSocket string) (string, error) {

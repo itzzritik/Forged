@@ -44,7 +44,7 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 - A parsed Git `ERR` pkt-line is never provider-proof success; broad packet-prefix heuristics cannot persist a route proof from an error response.
 - SSH-agent signing accepts only an exact zero, RSA-SHA256, or RSA-SHA512 flag value. Reserved, combined, and unsupported-algorithm requests fail instead of silently default-signing.
 - SSH integration migration removes only exact historical Forged marker blocks and managed include paths. An edited or ambiguous marker fails before the user config changes; inactive legacy files remain in place instead of being deleted recursively.
-- On Windows, agent and control pipes use distinct opaque current-user token-SID hashes. Automatic SSH routing is intentionally unavailable: the daemon starts no route service, removes a uniquely marked product-owned routing section from the private managed config, and preserves its agent prefix. Duplicate route markers or a missing generated `PermitLocalCommand` boundary block migration instead of being overwritten. Normal SSH-agent and commit-signing behavior remains available.
+- On Windows, agent and control pipes use distinct opaque current-user token-SID hashes. Automatic SSH routing is intentionally unavailable: the daemon starts no route service, removes a uniquely marked product-owned routing section from the private managed config, and preserves its agent prefix. It accepts the exact legacy one-line or current five-directive routing prefix; duplicate route markers or a changed prefix block migration instead of being overwritten. Normal SSH-agent and commit-signing behavior remains available.
 
 ## Decisions
 
