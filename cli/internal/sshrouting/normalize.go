@@ -2,6 +2,7 @@ package sshrouting
 
 import (
 	"fmt"
+	"net"
 	"net/url"
 	"strconv"
 	"strings"
@@ -79,8 +80,8 @@ func ParseCanonicalTarget(raw string) (Target, error) {
 }
 
 func ResolveSSHTarget(input PrepareInput) (Target, error) {
-	host := strings.TrimSpace(input.Host)
-	user := strings.TrimSpace(input.User)
+	host := normalizeSSHHost(input.Host)
+	user := strings.ToLower(strings.TrimSpace(input.User))
 	if host == "" || user == "" {
 		return Target{}, fmt.Errorf("SSH target requires host and user")
 	}
@@ -92,12 +93,20 @@ func ResolveSSHTarget(input PrepareInput) (Target, error) {
 
 	return Target{
 		Kind:         TargetSSH,
-		Canonical:    fmt.Sprintf("ssh://%s@%s:%d", strings.ToLower(user), strings.ToLower(host), port),
-		Host:         strings.ToLower(host),
+		Canonical:    fmt.Sprintf("ssh://%s@%s", user, net.JoinHostPort(host, strconv.Itoa(port))),
+		Host:         host,
 		OriginalHost: strings.ToLower(strings.TrimSpace(input.OriginalHost)),
-		User:         strings.ToLower(user),
+		User:         user,
 		Port:         port,
 	}, nil
+}
+
+func normalizeSSHHost(host string) string {
+	host = strings.TrimSpace(host)
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
+	return strings.ToLower(host)
 }
 
 func parsePort(raw string, fallback int) (int, error) {
