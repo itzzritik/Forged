@@ -13,6 +13,10 @@ import (
 
 var ErrRouteMemoryLocked = errors.New("SSH route memory is locked")
 
+type SessionChecker interface {
+	IsUnlocked() bool
+}
+
 type PrepareRequest struct {
 	Attempt      string
 	ClientPID    int
@@ -38,18 +42,19 @@ type Attempt struct {
 }
 
 type Service struct {
-	mu            sync.RWMutex
-	paths         config.Paths
-	keyStore      *vault.KeyStore
-	cachedKeys    []vault.Key
-	cachedRoutes  map[string]vault.SSHRoute
-	now           func() time.Time
-	attempts      map[string]Attempt
-	attemptOwners map[string]uint64
-	attemptSeq    uint64
-	clientAttempt map[int]string
-	prober        ProviderProber
-	onMutation    func(reason string)
+	mu             sync.RWMutex
+	paths          config.Paths
+	keyStore       *vault.KeyStore
+	sessionChecker SessionChecker
+	cachedKeys     []vault.Key
+	cachedRoutes   map[string]vault.SSHRoute
+	now            func() time.Time
+	attempts       map[string]Attempt
+	attemptOwners  map[string]uint64
+	attemptSeq     uint64
+	clientAttempt  map[int]string
+	prober         ProviderProber
+	onMutation     func(reason string)
 }
 
 func NewService(paths config.Paths, keyStore *vault.KeyStore) *Service {
@@ -71,6 +76,12 @@ func (s *Service) SetKeyStore(keyStore *vault.KeyStore) {
 	if keyStore != nil {
 		s.refreshCacheFromKeyStoreLocked(keyStore)
 	}
+}
+
+func (s *Service) SetSessionChecker(sessionChecker SessionChecker) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.sessionChecker = sessionChecker
 }
 
 func (s *Service) SetOnMutation(fn func(reason string)) {
@@ -151,7 +162,7 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 	}
 	probeProved := false
 	if target.Kind == TargetGit && !plan.HadExact && keyStore != nil {
-		probed, proved, err := s.probeGitProvider(ctx, target, operation, plan, refByFingerprint)
+		probed, proved, err := s.probeGitProvider(ctx, target, operation, plan, refByFingerprint, keyStore)
 		if err != nil {
 			return err
 		}
@@ -161,7 +172,7 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 		}
 	}
 	if target.Kind == TargetSSH && keyStore != nil {
-		probed, proved, err := s.probeSSHServer(ctx, target, operation, plan)
+		probed, proved, err := s.probeSSHServer(ctx, target, operation, plan, keyStore)
 		if err != nil {
 			return err
 		}
@@ -219,7 +230,7 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 }
 
 func (s *Service) Success(attempt string, clientPID int) error {
-	_, _, keys := s.routingSnapshot()
+	keyStore, _, keys := s.routingSnapshot()
 	refs, err := BuildKeyRefs(keys, s.paths.SSHManagedKeysDir())
 	if err != nil {
 		return fmt.Errorf("Building SSH key refs: %w", err)
@@ -240,8 +251,7 @@ func (s *Service) Success(attempt string, clientPID int) error {
 	}
 	s.mu.Unlock()
 
-	keyStore, _, _ := s.routingSnapshot()
-	if current.LastKey == "" || keyStore == nil {
+	if current.LastKey == "" || !s.keyStoreCurrent(keyStore) {
 		return nil
 	}
 	if current.Target.Kind == TargetGit {
@@ -254,9 +264,12 @@ func (s *Service) Success(attempt string, clientPID int) error {
 		current.Operation.String(),
 		s.now(),
 	); err != nil {
+		if !s.keyStoreCurrent(keyStore) {
+			return nil
+		}
 		return err
 	}
-	s.refreshCacheFromKeyStore()
+	s.refreshCacheFromKeyStore(keyStore)
 	s.notifyMutation("ssh_route_learned")
 	return nil
 }
@@ -374,8 +387,8 @@ func (s *Service) candidatesForTokenLocked(token string) []string {
 }
 
 func (s *Service) routingSnapshot() (*vault.KeyStore, map[string]vault.SSHRoute, []vault.Key) {
+	keyStore := s.currentKeyStore()
 	s.mu.RLock()
-	keyStore := s.keyStore
 	cachedRoutes := cloneRouteCache(s.cachedRoutes)
 	cachedKeys := clonePublicRoutingKeys(s.cachedKeys)
 	s.mu.RUnlock()
@@ -397,11 +410,48 @@ func (s *Service) routingSnapshot() (*vault.KeyStore, map[string]vault.SSHRoute,
 	return keyStore, routes, keys
 }
 
-func (s *Service) refreshCacheFromKeyStore() {
+func (s *Service) currentKeyStore() *vault.KeyStore {
+	s.mu.RLock()
+	keyStore := s.keyStore
+	sessionChecker := s.sessionChecker
+	s.mu.RUnlock()
+	if keyStore == nil || (sessionChecker != nil && !sessionChecker.IsUnlocked()) {
+		return nil
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.keyStore != keyStore {
+		return nil
+	}
+	return keyStore
+}
+
+func (s *Service) keyStoreCurrent(keyStore *vault.KeyStore) bool {
+	return keyStore != nil && s.currentKeyStore() == keyStore
+}
+
+func (s *Service) withCurrentKeyStore(keyStore *vault.KeyStore, fn func() error) error {
+	if !s.keyStoreCurrent(keyStore) {
+		return errProbeSessionLocked
+	}
+
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	if s.keyStore != keyStore {
+		return errProbeSessionLocked
+	}
+	return fn()
+}
+
+func (s *Service) refreshCacheFromKeyStore(keyStore *vault.KeyStore) {
+	if !s.keyStoreCurrent(keyStore) {
+		return
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.keyStore != nil {
-		s.refreshCacheFromKeyStoreLocked(s.keyStore)
+	if s.keyStore == keyStore {
+		s.refreshCacheFromKeyStoreLocked(keyStore)
 	}
 }
 
@@ -485,7 +535,7 @@ func (s *Service) resolveTarget(ctx context.Context, req PrepareRequest, process
 	return resolved, nil
 }
 
-func (s *Service) probeGitProvider(ctx context.Context, target Target, operation OperationClass, plan CandidatePlan, refs map[string]KeyRef) ([]string, bool, error) {
+func (s *Service) probeGitProvider(ctx context.Context, target Target, operation OperationClass, plan CandidatePlan, refs map[string]KeyRef, keyStore *vault.KeyStore) ([]string, bool, error) {
 	if _, ok := DetectProvider(target); !ok {
 		return nil, false, nil
 	}
@@ -499,10 +549,16 @@ func (s *Service) probeGitProvider(ctx context.Context, target Target, operation
 		if !ok {
 			continue
 		}
+		if !s.keyStoreCurrent(keyStore) {
+			return nil, false, nil
+		}
 		attempted++
 		result := s.prober.Probe(probeCtx, target, operation, ref)
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
+		}
+		if !s.keyStoreCurrent(keyStore) {
+			return nil, false, nil
 		}
 		switch result.Status {
 		case ProbeSuccess:
@@ -510,19 +566,23 @@ func (s *Service) probeGitProvider(ctx context.Context, target Target, operation
 			if proofOperation == OperationUnknown {
 				proofOperation = OperationRead
 			}
-			if s.keyStore != nil {
-				if err := s.keyStore.RecordSSHRouteProof(
-					target.Canonical,
-					candidate.Fingerprint,
-					vault.SSHRouteProofProviderProbe,
-					proofOperation.String(),
-					s.now(),
-				); err != nil {
-					return nil, false, err
-				}
-				s.refreshCacheFromKeyStore()
-				s.notifyMutation("ssh_route_learned")
+			if !s.keyStoreCurrent(keyStore) {
+				return nil, false, nil
 			}
+			if err := keyStore.RecordSSHRouteProof(
+				target.Canonical,
+				candidate.Fingerprint,
+				vault.SSHRouteProofProviderProbe,
+				proofOperation.String(),
+				s.now(),
+			); err != nil {
+				if !s.keyStoreCurrent(keyStore) {
+					return nil, false, nil
+				}
+				return nil, false, err
+			}
+			s.refreshCacheFromKeyStore(keyStore)
+			s.notifyMutation("ssh_route_learned")
 			return []string{candidate.Fingerprint}, true, nil
 		case ProbeDenied:
 			continue
@@ -543,8 +603,8 @@ func (s *Service) probeGitProvider(ctx context.Context, target Target, operation
 	return nil, false, nil
 }
 
-func (s *Service) probeSSHServer(ctx context.Context, target Target, operation OperationClass, plan CandidatePlan) ([]string, bool, error) {
-	if s.keyStore == nil {
+func (s *Service) probeSSHServer(ctx context.Context, target Target, operation OperationClass, plan CandidatePlan, keyStore *vault.KeyStore) ([]string, bool, error) {
+	if !s.keyStoreCurrent(keyStore) {
 		return nil, false, nil
 	}
 	probeCtx, cancel := context.WithTimeout(ctx, probeTotalTimeout)
@@ -553,10 +613,18 @@ func (s *Service) probeSSHServer(ctx context.Context, target Target, operation O
 	attempted := 0
 	inconclusive := false
 	for _, candidate := range plan.Candidates {
+		if !s.keyStoreCurrent(keyStore) {
+			return nil, false, nil
+		}
 		attempted++
-		result := ProbeSSHServer(probeCtx, target, candidate, s.keyStore)
+		result := ProbeSSHServer(probeCtx, target, candidate, keyStore, func(fn func() error) error {
+			return s.withCurrentKeyStore(keyStore, fn)
+		})
 		if err := ctx.Err(); err != nil {
 			return nil, false, err
+		}
+		if !s.keyStoreCurrent(keyStore) {
+			return nil, false, nil
 		}
 		switch result.Status {
 		case ProbeSuccess:
@@ -564,16 +632,22 @@ func (s *Service) probeSSHServer(ctx context.Context, target Target, operation O
 			if proofOperation == OperationUnknown {
 				proofOperation = OperationSSHAuth
 			}
-			if err := s.keyStore.RecordSSHRouteProof(
+			if !s.keyStoreCurrent(keyStore) {
+				return nil, false, nil
+			}
+			if err := keyStore.RecordSSHRouteProof(
 				target.Canonical,
 				candidate.Fingerprint,
 				vault.SSHRouteProofSSHAuth,
 				proofOperation.String(),
 				s.now(),
 			); err != nil {
+				if !s.keyStoreCurrent(keyStore) {
+					return nil, false, nil
+				}
 				return nil, false, err
 			}
-			s.refreshCacheFromKeyStore()
+			s.refreshCacheFromKeyStore(keyStore)
 			s.notifyMutation("ssh_route_learned")
 			return []string{candidate.Fingerprint}, true, nil
 		case ProbeDenied:

@@ -5,6 +5,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"io"
 	"net"
 	"os"
 	"os/exec"
@@ -37,6 +38,8 @@ type ProbeResult struct {
 	Fingerprint string
 	Message     string
 }
+
+var errProbeSessionLocked = errors.New("vault session is locked")
 
 type ProviderProber struct {
 	agentSocket string
@@ -128,7 +131,7 @@ func (p ProviderProber) Probe(ctx context.Context, target Target, operation Oper
 	return ProbeResult{Status: ProbeInconclusive, Fingerprint: ref.Fingerprint, Message: message}
 }
 
-func ProbeSSHServer(ctx context.Context, target Target, candidate Candidate, keyStore *vault.KeyStore) ProbeResult {
+func ProbeSSHServer(ctx context.Context, target Target, candidate Candidate, keyStore *vault.KeyStore, withCurrentKeyStore func(func() error) error) ProbeResult {
 	if keyStore == nil {
 		return ProbeResult{Status: ProbeSkipped, Fingerprint: candidate.Fingerprint, Message: "vault is locked"}
 	}
@@ -148,10 +151,20 @@ func ProbeSSHServer(ctx context.Context, target Target, candidate Candidate, key
 	if err != nil {
 		return ProbeResult{Status: ProbeSkipped, Fingerprint: candidate.Fingerprint, Message: "invalid public key"}
 	}
-	signer, _, _, err := keyStore.SignerByPublicKey(pub)
+	var signer ssh.Signer
+	if withCurrentKeyStore == nil {
+		signer, _, _, err = keyStore.SignerByPublicKey(pub)
+	} else {
+		err = withCurrentKeyStore(func() error {
+			var signerErr error
+			signer, _, _, signerErr = keyStore.SignerByPublicKey(pub)
+			return signerErr
+		})
+	}
 	if err != nil {
 		return ProbeResult{Status: ProbeSkipped, Fingerprint: candidate.Fingerprint, Message: err.Error()}
 	}
+	signer = sessionCheckedSigner(signer, withCurrentKeyStore)
 
 	port := target.Port
 	if port <= 0 {
@@ -187,6 +200,9 @@ func ProbeSSHServer(ctx context.Context, target Target, candidate Candidate, key
 	}
 	clientConn, chans, reqs, err := ssh.NewClientConn(conn, addr, config)
 	if err != nil {
+		if errors.Is(err, errProbeSessionLocked) {
+			return ProbeResult{Status: ProbeSkipped, Fingerprint: candidate.Fingerprint, Message: errProbeSessionLocked.Error()}
+		}
 		if isKnownHostsError(err) {
 			return ProbeResult{Status: ProbeSkipped, Fingerprint: candidate.Fingerprint, Message: "host key is not trusted"}
 		}
@@ -201,6 +217,72 @@ func ProbeSSHServer(ctx context.Context, target Target, candidate Candidate, key
 	client := ssh.NewClient(clientConn, chans, reqs)
 	_ = client.Close()
 	return ProbeResult{Status: ProbeSuccess, Fingerprint: candidate.Fingerprint}
+}
+
+type sessionSigner struct {
+	signer              ssh.Signer
+	withCurrentKeyStore func(func() error) error
+}
+
+func (s sessionSigner) PublicKey() ssh.PublicKey {
+	return s.signer.PublicKey()
+}
+
+func (s sessionSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error) {
+	var signature *ssh.Signature
+	err := s.withCurrentKeyStore(func() error {
+		var signErr error
+		signature, signErr = s.signer.Sign(rand, data)
+		return signErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return signature, nil
+}
+
+type sessionAlgorithmSigner struct {
+	sessionSigner
+	algorithmSigner ssh.AlgorithmSigner
+}
+
+func (s sessionAlgorithmSigner) SignWithAlgorithm(rand io.Reader, data []byte, algorithm string) (*ssh.Signature, error) {
+	var signature *ssh.Signature
+	err := s.withCurrentKeyStore(func() error {
+		var signErr error
+		signature, signErr = s.algorithmSigner.SignWithAlgorithm(rand, data, algorithm)
+		return signErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return signature, nil
+}
+
+type sessionMultiAlgorithmSigner struct {
+	sessionAlgorithmSigner
+	multiAlgorithmSigner ssh.MultiAlgorithmSigner
+}
+
+func (s sessionMultiAlgorithmSigner) Algorithms() []string {
+	return s.multiAlgorithmSigner.Algorithms()
+}
+
+func sessionCheckedSigner(signer ssh.Signer, withCurrentKeyStore func(func() error) error) ssh.Signer {
+	if withCurrentKeyStore == nil {
+		return signer
+	}
+	base := sessionSigner{signer: signer, withCurrentKeyStore: withCurrentKeyStore}
+	if multi, ok := signer.(ssh.MultiAlgorithmSigner); ok {
+		return sessionMultiAlgorithmSigner{
+			sessionAlgorithmSigner: sessionAlgorithmSigner{sessionSigner: base, algorithmSigner: multi},
+			multiAlgorithmSigner:   multi,
+		}
+	}
+	if algorithm, ok := signer.(ssh.AlgorithmSigner); ok {
+		return sessionAlgorithmSigner{sessionSigner: base, algorithmSigner: algorithm}
+	}
+	return base
 }
 
 func hasGitAdvertisement(output string, operation OperationClass) bool {

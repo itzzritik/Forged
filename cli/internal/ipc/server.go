@@ -355,6 +355,10 @@ func (s *Server) handleSSHRoutePrepare(deliveryCtx context.Context, raw json.Raw
 		User:         args.User,
 		Port:         args.Port,
 	}
+	if s.authBroker != nil {
+		// IsUnlocked clears an expired shared session without starting a prompt.
+		_ = s.authBroker.IsUnlocked()
+	}
 	if err := s.sshRoutes.PrepareContext(workCtx, req); err != nil {
 		if errors.Is(err, sshrouting.ErrRouteMemoryLocked) {
 			finalize, authErr := s.ensureExternalSession(deliveryCtx)

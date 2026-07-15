@@ -99,6 +99,9 @@ func (d *Daemon) Run(password []byte) error {
 	}
 	d.sshRouting = sshrouting.NewManager(d.paths, d.selfBinaryPath())
 	d.authBroker = sensitiveauth.NewBroker(d.paths, d.helperBinaryPath(), d.logger, d)
+	if d.routeService != nil {
+		d.routeService.SetSessionChecker(d.authBroker)
+	}
 
 	if len(password) > 0 {
 		if _, err := os.Stat(d.paths.VaultFile()); err != nil {
