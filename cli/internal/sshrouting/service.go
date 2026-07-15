@@ -238,6 +238,7 @@ func (s *Service) Success(attempt string, clientPID int) error {
 	refByFingerprint := KeyRefsByFingerprint(refs)
 
 	s.mu.Lock()
+	s.expireBeforeLocked(s.now().Add(-routeSnippetTTL))
 	current, ok := s.attemptBySuccessLocked(attempt, clientPID)
 	if !ok {
 		s.mu.Unlock()
