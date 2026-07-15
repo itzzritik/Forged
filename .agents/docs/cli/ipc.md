@@ -27,6 +27,7 @@ stable: yes
 - Key removal uses the exact reviewed name and can bind the request to its reviewed fingerprint so a stale confirmation cannot remove a different key.
 - Manual sync captures the encrypted blob, KDF parameters, and protected key from one vault snapshot.
 - Manual sync uses a two-minute IPC deadline on both client and daemon, so its bounded 30-second push, pull, and retry-push conflict path can complete.
+- The Manual Sync caller does not refresh account credentials; the daemon-owned sync token source refreshes them so a save-failed rotation remains available to the process that performs the sync.
 - Manual sync fails closed when the stateful sync bus is unavailable; it never performs a stateless push over unknown remote data.
 - A missing remote vault after prior linked history is a retryable status error; local sync state retains that condition across restart and the client never recreates the remote automatically.
 - When sync history is quarantined, `status` still exposes its safe recovery error without a sync bus and manual sync returns that error instead of suggesting a restart.

@@ -1,14 +1,12 @@
 package actions
 
 import (
-	"context"
-
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 )
 
 func TriggerSync(paths config.Paths) error {
-	creds, err := LoadFreshCredentials(context.Background(), paths)
+	creds, err := LoadCredentials(paths)
 	if err != nil {
 		return err
 	}
