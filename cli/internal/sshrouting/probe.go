@@ -22,6 +22,7 @@ import (
 const (
 	probePerKeyTimeout = 4 * time.Second
 	probeTotalTimeout  = 20 * time.Second
+	probeOutputLimit   = 64 * 1024
 )
 
 type ProbeStatus string
@@ -44,6 +45,28 @@ var errProbeSessionLocked = errors.New("vault session is locked")
 type ProviderProber struct {
 	agentSocket string
 	command     string
+}
+
+type probeOutput struct {
+	bytes.Buffer
+	overflow bool
+}
+
+func (b *probeOutput) Write(p []byte) (int, error) {
+	if len(p) == 0 {
+		return 0, nil
+	}
+	remaining := probeOutputLimit - b.Len()
+	if remaining <= 0 {
+		b.overflow = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.Buffer.Write(p[:remaining])
+		b.overflow = true
+		return len(p), nil
+	}
+	return b.Buffer.Write(p)
 }
 
 func NewProviderProber(agentSocket string) ProviderProber {
@@ -102,8 +125,8 @@ func (p ProviderProber) Probe(ctx context.Context, target Target, operation Oper
 		repoPath,
 	}
 
-	var stdout bytes.Buffer
-	var stderr bytes.Buffer
+	var stdout probeOutput
+	var stderr probeOutput
 	cmd := exec.CommandContext(perKeyCtx, p.command, args...)
 	cmd.Stdin = strings.NewReader("")
 	cmd.Stdout = &stdout
@@ -111,6 +134,9 @@ func (p ProviderProber) Probe(ctx context.Context, target Target, operation Oper
 	cmd.Env = append(os.Environ(), "FORGED_SSH_ROUTE_SKIP=1")
 
 	err = cmd.Run()
+	if stdout.overflow || stderr.overflow {
+		return ProbeResult{Status: ProbeInconclusive, Fingerprint: ref.Fingerprint, Message: "probe output exceeded limit"}
+	}
 	output := stdout.String()
 	message := strings.TrimSpace(stderr.String())
 	if hasGitAdvertisement(output, probeOperation) {
