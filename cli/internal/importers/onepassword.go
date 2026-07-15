@@ -13,6 +13,8 @@ import (
 
 var onePasswordPrivateKeyRE = regexp.MustCompile(`(?s)-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----.*?-----END [A-Z0-9 ]*PRIVATE KEY-----`)
 
+const max1PasswordExportDataBytes = 32 << 20
+
 type onePasswordExport struct {
 	Accounts []struct {
 		Vaults []struct {
@@ -53,14 +55,20 @@ func parse1Password1PUX(data []byte) ([]ImportedKey, error) {
 	var exportData []byte
 	for _, f := range reader.File {
 		if f.Name == "export.data" {
+			if f.UncompressedSize64 > uint64(max1PasswordExportDataBytes) {
+				return nil, fmt.Errorf("export.data exceeds %d MiB limit", max1PasswordExportDataBytes>>20)
+			}
 			rc, err := f.Open()
 			if err != nil {
 				return nil, fmt.Errorf("Reading export.data: %w", err)
 			}
-			exportData, err = io.ReadAll(rc)
-			rc.Close()
+			exportData, err = read1PasswordExportData(rc)
+			closeErr := rc.Close()
 			if err != nil {
 				return nil, fmt.Errorf("Reading export.data: %w", err)
+			}
+			if closeErr != nil {
+				return nil, fmt.Errorf("Reading export.data: %w", closeErr)
 			}
 			break
 		}
@@ -93,6 +101,17 @@ func parse1Password1PUX(data []byte) ([]ImportedKey, error) {
 		}
 	}
 	return keys, nil
+}
+
+func read1PasswordExportData(reader io.Reader) ([]byte, error) {
+	data, err := io.ReadAll(io.LimitReader(reader, max1PasswordExportDataBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > max1PasswordExportDataBytes {
+		return nil, fmt.Errorf("export.data exceeds %d MiB limit", max1PasswordExportDataBytes>>20)
+	}
+	return data, nil
 }
 
 func extractOnePasswordSSHKey(item onePasswordItem) string {

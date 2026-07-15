@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -35,6 +36,7 @@ type ImportFailure struct {
 const (
 	maxImportFailureNameRunes = 120
 	maxImportFailureRawBytes  = 4 << 10
+	maxImportFileBytes        = 16 << 20
 )
 
 type ImportPreview struct {
@@ -262,8 +264,11 @@ func loadImportedKeys(source string, file string) ([]importers.ImportedKey, erro
 	if strings.TrimSpace(file) == "" {
 		return nil, fmt.Errorf("Enter a file path")
 	}
+	if source != "1password" && source != "bitwarden" && source != "forged" && source != "file" {
+		return nil, fmt.Errorf("Unknown import source %q", source)
+	}
 
-	data, err := os.ReadFile(expandUserPath(file))
+	data, err := readImportFile(expandUserPath(file))
 	if err != nil {
 		return nil, fmt.Errorf("Reading file: %w", err)
 	}
@@ -301,7 +306,7 @@ func importFromSSHDir() []importers.ImportedKey {
 	paths := hostmatch.DiscoverSSHKeys()
 	keys := make([]importers.ImportedKey, 0, len(paths))
 	for _, path := range paths {
-		data, err := os.ReadFile(path)
+		data, err := readImportFile(path)
 		if err != nil {
 			continue
 		}
@@ -315,6 +320,38 @@ func importFromSSHDir() []importers.ImportedKey {
 		keys = append(keys, key)
 	}
 	return keys
+}
+
+func readImportFile(path string) ([]byte, error) {
+	info, err := os.Stat(path)
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("import file must be a regular file")
+	}
+
+	file, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer file.Close()
+	info, err = file.Stat()
+	if err != nil {
+		return nil, err
+	}
+	if !info.Mode().IsRegular() {
+		return nil, fmt.Errorf("import file must be a regular file")
+	}
+
+	data, err := io.ReadAll(io.LimitReader(file, maxImportFileBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxImportFileBytes {
+		return nil, fmt.Errorf("import file exceeds %d MiB limit", maxImportFileBytes>>20)
+	}
+	return data, nil
 }
 
 func deriveImportedKeyName(path string) string {
