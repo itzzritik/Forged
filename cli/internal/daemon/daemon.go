@@ -394,6 +394,8 @@ type syncInitRun struct {
 	generation uint64
 	vault      *vault.Vault
 	stateGate  *syncApplyGate
+	ctx        context.Context
+	cancel     context.CancelFunc
 }
 
 // syncStateSnapshot is a stable, parsed view of both account-transition
@@ -430,14 +432,9 @@ const (
 )
 
 func (d *Daemon) expireInitialLink(run *linkRun) {
-	timer := time.NewTimer(syncLinkTimeout)
-	defer timer.Stop()
-
 	select {
 	case <-d.stop:
-	case <-timer.C:
 	case <-run.ctx.Done():
-		return
 	}
 
 	run.cancel()
@@ -452,18 +449,35 @@ func (d *Daemon) initSyncLocked() {
 		return
 	}
 	d.syncGeneration++
-	run := &syncInitRun{generation: d.syncGeneration, vault: d.vault, stateGate: &syncApplyGate{}}
+	ctx, cancel := context.WithCancel(context.Background())
+	run := &syncInitRun{generation: d.syncGeneration, vault: d.vault, stateGate: &syncApplyGate{}, ctx: ctx, cancel: cancel}
 	d.syncInitRun = run
 	d.syncPending = true
 	go d.finishSyncInit(run)
 }
 
 func (d *Daemon) finishSyncInit(run *syncInitRun) {
+	promoted := false
+	defer func() {
+		if !promoted && run.cancel != nil {
+			run.cancel()
+		}
+	}()
+
 	// Credential-store calls can block in OS/keychain code. Keep them outside
 	// syncTransitionMu; both transition-held phases revalidate this run.
 	creds, credentialErr := accountauth.Load(d.paths)
-	candidate := d.prepareSyncInit(run, creds, credentialErr)
+	candidate, initialLink := d.prepareSyncInit(run, creds, credentialErr)
 	if candidate == nil {
+		return
+	}
+	if initialLink {
+		linkCtx, linkCancel := context.WithTimeout(run.ctx, syncLinkTimeout)
+		token, err := d.prepareInitialLinkCredentials(linkCtx, candidate)
+		promoted = d.finishInitialLink(run, candidate, linkCtx, linkCancel, token, err)
+		if !promoted {
+			linkCancel()
+		}
 		return
 	}
 
@@ -476,24 +490,24 @@ func (d *Daemon) finishSyncInit(run *syncInitRun) {
 	d.finishDirectSyncInit(run, candidate, err)
 }
 
-func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials, credentialErr error) *syncCandidate {
+func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials, credentialErr error) (*syncCandidate, bool) {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
 
 	d.sessionMu.Lock()
 	if !d.syncInitRunCurrentLocked(run) {
 		d.sessionMu.Unlock()
-		return nil
+		return nil, false
 	}
 	if credentialErr != nil || creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
 		d.clearSyncInitRunLocked(run)
 		d.sessionMu.Unlock()
-		return nil
+		return nil, false
 	}
 	d.sessionMu.Unlock()
 
 	if !d.admitSyncInitState(run) {
-		return nil
+		return nil, false
 	}
 	recoveryMarked := d.syncStateRecoveryMarked()
 	var recoveryErr error
@@ -514,36 +528,36 @@ func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials
 	d.sessionMu.Lock()
 	if !d.syncInitRunCurrentLocked(run) {
 		d.sessionMu.Unlock()
-		return nil
+		return nil, false
 	}
 	if recoveryMarked {
 		d.clearSyncInitRunLocked(run)
 		d.setSyncStateRecoveryLocked()
 		d.sessionMu.Unlock()
-		return nil
+		return nil, false
 	}
 	if recoveryErr != nil {
 		d.clearSyncInitRunLocked(run)
 		if errors.Is(recoveryErr, forgedsync.ErrStateCorrupt) || errors.Is(recoveryErr, forgedsync.ErrStateRecoveryRequired) {
 			d.setSyncStateRecoveryLocked()
 			d.sessionMu.Unlock()
-			return nil
+			return nil, false
 		}
 		d.logger.Warn("recovering sync state transaction failed", "error", recoveryErr)
 		d.scheduleSyncRetryLocked(run.generation)
 		d.sessionMu.Unlock()
-		return nil
+		return nil, false
 	}
 	if candidateErr != nil {
 		d.clearSyncInitRunLocked(run)
 		if errors.Is(candidateErr, forgedsync.ErrStateCorrupt) || errors.Is(candidateErr, forgedsync.ErrStateRecoveryRequired) {
 			d.setSyncStateRecoveryLocked()
 			d.sessionMu.Unlock()
-			return nil
+			return nil, false
 		}
 		d.logger.Warn("initializing sync failed", "error", candidateErr)
 		d.sessionMu.Unlock()
-		return nil
+		return nil, false
 	}
 	candidate.generation = run.generation
 
@@ -552,26 +566,97 @@ func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials
 			d.clearSyncInitRunLocked(run)
 			d.logger.Warn("initializing sync failed", "error", err)
 			d.sessionMu.Unlock()
-			return nil
+			return nil, false
 		}
-		d.syncInitRun = nil
-		ctx, cancel := context.WithCancel(context.Background())
-		link := &linkRun{
-			candidate: candidate,
-			ctx:       ctx,
-			cancel:    cancel,
-			done:      make(chan struct{}),
-			applyGate: &syncApplyGate{},
-		}
-		d.linkRun = link
 		d.sessionMu.Unlock()
-		go d.expireInitialLink(link)
-		go d.finishInitialSync(link, creds.UserID)
-		return nil
+		return candidate, true
 	}
 
 	d.sessionMu.Unlock()
-	return candidate
+	return candidate, false
+}
+
+func (d *Daemon) prepareInitialLinkCredentials(ctx context.Context, candidate *syncCandidate) (string, error) {
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	refreshed, err := accountauth.EnsureFresh(ctx, d.paths)
+	if err != nil {
+		return "", err
+	}
+	if err := validateSyncIdentity(refreshed, candidate.serverURL, candidate.userID); err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+
+	var token string
+	err = accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
+		if err := ctx.Err(); err != nil {
+			return err
+		}
+		if err := validateSyncIdentity(stored, candidate.serverURL, candidate.userID); err != nil {
+			return err
+		}
+		token = accountauth.CurrentToken(stored)
+		if token == "" {
+			return fmt.Errorf("Sync credentials are missing")
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if err := ctx.Err(); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func (d *Daemon) finishInitialLink(run *syncInitRun, candidate *syncCandidate, ctx context.Context, cancel context.CancelFunc, token string, authErr error) bool {
+	d.syncTransitionMu.Lock()
+	defer d.syncTransitionMu.Unlock()
+
+	d.sessionMu.Lock()
+	if !d.syncInitRunCurrentLocked(run) {
+		d.sessionMu.Unlock()
+		return false
+	}
+	if authErr == nil {
+		authErr = ctx.Err()
+	}
+	if authErr != nil {
+		d.clearSyncInitRunLocked(run)
+		d.logger.Warn("link reconcile failed", "error", authErr)
+		d.scheduleSyncRetryLocked(candidate.generation)
+		d.sessionMu.Unlock()
+		return false
+	}
+
+	linkCancel := func() {
+		cancel()
+		if run.cancel != nil {
+			run.cancel()
+		}
+	}
+	link := &linkRun{
+		candidate: candidate,
+		ctx:       ctx,
+		cancel:    linkCancel,
+		done:      make(chan struct{}),
+		applyGate: &syncApplyGate{},
+	}
+	client := forgedsync.NewClient(candidate.serverURL, token, candidate.state.DeviceID)
+	candidate.engine = forgedsync.NewEngineWithVaultApply(candidate.vault, client, d.logger, func(applyCtx context.Context, update func(*vault.VaultData) error) error {
+		return d.applyInitialLinkUpdate(link, applyCtx, update)
+	})
+	d.syncInitRun = nil
+	d.linkRun = link
+	d.sessionMu.Unlock()
+	go d.expireInitialLink(link)
+	go d.finishInitialSync(link, candidate.userID)
+	return true
 }
 
 func (d *Daemon) finishDirectSyncInit(run *syncInitRun, candidate *syncCandidate, identityErr error) {
@@ -638,12 +723,18 @@ func (d *Daemon) clearSyncInitRunLocked(run *syncInitRun) bool {
 	}
 	d.syncInitRun = nil
 	d.syncPending = false
+	if run.cancel != nil {
+		run.cancel()
+	}
 	return true
 }
 
 func (d *Daemon) cancelSyncInitRunLocked() *syncInitRun {
 	run := d.syncInitRun
 	d.syncInitRun = nil
+	if run != nil && run.cancel != nil {
+		run.cancel()
+	}
 	return run
 }
 
@@ -1331,21 +1422,9 @@ func (d *Daemon) finishInitialSync(run *linkRun, userID string) {
 	d.sessionMu.Unlock()
 
 	candidate := run.candidate
-	refreshed, err := accountauth.EnsureFresh(run.ctx, d.paths)
+	err := run.ctx.Err()
 	if err == nil {
-		err = validateSyncIdentity(refreshed, candidate.serverURL, userID)
-	}
-	if err == nil {
-		err = accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
-			if err := validateSyncIdentity(stored, candidate.serverURL, userID); err != nil {
-				return err
-			}
-			client := forgedsync.NewClient(candidate.serverURL, accountauth.CurrentToken(stored), candidate.state.DeviceID)
-			candidate.engine = forgedsync.NewEngineWithVaultApply(candidate.vault, client, d.logger, func(ctx context.Context, update func(*vault.VaultData) error) error {
-				return d.applyInitialLinkUpdate(run, ctx, update)
-			})
-			return candidate.engine.ReconcileOnLink(run.ctx, candidate.state, userID, candidate.serverURL)
-		})
+		err = candidate.engine.ReconcileOnLink(run.ctx, candidate.state, userID, candidate.serverURL)
 	}
 	if err == nil {
 		err = d.persistInitialLinkCandidate(run)
