@@ -746,6 +746,9 @@ func (m *model) invalidateSigningStatusCmd() tea.Cmd {
 }
 
 func (m *model) refreshSnapshotCmd() tea.Cmd {
+	if m.maintenanceBusy {
+		return nil
+	}
 	m.snapshotRefreshID++
 	id := m.snapshotRefreshID
 	repair := m.deps.Repair
@@ -756,7 +759,7 @@ func (m *model) refreshSnapshotCmd() tea.Cmd {
 }
 
 func (m *model) handleSnapshotRefreshMsg(msg snapshotRefreshMsg) (tea.Model, tea.Cmd) {
-	if msg.id != m.snapshotRefreshID {
+	if m.maintenanceBusy || msg.id != m.snapshotRefreshID {
 		return m, nil
 	}
 	if msg.err != nil {
