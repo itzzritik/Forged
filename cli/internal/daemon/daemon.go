@@ -1992,6 +1992,12 @@ func removeOwnedPIDFile(path string, pid int) {
 }
 
 func IsRunning(paths config.Paths) (int, bool) {
+	if runtime.GOOS == "windows" {
+		// Windows PID files are advisory: a later unrelated process can reuse
+		// the recorded PID. The per-user control pipe is the liveness authority.
+		return 0, platform.IsSocketAlive(paths.CtlSocket())
+	}
+
 	data, err := os.ReadFile(paths.PIDFile())
 	if err != nil {
 		return 0, false
