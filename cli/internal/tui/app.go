@@ -2671,6 +2671,11 @@ func (m *model) handleSensitiveSessionLoss(wasUnlocked bool) tea.Cmd {
 	}
 	locked := m.runtimeStatus.SensitiveKnown && !m.runtimeStatus.Unlocked
 	var clipboardCmd tea.Cmd
+	if locked && (wasUnlocked || m.keyImport.loading || m.keyImport.pickerOpening || m.keyImport.importing || len(m.keyImport.previews) > 0) {
+		m.cancelKeyImportPreview()
+		m.keyImport.importing = false
+		m.keyImport.status = ""
+	}
 	if locked && (wasUnlocked || m.privateCopyPending || m.privateClip.lease != nil) {
 		m.cancelPrivateKeyCopy()
 		clipboardCmd = m.clearPrivateClipboardForLock()

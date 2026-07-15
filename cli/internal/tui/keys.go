@@ -282,6 +282,10 @@ func (m *model) isKeyRoute() bool {
 	}
 }
 
+func (m *model) isKeyImportRoute() bool {
+	return m.screen == screenDashboard && m.session.Current().ID == RouteKeysImport
+}
+
 func (m *model) keyUsesSpinner() bool {
 	if !m.isKeyRoute() {
 		return false
@@ -1030,6 +1034,7 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	if m.keyImport.loading || m.keyImport.pickerOpening {
 		if msg.String() == "esc" {
+			m.cancelKeyImportPreview()
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
 			}
@@ -1048,7 +1053,7 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		switch msg.String() {
 		case "esc":
 			m.keyImport.result = actions.ImportResult{}
-			m.keyImport.previews = nil
+			m.discardKeyImportPreviews()
 			m.keyImport.failureOffset = 0
 			return m, m.returnToDashboardRoute()
 		case "up", "k":
@@ -1066,6 +1071,7 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if m.keyImport.step == keyImportStepReview {
 		switch msg.String() {
 		case "esc":
+			m.discardKeyImportPreviews()
 			if m.session.Back() {
 				return m, m.showCurrentRoute()
 			}
@@ -1105,6 +1111,7 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 	switch msg.String() {
 	case "esc":
+		m.discardKeyImportPreviews()
 		if m.session.Back() {
 			return m, m.showCurrentRoute()
 		}
@@ -1349,6 +1356,7 @@ func (m *model) startKeyRouteLoad() tea.Cmd {
 		m.resizeKeyInputs()
 		return textinput.Blink
 	case RouteKeysImport:
+		m.cancelKeyImportPreview()
 		m.keyImport = keyImportState{
 			sourceIndex: 0,
 			focus:       0,
@@ -2004,33 +2012,52 @@ func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model,
 	if msg.id != m.keyImportID {
 		return m, nil
 	}
-	m.keyImport.importing = false
-	m.keyImport.status = ""
+	active := m.isKeyImportRoute() && m.keyImport.importing
 	if msg.err != nil {
-		m.keyImport.err = m.reportError("keys.import", msg.err)
-		m.keyImport.warning = ""
+		errorText := m.reportError("keys.import", msg.err)
+		if active {
+			m.keyImport.importing = false
+			m.keyImport.status = ""
+			m.keyImport.err = errorText
+			m.keyImport.warning = ""
+		}
 		return m, nil
 	}
 	for _, key := range msg.result.Keys {
 		m.upsertCachedKey(key)
 	}
-	m.keyImport.result = msg.result
 	if len(msg.result.Failures) > 0 {
+		m.logImportFailures(msg.result)
+		if !active {
+			return m, m.invalidateSigningStatusCmd()
+		}
+		m.keyImport.importing = false
+		m.keyImport.status = ""
+		m.keyImport.result = msg.result
 		m.keyImport.step = keyImportStepResult
 		m.keyImport.failureCursor = 0
 		m.keyImport.failureOffset = 0
-		m.keyImport.previews = nil
+		m.discardKeyImportPreviews()
 		m.keyImport.err = ""
 		m.keyImport.warning = ""
-		m.logImportFailures(msg.result)
 		return m, m.invalidateSigningStatusCmd()
 	}
 	if msg.result.Imported == 0 {
-		m.keyImport.err = "No keys were imported"
-		m.keyImport.warning = ""
+		if active {
+			m.keyImport.importing = false
+			m.keyImport.status = ""
+			m.keyImport.err = "No keys were imported"
+			m.keyImport.warning = ""
+		}
 		return m, nil
 	}
-	m.keyImport.previews = nil
+	if !active {
+		return m, m.invalidateSigningStatusCmd()
+	}
+	m.keyImport.importing = false
+	m.keyImport.status = ""
+	m.keyImport.result = msg.result
+	m.discardKeyImportPreviews()
 	m.keyImport.err = ""
 	m.keyImport.warning = ""
 	m.keyImport.success = m.newKeyTransferSuccessState(
@@ -2045,7 +2072,7 @@ func (m *model) handleKeyImportFinishedMsg(msg keyImportFinishedMsg) (tea.Model,
 }
 
 func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, tea.Cmd) {
-	if msg.id != m.keyImportPreviewID {
+	if msg.id != m.keyImportPreviewID || !m.isKeyImportRoute() || !m.keyImport.loading {
 		return m, nil
 	}
 	m.keyImport.loading = false
@@ -2055,7 +2082,7 @@ func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, t
 	source := m.currentImportSource()
 	if msg.err != nil {
 		m.keyImport.step = keyImportStepSource
-		m.keyImport.previews = nil
+		m.discardKeyImportPreviews()
 		m.keyImport.discovered = 0
 		m.keyImport.duplicates = 0
 		m.keyImport.status = ""
@@ -2071,7 +2098,7 @@ func (m *model) handleKeyImportPreviewMsg(msg keyImportPreviewMsg) (tea.Model, t
 	}
 	if len(msg.result.Previews) == 0 {
 		m.keyImport.step = keyImportStepSource
-		m.keyImport.previews = nil
+		m.discardKeyImportPreviews()
 		m.keyImport.discovered = msg.result.Discovered
 		m.keyImport.duplicates = msg.result.Duplicates
 		m.keyImport.status = ""
@@ -2152,7 +2179,7 @@ func (m *model) handleKeyExportAuthorizedMsg(msg keyExportAuthorizedMsg) (tea.Mo
 }
 
 func (m *model) handleKeyImportPickerMsg(msg keyImportPickerMsg) (tea.Model, tea.Cmd) {
-	if msg.id != m.keyImportPickerID {
+	if msg.id != m.keyImportPickerID || !m.isKeyImportRoute() || !m.keyImport.pickerOpening {
 		return m, nil
 	}
 	m.keyImport.pickerOpening = false
@@ -2572,8 +2599,7 @@ func (m *model) moveKeyImportSource(delta int) {
 	m.keyImport.sourceIndex = next
 	source := m.currentImportSource()
 	m.keyImport.step = keyImportStepSource
-	m.keyImport.previews = nil
-	m.keyImport.reviewCursor = 0
+	m.discardKeyImportPreviews()
 	m.keyImport.discovered = 0
 	m.keyImport.duplicates = 0
 	m.keyImport.err = ""
@@ -2587,6 +2613,20 @@ func (m *model) moveKeyImportSource(delta int) {
 		m.keyImport.pathInput.Blur()
 		m.keyImport.pathInput.SetValue("")
 	}
+}
+
+func (m *model) cancelKeyImportPreview() {
+	m.keyImportPreviewID++
+	m.keyImportPickerID++
+	m.keyImport.loading = false
+	m.keyImport.pickerOpening = false
+	m.discardKeyImportPreviews()
+}
+
+func (m *model) discardKeyImportPreviews() {
+	clear(m.keyImport.previews)
+	m.keyImport.previews = nil
+	m.keyImport.reviewCursor = 0
 }
 
 func (m *model) currentImportSource() keyImportSource {
