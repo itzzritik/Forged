@@ -21,6 +21,42 @@ func SSHConfigPath() string {
 	return DefaultPaths().SSHUserConfig()
 }
 
+func IsManagedSSHIntegrationEnabled(paths Paths) bool {
+	if err := paths.ValidateRuntimePaths(); err != nil {
+		return false
+	}
+	data, err := os.ReadFile(paths.SSHUserConfig())
+	if err != nil {
+		return false
+	}
+
+	lines := strings.Split(string(data), "\n")
+	includes := forgedIncludeLines(paths)
+	legacyMarker := -1
+	multipleLegacyMarkers := false
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if !strings.HasPrefix(trimmed, "#") {
+			if _, ok := includes[trimmed]; ok {
+				return true
+			}
+		}
+		if trimmed == legacySSHConfigMarker {
+			if legacyMarker >= 0 {
+				multipleLegacyMarkers = true
+			} else {
+				legacyMarker = i
+			}
+		}
+	}
+
+	if legacyMarker < 0 || multipleLegacyMarkers {
+		return false
+	}
+	_, ok := legacyForgedBlockEnd(lines, legacyMarker, paths)
+	return ok
+}
+
 func IsSSHAgentEnabled(paths Paths) bool {
 	if err := paths.ValidateRuntimePaths(); err != nil {
 		return false

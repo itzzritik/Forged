@@ -1061,6 +1061,9 @@ func (m *model) systemHeaderItem() shell.StatusItem {
 	if strings.TrimSpace(m.doctorRepairError) != "" {
 		return shell.StatusItem{Label: "Doctor repair failed", Tone: shell.StatusToneDanger}
 	}
+	if m.systemHeader == systemHeaderHealthy && m.snapshot.RequiresManualSSHConfigurationChange() {
+		return shell.StatusItem{Label: "Forged remains active through external SSH configuration", Tone: shell.StatusToneWarning}
+	}
 	if m.systemHeader == systemHeaderHealthy && m.snapshot.AgentDisabled {
 		return shell.StatusItem{Label: "Agent disabled", Tone: shell.StatusToneWarning}
 	}

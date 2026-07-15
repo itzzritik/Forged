@@ -113,11 +113,13 @@ func (m *model) agentItems() []agentItem {
 		}}
 	}
 
-	sshLabel := "Enable SSH Agent"
+	sshLabel := "Enable Forged SSH Integration"
 	sshSummary := "Use Forged as your active SSH agent on this machine"
-	if m.snapshot.IdentityAgentOwner.IsForged() {
-		sshLabel = "Disable SSH Agent"
+	if m.snapshot.ManagedSSHIntegration {
+		sshLabel = "Disable Forged SSH Integration"
 		sshSummary = "Stop using Forged as your active SSH agent on this machine"
+	} else if m.snapshot.RequiresManualSSHConfigurationChange() {
+		sshSummary = "Forged removed its managed SSH integration, but active SSH configuration still selects Forged. Forged will not edit user-owned IdentityAgent or SSH_AUTH_SOCK; you must update that setting, then refresh."
 	}
 
 	signingSummary := "Review signing status and choose the key used for Git commit signing"
@@ -654,7 +656,7 @@ func (m *model) runAgentSSHToggle() tea.Cmd {
 	if m.agent.sshBusy || m.maintenanceBusy {
 		return nil
 	}
-	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" || m.snapshot.IdentityAgentOwner.IsForged() {
+	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" || m.snapshot.ManagedSSHIntegration {
 		return m.disableSSHAgentCmd()
 	}
 	return m.enableSSHAgentCmd()

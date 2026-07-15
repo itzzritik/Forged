@@ -31,6 +31,9 @@ func DetectSSHAgentOwner(paths Paths) (SSHAgentOwner, error) {
 	}
 
 	raw := parseIdentityAgent(out)
+	if raw == "" {
+		raw = strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK"))
+	}
 	if raw == "" || strings.EqualFold(raw, "none") {
 		return SSHAgentOwner{Name: "None"}, nil
 	}

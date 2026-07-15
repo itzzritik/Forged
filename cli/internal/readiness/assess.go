@@ -29,6 +29,7 @@ type Engine struct {
 	isRunning        func(config.Paths) (int, bool)
 	socketReady      func(string) bool
 	isSSHEnabled     func(config.Paths) bool
+	isManagedSSH     func(config.Paths) bool
 	detectOwner      func(config.Paths) (config.SSHAgentOwner, error)
 	loadCredentials  func(config.Paths) (bool, error)
 	loadDaemonStatus func(string) (DaemonRuntimeStatus, error)
@@ -48,6 +49,7 @@ func New(paths config.Paths) *Engine {
 		isRunning:        daemon.IsRunning,
 		socketReady:      defaultSocketReady,
 		isSSHEnabled:     config.IsSSHAgentEnabled,
+		isManagedSSH:     config.IsManagedSSHIntegrationEnabled,
 		detectOwner:      config.DetectSSHAgentOwner,
 		loadCredentials:  defaultCredentialsValid,
 		loadDaemonStatus: defaultDaemonRuntimeStatus,
@@ -88,6 +90,7 @@ func (e *Engine) Assess() (Snapshot, error) {
 	}
 
 	snapshot.SSHEnabled = e.isSSH(e.Paths)
+	snapshot.ManagedSSHIntegration = e.isManagedSSHIntegrationEnabled(e.Paths)
 
 	service, err := e.serviceStatus(e.Paths)
 	if err != nil {
@@ -210,6 +213,13 @@ func (e *Engine) isSSH(paths config.Paths) bool {
 		return e.isSSHEnabled(paths)
 	}
 	return config.IsSSHAgentEnabled(paths)
+}
+
+func (e *Engine) isManagedSSHIntegrationEnabled(paths config.Paths) bool {
+	if e != nil && e.isManagedSSH != nil {
+		return e.isManagedSSH(paths)
+	}
+	return config.IsManagedSSHIntegrationEnabled(paths)
 }
 
 func (e *Engine) owner(paths config.Paths) (config.SSHAgentOwner, error) {

@@ -46,24 +46,29 @@ const (
 type PasswordPrompt func(reason string) ([]byte, error)
 
 type Snapshot struct {
-	State              State
-	RuntimePathError   string
-	KeyCount           int
-	CurrentBuildID     string
-	DaemonBuildID      string
-	LoggedIn           bool
-	VaultExists        bool
-	ConfigExists       bool
-	ConfigValid        bool
-	ConfigError        string
-	Service            daemon.ServiceStatus
-	DaemonPID          int
-	IPCSocketReady     bool
-	AgentSocketReady   bool
-	AgentDisabled      bool
-	SSHEnabled         bool
-	ManagedConfigReady bool
-	IdentityAgentOwner config.SSHAgentOwner
+	State                 State
+	RuntimePathError      string
+	KeyCount              int
+	CurrentBuildID        string
+	DaemonBuildID         string
+	LoggedIn              bool
+	VaultExists           bool
+	ConfigExists          bool
+	ConfigValid           bool
+	ConfigError           string
+	Service               daemon.ServiceStatus
+	DaemonPID             int
+	IPCSocketReady        bool
+	AgentSocketReady      bool
+	AgentDisabled         bool
+	SSHEnabled            bool
+	ManagedSSHIntegration bool
+	ManagedConfigReady    bool
+	IdentityAgentOwner    config.SSHAgentOwner
+}
+
+func (s Snapshot) RequiresManualSSHConfigurationChange() bool {
+	return s.AgentDisabled && !s.ManagedSSHIntegration && s.IdentityAgentOwner.IsForged()
 }
 
 type RepairSummary struct {

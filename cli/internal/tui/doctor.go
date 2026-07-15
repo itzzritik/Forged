@@ -597,6 +597,16 @@ func (m *model) doctorAgentSocketRow(paths config.Paths) doctorRow {
 }
 
 func (m *model) doctorSSHAgentRow() doctorRow {
+	if m.snapshot.RequiresManualSSHConfigurationChange() {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "SSH Agent",
+				Status: "! Active externally",
+				Detail: "Forged remains active through external SSH configuration; update it manually, then refresh",
+				Tone:   doctorscreen.ToneWarning,
+			},
+		}
+	}
 	if m.snapshot.AgentDisabled {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -635,6 +645,16 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 }
 
 func (m *model) doctorSSHConfigRow(paths config.Paths) doctorRow {
+	if m.snapshot.RequiresManualSSHConfigurationChange() {
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "SSH Config",
+				Status: "! Disabled",
+				Detail: "Forged-managed SSH integration is disabled",
+				Tone:   doctorscreen.ToneWarning,
+			},
+		}
+	}
 	if m.snapshot.AgentDisabled {
 		return doctorRow{
 			screen: doctorscreen.Row{
@@ -669,6 +689,20 @@ func (m *model) doctorSSHConfigRow(paths config.Paths) doctorRow {
 }
 
 func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
+	if m.snapshot.RequiresManualSSHConfigurationChange() {
+		detail := paths.AgentSocket()
+		if ownerPath := strings.TrimSpace(m.snapshot.IdentityAgentOwner.Path); ownerPath != "" {
+			detail = ownerPath
+		}
+		return doctorRow{
+			screen: doctorscreen.Row{
+				Check:  "IdentityAgent",
+				Status: "! Forged (external)",
+				Detail: detail + "; update external SSH configuration manually",
+				Tone:   doctorscreen.ToneWarning,
+			},
+		}
+	}
 	if m.snapshot.AgentDisabled {
 		return doctorRow{
 			screen: doctorscreen.Row{
