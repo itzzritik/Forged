@@ -25,6 +25,7 @@ var sshRoutePrepareCmd = &cobra.Command{
 	Hidden:        true,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	Args:          cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !platform.SSHRoutingSupported() {
 			return fmt.Errorf("SSH routing is unavailable on this platform")
@@ -59,6 +60,7 @@ var sshRouteSuccessCmd = &cobra.Command{
 	Hidden:        true,
 	SilenceUsage:  true,
 	SilenceErrors: true,
+	Args:          cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		if !platform.SSHRoutingSupported() {
 			return fmt.Errorf("SSH routing is unavailable on this platform")

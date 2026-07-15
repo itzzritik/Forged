@@ -16,6 +16,7 @@ var doctorCmd = &cobra.Command{
 	Short: "Diagnose and repair this device",
 	Long: "Open Forged on the Doctor tab. With --fix, run a headless repair pass first " +
 		"so a broken install can be recovered before the TUI tries to start.",
+	Args: cobra.NoArgs,
 	RunE: runDoctorCommand,
 }
 

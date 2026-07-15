@@ -16,6 +16,7 @@ const maxStartupPasswordBytes = 64 * 1024
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
 	Short: "Start daemon in foreground",
+	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
 

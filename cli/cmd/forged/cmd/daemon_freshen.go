@@ -13,6 +13,7 @@ var daemonFreshenQuiet bool
 var daemonFreshenCmd = &cobra.Command{
 	Use:   "__daemon-freshen",
 	Short: "Refresh an installed daemon when it is running an older build",
+	Args:  cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
 		paths := config.DefaultPaths()
 		runtime, err := daemon.DefaultRuntimeSpec()

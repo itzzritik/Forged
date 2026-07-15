@@ -59,6 +59,7 @@ func newRootCmd() *cobra.Command {
 		Long:          "Forged is a cross-platform SSH key manager with zero-knowledge encrypted sync and Git commit signing.",
 		SilenceUsage:  true,
 		SilenceErrors: true,
+		Args:          cobra.NoArgs,
 		RunE:          runRootCommand,
 	}
 
