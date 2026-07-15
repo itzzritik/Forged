@@ -229,8 +229,8 @@ func (d *Daemon) cleanStaleState() error {
 		if data, err := os.ReadFile(pidPath); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
 				if platform.ProcessAlive(pid) {
-					if command, inspectErr := processCommandLine(pid); inspectErr == nil {
-						if isForgedDaemonCommand(command) {
+					if forgedDaemon, command, inspectErr := isForgedDaemonProcess(pid); inspectErr == nil {
+						if forgedDaemon {
 							return fmt.Errorf("Daemon already running (PID %d)", pid)
 						}
 						if d.logger != nil {
@@ -2028,34 +2028,45 @@ func IsRunning(paths config.Paths) (int, bool) {
 	if !platform.ProcessAlive(pid) {
 		return 0, false
 	}
-	if command, err := processCommandLine(pid); err == nil && !isForgedDaemonCommand(command) {
+	if forgedDaemon, _, err := isForgedDaemonProcess(pid); err == nil && !forgedDaemon {
 		return 0, false
 	}
 	return pid, true
 }
 
-func processCommandLine(pid int) (string, error) {
-	if runtime.GOOS == "windows" {
-		return "", fmt.Errorf("Process inspection unavailable")
-	}
-	output, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "command=").Output()
+func isForgedDaemonProcess(pid int) (bool, string, error) {
+	executable, command, err := processCommand(pid)
 	if err != nil {
-		return "", err
+		return false, "", err
 	}
-	return strings.TrimSpace(string(output)), nil
+	return isForgedDaemonCommand(command, executable), command, nil
 }
 
-func isForgedDaemonCommand(command string) bool {
-	fields := strings.Fields(command)
-	if len(fields) == 0 {
-		return false
+func processCommand(pid int) (string, string, error) {
+	if runtime.GOOS == "windows" {
+		return "", "", fmt.Errorf("Process inspection unavailable")
 	}
-	executable := filepath.Base(fields[0])
+	output, err := exec.Command("ps", "-p", strconv.Itoa(pid), "-o", "ucomm=", "-o", "command=").Output()
+	if err != nil {
+		return "", "", err
+	}
+	value := strings.TrimSpace(string(output))
+	separator := strings.IndexAny(value, " \t")
+	if separator <= 0 {
+		return "", "", fmt.Errorf("Process command unavailable")
+	}
+	return value[:separator], strings.TrimSpace(value[separator:]), nil
+}
+
+func isForgedDaemonCommand(command, executable string) bool {
+	executable = filepath.Base(strings.TrimSpace(executable))
 	if !strings.HasPrefix(executable, "forged") {
 		return false
 	}
-	for _, field := range fields[1:] {
-		if field == "daemon" {
+	// ps does not quote command paths, so the separately verified executable
+	// name above must not be inferred from this raw argument display.
+	for _, arg := range strings.Fields(command) {
+		if arg == "daemon" {
 			return true
 		}
 	}
