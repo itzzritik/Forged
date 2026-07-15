@@ -17,6 +17,7 @@ import (
 
 const (
 	logTailLineCount  = 10
+	logTailByteLimit  = 64 * 1024
 	logFollowInterval = 250 * time.Millisecond
 )
 
@@ -61,7 +62,7 @@ func followLog(ctx context.Context, dst io.Writer, path string) error {
 	}
 	defer func() { _ = file.Close() }()
 
-	contents, err := io.ReadAll(file)
+	contents, err := readLogTail(file)
 	if err != nil {
 		return fmt.Errorf("reading log: %w", err)
 	}
@@ -131,6 +132,45 @@ func followLog(ctx context.Context, dst io.Writer, path string) error {
 			return fmt.Errorf("following rotated log: %w", err)
 		}
 	}
+}
+
+func readLogTail(file *os.File) ([]byte, error) {
+	end, err := file.Seek(0, io.SeekEnd)
+	if err != nil {
+		return nil, err
+	}
+	size := end
+	if size > logTailByteLimit {
+		size = logTailByteLimit
+	}
+	if size == 0 {
+		return nil, nil
+	}
+	start := end - size
+	partialLine := false
+	if start > 0 {
+		var previous [1]byte
+		if _, err := file.ReadAt(previous[:], start-1); err == nil {
+			partialLine = previous[0] != '\n'
+		} else if !errors.Is(err, io.EOF) {
+			return nil, err
+		}
+	}
+	if _, err := file.Seek(start, io.SeekStart); err != nil {
+		return nil, err
+	}
+	contents, err := io.ReadAll(io.LimitReader(file, size))
+	if err != nil {
+		return nil, err
+	}
+	if partialLine {
+		index := bytes.IndexByte(contents, '\n')
+		if index < 0 {
+			return nil, nil
+		}
+		contents = contents[index+1:]
+	}
+	return contents, nil
 }
 
 func lastLogLines(contents []byte, count int) []byte {
