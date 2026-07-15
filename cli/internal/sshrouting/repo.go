@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net"
 	"net/url"
 	"os"
 	"os/exec"
@@ -103,7 +104,7 @@ func normalizeGitRemote(raw string) (Target, error) {
 		repo := strings.Join(parts[1:], "/")
 		return Target{
 			Kind:      TargetGit,
-			Canonical: fmt.Sprintf("git+ssh://%s@%s:%d/%s/%s", user, host, port, parts[0], repo),
+			Canonical: canonicalGitTarget(user, host, port, parts[0], repo),
 			Host:      host,
 			User:      user,
 			Port:      port,
@@ -112,15 +113,13 @@ func normalizeGitRemote(raw string) (Target, error) {
 		}, nil
 	}
 
-	at := strings.Index(trimmed, "@")
-	colon := strings.Index(trimmed, ":")
-	if at < 0 || colon < 0 || colon < at {
+	user, host, path, err := splitSCPGitRemote(trimmed)
+	if err != nil {
 		return Target{}, fmt.Errorf("Unsupported git remote %q", raw)
 	}
-
-	user := strings.ToLower(trimmed[:at])
-	host := strings.ToLower(trimmed[at+1 : colon])
-	path := normalizeRepoPath(trimmed[colon+1:])
+	user = strings.ToLower(user)
+	host = strings.ToLower(host)
+	path = normalizeRepoPath(path)
 	parts := strings.Split(path, "/")
 	if len(parts) < 2 {
 		return Target{}, fmt.Errorf("Git remote is missing owner/repo %q", raw)
@@ -129,7 +128,7 @@ func normalizeGitRemote(raw string) (Target, error) {
 
 	return Target{
 		Kind:      TargetGit,
-		Canonical: fmt.Sprintf("git+ssh://%s@%s:22/%s/%s", user, host, parts[0], repo),
+		Canonical: canonicalGitTarget(user, host, 22, parts[0], repo),
 		Host:      host,
 		User:      user,
 		Port:      22,
@@ -155,11 +154,14 @@ func targetFromRepoPath(input PrepareInput, path string) (Target, error) {
 		return Target{}, fmt.Errorf("Git command is missing owner/repo: %q", path)
 	}
 	repo := strings.Join(parts[1:], "/")
+	if strings.HasPrefix(host, "[") && strings.HasSuffix(host, "]") {
+		host = host[1 : len(host)-1]
+	}
 	host = strings.ToLower(host)
 	user = strings.ToLower(user)
 	return Target{
 		Kind:         TargetGit,
-		Canonical:    fmt.Sprintf("git+ssh://%s@%s:%d/%s/%s", user, host, port, parts[0], repo),
+		Canonical:    canonicalGitTarget(user, host, port, parts[0], repo),
 		Host:         host,
 		OriginalHost: strings.ToLower(strings.TrimSpace(input.OriginalHost)),
 		User:         user,
@@ -167,6 +169,31 @@ func targetFromRepoPath(input PrepareInput, path string) (Target, error) {
 		Owner:        parts[0],
 		Repo:         repo,
 	}, nil
+}
+
+func splitSCPGitRemote(raw string) (user, host, path string, err error) {
+	at := strings.Index(raw, "@")
+	if at < 0 {
+		return "", "", "", fmt.Errorf("missing user")
+	}
+	user = raw[:at]
+	endpoint := raw[at+1:]
+	if strings.HasPrefix(endpoint, "[") {
+		closing := strings.Index(endpoint, "]")
+		if closing <= 1 || closing+1 >= len(endpoint) || endpoint[closing+1] != ':' {
+			return "", "", "", fmt.Errorf("invalid bracketed host")
+		}
+		return user, endpoint[1:closing], endpoint[closing+2:], nil
+	}
+	colon := strings.IndexByte(endpoint, ':')
+	if colon < 0 {
+		return "", "", "", fmt.Errorf("missing path separator")
+	}
+	return user, endpoint[:colon], endpoint[colon+1:], nil
+}
+
+func canonicalGitTarget(user, host string, port int, owner, repo string) string {
+	return fmt.Sprintf("git+ssh://%s@%s/%s/%s", user, net.JoinHostPort(host, fmt.Sprintf("%d", port)), owner, repo)
 }
 
 func normalizeRepoPath(path string) string {
