@@ -334,11 +334,11 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	}
 }
 
-func (s *Server) handleSSHRoutePrepare(ctx context.Context, raw json.RawMessage) Response {
+func (s *Server) handleSSHRoutePrepare(deliveryCtx context.Context, raw json.RawMessage) Response {
 	if s.sshRoutes == nil {
 		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
 	}
-	ctx, cancel := context.WithTimeout(ctx, SSHRoutePrepareWorkTimeout)
+	workCtx, cancel := context.WithTimeout(deliveryCtx, SSHRoutePrepareWorkTimeout)
 	defer cancel()
 
 	var args SSHRoutePrepareArgs
@@ -355,15 +355,21 @@ func (s *Server) handleSSHRoutePrepare(ctx context.Context, raw json.RawMessage)
 		User:         args.User,
 		Port:         args.Port,
 	}
-	if err := s.sshRoutes.PrepareContext(ctx, req); err != nil {
+	if err := s.sshRoutes.PrepareContext(workCtx, req); err != nil {
 		if errors.Is(err, sshrouting.ErrRouteMemoryLocked) {
-			if authErr := s.ensureExternalSession(ctx); authErr != nil {
+			finalize, authErr := s.ensureExternalSession(deliveryCtx)
+			if authErr != nil {
 				return ErrorResponse(authErr)
 			}
-			err = s.sshRoutes.PrepareContext(ctx, req)
-		}
-		if err == nil {
-			return OkResponse(nil)
+			err = s.sshRoutes.PrepareContext(workCtx, req)
+			if err == nil {
+				resp := OkResponse(nil)
+				resp.finalize = finalize
+				return resp
+			}
+			if finalize != nil {
+				_ = finalize(false)
+			}
 		}
 		return ErrorResponse(err)
 	}
@@ -371,21 +377,24 @@ func (s *Server) handleSSHRoutePrepare(ctx context.Context, raw json.RawMessage)
 	return OkResponse(nil)
 }
 
-func (s *Server) ensureExternalSession(ctx context.Context) error {
+func (s *Server) ensureExternalSession(ctx context.Context) (func(bool) error, error) {
 	s.stateMu.RLock()
 	locked := s.keyStore == nil
 	s.stateMu.RUnlock()
 	if !locked || s.authBroker == nil {
-		return nil
+		return nil, nil
 	}
-	result, err := s.authBroker.Authorize(ctx, sensitiveauth.ActionExternal)
+	result, finalize, err := s.authBroker.BeginAuthorize(ctx, sensitiveauth.ActionExternal, false)
 	if err != nil {
-		return err
+		return nil, err
 	}
 	if result.PasswordRequired {
-		return fmt.Errorf("System Auth is required for external use")
+		if finalize != nil {
+			_ = finalize(false)
+		}
+		return nil, fmt.Errorf("System Auth is required for external use")
 	}
-	return nil
+	return finalize, nil
 }
 
 func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
@@ -862,16 +871,13 @@ func (s *Server) handleSensitiveAuth(ctx context.Context, raw json.RawMessage) R
 		return ErrorResponse(err)
 	}
 
-	var result sensitiveauth.AuthorizeResult
-	if a.Force {
-		result, err = s.authBroker.AuthorizeForced(ctx, action)
-	} else {
-		result, err = s.authBroker.Authorize(ctx, action)
-	}
+	result, finalize, err := s.authBroker.BeginAuthorize(ctx, action, a.Force)
 	if err != nil {
 		return ErrorResponse(err)
 	}
-	return OkResponse(result)
+	resp := OkResponse(result)
+	resp.finalize = finalize
+	return resp
 }
 
 func (s *Server) handleSensitivePassword(ctx context.Context, raw json.RawMessage) Response {

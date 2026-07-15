@@ -26,23 +26,23 @@ type Broker struct {
 	authGeneration uint64
 	// sessionEpoch is guarded by sessionMu and identifies the latest grant or
 	// clear, so a canceled request cannot clear a later session.
-	sessionEpoch     uint64
-	pendingPassword  *passwordAuthorization
-	nativeMu         sync.RWMutex
-	native           CapabilityState
-	helperTerminated bool
-	systemMu         sync.Mutex
-	systemRun        *systemAuthCall
-	cooldown         systemAuthCooldown
-	pwMu             sync.Mutex
-	pwRun            *passwordUnlockCall
-	pwCooldown       time.Time
-	lifecycleMu      sync.Mutex
-	stopping         bool
-	stopOnce         sync.Once
-	background       sync.WaitGroup
-	stopCtx          context.Context
-	stopCancel       context.CancelFunc
+	sessionEpoch         uint64
+	pendingAuthorization *deliveryAuthorization
+	nativeMu             sync.RWMutex
+	native               CapabilityState
+	helperTerminated     bool
+	systemMu             sync.Mutex
+	systemRun            *systemAuthCall
+	cooldown             systemAuthCooldown
+	pwMu                 sync.Mutex
+	pwRun                *passwordUnlockCall
+	pwCooldown           time.Time
+	lifecycleMu          sync.Mutex
+	stopping             bool
+	stopOnce             sync.Once
+	background           sync.WaitGroup
+	stopCtx              context.Context
+	stopCancel           context.CancelFunc
 }
 
 type systemAuthCall struct {
@@ -59,7 +59,7 @@ type passwordUnlockCall struct {
 	cancel context.CancelFunc
 }
 
-type passwordAuthorization struct {
+type deliveryAuthorization struct {
 	broker     *Broker
 	ctx        context.Context
 	generation uint64
@@ -70,12 +70,12 @@ type passwordAuthorization struct {
 	err        error
 }
 
-func (a *passwordAuthorization) Finalize(delivered bool) error {
+func (a *deliveryAuthorization) Finalize(delivered bool) error {
 	a.once.Do(func() {
 		a.broker.sessionMu.Lock()
 		defer a.broker.sessionMu.Unlock()
-		if a.broker.pendingPassword == a {
-			a.broker.pendingPassword = nil
+		if a.broker.pendingAuthorization == a {
+			a.broker.pendingAuthorization = nil
 		}
 
 		if delivered && a.ctx.Err() == nil && a.broker.authGeneration == a.generation {
@@ -189,32 +189,55 @@ func (b *Broker) helperExited() {
 }
 
 func (b *Broker) Authorize(ctx context.Context, action Action) (AuthorizeResult, error) {
-	return b.authorize(ctx, action, false)
+	result, finalize, err := b.beginAuthorize(ctx, action, false, false)
+	if err != nil {
+		return AuthorizeResult{}, err
+	}
+	if finalize != nil {
+		if err := finalize(true); err != nil {
+			return AuthorizeResult{}, err
+		}
+	}
+	return result, nil
 }
 
 func (b *Broker) AuthorizeForced(ctx context.Context, action Action) (AuthorizeResult, error) {
-	return b.authorize(ctx, action, true)
+	result, finalize, err := b.beginAuthorize(ctx, action, true, false)
+	if err != nil {
+		return AuthorizeResult{}, err
+	}
+	if finalize != nil {
+		if err := finalize(true); err != nil {
+			return AuthorizeResult{}, err
+		}
+	}
+	return result, nil
 }
 
-func (b *Broker) authorize(ctx context.Context, action Action, force bool) (AuthorizeResult, error) {
+func (b *Broker) BeginAuthorize(ctx context.Context, action Action, force bool) (AuthorizeResult, func(bool) error, error) {
+	return b.beginAuthorize(ctx, action, force, true)
+}
+
+func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watchDelivery bool) (AuthorizeResult, func(bool) error, error) {
 	if action == ActionExport || action == ActionPrivateKey {
 		return AuthorizeResult{
 			PasswordRequired: true,
 			Prompt:           action.PasswordPrompt(),
-		}, nil
+		}, nil, nil
 	}
 
 	generation := b.authorizationGeneration()
 	now := time.Now()
 	result, activeSession, err := b.allowActiveSession(action, now, generation)
 	if errors.Is(err, ErrAuthenticationCanceled) {
-		return b.authorizationInterrupted(action)
+		result, err := b.authorizationInterrupted(action)
+		return result, nil, err
 	}
 	if !force && activeSession {
-		return result, nil
+		return result, nil, nil
 	}
 	if headlessModePreemptsSystemAuth(b.paths) {
-		return b.authorizeWithoutSystemAuth(action, CapabilityUnavailableByPlatform, generation)
+		return b.authorizeWithoutSystemAuth(ctx, action, CapabilityUnavailableByPlatform, generation, watchDelivery)
 	}
 
 	if b.helper != nil {
@@ -228,52 +251,61 @@ func (b *Broker) authorize(ctx context.Context, action Action, force bool) (Auth
 		if action == ActionExternal && !LocalEnrollmentUsable(b.paths) {
 			if runtime.GOOS == "darwin" {
 				b.promptPasswordUnlock(generation)
-				return AuthorizeResult{}, externalUseLockedError()
+				return AuthorizeResult{}, nil, externalUseLockedError()
 			}
-			return AuthorizeResult{}, externalUseNoDeviceUnlockError()
+			return AuthorizeResult{}, nil, externalUseNoDeviceUnlockError()
 		}
 		capability, err := b.authorizeSystem(ctx, action, generation)
 		if !b.authorizationCurrent(generation) {
-			return b.authorizationInterrupted(action)
+			result, err := b.authorizationInterrupted(action)
+			return result, nil, err
 		}
 		switch {
 		case err == nil:
 			b.setNativeCapability(capability)
-			result, err := b.grantWithEnrollment(action, time.Now(), generation)
+			auth, err := b.beginGrantWithEnrollment(ctx, action, time.Now(), generation, watchDelivery)
+			if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return AuthorizeResult{}, nil, err
+			}
 			if errors.Is(err, ErrAuthenticationCanceled) {
-				return b.authorizationInterrupted(action)
+				result, err := b.authorizationInterrupted(action)
+				return result, nil, err
+			}
+			if errors.Is(err, ErrAuthorizationInProgress) {
+				return AuthorizeResult{}, nil, err
 			}
 			if err != nil {
-				return b.handleMissingDeviceUnlock(action, "System Auth succeeded, but this device needs your master password to finish unlocking Forged.", err)
+				result, err := b.handleMissingDeviceUnlock(action, "System Auth succeeded, but this device needs your master password to finish unlocking Forged.", err)
+				return result, nil, err
 			}
-			return result, nil
+			return auth.result, auth.Finalize, nil
 		case errors.Is(err, context.Canceled), errors.Is(err, context.DeadlineExceeded):
-			return AuthorizeResult{}, err
+			return AuthorizeResult{}, nil, err
 		case errors.Is(err, ErrNativeUnavailable):
 			b.setNativeCapability(capability)
-			return b.authorizeWithoutSystemAuth(action, capability, generation)
+			return b.authorizeWithoutSystemAuth(ctx, action, capability, generation, watchDelivery)
 		case errors.Is(err, ErrNativeBroken):
 			b.setNativeCapability(CapabilityBroken)
 			if action == ActionExternal {
-				return AuthorizeResult{}, externalUseBrokenError()
+				return AuthorizeResult{}, nil, externalUseBrokenError()
 			}
-			return passwordRequired("System Auth is not working. Enter your master password to unlock Forged."), nil
+			return passwordRequired("System Auth is not working. Enter your master password to unlock Forged."), nil, nil
 		case errors.Is(err, ErrAuthenticationCanceled):
 			if action == ActionExternal {
 				b.recordExternalCooldown(err)
-				return AuthorizeResult{}, externalUseCanceledError()
+				return AuthorizeResult{}, nil, externalUseCanceledError()
 			}
-			return passwordRequired("System Auth was canceled. Try System Auth again, or enter your master password."), nil
+			return passwordRequired("System Auth was canceled. Try System Auth again, or enter your master password."), nil, nil
 		default:
 			if action == ActionExternal {
 				b.recordExternalCooldown(err)
-				return AuthorizeResult{}, externalUseFailedError()
+				return AuthorizeResult{}, nil, externalUseFailedError()
 			}
-			return passwordRequired("System Auth failed. Enter your master password to continue."), nil
+			return passwordRequired("System Auth failed. Enter your master password to continue."), nil, nil
 		}
 	}
 
-	return b.authorizeWithoutSystemAuth(action, b.nativeCapability(), generation)
+	return b.authorizeWithoutSystemAuth(ctx, action, b.nativeCapability(), generation, watchDelivery)
 }
 
 func (b *Broker) AuthorizeWithPassword(ctx context.Context, action Action, password []byte) (AuthorizeResult, error) {
@@ -299,7 +331,7 @@ func (b *Broker) BeginAuthorizeWithPassword(ctx context.Context, action Action, 
 	return auth.result, auth.Finalize, nil
 }
 
-func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, password []byte, generation uint64, watchDelivery bool) (*passwordAuthorization, error) {
+func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, password []byte, generation uint64, watchDelivery bool) (*deliveryAuthorization, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -321,8 +353,8 @@ func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, 
 	if b.authGeneration != generation {
 		return nil, ErrAuthenticationCanceled
 	}
-	if b.pendingPassword != nil {
-		return nil, fmt.Errorf("Password authorization already in progress")
+	if b.pendingAuthorization != nil {
+		return nil, ErrAuthorizationInProgress
 	}
 	hydrated := false
 	if b.session != nil && !b.session.HasActiveSession() {
@@ -348,7 +380,11 @@ func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, 
 	if action == ActionPrivateKey {
 		result.PrivateKeyToken = b.leases.IssuePrivateKeyToken(now)
 	}
-	auth := &passwordAuthorization{
+	return b.newDeliveryAuthorizationLocked(ctx, generation, hydrated, result, watchDelivery), nil
+}
+
+func (b *Broker) newDeliveryAuthorizationLocked(ctx context.Context, generation uint64, hydrated bool, result AuthorizeResult, watchDelivery bool) *deliveryAuthorization {
+	auth := &deliveryAuthorization{
 		broker:     b,
 		ctx:        ctx,
 		generation: generation,
@@ -356,11 +392,11 @@ func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, 
 		hydrated:   hydrated,
 		result:     result,
 	}
-	b.pendingPassword = auth
+	b.pendingAuthorization = auth
 	if watchDelivery {
 		context.AfterFunc(ctx, func() { _ = auth.Finalize(false) })
 	}
-	return auth, nil
+	return auth
 }
 
 func (b *Broker) IsUnlocked() bool {
@@ -455,7 +491,7 @@ func (b *Broker) allowActiveSession(action Action, now time.Time, generation uin
 
 func (b *Broker) clearSharedSessionLocked(reason string) {
 	b.sessionEpoch++
-	b.pendingPassword = nil
+	b.pendingAuthorization = nil
 	b.leases.Clear()
 	if b.session != nil {
 		b.session.ClearActiveSession(reason)
@@ -669,25 +705,33 @@ func (b *Broker) cancelSystemAuthWaiter(call *systemAuthCall) (systemAuthResult,
 	return systemAuthResult{}, false
 }
 
-func (b *Broker) authorizeWithoutSystemAuth(action Action, capability CapabilityState, generation uint64) (AuthorizeResult, error) {
+func (b *Broker) authorizeWithoutSystemAuth(ctx context.Context, action Action, capability CapabilityState, generation uint64, watchDelivery bool) (AuthorizeResult, func(bool) error, error) {
 	if !isHeadlessAuthMode(b.paths, capability) {
 		if action == ActionExternal {
-			return AuthorizeResult{}, externalUseBrokenError()
+			return AuthorizeResult{}, nil, externalUseBrokenError()
 		}
-		return passwordRequired(action.PasswordPrompt()), nil
+		return passwordRequired(action.PasswordPrompt()), nil, nil
 	}
 
-	result, err := b.grantWithEnrollment(action, time.Now(), generation)
+	auth, err := b.beginGrantWithEnrollment(ctx, action, time.Now(), generation, watchDelivery)
+	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+		return AuthorizeResult{}, nil, err
+	}
 	if errors.Is(err, ErrAuthenticationCanceled) {
-		return b.authorizationInterrupted(action)
+		result, err := b.authorizationInterrupted(action)
+		return result, nil, err
+	}
+	if errors.Is(err, ErrAuthorizationInProgress) {
+		return AuthorizeResult{}, nil, err
 	}
 	if err != nil {
-		return b.handleMissingDeviceUnlock(action, "Enter your master password to unlock this device.", err)
+		result, err := b.handleMissingDeviceUnlock(action, "Enter your master password to unlock this device.", err)
+		return result, nil, err
 	}
 	if b.logger != nil {
 		b.logger.Info("allowing use without System Auth", "action", action, "capability", capability)
 	}
-	return result, nil
+	return auth.result, auth.Finalize, nil
 }
 
 func isHeadlessAuthMode(paths config.Paths, capability CapabilityState) bool {
@@ -697,27 +741,37 @@ func isHeadlessAuthMode(paths config.Paths, capability CapabilityState) bool {
 	return HeadlessModeEnabled(paths)
 }
 
-func (b *Broker) grantWithEnrollment(action Action, now time.Time, generation uint64) (AuthorizeResult, error) {
+func (b *Broker) beginGrantWithEnrollment(ctx context.Context, action Action, now time.Time, generation uint64, watchDelivery bool) (*deliveryAuthorization, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	b.sessionMu.Lock()
 	defer b.sessionMu.Unlock()
 
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if b.authGeneration != generation {
-		return AuthorizeResult{}, ErrAuthenticationCanceled
+		return nil, ErrAuthenticationCanceled
+	}
+	if b.pendingAuthorization != nil {
+		return nil, ErrAuthorizationInProgress
 	}
 	if b.session == nil || b.session.HasActiveSession() {
-		if b.authGeneration != generation {
-			return AuthorizeResult{}, ErrAuthenticationCanceled
-		}
-		return b.grantLocked(action, now), nil
+		return b.newDeliveryAuthorizationLocked(ctx, generation, false, b.grantLocked(action, now), watchDelivery), nil
 	}
 	if err := b.session.HydrateFromEnrollment(); err != nil {
-		return AuthorizeResult{}, err
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
+		b.clearSharedSessionLocked("authorization_canceled")
+		return nil, err
 	}
 	if b.authGeneration != generation {
 		b.clearSharedSessionLocked("authorization_invalidated")
-		return AuthorizeResult{}, ErrAuthenticationCanceled
+		return nil, ErrAuthenticationCanceled
 	}
-	return b.grantLocked(action, now), nil
+	return b.newDeliveryAuthorizationLocked(ctx, generation, true, b.grantLocked(action, now), watchDelivery), nil
 }
 
 func (b *Broker) authorizationInterrupted(action Action) (AuthorizeResult, error) {
