@@ -17,7 +17,7 @@ import (
 type HelperClient struct {
 	logger           *slog.Logger
 	path             string
-	cmd              *exec.Cmd
+	run              *helperRun
 	stdin            *bufio.Writer
 	stdinPipe        io.WriteCloser
 	responses        map[string]chan HelperResponse
@@ -27,6 +27,20 @@ type HelperClient struct {
 	terminalNotified bool
 	mu               sync.Mutex
 	nextID           atomic.Uint64
+}
+
+type helperRun struct {
+	cmd      *exec.Cmd
+	done     chan struct{}
+	waitOnce sync.Once
+	waitErr  error
+}
+
+func (r *helperRun) reap() {
+	r.waitOnce.Do(func() {
+		r.waitErr = r.cmd.Wait()
+		close(r.done)
+	})
 }
 
 func NewHelperClient(path string, logger *slog.Logger) *HelperClient {
@@ -52,9 +66,10 @@ func (c *HelperClient) Start(ctx context.Context, onLock, onExit func()) error {
 	if err := cmd.Start(); err != nil {
 		return err
 	}
+	run := &helperRun{cmd: cmd, done: make(chan struct{})}
 
 	c.mu.Lock()
-	c.cmd = cmd
+	c.run = run
 	c.stdin = bufio.NewWriter(stdin)
 	c.stdinPipe = stdin
 	c.onLock = onLock
@@ -63,7 +78,7 @@ func (c *HelperClient) Start(ctx context.Context, onLock, onExit func()) error {
 	c.terminalNotified = false
 	c.mu.Unlock()
 
-	go c.readLoop(bufio.NewScanner(stdout))
+	go c.readLoop(bufio.NewScanner(stdout), run)
 
 	subscribeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
@@ -79,12 +94,11 @@ func (c *HelperClient) Start(ctx context.Context, onLock, onExit func()) error {
 func (c *HelperClient) Close() error {
 	c.mu.Lock()
 	c.intentionalClose = true
-	cmd := c.cmd
+	run := c.run
 	stdin := c.stdinPipe
 	for id := range c.responses {
 		_ = c.writeRequestLocked(NewCancelRequest(id))
 	}
-	c.cmd = nil
 	c.stdin = nil
 	c.stdinPipe = nil
 	for id, ch := range c.responses {
@@ -96,22 +110,18 @@ func (c *HelperClient) Close() error {
 		_ = stdin.Close()
 	}
 
-	if cmd == nil || cmd.Process == nil {
+	if run == nil || run.cmd.Process == nil {
 		return nil
 	}
-	done := make(chan error, 1)
-	go func() {
-		done <- cmd.Wait()
-	}()
 	timer := time.NewTimer(time.Second)
 	defer timer.Stop()
 	select {
-	case err := <-done:
-		return err
+	case <-run.done:
+		return run.waitErr
 	case <-timer.C:
 	}
-	_ = cmd.Process.Kill()
-	<-done
+	_ = run.cmd.Process.Kill()
+	<-run.done
 	return nil
 }
 
@@ -228,7 +238,7 @@ func (c *HelperClient) writeRequestLocked(req HelperRequest) error {
 	return c.stdin.Flush()
 }
 
-func (c *HelperClient) readLoop(scanner *bufio.Scanner) {
+func (c *HelperClient) readLoop(scanner *bufio.Scanner, run *helperRun) {
 	for scanner.Scan() {
 		var resp HelperResponse
 		if err := json.Unmarshal(scanner.Bytes(), &resp); err != nil {
@@ -252,17 +262,33 @@ func (c *HelperClient) readLoop(scanner *bufio.Scanner) {
 	}
 
 	c.mu.Lock()
+	if c.run != run {
+		c.mu.Unlock()
+		run.reap()
+		return
+	}
 	for id, ch := range c.responses {
 		delete(c.responses, id)
 		close(ch)
 	}
+	c.stdin = nil
+	c.stdinPipe = nil
 	onExit := c.onExit
 	unexpectedExit := !c.intentionalClose && !c.terminalNotified
 	c.terminalNotified = true
 	c.mu.Unlock()
+	if unexpectedExit {
+		_ = run.cmd.Process.Kill()
+	}
+	run.reap()
 	if unexpectedExit && onExit != nil {
 		onExit()
 	}
+	c.mu.Lock()
+	if c.run == run {
+		c.run = nil
+	}
+	c.mu.Unlock()
 }
 
 func (c *HelperClient) id() string {
