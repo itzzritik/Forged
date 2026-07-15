@@ -2,8 +2,10 @@ package main
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"os"
+	"os/exec"
 	"strings"
 	"time"
 
@@ -23,14 +25,17 @@ func main() {
 		fmt.Fprintln(os.Stderr, "forged-sign: No arguments provided")
 		os.Exit(1)
 	}
+	if !isSignOperation(args) {
+		delegateSSHKeygen(args)
+		return
+	}
 
-	var operation, namespace, keyFile, bufferFile string
+	var namespace, keyFile, bufferFile string
 
 	for i := 0; i < len(args); i++ {
 		switch args[i] {
 		case "-Y":
 			if i+1 < len(args) {
-				operation = args[i+1]
 				i++
 			}
 		case "-n":
@@ -51,13 +56,34 @@ func main() {
 		}
 	}
 
-	if operation != "sign" {
-		fmt.Fprintf(os.Stderr, "forged-sign: Unsupported operation: %s\n", operation)
-		os.Exit(1)
-	}
-
 	if err := signFile(keyFile, bufferFile, namespace); err != nil {
 		fmt.Fprintf(os.Stderr, "forged-sign: %v\n", err)
+		os.Exit(1)
+	}
+}
+
+func isSignOperation(args []string) bool {
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == "-Y" {
+			return args[i+1] == "sign"
+		}
+	}
+	return false
+}
+
+func delegateSSHKeygen(args []string) {
+	cmd := exec.Command("ssh-keygen", args...)
+	cmd.Stdin = os.Stdin
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
+	if err := cmd.Run(); err != nil {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) {
+			if exitCode := exitErr.ExitCode(); exitCode > 0 {
+				os.Exit(exitCode)
+			}
+		}
+		fmt.Fprintf(os.Stderr, "forged-sign: running ssh-keygen: %v\n", err)
 		os.Exit(1)
 	}
 }

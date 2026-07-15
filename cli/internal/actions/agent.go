@@ -43,6 +43,7 @@ func LoadCommitSigningStatus(paths config.Paths) (CommitSigningStatus, error) {
 	signingKey := strings.TrimSpace(gitConfig["user.signingkey"])
 	gpgFormat := strings.ToLower(strings.TrimSpace(gitConfig["gpg.format"]))
 	signProgram := strings.TrimSpace(gitConfig["gpg.ssh.program"])
+	allowedSignersFile := strings.TrimSpace(gitConfig["gpg.ssh.allowedsignersfile"])
 	commitValue, commitPresent := gitConfig["commit.gpgsign"]
 	commitSign, err := parseGitBool(commitValue, commitPresent)
 	if err != nil {
@@ -65,6 +66,9 @@ func LoadCommitSigningStatus(paths config.Paths) (CommitSigningStatus, error) {
 	if !isForgedSigningProgram(signProgram) {
 		return status, nil
 	}
+	if allowedSignersFile == "" {
+		return status, fmt.Errorf("forged SSH signature verification is not configured; enable commit signing again")
+	}
 
 	match, err := matchForgedSigningKey(paths, signingKey)
 	if err != nil {
@@ -72,6 +76,9 @@ func LoadCommitSigningStatus(paths config.Paths) (CommitSigningStatus, error) {
 	}
 	if match == nil {
 		return status, fmt.Errorf("Configured signing key is not available in Forged")
+	}
+	if err := validateAllowedSignersFile(allowedSignersFile, match.PublicKey); err != nil {
+		return status, err
 	}
 
 	status.Mode = CommitSigningForged
@@ -98,10 +105,11 @@ func EnableCommitSigning(paths config.Paths, keyName string) (CommitSigningStatu
 	if err != nil {
 		return CommitSigningStatus{}, err
 	}
-	if err := writeAllowedSigners(exported.PublicKey); err != nil {
+	allowedSignersFile, err := writeAllowedSigners(exported.PublicKey)
+	if err != nil {
 		return CommitSigningStatus{}, err
 	}
-	if err := applyGitSigningConfig(exported.PublicKey, signPath); err != nil {
+	if err := applyGitSigningConfig(exported.PublicKey, signPath, allowedSignersFile); err != nil {
 		return CommitSigningStatus{}, err
 	}
 
@@ -173,7 +181,7 @@ func requireSupportedForgedSigningKey(key ssh.PublicKey) error {
 func loadGlobalGitSigningConfig() (map[string]string, error) {
 	out, err := exec.Command(
 		"git", "config", "--global", "--null", "--get-regexp",
-		"^(user\\.signingkey|gpg\\.format|gpg\\.ssh\\.program|commit\\.gpgsign)$",
+		"^(user\\.signingkey|gpg\\.format|gpg\\.ssh\\.program|gpg\\.ssh\\.allowedsignersfile|commit\\.gpgsign)$",
 	).Output()
 	if err != nil {
 		var exitErr *exec.ExitError
@@ -284,38 +292,69 @@ func findSignBinary() (string, error) {
 	return "", fmt.Errorf("Forged-sign not found in PATH or next to the Forged binary")
 }
 
-func writeAllowedSigners(publicKey string) error {
+func writeAllowedSigners(publicKey string) (string, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return err
+		return "", err
 	}
 
 	signerFile := filepath.Join(home, ".ssh", "allowed_signers")
 	if data, err := os.ReadFile(signerFile); err == nil {
 		if strings.Contains(string(data), publicKey) {
-			return nil
+			return signerFile, nil
 		}
 	}
 
 	if err := os.MkdirAll(filepath.Dir(signerFile), 0o700); err != nil {
-		return err
+		return "", err
 	}
 
 	file, err := os.OpenFile(signerFile, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o600)
 	if err != nil {
-		return err
+		return "", err
 	}
 	defer file.Close()
 
-	_, err = fmt.Fprintf(file, "* %s\n", publicKey)
-	return err
+	if _, err := fmt.Fprintf(file, "* %s\n", publicKey); err != nil {
+		return "", err
+	}
+	return signerFile, nil
 }
 
-func applyGitSigningConfig(publicKey string, signPath string) error {
+func validateAllowedSignersFile(path, publicKey string) error {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return fmt.Errorf("resolving allowed signers path: %w", err)
+		}
+		if path == "~" {
+			path = home
+		} else {
+			path = filepath.Join(home, strings.TrimPrefix(path, "~/"))
+		}
+	}
+	if !filepath.IsAbs(path) {
+		return nil
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return fmt.Errorf("reading configured allowed signers file: %w", err)
+	}
+	if !strings.Contains(string(data), publicKey) {
+		return fmt.Errorf("configured allowed signers file does not include the selected Forged key")
+	}
+	return nil
+}
+
+func applyGitSigningConfig(publicKey, signPath, allowedSignersFile string) error {
+	if strings.TrimSpace(allowedSignersFile) == "" {
+		return fmt.Errorf("allowed signers file is required")
+	}
 	for _, args := range [][]string{
 		{"git", "config", "--global", "user.signingkey", publicKey},
 		{"git", "config", "--global", "gpg.format", "ssh"},
 		{"git", "config", "--global", "gpg.ssh.program", signPath},
+		{"git", "config", "--global", "gpg.ssh.allowedSignersFile", allowedSignersFile},
 		{"git", "config", "--global", "commit.gpgsign", "true"},
 	} {
 		cmd := exec.Command(args[0], args[1:]...)
