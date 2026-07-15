@@ -185,8 +185,12 @@ func callDaemonAccountCommand(paths config.Paths, command string, args any) (ipc
 }
 
 func ensureAccountDaemon(paths config.Paths) error {
-	if protocol, err := runningAccountProtocol(paths); err == nil && protocol >= ipc.AccountChangeProtocol {
-		return nil
+	if protocol, err := runningAccountProtocol(paths); err == nil {
+		if protocol >= ipc.AccountChangeProtocol {
+			return nil
+		}
+	} else if errors.Is(err, ipc.ErrDaemonIdentity) {
+		return fmt.Errorf("Verifying daemon identity: %w", err)
 	}
 	runtimeSpec, err := daemon.DefaultRuntimeSpec()
 	if err != nil {

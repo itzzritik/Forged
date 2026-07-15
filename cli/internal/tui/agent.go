@@ -103,13 +103,13 @@ func (m *model) agentItems() []agentItem {
 			return []agentItem{{
 				ID:      agentItemSSHDisabled,
 				Label:   "Forged SSH Integration Disabled",
-				Summary: "Resolve the Windows pipe identity before re-enabling Forged SSH integration",
+				Summary: "Resolve the daemon endpoint identity before re-enabling Forged SSH integration",
 			}}
 		}
 		return []agentItem{{
 			ID:      agentItemSSHToggle,
 			Label:   "Disable Forged SSH Integration",
-			Summary: "Remove Forged SSH integration while the Windows pipe identity is unavailable",
+			Summary: "Remove Forged SSH integration while the daemon endpoint identity is unavailable",
 		}}
 	}
 

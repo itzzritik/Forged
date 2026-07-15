@@ -323,7 +323,7 @@ func (m *model) doctorRows() []doctorRow {
 
 func (m *model) doctorRepairDetail(detail string) string {
 	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" {
-		return "Resolve the Windows pipe identity before repair"
+		return "Resolve the daemon endpoint identity before repair"
 	}
 	return detail
 }
@@ -354,7 +354,7 @@ func (m *model) doctorVaultRow(paths config.Paths) doctorRow {
 		}
 	}
 
-	detail := "Resolve the Windows pipe identity before setup or restore"
+	detail := "Resolve the daemon endpoint identity before setup or restore"
 	if strings.TrimSpace(m.snapshot.RuntimePathError) == "" && m.snapshot.LoggedIn {
 		detail = "Fix Issues can restore this device"
 	} else if strings.TrimSpace(m.snapshot.RuntimePathError) == "" {

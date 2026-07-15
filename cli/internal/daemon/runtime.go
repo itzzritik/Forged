@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -79,6 +80,9 @@ func RefreshInstalledServiceIfStale(paths config.Paths, runtime RuntimeSpec) (bo
 	fresh, err := ServiceFresh(paths, runtime.BuildID)
 	if err == nil && fresh {
 		return false, nil
+	}
+	if errors.Is(err, ipc.ErrDaemonIdentity) {
+		return false, fmt.Errorf("verifying daemon identity: %w", err)
 	}
 
 	if err := EnsureService(paths, runtime); err != nil {

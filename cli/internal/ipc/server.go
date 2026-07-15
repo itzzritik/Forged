@@ -200,6 +200,13 @@ func (s *Server) acceptLoop(listener net.Listener) {
 			return
 		}
 		retryDelay = 0
+		if platform.ControlPeerCredentialsAvailable() {
+			if err := platform.VerifyCurrentUserPeer(conn); err != nil {
+				s.logger.Warn("rejecting IPC peer", "error", err)
+				_ = conn.Close()
+				continue
+			}
+		}
 		if !s.admit(conn) {
 			_ = conn.Close()
 			return

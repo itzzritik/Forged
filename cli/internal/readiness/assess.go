@@ -112,6 +112,8 @@ func (e *Engine) Assess() (Snapshot, error) {
 		if status, err := e.daemonStatus(e.Paths.CtlSocket()); err == nil {
 			snapshot.KeyCount = status.KeyCount
 			snapshot.DaemonBuildID = status.BuildID
+		} else if errors.Is(err, ipc.ErrDaemonIdentity) && !errors.Is(err, os.ErrNotExist) {
+			snapshot.RuntimePathError = fmt.Sprintf("untrusted daemon endpoint: %v", err)
 		}
 	}
 

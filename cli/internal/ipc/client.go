@@ -5,12 +5,18 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net"
+	"os"
+	"path/filepath"
+	"strconv"
+	"strings"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 var ErrDaemonNotRunning = errors.New("Daemon is not running")
+var ErrDaemonIdentity = errors.New("Daemon identity could not be verified")
 
 type Client struct {
 	socketPath string
@@ -51,6 +57,11 @@ func (c *Client) CallContext(ctx context.Context, command string, args any) (Res
 		return Response{}, fmt.Errorf("%w. Open Forged to start it", ErrDaemonNotRunning)
 	}
 	defer conn.Close()
+	if platform.ControlPeerCredentialsAvailable() {
+		if err := verifyDaemonIdentity(conn, c.socketPath); err != nil {
+			return Response{}, err
+		}
+	}
 
 	stopClose := context.AfterFunc(ctx, func() {
 		_ = conn.Close()
@@ -91,4 +102,35 @@ func (c *Client) CallContext(ctx context.Context, command string, args any) (Res
 	}
 
 	return resp, nil
+}
+
+func verifyDaemonIdentity(conn net.Conn, socketPath string) error {
+	pid, err := readDaemonPID(socketPath)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrDaemonIdentity, err)
+	}
+	if err := platform.VerifyDaemonPeer(conn, pid); err != nil {
+		return fmt.Errorf("%w: %w", ErrDaemonIdentity, err)
+	}
+	currentPID, err := readDaemonPID(socketPath)
+	if err != nil {
+		return fmt.Errorf("%w: %w", ErrDaemonIdentity, err)
+	}
+	if currentPID != pid {
+		return fmt.Errorf("%w: daemon restarted during verification", ErrDaemonIdentity)
+	}
+	return nil
+}
+
+func readDaemonPID(socketPath string) (int, error) {
+	data, err := os.ReadFile(filepath.Join(filepath.Dir(socketPath), "daemon.pid"))
+	if err != nil {
+		return 0, fmt.Errorf("reading daemon pid: %w", err)
+	}
+	defer clear(data)
+	pID, err := strconv.Atoi(strings.TrimSpace(string(data)))
+	if err != nil || pID <= 0 {
+		return 0, fmt.Errorf("invalid daemon pid")
+	}
+	return pID, nil
 }
