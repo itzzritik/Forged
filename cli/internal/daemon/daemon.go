@@ -895,6 +895,7 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 
 	snapshot, err := d.preflightSyncState()
 	var cleanupErr error
+	credentialSecretCleanupPending := false
 	if err == nil {
 		err = accountauth.WithCredentialsLock(d.paths, func() error {
 			var verifyErr error
@@ -919,11 +920,15 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 					return err
 				}
 			}
-			if err := accountauth.SaveLocked(d.paths, creds); err != nil {
-				if restoreErr := snapshot.restore(staged); restoreErr != nil {
-					return errors.Join(err, restoreErr)
+			if saveErr := accountauth.SaveLocked(d.paths, creds); saveErr != nil {
+				if errors.Is(saveErr, accountauth.ErrCredentialSecretCleanupPending) {
+					credentialSecretCleanupPending = true
+				} else {
+					if restoreErr := snapshot.restore(staged); restoreErr != nil {
+						return errors.Join(saveErr, restoreErr)
+					}
+					return saveErr
 				}
-				return err
 			}
 			if staged {
 				if removeErr := snapshot.removeBackup(); removeErr != nil {
@@ -947,8 +952,11 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 	}
 	d.sessionMu.Unlock()
 	d.logger.Info("account replacement committed", "user_id", args.UserID)
-	if cleanupErr != nil {
-		return &ipc.AccountChangeResult{SyncCleanupPending: true}, nil
+	if cleanupErr != nil || credentialSecretCleanupPending {
+		return &ipc.AccountChangeResult{
+			SyncCleanupPending:             cleanupErr != nil,
+			CredentialSecretCleanupPending: credentialSecretCleanupPending,
+		}, nil
 	}
 	return nil, nil
 }

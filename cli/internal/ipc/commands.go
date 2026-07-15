@@ -3,7 +3,7 @@ package ipc
 import "time"
 
 const (
-	AccountChangeProtocol = 4
+	AccountChangeProtocol = 5
 
 	SSHRoutePrepareWorkTimeout = 45 * time.Second
 	SSHRoutePrepareCallTimeout = SSHRoutePrepareWorkTimeout + 5*time.Second
@@ -23,7 +23,7 @@ const (
 	CmdSyncTrigger       = "sync-trigger"
 	CmdSyncLink          = "sync-link"
 	CmdSyncUnlink        = "sync-unlink"
-	CmdAccountReplace    = "account-replace-v3"
+	CmdAccountReplace    = "account-replace-v4"
 	CmdAccountClear      = "account-clear-v4"
 	CmdStatus            = "status"
 	CmdSSHRoutePrepare   = "ssh-route-prepare"

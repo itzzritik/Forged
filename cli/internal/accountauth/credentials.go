@@ -264,11 +264,21 @@ func saveCredentials(paths config.Paths, creds Credentials) error {
 		return err
 	}
 
+	var cleanupErr error
 	if oldMetadata != nil && (oldMetadata.CredentialID != metadata.CredentialID || oldMetadata.CredentialBackend != metadata.CredentialBackend) {
-		_ = storeForBackend(paths, oldMetadata.CredentialBackend).Delete(ctx, oldMetadata.CredentialID)
+		if err := storeForBackend(paths, oldMetadata.CredentialBackend).Delete(ctx, oldMetadata.CredentialID); err != nil &&
+			!errors.Is(err, ErrCredentialSecretNotFound) {
+			cleanupErr = errors.Join(cleanupErr, err)
+		}
+	}
+	if err := os.Remove(paths.LegacyCredentialsFile()); err != nil && !os.IsNotExist(err) {
+		cleanupErr = errors.Join(cleanupErr, err)
 	}
 	cacheCredentials(paths, creds, metadata.UpdatedAt)
-	_ = os.Remove(paths.LegacyCredentialsFile())
+	if cleanupErr != nil {
+		slog.Error("deleting retired account credentials failed", "error", cleanupErr)
+		return ErrCredentialSecretCleanupPending
+	}
 	return nil
 }
 
@@ -374,7 +384,9 @@ func ensureFreshLocked(ctx context.Context, paths config.Paths) (Credentials, er
 	// tokens are the only ones that work.
 	cacheCredentials(paths, refreshed, time.Now().UTC())
 
-	if err := saveCredentials(paths, refreshed); err != nil {
+	if err := saveCredentials(paths, refreshed); errors.Is(err, ErrCredentialSecretCleanupPending) {
+		slog.Warn("retired account credential cleanup pending after refresh")
+	} else if err != nil {
 		// Don't return the error — we have the new tokens in memory.
 		// Returning here would make the caller treat this as a failure
 		// even though sync can proceed. Log loudly so the issue is

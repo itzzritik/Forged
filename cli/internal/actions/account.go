@@ -23,11 +23,12 @@ import (
 type AccountCredentials = accountauth.Credentials
 
 var (
-	ErrAccountChangeSyncCleanupPending            = errors.New("account saved, but sync cleanup is pending")
-	ErrAccountChangeCommittedUnconfirmed          = errors.New("account saved, but sync cleanup could not be confirmed")
-	ErrAccountClearSyncCleanupPending             = errors.New("account cleared, but sync cleanup is pending")
-	ErrAccountClearCommittedUnconfirmed           = errors.New("account cleared, but sync cleanup could not be confirmed")
-	ErrAccountClearCredentialSecretCleanupPending = errors.New("account cleared, but credential secret cleanup is pending")
+	ErrAccountChangeSyncCleanupPending             = errors.New("account saved, but sync cleanup is pending")
+	ErrAccountChangeCredentialSecretCleanupPending = errors.New("account saved, but credential secret cleanup is pending")
+	ErrAccountChangeCommittedUnconfirmed           = errors.New("account saved, but local cleanup could not be confirmed")
+	ErrAccountClearSyncCleanupPending              = errors.New("account cleared, but sync cleanup is pending")
+	ErrAccountClearCommittedUnconfirmed            = errors.New("account cleared, but local cleanup could not be confirmed")
+	ErrAccountClearCredentialSecretCleanupPending  = errors.New("account cleared, but credential secret cleanup is pending")
 )
 
 type LoginSession struct {
@@ -97,10 +98,14 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 		}
 		return resultErr
 	}
+	var cleanupErr error
 	if result.SyncCleanupPending {
-		return ErrAccountChangeSyncCleanupPending
+		cleanupErr = errors.Join(cleanupErr, ErrAccountChangeSyncCleanupPending)
 	}
-	return nil
+	if result.CredentialSecretCleanupPending {
+		cleanupErr = errors.Join(cleanupErr, ErrAccountChangeCredentialSecretCleanupPending)
+	}
+	return cleanupErr
 }
 
 func accountCredentialsArgs(creds AccountCredentials) ipc.AccountCredentialsArgs {

@@ -653,11 +653,18 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		m.postLoginWarning = ""
-		if errors.Is(msg.err, actions.ErrAccountChangeSyncCleanupPending) {
+		syncCleanupPending := errors.Is(msg.err, actions.ErrAccountChangeSyncCleanupPending)
+		credentialSecretCleanupPending := errors.Is(msg.err, actions.ErrAccountChangeCredentialSecretCleanupPending)
+		switch {
+		case syncCleanupPending && credentialSecretCleanupPending:
+			m.postLoginWarning = "Account saved, but Forged could not remove prior sync state or a retired credential artifact. Sync is paused to protect it; resolve both before switching accounts."
+		case syncCleanupPending:
 			m.postLoginWarning = "Account saved, but Forged could not remove prior sync state. Sync is paused to protect it. Open Doctor to review it."
-		} else if errors.Is(msg.err, actions.ErrAccountChangeCommittedUnconfirmed) {
-			m.postLoginWarning = "Account saved, but Forged could not confirm sync cleanup. Open Doctor to review it."
-		} else if msg.err != nil {
+		case credentialSecretCleanupPending:
+			m.postLoginWarning = "Account saved, but a prior local credential artifact could not be removed. It will not be retried automatically; resolve it before switching accounts."
+		case errors.Is(msg.err, actions.ErrAccountChangeCommittedUnconfirmed):
+			m.postLoginWarning = "Account saved, but Forged could not confirm local cleanup. Review it before switching accounts."
+		case msg.err != nil:
 			errorText := m.reportError("login.finish", msg.err)
 			m.loginScreen.Waiting = false
 			m.loginScreen.Error = errorText
