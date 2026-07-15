@@ -130,7 +130,7 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
 		lines: [
 			"> forged",
 			"[TUI] First-run setup",
-			"[INIT] Creating vault at ~/.forged/",
+			"[INIT] Creating encrypted vault",
 			"[INIT] Master password: ********",
 			"[SCAN] Found 5 keys in ~/.ssh/",
 			"[IMPORT] id_ed25519 ... ok",
@@ -144,7 +144,7 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
 		status: "ok",
 		brightness: 0.75,
 		pace: "slow",
-		lines: ["> forged", "[TUI] Agent", "SSH Agent: enabled", "Keys:   4 loaded", "Socket: ~/.forged/agent.sock"],
+		lines: ["> forged", "[TUI] Agent", "SSH Agent: enabled", "Keys:   4 loaded", "Socket: managed per-user endpoint"],
 	},
 	{
 		title: "KEYGEN // ED25519",
@@ -282,7 +282,7 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
 			"[TUI] Agent",
 			"SSH Agent: enabled",
 			"Keys:   4 loaded",
-			"Socket: /Users/user/.forged/agent.sock",
+			"Socket: managed per-user endpoint",
 			"[OK] SSH agent available",
 		],
 	},

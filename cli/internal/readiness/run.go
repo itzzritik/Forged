@@ -3,7 +3,6 @@ package readiness
 import (
 	"errors"
 
-	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 )
 
@@ -66,17 +65,6 @@ func (e *Engine) ensureConfigStage(state *repairState) error {
 		if !state.result.Snapshot.ConfigValid {
 			e.markFailed(&state.result.Summary, "config")
 			return nil
-		}
-		migrated, err := config.MigrateLegacyAgentSocket(e.Paths)
-		if err != nil {
-			e.markFailed(&state.result.Summary, "config")
-			return err
-		}
-		if migrated {
-			if err := e.refreshSnapshot(state); err != nil {
-				return err
-			}
-			e.markFixed(&state.result.Summary, "config")
 		}
 		return nil
 	}

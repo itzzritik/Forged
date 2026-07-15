@@ -8,8 +8,6 @@ import (
 	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
-const legacyAgentSocket = `\\.\pipe\forged-agent`
-
 func (Paths) AgentSocket() string {
 	agent, _, err := platform.CurrentUserPipePaths()
 	if err != nil {
@@ -31,8 +29,4 @@ func (Paths) ValidateRuntimePaths() error {
 		return fmt.Errorf("resolving current Windows user pipe identity: %w", err)
 	}
 	return nil
-}
-
-func isLegacyAgentSocket(value string) bool {
-	return value == legacyAgentSocket
 }

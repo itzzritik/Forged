@@ -218,15 +218,6 @@ export default function DocsPage() {
 								'$ forged host github "github.com" "*.github.com"\n$ forged host deploy "*.prod.company.com" "10.0.*"\n$ forged host api "~^api\\\\d+\\\\.example\\\\.com$"  # Regex via ~ prefix\n$ forged hosts                       # List all active host mappings\n$ forged unhost deploy "10.0.*"      # Remove a host mapping'
 							}
 						</CodeBlock>
-						<p className="mt-8 font-mono text-sm text-white/50 uppercase tracking-widest">[ Manual overrides via local architecture ]</p>
-						<p className="mt-4">
-							Alternatively, you can manually define patterns inside your local <Code>~/.forged/config.toml</Code>:
-						</p>
-						<CodeBlock title="config.toml">
-							{
-								'[[hosts]]\nname = "GitHub"\nmatch = ["github.com", "*.github.com"]\nkey = "github"\ngit_signing = true\n\n[[hosts]]\nname = "Production"\nmatch = ["*.prod.company.com", "10.0.*"]\nkey = "deploy"'
-							}
-						</CodeBlock>
 					</Section>
 
 					<Section id="git-signing" title="Signature Verification">
@@ -263,14 +254,10 @@ export default function DocsPage() {
 						<ul className="mb-8 space-y-4 border border-[#27272a] bg-black p-6 font-mono text-sm shadow-[4px_4px_0px_rgba(39,39,42,1)]">
 							<li className="flex items-center gap-4">
 								<span className="h-2 w-2 shrink-0 rounded-full bg-[#ea580c]" />
-								<span className="min-w-[70px] text-[#a1a1aa]">macOS:</span> <span className="text-white">~/.forged/config.toml</span>
-							</li>
-							<li className="flex items-center gap-4">
-								<span className="h-2 w-2 shrink-0 rounded-full bg-[#ea580c]" />
-								<span className="min-w-[70px] text-[#a1a1aa]">Linux:</span> <span className="text-white">~/.config/forged/config.toml</span>
+								<span className="min-w-[70px] text-[#a1a1aa]">All platforms:</span> <span className="text-white">~/.config/forged/config.toml</span>
 							</li>
 						</ul>
-						<CodeBlock title="config.toml">{'[agent]\nsocket = "~/.forged/agent.sock"\nlog_level = "info"\n\n[sync]\nenabled = false'}</CodeBlock>
+						<CodeBlock title="config.toml">{'[agent]\ndisabled = false\n\n[security]\nmaster_password_interval = "7d"\nheadless_unlock = false'}</CodeBlock>
 					</Section>
 
 					<Section id="commands" title="Unified Call Stack">

@@ -1,12 +1,13 @@
 # IPC Protocol Specification
 
-CLI commands communicate with the daemon over a Unix domain socket (`ctl.sock`).
+CLI commands communicate with the daemon over a local control endpoint.
 
 ## Transport
 
-- Unix domain socket (stream)
-- macOS: `~/.forged/ctl.sock`
+- Unix: Unix domain socket (stream)
+- macOS: `~/.config/forged/runtime/ctl.sock`
 - Linux: `$XDG_RUNTIME_DIR/forged/ctl.sock`
+- Windows: per-user named control pipe
 
 ## Message Framing
 
@@ -57,8 +58,6 @@ Each message is length-prefixed:
 | `unlock` | `{"password": "string"}` | none |
 | `sync-trigger` | none | none |
 | `sync-status` | none | `{"enabled": bool, "last_sync": "timestamp", "devices": int}` |
-| `config-get` | `{"key": "string"}` | `{"value": "any"}` |
-| `config-set` | `{"key": "string", "value": "any"}` | none |
 | `activity` | `{"limit": int}` | `{"events": [...]}` |
 
 ## Error Handling

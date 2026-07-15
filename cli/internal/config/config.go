@@ -14,20 +14,11 @@ import (
 
 type Config struct {
 	Agent    AgentConfig    `toml:"agent"`
-	Sync     SyncConfig     `toml:"sync"`
 	Security SecurityConfig `toml:"security"`
 }
 
 type AgentConfig struct {
-	Socket   string `toml:"socket"`
-	LogLevel string `toml:"log_level"`
-	Disabled bool   `toml:"disabled"`
-}
-
-type SyncConfig struct {
-	Server   string `toml:"server"`
-	Interval string `toml:"interval"`
-	Enabled  bool   `toml:"enabled"`
+	Disabled bool `toml:"disabled"`
 }
 
 type SecurityConfig struct {
@@ -43,7 +34,6 @@ const (
 
 func Load(path string) (Config, error) {
 	var cfg Config
-	cfg.Agent.LogLevel = "info"
 	cfg.Security.MasterPasswordInterval = MasterPasswordInterval7Days
 
 	if _, err := os.Stat(path); os.IsNotExist(err) {
@@ -60,39 +50,20 @@ func Load(path string) (Config, error) {
 
 func Save(path string, cfg Config) error {
 	return withConfigLock(path, func() error {
-		return saveConfigLocked(DefaultPaths(), path, cfg, true)
+		return saveConfigLocked(path, cfg)
 	})
 }
 
-func saveConfigLocked(paths Paths, path string, cfg Config, ensureAgentSocket bool) error {
+func saveConfigLocked(path string, cfg Config) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return fmt.Errorf("Creating config directory: %w", err)
 	}
 
-	if ensureAgentSocket && (strings.TrimSpace(cfg.Agent.Socket) == "" || isLegacyAgentSocket(cfg.Agent.Socket)) {
-		if err := paths.ValidateRuntimePaths(); err != nil {
-			return err
-		}
-		cfg.Agent.Socket = paths.AgentSocket()
-	}
-	if strings.TrimSpace(cfg.Agent.LogLevel) == "" {
-		cfg.Agent.LogLevel = "info"
-	}
 	normalizeConfig(&cfg)
 
 	var body strings.Builder
 	body.WriteString("[agent]\n")
-	body.WriteString(fmt.Sprintf("socket = %q\n", cfg.Agent.Socket))
-	body.WriteString(fmt.Sprintf("log_level = %q\n", cfg.Agent.LogLevel))
 	body.WriteString(fmt.Sprintf("disabled = %t\n", cfg.Agent.Disabled))
-	body.WriteString("\n[sync]\n")
-	if strings.TrimSpace(cfg.Sync.Server) != "" {
-		body.WriteString(fmt.Sprintf("server = %q\n", cfg.Sync.Server))
-	}
-	if strings.TrimSpace(cfg.Sync.Interval) != "" {
-		body.WriteString(fmt.Sprintf("interval = %q\n", cfg.Sync.Interval))
-	}
-	body.WriteString(fmt.Sprintf("enabled = %t\n", cfg.Sync.Enabled))
 	body.WriteString("\n[security]\n")
 	body.WriteString(fmt.Sprintf("master_password_interval = %q\n", cfg.Security.MasterPasswordInterval))
 	body.WriteString(fmt.Sprintf("headless_unlock = %t\n", cfg.Security.HeadlessUnlock))
@@ -134,26 +105,14 @@ func IsAgentDisabled(paths Paths) bool {
 	return cfg.Agent.Disabled || hasDisabledForgedInclude(paths)
 }
 
-type agentSocketUpdatePolicy uint8
-
-const (
-	agentSocketPreserve agentSocketUpdatePolicy = iota
-	agentSocketEnsure
-	agentSocketEnsureOnCreate
-)
-
 func SetAgentDisabled(paths Paths, disabled bool) error {
-	policy := agentSocketEnsure
-	if disabled {
-		policy = agentSocketPreserve
-	}
-	return updateConfig(paths, policy, func(cfg *Config) {
+	return updateConfig(paths, func(cfg *Config) {
 		cfg.Agent.Disabled = disabled
 	})
 }
 
 func SetMasterPasswordInterval(paths Paths, interval string) error {
-	return updateConfig(paths, agentSocketEnsureOnCreate, func(cfg *Config) {
+	return updateConfig(paths, func(cfg *Config) {
 		cfg.Security.MasterPasswordInterval = NormalizeMasterPasswordInterval(interval)
 	})
 }
@@ -164,7 +123,7 @@ func HeadlessUnlockEnabled(paths Paths) bool {
 }
 
 func SetHeadlessUnlock(paths Paths, enabled bool) error {
-	return updateConfig(paths, agentSocketEnsureOnCreate, func(cfg *Config) {
+	return updateConfig(paths, func(cfg *Config) {
 		cfg.Security.HeadlessUnlock = enabled
 	})
 }
@@ -177,53 +136,16 @@ func EnsureDefault(paths Paths) error {
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("Inspecting config: %w", err)
 		}
-		return saveConfigLocked(paths, path, Config{
+		return saveConfigLocked(path, Config{
 			Agent: AgentConfig{Disabled: hasDisabledForgedInclude(paths)},
-		}, true)
+		})
 	})
 }
 
-func MigrateLegacyAgentSocket(paths Paths) (bool, error) {
-	path := paths.ConfigFile()
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return false, nil
-	} else if err != nil {
-		return false, fmt.Errorf("Inspecting config: %w", err)
-	}
-
-	var migrated bool
-	err := withConfigLock(path, func() error {
-		if _, err := os.Stat(path); os.IsNotExist(err) {
-			return nil
-		} else if err != nil {
-			return fmt.Errorf("Inspecting config: %w", err)
-		}
-		cfg, err := Load(path)
-		if err != nil {
-			return err
-		}
-		if !isLegacyAgentSocket(cfg.Agent.Socket) {
-			return nil
-		}
-		if err := paths.ValidateRuntimePaths(); err != nil {
-			return err
-		}
-		cfg.Agent.Socket = paths.AgentSocket()
-		if err := saveConfigLocked(paths, path, cfg, false); err != nil {
-			return err
-		}
-		migrated = true
-		return nil
-	})
-	return migrated, err
-}
-
-func updateConfig(paths Paths, socketPolicy agentSocketUpdatePolicy, update func(*Config)) error {
+func updateConfig(paths Paths, update func(*Config)) error {
 	path := paths.ConfigFile()
 	return withConfigLock(path, func() error {
-		_, err := os.Stat(path)
-		configMissing := os.IsNotExist(err)
-		if err != nil && !configMissing {
+		if _, err := os.Stat(path); err != nil && !os.IsNotExist(err) {
 			return fmt.Errorf("Inspecting config: %w", err)
 		}
 		cfg, err := Load(path)
@@ -231,9 +153,7 @@ func updateConfig(paths Paths, socketPolicy agentSocketUpdatePolicy, update func
 			return err
 		}
 		update(&cfg)
-		ensureAgentSocket := socketPolicy == agentSocketEnsure ||
-			(socketPolicy == agentSocketEnsureOnCreate && configMissing)
-		return saveConfigLocked(paths, path, cfg, ensureAgentSocket)
+		return saveConfigLocked(path, cfg)
 	})
 }
 

@@ -15,7 +15,3 @@ func (p Paths) CtlSocket() string {
 func (Paths) ValidateRuntimePaths() error {
 	return nil
 }
-
-func isLegacyAgentSocket(string) bool {
-	return false
-}
