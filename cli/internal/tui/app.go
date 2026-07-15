@@ -2699,7 +2699,7 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 				m.startupUnlockNeedsRepair = false
 				m.maintenanceUsedPassword = false
 				m.maintenanceAuthEmail = ""
-				return m.finishVaultBoot()
+				return m.finishVaultBoot(false)
 			}
 			if unlockErr != nil {
 				m.runtimeStatus.Unlocked = false
@@ -2711,7 +2711,7 @@ func (m *model) handleMaintenanceFinished(result readiness.RunResult, err error,
 			return m.startStartupUnlockFlow()
 		}
 		m.popWizardRoutes()
-		return m.finishVaultBoot()
+		return m.finishVaultBoot(m.maintenanceTrigger == maintenanceTriggerDoctor && m.screen == screenDashboard)
 	}
 }
 
@@ -2805,7 +2805,7 @@ func (m *model) submitStartupUnlock(password []byte) tea.Cmd {
 	return tea.Batch(m.spinner.Tick, m.unlockSensitiveLaunchCmd(password))
 }
 
-func (m *model) finishVaultBoot() tea.Cmd {
+func (m *model) finishVaultBoot(preserveCurrentRoute bool) tea.Cmd {
 	m.notice = notice{}
 	m.discardPasswordInput()
 	m.screen = screenDashboard
@@ -2831,8 +2831,10 @@ func (m *model) finishVaultBoot() tea.Cmd {
 		m.loadSigningStatusCmd(),
 		m.resetIdleLockCmd(),
 	}
-	if route := m.session.Current().ID; route != "" && route != RouteDashboardHome {
-		cmds = append([]tea.Cmd{m.showCurrentRoute()}, cmds...)
+	if !preserveCurrentRoute {
+		if route := m.session.Current().ID; route != "" && route != RouteDashboardHome {
+			cmds = append([]tea.Cmd{m.showCurrentRoute()}, cmds...)
+		}
 	}
 	return tea.Batch(cmds...)
 }
@@ -2899,7 +2901,7 @@ func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea
 		)
 	}
 
-	return m.finishVaultBoot()
+	return m.finishVaultBoot(false)
 }
 
 func (m *model) cancelStartupUnlock() {
