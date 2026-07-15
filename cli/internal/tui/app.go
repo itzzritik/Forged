@@ -178,10 +178,11 @@ type loginApprovedMsg struct {
 }
 
 type loginFinishedMsg struct {
-	id       int
-	creds    actions.AccountCredentials
-	err      error
-	canceled bool
+	id         int
+	creds      actions.AccountCredentials
+	err        error
+	canceled   bool
+	committing bool
 }
 
 type restoreFinishedMsg struct {
@@ -648,7 +649,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loginScreen.Error = ""
 		return m, m.commitLogin(msg.id, msg.creds)
 	case loginFinishedMsg:
-		if msg.id != m.loginID {
+		if msg.id != m.loginID || m.screen != screenLogin || msg.committing != m.loginCommitting {
 			return m, nil
 		}
 		m.loginCommitting = false
@@ -2224,7 +2225,11 @@ func (m *model) dashboardTabs() []dashboardTab {
 }
 
 func (m *model) enterRuntimePathRecovery(runtimePathError string) {
+	m.cancelClipboardCopy()
+	m.loginID++
+	m.loginProgress = nil
 	m.cancelLoginFlow()
+	m.loginCommitting = false
 	m.discardPasswordInput()
 	route := RouteDashboardHome
 	if m.intent.Entry == RouteDoctorOverview || m.session.Current().ID == RouteDoctorOverview {
@@ -2541,7 +2546,7 @@ func (m *model) waitForLogin(ctx context.Context, id int, session actions.LoginS
 func (m *model) commitLogin(id int, creds actions.AccountCredentials) tea.Cmd {
 	save := m.deps.SaveCredentials
 	return func() tea.Msg {
-		return loginFinishedMsg{id: id, creds: creds, err: save(creds)}
+		return loginFinishedMsg{id: id, creds: creds, err: save(creds), committing: true}
 	}
 }
 
