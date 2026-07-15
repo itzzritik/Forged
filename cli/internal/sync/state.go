@@ -154,24 +154,7 @@ func (s *StateStore) Quarantine() error {
 }
 
 func (s *StateStore) MoveTo(destination string) error {
-	if !stateDirectorySyncSupported() {
-		return fmt.Errorf("%w: directory sync is unavailable", ErrStateRecoveryRequired)
-	}
-	if err := os.Link(s.path, destination); errors.Is(err, os.ErrExist) {
-		return fmt.Errorf("%w: destination sync state exists", ErrStateRecoveryRequired)
-	} else if err != nil {
-		return fmt.Errorf("linking sync state: %w", err)
-	}
-	if err := syncStateDirectory(filepath.Dir(s.path)); err != nil {
-		return fmt.Errorf("syncing sync state directory: %w", err)
-	}
-	if err := os.Remove(s.path); err != nil {
-		return fmt.Errorf("removing moved sync state: %w", err)
-	}
-	if err := syncStateDirectory(filepath.Dir(s.path)); err != nil {
-		return fmt.Errorf("syncing sync state directory: %w", err)
-	}
-	return nil
+	return moveSyncStateFileNoReplace(s.path, destination)
 }
 
 func (s *StateStore) quarantineCorruptState(corruptErr error) error {

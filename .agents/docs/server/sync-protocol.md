@@ -23,7 +23,7 @@ Sync is encrypted-blob push/pull with optimistic locking. The server stores blob
 - First-link bootstrap merge is separate from normal three-way merge.
 - Key deletes and SSH-route deletes use tombstones.
 - Local sync state keeps the last synced base blob and last known server version.
-- Sync state is replaced atomically and its parent directory is synced where supported. Windows uses `MoveFileEx` with `REPLACE_EXISTING|WRITE_THROUGH` for clean-state replacement because it has no portable directory flush; native power-loss validation is still required. The dirty marker remains until a clean state save succeeds, so a failed write cannot lose pending work on restart.
+- Sync state is replaced atomically and its parent directory is synced where supported. Windows uses `MoveFileEx` with `REPLACE_EXISTING|WRITE_THROUGH` for clean-state replacement and a no-replace `WRITE_THROUGH` move for account-transition staging or restore, so an existing staged state fails before credentials change. Windows has no portable directory flush; native power-loss validation is still required. The dirty marker remains until a clean state save succeeds, so a failed write cannot lose pending work on restart.
 - Sync state history is integrity-sensitive. A malformed, incomplete, or hash-mismatched state is quarantined behind a recovery marker; clients must not reset, relink, or bootstrap over it automatically.
 - The daemon checks `/sync/status` before background or foreground refresh pulls. It pulls the encrypted blob only when the server version changed.
 - Push and status paths recheck caller cancellation after a successful remote response before marking a sync snapshot clean or recording remote freshness.
