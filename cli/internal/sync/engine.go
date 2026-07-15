@@ -161,8 +161,10 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 	state.LastRemoteCheckAt = now
 	state.LastSuccessfulPullAt = now
 	if !state.Dirty && remoteMetadataMissing(result) {
-		if err := e.repairRemoteMetadata(ctx, state, result.Version); err != nil && e.logger != nil {
-			e.logger.Warn("repairing missing remote vault metadata failed", "error", err)
+		if err := e.repairRemoteMetadata(ctx, state, result.Version); err != nil {
+			err = fmt.Errorf("repairing missing remote vault metadata: %w", err)
+			state.MarkDirty(err.Error(), time.Time{})
+			return remote, result, err
 		}
 	}
 	return remote, result, nil
