@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/tui/components"
 	accountscreen "github.com/itzzritik/forged/cli/internal/tui/screens/account"
 	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
+	dashboardscreen "github.com/itzzritik/forged/cli/internal/tui/screens/dashboard"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
@@ -642,7 +644,13 @@ func (m *model) handleManageSyncFinishedMsg(msg manageSyncFinishedMsg) (tea.Mode
 
 func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.Model, tea.Cmd) {
 	m.manage.logoutBusy = false
-	if msg.err != nil {
+	warning := ""
+	switch {
+	case errors.Is(msg.err, actions.ErrAccountClearSyncCleanupPending):
+		warning = "Signed out. Local sync cleanup is incomplete. Review it before switching accounts."
+	case errors.Is(msg.err, actions.ErrAccountClearCommittedUnconfirmed):
+		warning = "Signed out locally, but Forged could not confirm sync cleanup. Restart Forged before switching accounts."
+	case msg.err != nil:
 		m.manage.settingItem = manageItemLogout
 		m.manage.settingErr = m.reportError("account.logout", msg.err)
 		return m, nil
@@ -653,6 +661,7 @@ func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.
 	m.accountEmail = ""
 	m.manage.syncBusy = false
 	m.manage.logoutArmed = false
+	m.manage.selected = 0
 	m.manage.settingItem = ""
 	m.manage.settingErr = ""
 	m.runtimeStatus.Linked = false
@@ -660,6 +669,18 @@ func (m *model) handleManageLogoutFinishedMsg(msg manageLogoutFinishedMsg) (tea.
 	m.runtimeStatus.Error = ""
 	m.runtimeStatus.LastSuccessfulPullAt = time.Time{}
 	m.runtimeStatus.LastSuccessfulPushAt = time.Time{}
+	if warning != "" {
+		m.session.Reset(Route{ID: RouteDashboardHome})
+		m.dashboardTabIndex = 0
+		m.dashboardPageIndices = nil
+		for index, tab := range m.dashboardTabs() {
+			if tab.Label == "Manage" {
+				m.dashboardTabIndex = index
+				break
+			}
+		}
+		m.showDashboardNotice(warning, dashboardscreen.ToneWarning)
+	}
 	return m, tea.Batch(m.refreshSnapshotCmd(), m.pollRuntimeStatus(0))
 }
 

@@ -954,7 +954,7 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) (*ipc.Acc
 }
 
 func (d *Daemon) handleAccountClear() (*ipc.AccountChangeResult, error) {
-	creds, err := d.commitAccountClear()
+	creds, cleanupPending, err := d.commitAccountClear()
 	if err != nil {
 		return nil, err
 	}
@@ -965,17 +965,20 @@ func (d *Daemon) handleAccountClear() (*ipc.AccountChangeResult, error) {
 		d.logger.Warn("revoking remote session after logout failed", "error", err)
 	}
 	d.logger.Info("account cleared")
+	if cleanupPending {
+		return &ipc.AccountChangeResult{SyncCleanupPending: true}, nil
+	}
 	return nil, nil
 }
 
-func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
+func (d *Daemon) commitAccountClear() (accountauth.Credentials, bool, error) {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
 	run, bus, applyGate, transition, err := d.beginAccountChangeLocked()
 	d.sessionMu.Unlock()
 	if err != nil {
-		return accountauth.Credentials{}, err
+		return accountauth.Credentials{}, false, err
 	}
 	revokeSyncApplies(run, applyGate)
 	waitForLinkRun(run)
@@ -984,6 +987,7 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
 	snapshot, stateErr := d.preflightSyncState()
 	var creds accountauth.Credentials
 	stateRemoved := false
+	var dirtyErr error
 	err = accountauth.WithCredentialsLock(d.paths, func() error {
 		creds, _ = accountauth.LoadLocked(d.paths)
 		if err := accountauth.DeleteLocked(d.paths); err != nil {
@@ -1004,8 +1008,9 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
 		if stateErr != nil {
 			d.logger.Warn("removing sync state after logout failed", "error", stateErr)
 		}
-		if err := os.Remove(d.paths.SyncDirtyFile()); err != nil && !os.IsNotExist(err) {
-			d.logger.Warn("removing sync dirty marker after logout failed", "error", err)
+		if removeErr := os.Remove(d.paths.SyncDirtyFile()); removeErr != nil && !os.IsNotExist(removeErr) {
+			dirtyErr = removeErr
+			d.logger.Warn("removing sync dirty marker after logout failed", "error", removeErr)
 		}
 		return nil
 	})
@@ -1016,11 +1021,15 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
 	if err != nil {
 		d.finishAccountTransitionLocked(transition, true, stateErr)
 		d.sessionMu.Unlock()
-		return accountauth.Credentials{}, err
+		return accountauth.Credentials{}, false, err
 	}
-	d.finishAccountTransitionLocked(transition, false, stateErr)
+	transitionErr := stateErr
+	if transitionErr != nil && !errors.Is(transitionErr, forgedsync.ErrStateCorrupt) && !errors.Is(transitionErr, forgedsync.ErrStateRecoveryRequired) {
+		transitionErr = fmt.Errorf("%w: retaining sync state after logout: %v", forgedsync.ErrStateRecoveryRequired, transitionErr)
+	}
+	d.finishAccountTransitionLocked(transition, false, transitionErr)
 	d.sessionMu.Unlock()
-	return creds, nil
+	return creds, stateErr != nil || dirtyErr != nil, nil
 }
 
 func (d *Daemon) beginAccountChangeLocked() (*linkRun, *forgedsync.Bus, *syncApplyGate, uint64, error) {

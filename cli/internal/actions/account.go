@@ -25,6 +25,8 @@ type AccountCredentials = accountauth.Credentials
 var (
 	ErrAccountChangeSyncCleanupPending   = errors.New("account saved, but sync cleanup is pending")
 	ErrAccountChangeCommittedUnconfirmed = errors.New("account saved, but sync cleanup could not be confirmed")
+	ErrAccountClearSyncCleanupPending    = errors.New("account cleared, but sync cleanup is pending")
+	ErrAccountClearCommittedUnconfirmed  = errors.New("account cleared, but sync cleanup could not be confirmed")
 )
 
 type LoginSession struct {
@@ -87,11 +89,12 @@ func SaveCredentials(paths config.Paths, creds AccountCredentials) error {
 		}
 		return err
 	}
-	var result ipc.AccountChangeResult
-	if len(resp.Data) > 0 {
-		if err := json.Unmarshal(resp.Data, &result); err != nil {
-			return fmt.Errorf("Reading account change result: %w", err)
+	result, resultErr := accountChangeResult(resp)
+	if resultErr != nil {
+		if saved, loadErr := accountauth.Load(paths); loadErr == nil && saved.ChangeID == creds.ChangeID {
+			return ErrAccountChangeCommittedUnconfirmed
 		}
+		return resultErr
 	}
 	if result.SyncCleanupPending {
 		return ErrAccountChangeSyncCleanupPending
@@ -116,12 +119,48 @@ func accountCredentialsArgs(creds AccountCredentials) ipc.AccountCredentialsArgs
 
 func ClearCredentials(paths config.Paths) error {
 	resp, err := callDaemonAccountCommand(paths, ipc.CmdAccountClear, nil)
-	if err != nil && resp.Status == "" {
-		if _, loadErr := accountauth.Load(paths); errors.Is(loadErr, os.ErrNotExist) || errors.Is(loadErr, accountauth.ErrLoginRequired) {
-			return nil
+	if err != nil {
+		if credentialsCleared(paths) {
+			return ErrAccountClearCommittedUnconfirmed
 		}
+		return err
 	}
-	return err
+	result, err := accountChangeResult(resp)
+	if err != nil {
+		if credentialsCleared(paths) {
+			return ErrAccountClearCommittedUnconfirmed
+		}
+		return err
+	}
+	if !credentialsCleared(paths) {
+		return fmt.Errorf("daemon reported logout but credentials remain")
+	}
+	if result.SyncCleanupPending {
+		return ErrAccountClearSyncCleanupPending
+	}
+	return nil
+}
+
+func accountChangeResult(resp ipc.Response) (ipc.AccountChangeResult, error) {
+	if resp.Status != "ok" {
+		return ipc.AccountChangeResult{}, fmt.Errorf("unexpected account change response")
+	}
+	var result ipc.AccountChangeResult
+	if len(resp.Data) == 0 {
+		return result, nil
+	}
+	if bytes.Equal(bytes.TrimSpace(resp.Data), []byte("null")) {
+		return ipc.AccountChangeResult{}, fmt.Errorf("unexpected account change response")
+	}
+	if err := json.Unmarshal(resp.Data, &result); err != nil {
+		return ipc.AccountChangeResult{}, fmt.Errorf("Reading account change result: %w", err)
+	}
+	return result, nil
+}
+
+func credentialsCleared(paths config.Paths) bool {
+	_, err := accountauth.Load(paths)
+	return errors.Is(err, os.ErrNotExist) || errors.Is(err, accountauth.ErrLoginRequired)
 }
 
 func callDaemonAccountCommand(paths config.Paths, command string, args any) (ipc.Response, error) {
