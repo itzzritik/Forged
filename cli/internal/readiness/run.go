@@ -202,11 +202,7 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 	}
 
 	if err := e.ensureServiceInstalled(); err != nil {
-		if errors.Is(err, daemon.ErrDaemonServiceOwnership) {
-			state.result.Snapshot.Service.Repairable = false
-			state.result.Snapshot.Service.OwnershipBlocked = true
-			state.result.Snapshot.Service.Detail = "Stop the running Forged daemon or service, then refresh Doctor."
-			e.markFailed(&state.result.Summary, "service")
+		if e.blockServiceOwnership(state, err) {
 			return nil
 		}
 		if updated, waitErr := e.waitForServiceReady(); waitErr == nil {
@@ -219,6 +215,9 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 
 		e.pauseForServiceRetry()
 		if retryErr := e.ensureServiceInstalled(); retryErr != nil {
+			if e.blockServiceOwnership(state, retryErr) {
+				return nil
+			}
 			if updated, waitErr := e.waitForServiceReady(); waitErr == nil {
 				state.result.Snapshot = updated
 				if serviceHealthy(updated) {
@@ -240,6 +239,17 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 	}
 	e.markFailed(&state.result.Summary, "service")
 	return nil
+}
+
+func (e *Engine) blockServiceOwnership(state *repairState, err error) bool {
+	if !errors.Is(err, daemon.ErrDaemonServiceOwnership) {
+		return false
+	}
+	state.result.Snapshot.Service.Repairable = false
+	state.result.Snapshot.Service.OwnershipBlocked = true
+	state.result.Snapshot.Service.Detail = "Stop the running Forged daemon or service, then refresh Doctor."
+	e.markFailed(&state.result.Summary, "service")
+	return true
 }
 
 func (e *Engine) ensureSocketStage(state *repairState) error {
