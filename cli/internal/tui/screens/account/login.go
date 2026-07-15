@@ -5,6 +5,8 @@ import (
 	"unicode"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
+	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -45,11 +47,8 @@ func Render(screen LoginScreen, spinner string, width int) string {
 		lines = append(lines, status)
 	}
 
-	if link := renderLink(screen.URL, screen.Copied); link != "" {
-		if len(lines) > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, link)
+	if link := renderLink(screen.URL, screen.Copied, contentWidth); link != "" {
+		return shell.DockBottom(strings.Join(lines, "\n"), link)
 	}
 
 	return strings.Join(lines, "\n")
@@ -68,18 +67,20 @@ func renderCode(code string, width int) string {
 	return theme.CodeFrame.Render(inner)
 }
 
-func renderLink(raw string, copied bool) string {
-	if strings.TrimSpace(raw) == "" {
+func renderLink(raw string, copied bool, width int) string {
+	url := strings.TrimSpace(theme.SanitizeText(raw))
+	if url == "" {
 		return ""
 	}
 
+	width = max(1, width)
 	label := theme.BodyStrong.Render("Log In Link")
 	if copied {
-		label += "  " + theme.Success.Render(theme.Glyphs.Check) + " " + theme.BodyMuted.Render("Copied")
+		label = shell.JoinRow(width, label, theme.Success.Render(theme.Glyphs.Check)+" "+theme.BodyMuted.Render("Copied"))
 	}
 	return strings.Join([]string{
 		label,
-		theme.Link.Render(raw),
+		theme.Link.Render(ansi.Hardwrap(url, width, false)),
 	}, "\n")
 }
 
