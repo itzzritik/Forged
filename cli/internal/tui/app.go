@@ -1415,19 +1415,19 @@ func (m *model) renderBody(contentWidth int, bodyHeight int) string {
 			return m.renderKeyBody(contentWidth, bodyHeight)
 		}
 		if m.isManageHomeRoute() {
-			return m.renderManageBody(contentWidth)
+			return m.renderManageBody(contentWidth, bodyHeight)
 		}
 		if m.isManageProfileRoute() {
 			return m.renderManageProfileBody(contentWidth)
 		}
 		if m.isManageMasterIntervalRoute() {
-			return m.renderManageMasterIntervalBody(contentWidth)
+			return m.renderManageMasterIntervalBody(contentWidth, bodyHeight)
 		}
 		if m.isManageSuccessRoute() {
 			return m.renderManageSuccessBody(contentWidth)
 		}
 		if m.isAgentHomeRoute() {
-			return m.renderAgentBody(contentWidth)
+			return m.renderAgentBody(contentWidth, bodyHeight)
 		}
 		if m.isAgentSigningRoute() {
 			return m.renderAgentSigningBody(contentWidth, bodyHeight)
@@ -1446,12 +1446,13 @@ func (m *model) renderBody(contentWidth int, bodyHeight int) string {
 		}
 		tabs, pages, summary := m.dashboardRootScreen()
 		return dashboardscreen.Render(dashboardscreen.Screen{
-			Title:   m.dashboardBodyTitle(),
-			Context: m.dashboardLead(),
-			Options: m.dashboardOptions(),
-			Tabs:    tabs,
-			Pages:   pages,
-			Summary: summary,
+			Title:      m.dashboardBodyTitle(),
+			Context:    m.dashboardLead(),
+			Options:    m.dashboardOptions(),
+			Tabs:       tabs,
+			Pages:      pages,
+			Summary:    summary,
+			BodyHeight: bodyHeight,
 			Notice: dashboardscreen.Notice{
 				Message: m.notice.message,
 				Tone:    m.notice.tone,

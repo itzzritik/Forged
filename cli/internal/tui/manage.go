@@ -7,6 +7,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -209,7 +210,7 @@ func (m *model) selectedManageItem() (manageItem, bool) {
 	return items[m.manage.selected], true
 }
 
-func (m *model) renderManageBody(contentWidth int) string {
+func (m *model) renderManageBody(contentWidth int, bodyHeight int) string {
 	items := m.manageItems()
 	if len(items) == 0 {
 		return ""
@@ -224,7 +225,6 @@ func (m *model) renderManageBody(contentWidth int) string {
 		})
 	}
 
-	top := components.RenderSelectionList(listItems, contentWidth, manageListMinHeight)
 	bottom := ""
 
 	if item, ok := m.selectedManageItem(); ok {
@@ -240,10 +240,27 @@ func (m *model) renderManageBody(contentWidth int) string {
 		}
 	}
 
+	listHeight := bodyHeight
+	dockGap := 1
+	if bottom != "" {
+		listHeight -= lipgloss.Height(bottom) + dockGap
+		if listHeight < 1 && dockGap > 0 {
+			dockGap = 0
+			listHeight = bodyHeight - lipgloss.Height(bottom)
+		}
+		if listHeight < 1 {
+			bottom = ""
+			listHeight = bodyHeight
+		}
+	}
+	top := components.RenderSelectionListPage(listItems, contentWidth, manageListMinHeight, listHeight)
 	if bottom == "" {
 		return top
 	}
-	return shell.DockBottom(top+"\n", bottom)
+	if dockGap > 0 {
+		top += "\n"
+	}
+	return shell.DockBottom(top, bottom)
 }
 
 func (m *model) renderManageProfileBody(contentWidth int) string {
@@ -253,7 +270,7 @@ func (m *model) renderManageProfileBody(contentWidth int) string {
 	}, contentWidth)
 }
 
-func (m *model) renderManageMasterIntervalBody(contentWidth int) string {
+func (m *model) renderManageMasterIntervalBody(contentWidth int, bodyHeight int) string {
 	if !m.securityLoaded {
 		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
 			Title:       "Loading security settings",
@@ -291,19 +308,40 @@ func (m *model) renderManageMasterIntervalBody(contentWidth int) string {
 		})
 	}
 
-	top := strings.Join([]string{
-		description,
-		"",
-		components.RenderSelectionList(items, contentWidth, manageIntervalListMinHeight),
-	}, "\n")
-
 	summary := theme.BodyMuted.Width(descriptionWidth).Render(masterPasswordIntervalOptionSummary(options[selected].Value))
 	if m.manage.settingBusy {
 		summary = theme.BodyMuted.Width(descriptionWidth).Render(theme.Spinner.Render(m.spinner.View()) + " Saving security settings")
 	} else if errText := strings.TrimSpace(m.manage.settingErr); errText != "" {
 		summary = theme.Warning.Width(descriptionWidth).Render(errText)
 	}
-	return shell.DockBottom(top+"\n", summary)
+
+	dockGap := 1
+	listHeight := bodyHeight - lipgloss.Height(description) - lipgloss.Height(summary) - 1 - dockGap
+	if listHeight < 1 && dockGap > 0 {
+		dockGap = 0
+		listHeight = bodyHeight - lipgloss.Height(description) - lipgloss.Height(summary) - 1
+	}
+	if listHeight < 1 {
+		summary = ""
+		listHeight = bodyHeight - lipgloss.Height(description) - 1
+	}
+	if listHeight < 1 {
+		description = ""
+		listHeight = bodyHeight
+	}
+	topSections := make([]string, 0, 3)
+	if description != "" {
+		topSections = append(topSections, description, "")
+	}
+	topSections = append(topSections, components.RenderSelectionListPage(items, contentWidth, manageIntervalListMinHeight, listHeight))
+	top := strings.Join(topSections, "\n")
+	if summary == "" {
+		return top
+	}
+	if dockGap > 0 {
+		top += "\n"
+	}
+	return shell.DockBottom(top, summary)
 }
 
 func (m *model) renderManageSuccessBody(contentWidth int) string {

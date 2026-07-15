@@ -189,7 +189,7 @@ func (m *model) dashboardAgentSSHIntegrationSelected(tabs []dashboardTab) bool {
 	return itemIndex >= 0 && itemIndex < len(items) && items[itemIndex].ID == agentItemSSHToggle
 }
 
-func (m *model) renderAgentBody(contentWidth int) string {
+func (m *model) renderAgentBody(contentWidth int, bodyHeight int) string {
 	items := m.agentItems()
 	if len(items) == 0 {
 		return ""
@@ -205,20 +205,53 @@ func (m *model) renderAgentBody(contentWidth int) string {
 	}
 
 	textWidth := max(1, min(contentWidth, theme.HeroMaxWidth))
-	sections := []string{components.RenderSelectionList(listItems, contentWidth, agentListMinHeight)}
-	bottomSections := make([]string, 0, 2)
+	summary := ""
 	if item, ok := m.selectedAgentItem(); ok && strings.TrimSpace(item.Summary) != "" {
-		bottomSections = append(bottomSections, theme.BodyMuted.Width(textWidth).Render(item.Summary))
+		summary = theme.BodyMuted.Width(textWidth).Render(item.Summary)
 	}
+	statusError := ""
 	if errText := strings.TrimSpace(m.agent.statusErr); errText != "" {
-		bottomSections = append(bottomSections, theme.Danger.Width(max(1, contentWidth)).Render(theme.Glyphs.Cross+" "+errText))
+		statusError = theme.Danger.Width(max(1, contentWidth)).Render(theme.Glyphs.Cross + " " + errText)
 	}
+	bottomSections := make([]string, 0, 2)
+	if summary != "" {
+		bottomSections = append(bottomSections, summary)
+	}
+	if statusError != "" {
+		bottomSections = append(bottomSections, statusError)
+	}
+	bottom := strings.Join(bottomSections, "\n\n")
 
-	top := strings.Join(sections, "\n")
-	if len(bottomSections) == 0 {
+	listHeight := bodyHeight
+	dockGap := 1
+	if bottom != "" {
+		listHeight -= lipgloss.Height(bottom) + dockGap
+		if listHeight < 1 && dockGap > 0 {
+			dockGap = 0
+			listHeight = bodyHeight - lipgloss.Height(bottom)
+		}
+		if listHeight < 1 && statusError != "" {
+			bottom = compactAgentStatus(statusError)
+			listHeight = bodyHeight - lipgloss.Height(bottom) - dockGap
+		}
+		if listHeight < 1 {
+			bottom = ""
+			listHeight = bodyHeight
+		}
+	}
+	top := components.RenderSelectionListPage(listItems, contentWidth, agentListMinHeight, listHeight)
+	if bottom == "" {
 		return top
 	}
-	return shell.DockBottom(top+"\n", strings.Join(bottomSections, "\n\n"))
+	if dockGap > 0 {
+		top += "\n"
+	}
+	return shell.DockBottom(top, bottom)
+}
+
+func compactAgentStatus(status string) string {
+	line, _, _ := strings.Cut(status, "\n")
+	return line
 }
 
 func (m *model) renderAgentSigningBody(contentWidth int, bodyHeight int) string {

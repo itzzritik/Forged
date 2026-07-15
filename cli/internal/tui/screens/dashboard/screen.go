@@ -40,13 +40,14 @@ type Page struct {
 }
 
 type Screen struct {
-	Title   string
-	Context string
-	Notice  Notice
-	Options []Option
-	Tabs    []Tab
-	Pages   []Page
-	Summary string
+	Title      string
+	Context    string
+	Notice     Notice
+	Options    []Option
+	Tabs       []Tab
+	Pages      []Page
+	Summary    string
+	BodyHeight int
 }
 
 const (
@@ -76,29 +77,89 @@ func Render(screen Screen, width int) string {
 }
 
 func renderTabbedDashboard(screen Screen, width int) string {
-	topSections := make([]string, 0, 5)
-	if notice := renderNotice(screen.Notice, width); notice != "" {
-		topSections = append(topSections, notice, "")
-	}
-
 	tabWidth := max(16, width)
-	topSections = append(topSections, renderTabs(screen.Tabs, tabWidth))
-
-	if len(screen.Pages) > 0 {
-		topSections = append(topSections, strings.Repeat("\n", tabPageGap-1))
-		topSections = append(topSections, renderPages(screen.Pages, width))
+	notice := renderNotice(screen.Notice, width)
+	tabBar := renderTabs(screen.Tabs, tabWidth)
+	bottom := ""
+	if strings.TrimSpace(screen.Summary) != "" {
+		bottom = theme.BodyMuted.Width(max(1, min(width, theme.HeroMaxWidth))).Render(screen.Summary)
+	}
+	prefix := renderTabbedPrefix(notice, tabBar)
+	pageGap := tabPageGap
+	pageHeight := 0
+	dockGap := 1
+	if len(screen.Pages) > 0 && screen.BodyHeight > 0 {
+		pageHeight = screen.BodyHeight - lipgloss.Height(prefix) - pageGap
+		if bottom != "" {
+			pageHeight -= lipgloss.Height(bottom) + dockGap
+		}
+		if pageHeight < 1 && pageGap > 0 {
+			pageGap = 0
+			pageHeight = screen.BodyHeight - lipgloss.Height(prefix)
+			if bottom != "" {
+				pageHeight -= lipgloss.Height(bottom) + dockGap
+			}
+		}
+		if pageHeight < 1 && bottom != "" && dockGap > 0 {
+			dockGap = 0
+			pageHeight = screen.BodyHeight - lipgloss.Height(prefix) - pageGap - lipgloss.Height(bottom)
+		}
+		if pageHeight < 1 && bottom != "" {
+			bottom = ""
+			pageHeight = screen.BodyHeight - lipgloss.Height(prefix) - pageGap
+		}
+		if pageHeight < 1 && notice != "" {
+			notice = compactDashboardNotice(notice)
+			prefix = renderTabbedPrefix(notice, tabBar)
+			pageHeight = screen.BodyHeight - lipgloss.Height(prefix) - pageGap
+		}
+		if pageHeight < 1 && tabBar != "" {
+			tabBar = ""
+			prefix = renderTabbedPrefix(notice, tabBar)
+			pageGap = 0
+			pageHeight = screen.BodyHeight - lipgloss.Height(prefix)
+		}
+		if pageHeight < 1 {
+			prefix = ""
+			pageGap = 0
+			pageHeight = screen.BodyHeight
+		}
 	}
 
-	top := strings.Join(topSections, "\n")
-	if strings.TrimSpace(screen.Summary) == "" {
+	top := prefix
+	if len(screen.Pages) > 0 {
+		pages := renderPages(screen.Pages, width, pageHeight)
+		if top != "" && pages != "" {
+			top += strings.Repeat("\n", pageGap+1)
+		}
+		top += pages
+	}
+	if bottom == "" {
 		return top
 	}
-
-	bottom := theme.BodyMuted.Width(max(1, min(width, theme.HeroMaxWidth))).Render(screen.Summary)
-	if strings.TrimSpace(top) != "" {
+	if strings.TrimSpace(top) != "" && dockGap > 0 {
 		top += "\n"
 	}
 	return shell.DockBottom(top, bottom)
+}
+
+func renderTabbedPrefix(notice string, tabBar string) string {
+	sections := make([]string, 0, 3)
+	if notice != "" {
+		sections = append(sections, notice)
+		if tabBar != "" {
+			sections = append(sections, "")
+		}
+	}
+	if tabBar != "" {
+		sections = append(sections, tabBar)
+	}
+	return strings.Join(sections, "\n")
+}
+
+func compactDashboardNotice(notice string) string {
+	line, _, _ := strings.Cut(notice, "\n")
+	return line
 }
 
 func renderTabs(tabs []Tab, width int) string {
@@ -257,7 +318,7 @@ func joinTabBlocks(blocks []string) string {
 	return lipgloss.JoinHorizontal(lipgloss.Top, parts...)
 }
 
-func renderPages(pages []Page, width int) string {
+func renderPages(pages []Page, width int, maxHeight int) string {
 	if len(pages) == 0 {
 		return ""
 	}
@@ -269,7 +330,7 @@ func renderPages(pages []Page, width int) string {
 			Selected: page.Selected,
 		})
 	}
-	return components.RenderSelectionList(items, width, pageListMinHeight)
+	return components.RenderSelectionListPage(items, width, pageListMinHeight, maxHeight)
 }
 
 func renderNotice(notice Notice, width int) string {

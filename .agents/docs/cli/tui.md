@@ -41,6 +41,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - The standalone `forged doctor` route remains available when no vault exists; it reports device-level health instead of replacing diagnostics with onboarding.
 - Doctor checks stay in dependency order while their status icon and tone show changing health.
 - Doctor check rows page within the available body height and remain reachable with Up/Down; narrow layouts stack each check so its status stays readable.
+- Dashboard, Manage, Agent, and Master Password Interval selection lists page by rendered row height within the remaining body. Cosmetic gaps and secondary summaries yield first; Agent errors and dashboard notices compact before tab chrome so the selected action remains visible whenever the body has room for one row.
 - Tables and import-review rows size against the real body width, collapse secondary columns before names or status, and truncate by terminal display cells so wide Unicode values cannot overflow.
 - Account profile fields hard-wrap unbroken names and email addresses; compact header greetings truncate by display cells, while post-login identity lines wrap instead of overflowing.
 - Key names are rendered with terminal control characters replaced, including legacy or synced data that predates storage validation.
