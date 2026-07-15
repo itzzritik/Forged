@@ -17,7 +17,7 @@ import (
 type Client struct {
 	ServerURL   string
 	Token       string
-	TokenSource func() (string, error)
+	TokenSource func(context.Context) (string, error)
 	DeviceID    string
 	HTTPClient  *http.Client
 }
@@ -46,7 +46,7 @@ func NewClient(serverURL, token, deviceID string) *Client {
 	}
 }
 
-func NewClientWithTokenSource(serverURL, deviceID string, tokenSource func() (string, error)) *Client {
+func NewClientWithTokenSource(serverURL, deviceID string, tokenSource func(context.Context) (string, error)) *Client {
 	return &Client{
 		ServerURL:   serverURL,
 		TokenSource: tokenSource,
@@ -100,7 +100,7 @@ func (c *Client) PushContext(ctx context.Context, blob []byte, kdf vault.KDFPara
 		return PushResult{}, err
 	}
 
-	token, err := c.authToken()
+	token, err := c.authToken(ctx)
 	if err != nil {
 		return PushResult{}, err
 	}
@@ -137,7 +137,7 @@ func (c *Client) Rekey(kdf vault.KDFParams, protectedKey string) error {
 	if err != nil {
 		return err
 	}
-	token, err := c.authToken()
+	token, err := c.authToken(context.Background())
 	if err != nil {
 		return err
 	}
@@ -174,7 +174,7 @@ func (c *Client) PullContext(ctx context.Context) (PullResult, error) {
 		return PullResult{}, err
 	}
 
-	token, err := c.authToken()
+	token, err := c.authToken(ctx)
 	if err != nil {
 		return PullResult{}, err
 	}
@@ -236,7 +236,7 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 		return StatusResult{}, err
 	}
 
-	token, err := c.authToken()
+	token, err := c.authToken(ctx)
 	if err != nil {
 		return StatusResult{}, err
 	}
@@ -260,9 +260,9 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 	return result, nil
 }
 
-func (c *Client) authToken() (string, error) {
+func (c *Client) authToken(ctx context.Context) (string, error) {
 	if c.TokenSource != nil {
-		token, err := c.TokenSource()
+		token, err := c.TokenSource(ctx)
 		if err != nil {
 			return "", err
 		}

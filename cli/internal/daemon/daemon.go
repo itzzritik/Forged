@@ -31,27 +31,32 @@ import (
 )
 
 type Daemon struct {
-	sessionMu      sync.Mutex
-	paths          config.Paths
-	vault          *vault.Vault
-	keyStore       *vault.KeyStore
-	activityLog    *activity.ActivityLog
-	agent          *forgedagent.ForgedAgent
-	agentServer    *forgedagent.Server
-	ipcServer      *ipc.Server
-	syncBus        *forgedsync.Bus
-	authBroker     *sensitiveauth.Broker
-	sshRouting     *sshrouting.Manager
-	routeService   *sshrouting.Service
-	syncGeneration uint64
-	syncPending    bool
-	syncSuppressed bool
-	syncRetryDelay time.Duration
-	syncError      string
-	logger         *slog.Logger
-	stop           chan struct{}
-	stopOnce       sync.Once
-	shutdownOnce   sync.Once
+	// syncTransitionMu serializes account and sync-state transitions. It is
+	// never held by link network work or manual/session locking.
+	syncTransitionMu sync.Mutex
+	sessionMu        sync.Mutex
+	paths            config.Paths
+	vault            *vault.Vault
+	keyStore         *vault.KeyStore
+	activityLog      *activity.ActivityLog
+	agent            *forgedagent.ForgedAgent
+	agentServer      *forgedagent.Server
+	ipcServer        *ipc.Server
+	syncBus          *forgedsync.Bus
+	syncDraining     *forgedsync.Bus
+	authBroker       *sensitiveauth.Broker
+	sshRouting       *sshrouting.Manager
+	routeService     *sshrouting.Service
+	syncGeneration   uint64
+	syncPending      bool
+	syncSuppressed   bool
+	syncRetryDelay   time.Duration
+	syncError        string
+	linkRun          *linkRun
+	logger           *slog.Logger
+	stop             chan struct{}
+	stopOnce         sync.Once
+	shutdownOnce     sync.Once
 }
 
 func New(paths config.Paths) *Daemon {
@@ -345,13 +350,32 @@ type syncCandidate struct {
 	engine     *forgedsync.Engine
 }
 
+type linkRun struct {
+	candidate *syncCandidate
+	ctx       context.Context
+	cancel    context.CancelFunc
+	done      chan struct{}
+}
+
 const (
 	syncLinkTimeout       = 25 * time.Second
 	syncStateRecoveryHint = "Sync is paused because its local history needs recovery. Restore a verified sync-state.json backup before removing the recovery marker."
 )
 
+func (d *Daemon) initialSyncContext() (context.Context, context.CancelFunc) {
+	ctx, cancel := context.WithTimeout(context.Background(), syncLinkTimeout)
+	go func() {
+		select {
+		case <-d.stop:
+			cancel()
+		case <-ctx.Done():
+		}
+	}()
+	return ctx, cancel
+}
+
 func (d *Daemon) initSyncLocked() {
-	if d.syncSuppressed || d.syncPending {
+	if d.syncSuppressed || d.syncPending || d.syncDraining != nil {
 		return
 	}
 	if d.syncBus != nil {
@@ -396,7 +420,15 @@ func (d *Daemon) initSyncLocked() {
 			return
 		}
 		d.syncPending = true
-		go d.finishInitialSync(candidate, creds.UserID)
+		ctx, cancel := d.initialSyncContext()
+		run := &linkRun{
+			candidate: candidate,
+			ctx:       ctx,
+			cancel:    cancel,
+			done:      make(chan struct{}),
+		}
+		d.linkRun = run
+		go d.finishInitialSync(run, creds.UserID)
 		return
 	}
 
@@ -467,11 +499,19 @@ func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
 		return err
 	}
 
+	d.syncTransitionMu.Lock()
+	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
-	if err := d.beginAccountChangeLocked(); err != nil {
+	run, bus, err := d.beginAccountChangeLocked()
+	d.sessionMu.Unlock()
+	if err != nil {
 		return err
 	}
+	waitForLinkRun(run)
+	waitForSyncBus(bus)
+
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
 	if _, err := d.requireSyncIdentity(args.ServerURL, args.UserID); err != nil {
 		d.syncSuppressed = false
 		d.initSyncLocked()
@@ -503,12 +543,20 @@ func (d *Daemon) handleAccountReplace(args ipc.AccountCredentialsArgs) error {
 		return fmt.Errorf("Account change ID is required")
 	}
 
+	d.syncTransitionMu.Lock()
+	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
-	if err := d.beginAccountChangeLocked(); err != nil {
+	run, bus, err := d.beginAccountChangeLocked()
+	d.sessionMu.Unlock()
+	if err != nil {
 		return err
 	}
-	err := accountauth.WithCredentialsLock(d.paths, func() error {
+	waitForLinkRun(run)
+	waitForSyncBus(bus)
+
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	err = accountauth.WithCredentialsLock(d.paths, func() error {
 		if current, err := accountauth.LoadLocked(d.paths); err == nil {
 			if err := d.recoverSyncStateLocked(current); err != nil {
 				return err
@@ -565,13 +613,21 @@ func (d *Daemon) handleAccountClear() error {
 }
 
 func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
+	d.syncTransitionMu.Lock()
+	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
-	if err := d.beginAccountChangeLocked(); err != nil {
+	run, bus, err := d.beginAccountChangeLocked()
+	d.sessionMu.Unlock()
+	if err != nil {
 		return accountauth.Credentials{}, err
 	}
+	waitForLinkRun(run)
+	waitForSyncBus(bus)
+
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
 	var creds accountauth.Credentials
-	err := accountauth.WithCredentialsLock(d.paths, func() error {
+	err = accountauth.WithCredentialsLock(d.paths, func() error {
 		creds, _ = accountauth.LoadLocked(d.paths)
 		if err := accountauth.DeleteLocked(d.paths); err != nil {
 			return err
@@ -594,21 +650,21 @@ func (d *Daemon) commitAccountClear() (accountauth.Credentials, error) {
 	return creds, nil
 }
 
-func (d *Daemon) beginAccountChangeLocked() error {
+func (d *Daemon) beginAccountChangeLocked() (*linkRun, *forgedsync.Bus, error) {
 	if d.vault != nil && d.keyStore != nil {
 		if err := d.markSyncDirtyLocked(); err != nil {
-			return err
+			return nil, nil, err
 		}
 		if d.syncBus != nil {
 			d.syncBus.LocalMutation("account_link_transition")
 		}
 	}
+	run := d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
 	d.syncSuppressed = true
 	d.syncRetryDelay = 0
-	d.replaceSyncBusLocked(nil)
-	return nil
+	return run, d.detachSyncBusLocked(), nil
 }
 
 func (d *Daemon) removeSyncStateLocked() error {
@@ -812,19 +868,21 @@ func (d *Daemon) syncStateRecoveryMarkedLocked() bool {
 }
 
 func (d *Daemon) handleSyncUnlink() error {
+	d.syncTransitionMu.Lock()
+	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
+	run := d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
 	d.syncSuppressed = true
 	d.syncRetryDelay = 0
+	bus := d.detachSyncBusLocked()
+	d.sessionMu.Unlock()
+	waitForLinkRun(run)
+	waitForSyncBus(bus)
 
-	if d.syncBus != nil {
-		if err := d.syncBus.AuthUnlinked(context.Background()); err != nil {
-			return err
-		}
-	}
-	d.replaceSyncBusLocked(nil)
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
 
 	if err := d.removeSyncStateLocked(); err != nil {
 		return err
@@ -838,25 +896,22 @@ func (d *Daemon) handleSyncUnlink() error {
 	return nil
 }
 
-func (d *Daemon) finishInitialSync(candidate *syncCandidate, userID string) {
+func (d *Daemon) finishInitialSync(run *linkRun, userID string) {
+	defer close(run.done)
+	defer run.cancel()
+
 	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
-
-	if candidate.generation != d.syncGeneration || d.syncSuppressed {
+	if !d.linkRunCurrentLocked(run) {
+		d.sessionMu.Unlock()
 		return
 	}
-	d.syncPending = false
-	if d.vault == nil || d.vault != candidate.vault || d.syncBus != nil {
-		return
-	}
+	d.sessionMu.Unlock()
 
-	ctx, cancel := context.WithTimeout(context.Background(), syncLinkTimeout)
-	defer cancel()
-	refreshed, err := accountauth.EnsureFresh(ctx, d.paths)
+	candidate := run.candidate
+	refreshed, err := accountauth.EnsureFresh(run.ctx, d.paths)
 	if err == nil {
 		err = validateSyncIdentity(refreshed, candidate.serverURL, userID)
 	}
-	var bus *forgedsync.Bus
 	if err == nil {
 		err = accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
 			if err := validateSyncIdentity(stored, candidate.serverURL, userID); err != nil {
@@ -864,14 +919,23 @@ func (d *Daemon) finishInitialSync(candidate *syncCandidate, userID string) {
 			}
 			client := forgedsync.NewClient(candidate.serverURL, accountauth.CurrentToken(stored), candidate.state.DeviceID)
 			candidate.engine = forgedsync.NewEngine(candidate.vault, client, d.logger)
-			if err := candidate.engine.ReconcileOnLink(ctx, candidate.state, userID, candidate.serverURL); err != nil {
-				return err
-			}
-			var err error
-			bus, err = d.activateSyncCandidateLocked(candidate)
-			return err
+			return candidate.engine.ReconcileOnLink(run.ctx, candidate.state, userID, candidate.serverURL)
 		})
 	}
+
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	if !d.linkRunCurrentLocked(run) {
+		return
+	}
+	d.linkRun = nil
+	d.syncPending = false
+	if err != nil {
+		d.logger.Warn("link reconcile failed", "error", err)
+		d.scheduleSyncRetryLocked(candidate.generation)
+		return
+	}
+	bus, err := d.activateSyncCandidateLocked(candidate)
 	if err != nil {
 		d.logger.Warn("link reconcile failed", "error", err)
 		d.scheduleSyncRetryLocked(candidate.generation)
@@ -880,6 +944,33 @@ func (d *Daemon) finishInitialSync(candidate *syncCandidate, userID string) {
 	if bus != nil {
 		d.syncRetryDelay = 0
 		go bus.LifecycleRefresh("link_complete")
+	}
+}
+
+func (d *Daemon) linkRunCurrentLocked(run *linkRun) bool {
+	if run == nil || d.linkRun != run || run.candidate == nil {
+		return false
+	}
+	candidate := run.candidate
+	return candidate.generation == d.syncGeneration &&
+		!d.syncSuppressed &&
+		d.vault != nil && d.vault == candidate.vault &&
+		d.syncBus == nil
+}
+
+func (d *Daemon) cancelLinkRunLocked() *linkRun {
+	run := d.linkRun
+	if run == nil {
+		return nil
+	}
+	d.linkRun = nil
+	run.cancel()
+	return run
+}
+
+func waitForLinkRun(run *linkRun) {
+	if run != nil {
+		<-run.done
 	}
 }
 
@@ -920,6 +1011,9 @@ func (d *Daemon) activateSyncCandidateLocked(candidate *syncCandidate) (*forgeds
 	if d.vault == nil || d.vault != candidate.vault {
 		return nil, fmt.Errorf("Vault session changed while linking sync")
 	}
+	if d.syncDraining != nil {
+		return nil, fmt.Errorf("previous sync work is still stopping")
+	}
 	if _, err := os.Stat(d.paths.SyncDirtyFile()); err == nil {
 		candidate.state.MarkDirty("", time.Time{})
 	} else if !os.IsNotExist(err) {
@@ -936,22 +1030,23 @@ func (d *Daemon) activateSyncCandidateLocked(candidate *syncCandidate) (*forgeds
 		StateStore:    candidate.stateStore,
 	})
 	d.clearSyncStateRecoveryLocked()
-	d.replaceSyncBusLocked(bus)
+	if err := d.replaceSyncBusLocked(bus); err != nil {
+		return nil, err
+	}
 	d.logger.Info("sync initialized", "server", candidate.serverURL, "device_id", candidate.state.DeviceID)
 	return bus, nil
 }
 
-func (d *Daemon) replaceSyncBusLocked(next *forgedsync.Bus) {
-	previous := d.syncBus
-	if previous != nil && previous != next {
-		d.syncBus = nil
-		if d.ipcServer != nil {
-			d.ipcServer.SetSyncBus(nil)
-		}
-		if d.agent != nil {
-			d.agent.SetSyncCoordinator(nil)
-		}
-		previous.Stop()
+func (d *Daemon) replaceSyncBusLocked(next *forgedsync.Bus) error {
+	if next == nil {
+		d.detachSyncBusLocked()
+		return nil
+	}
+	if d.syncBus != nil && d.syncBus != next {
+		return fmt.Errorf("sync bus replacement requires the previous bus to stop")
+	}
+	if d.syncDraining != nil {
+		return fmt.Errorf("previous sync work is still stopping")
 	}
 	d.syncBus = next
 	if d.ipcServer != nil {
@@ -960,11 +1055,59 @@ func (d *Daemon) replaceSyncBusLocked(next *forgedsync.Bus) {
 	if d.agent != nil {
 		d.agent.SetSyncCoordinator(next)
 	}
+	return nil
 }
 
-func (d *Daemon) syncTokenSource(serverURL, userID string) func() (string, error) {
-	return func() (string, error) {
-		creds, err := accountauth.EnsureFresh(context.Background(), d.paths)
+func (d *Daemon) detachSyncBusLocked() *forgedsync.Bus {
+	if d.syncBus == nil {
+		return d.syncDraining
+	}
+
+	previous := d.syncBus
+	d.syncBus = nil
+	if d.ipcServer != nil {
+		d.ipcServer.SetSyncBus(nil)
+	}
+	if d.agent != nil {
+		d.agent.SetSyncCoordinator(nil)
+	}
+	previous.BeginStop()
+	d.syncDraining = previous
+	go d.drainSyncBus(previous)
+	return previous
+}
+
+func (d *Daemon) drainSyncBus(bus *forgedsync.Bus) {
+	bus.Wait()
+
+	d.sessionMu.Lock()
+	defer d.sessionMu.Unlock()
+	if d.syncDraining != bus {
+		return
+	}
+	d.syncDraining = nil
+	d.initSyncLocked()
+}
+
+func waitForSyncBus(bus *forgedsync.Bus) {
+	if bus != nil {
+		bus.Wait()
+	}
+}
+
+func (d *Daemon) waitForSyncDrain() {
+	d.sessionMu.Lock()
+	bus := d.syncDraining
+	d.sessionMu.Unlock()
+	waitForSyncBus(bus)
+}
+
+func (d *Daemon) syncTokenSource(serverURL, userID string) func(context.Context) (string, error) {
+	return func(ctx context.Context) (string, error) {
+		if err := ctx.Err(); err != nil {
+			return "", err
+		}
+		creds, err := accountauth.EnsureFresh(ctx, d.paths)
 		if err != nil {
 			return "", fmt.Errorf("Refreshing account credentials: %w", err)
 		}
@@ -1120,10 +1263,11 @@ func (d *Daemon) clearActiveSession(reason string) {
 	d.sessionMu.Lock()
 	defer d.sessionMu.Unlock()
 
+	d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
 	d.syncRetryDelay = 0
-	d.replaceSyncBusLocked(nil)
+	d.detachSyncBusLocked()
 
 	if d.routeService != nil {
 		d.routeService.SetKeyStore(nil)
@@ -1223,6 +1367,7 @@ func (d *Daemon) shutdownNow() {
 	} else {
 		d.clearActiveSession("shutdown")
 	}
+	d.waitForSyncDrain()
 
 	removeOwnedPIDFile(d.paths.PIDFile(), os.Getpid())
 

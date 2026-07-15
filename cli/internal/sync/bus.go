@@ -277,9 +277,11 @@ func (b *Bus) AuthLinked(ctx context.Context, userID, serverURL string) error {
 	linker, ok := b.engine.(linkRuntime)
 	if !ok {
 		b.mu.Lock()
-		b.state.LinkedUserID = userID
-		b.state.ServerURL = serverURL
-		b.persistLocked()
+		if !b.stopped {
+			b.state.LinkedUserID = userID
+			b.state.ServerURL = serverURL
+			b.persistLocked()
+		}
 		b.mu.Unlock()
 		b.finishPull(nil, false)
 		return nil
@@ -289,20 +291,6 @@ func (b *Bus) AuthLinked(ctx context.Context, userID, serverURL string) error {
 	b.applyEngineState(state, mutationVersion)
 	b.finishPull(err, errors.Is(ctx.Err(), context.Canceled))
 	return err
-}
-
-func (b *Bus) AuthUnlinked(_ context.Context) error {
-	b.Stop()
-
-	b.mu.Lock()
-	defer b.mu.Unlock()
-	deviceID := b.state.DeviceID
-	cleared := DefaultSyncState(deviceID)
-	*b.state = cleared
-	b.retryIndex = 0
-	b.lastAgentRefresh = time.Time{}
-	b.persistLocked()
-	return nil
 }
 
 func (b *Bus) ForceSync(ctx context.Context, reason string) error {
@@ -370,6 +358,10 @@ func (b *Bus) CheckDirtyFlag() {
 		return
 	}
 	b.mu.Lock()
+	if b.stopped {
+		b.mu.Unlock()
+		return
+	}
 	b.mutationVersion++
 	b.state.MarkDirty("", time.Time{})
 	b.persistLocked()
@@ -510,6 +502,18 @@ func (b *Bus) remoteNeedsPull(ctx context.Context, checker remoteStatusRuntime, 
 
 func (b *Bus) finishPush(err error) {
 	b.mu.Lock()
+	if b.stopped {
+		done := b.syncDone
+		b.syncDone = nil
+		b.syncing = false
+		b.queuedPush = false
+		b.queuedRefresh = false
+		b.mu.Unlock()
+
+		close(done)
+		b.active.Done()
+		return
+	}
 	if err != nil {
 		delay := b.nextRetryDelayLocked()
 		b.state.MarkDirty(err.Error(), time.Now().UTC().Add(delay))
@@ -558,6 +562,18 @@ func (b *Bus) finishPush(err error) {
 
 func (b *Bus) finishPull(err error, callerCanceled bool) {
 	b.mu.Lock()
+	if b.stopped {
+		done := b.syncDone
+		b.syncDone = nil
+		b.syncing = false
+		b.queuedPush = false
+		b.queuedRefresh = false
+		b.mu.Unlock()
+
+		close(done)
+		b.active.Done()
+		return
+	}
 	done := b.syncDone
 	b.syncDone = nil
 	b.syncing = false
@@ -617,6 +633,9 @@ func (b *Bus) engineStateSnapshot() (SyncState, uint64) {
 func (b *Bus) applyEngineState(next SyncState, mutationVersion uint64) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if b.stopped {
+		return
+	}
 
 	mutatedDuringSync := mutationVersion != b.mutationVersion
 	*b.state = cloneSyncState(next)
@@ -636,7 +655,7 @@ func cloneSyncState(state SyncState) SyncState {
 	return state
 }
 
-func (b *Bus) Stop() {
+func (b *Bus) BeginStop() {
 	b.stopOnce.Do(func() {
 		b.mu.Lock()
 		b.stopped = true
@@ -653,11 +672,17 @@ func (b *Bus) Stop() {
 		b.mu.Unlock()
 		b.cancelStop()
 		close(b.stopCh)
-		b.active.Wait()
-		b.mu.Lock()
-		b.persistLocked()
-		b.mu.Unlock()
 	})
+}
+
+func (b *Bus) Wait() {
+	b.BeginStop()
+	b.active.Wait()
+}
+
+func (b *Bus) Stop() {
+	b.BeginStop()
+	b.Wait()
 }
 
 func (b *Bus) withStopContext(parent context.Context) (context.Context, context.CancelFunc) {
@@ -739,6 +764,9 @@ func (b *Bus) startBackgroundRefresh() {
 }
 
 func (b *Bus) persistLocked() {
+	if b.stopped {
+		return
+	}
 	stateSaved := true
 	if b.cfg.StateStore != nil {
 		if err := b.cfg.StateStore.Save(b.state); err != nil {

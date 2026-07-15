@@ -27,7 +27,8 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - A foreground startup password hydrates through the broker, so it establishes the same active session as an interactive password unlock.
 - A delivered master-password authorization refreshes local unlock enrollment from the active vault session; a canceled or failed response does not change that durable trust.
 - When the shared session is cleared, the daemon drops back to cold state.
-- Session clear waits for admitted sync work to finish before zeroing and closing the vault.
+- Session clear immediately cancels and detaches initial-link and sync-bus work before closing the vault. Stopped buses discard completion-state writes; old work drains separately, and a generation plus vault-identity fence prevents a stale link from publishing a bus or sync-state metadata.
+- Account and sync-state transitions wait for detached work outside the live-session lock, so manual/system locking is not held behind initial-link or active-sync network work.
 - Sync only exists while account credentials are present and a live vault session is available.
 - Local sync state preserves the three-way merge base and server version. Corrupt history is quarantined with a recovery marker, blocks sync and account-change state replacement, and is never auto-relinked or deleted as stale state.
 - Account actions require the daemon's account-change protocol, repairing or restarting the managed service before sending versioned replace and clear commands. They never write credentials directly. Replacement and clear hold the credential lock through their sync-state transaction, so restore cannot publish state for the previous account mid-switch or logout. Credential commit is quick; reconciliation continues as bounded, generation-checked background work.
