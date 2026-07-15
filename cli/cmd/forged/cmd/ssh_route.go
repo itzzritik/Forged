@@ -5,8 +5,10 @@ import (
 	"os"
 	"time"
 
+	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/platform"
+	"github.com/itzzritik/forged/cli/internal/sshrouting"
 	"github.com/spf13/cobra"
 )
 
@@ -18,6 +20,7 @@ var (
 	sshRouteOriginalHost string
 	sshRouteUser         string
 	sshRoutePort         string
+	sshRouteSlot         int
 )
 
 var sshRoutePrepareCmd = &cobra.Command{
@@ -32,6 +35,9 @@ var sshRoutePrepareCmd = &cobra.Command{
 		}
 		if os.Getenv("FORGED_SSH_ROUTE_SKIP") == "1" {
 			os.Exit(1)
+		}
+		if err := sshrouting.RemoveRouteReady(config.DefaultPaths().SSHRouteRuntimeDir(), sshRouteAttempt); err != nil {
+			debugSSHRoute("prepare ready marker: %v", err)
 		}
 		cwd, err := os.Getwd()
 		if err != nil {
@@ -76,14 +82,39 @@ var sshRouteSuccessCmd = &cobra.Command{
 	},
 }
 
+var sshRouteSlotCmd = &cobra.Command{
+	Use:           "__ssh-route-slot",
+	Hidden:        true,
+	SilenceUsage:  true,
+	SilenceErrors: true,
+	Args:          cobra.NoArgs,
+	Run: func(cmd *cobra.Command, args []string) {
+		if !platform.SSHRoutingSupported() {
+			os.Exit(1)
+		}
+		_, err := ctlClient().CallWithTimeout(ipc.CmdSSHRouteSlot, ipc.SSHRouteSlotArgs{
+			Attempt:   sshRouteAttempt,
+			ClientPID: os.Getppid(),
+			Slot:      sshRouteSlot,
+		}, sshRouteSuccessCallTimeout)
+		if err != nil {
+			debugSSHRoute("slot: %v", err)
+			os.Exit(1)
+		}
+	},
+}
+
 func init() {
-	for _, routeCmd := range []*cobra.Command{sshRoutePrepareCmd, sshRouteSuccessCmd} {
+	for _, routeCmd := range []*cobra.Command{sshRoutePrepareCmd, sshRouteSuccessCmd, sshRouteSlotCmd} {
 		routeCmd.Flags().StringVar(&sshRouteAttempt, "attempt", "", "routing attempt token")
+	}
+	for _, routeCmd := range []*cobra.Command{sshRoutePrepareCmd, sshRouteSuccessCmd} {
 		routeCmd.Flags().StringVar(&sshRouteHost, "host", "", "effective host")
 		routeCmd.Flags().StringVar(&sshRouteOriginalHost, "original-host", "", "original host")
 		routeCmd.Flags().StringVar(&sshRouteUser, "user", "", "target user")
 		routeCmd.Flags().StringVar(&sshRoutePort, "port", "22", "target port")
 	}
+	sshRouteSlotCmd.Flags().IntVar(&sshRouteSlot, "slot", 0, "routing identity slot")
 }
 
 func debugSSHRoute(format string, args ...any) {

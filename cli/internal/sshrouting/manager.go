@@ -3,6 +3,7 @@ package sshrouting
 import (
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -47,10 +48,6 @@ func (m *Manager) Refresh(keys []vault.Key) error {
 	if err := SyncPublicHintFiles(m.paths.SSHManagedKeysDir(), refs, time.Now().UTC()); err != nil {
 		return fmt.Errorf("Syncing SSH public key hints: %w", err)
 	}
-	if err := CleanupRouteRuntime(m.paths.SSHRouteRuntimeDir(), time.Now().UTC().Add(-routeSnippetTTL)); err != nil {
-		return fmt.Errorf("Cleaning SSH route snippets: %w", err)
-	}
-
 	routes := renderRouteHooks(m.paths, m.selfPath)
 	content := config.RenderManagedSSHConfig(m.paths, routes)
 	return config.WriteManagedSSHConfig(m.paths, content)
@@ -58,6 +55,7 @@ func (m *Manager) Refresh(keys []vault.Key) error {
 
 func renderRouteHooks(paths config.Paths, selfPath string) string {
 	prepare := strings.Join([]string{
+		"exec",
 		shellQuote(selfPath),
 		"__ssh-route-prepare",
 		"--attempt", shellQuote("%C"),
@@ -67,26 +65,31 @@ func renderRouteHooks(paths config.Paths, selfPath string) string {
 		"--original-host", shellQuote("%n"),
 	}, " ")
 	success := strings.Join([]string{
+		"exec",
 		shellQuote(selfPath),
 		"__ssh-route-success",
 		"--attempt", shellQuote("%C"),
 	}, " ")
 	return strings.Join([]string{
 		fmt.Sprintf("Match exec %s", sshConfigQuote(prepare)),
-		"    IdentitiesOnly yes",
-		"    IdentityFile none",
 		fmt.Sprintf("    LocalCommand %s", success),
-		renderRouteIdentitySlotHooks(paths),
+		renderRouteIdentitySlotHooks(paths, selfPath),
 	}, "\n")
 }
 
-func renderRouteIdentitySlotHooks(paths config.Paths) string {
+func renderRouteIdentitySlotHooks(paths config.Paths, selfPath string) string {
 	lines := make([]string, 0, routeIdentitySlotCount*2)
 	for slot := 1; slot <= routeIdentitySlotCount; slot++ {
 		path := routeIdentitySlotPattern(paths.SSHRouteRuntimeDir(), slot)
-		test := "test -f " + shellQuote(path)
+		check := strings.Join([]string{
+			"exec",
+			shellQuote(selfPath),
+			"__ssh-route-slot",
+			"--attempt", shellQuote("%C"),
+			"--slot", strconv.Itoa(slot),
+		}, " ")
 		lines = append(lines,
-			fmt.Sprintf("Match exec %s", sshConfigQuote(test)),
+			fmt.Sprintf("Match exec %s", sshConfigQuote(check)),
 			fmt.Sprintf("    IdentityFile %q", path),
 		)
 	}

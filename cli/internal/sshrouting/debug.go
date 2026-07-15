@@ -14,9 +14,10 @@ import (
 )
 
 type DebugSnapshot struct {
-	Routes          []DebugRoute          `json:"routes"`
-	RuntimeAttempts []DebugRuntimeAttempt `json:"runtime_attempts"`
-	PublicHints     []DebugPublicHint     `json:"public_hints"`
+	Routes               []DebugRoute          `json:"routes"`
+	RuntimeAttempts      []DebugRuntimeAttempt `json:"runtime_attempts"`
+	PublicHints          []DebugPublicHint     `json:"public_hints"`
+	RuntimeGuardRequired bool                  `json:"runtime_guard_required,omitempty"`
 }
 
 type DebugRoute struct {
@@ -81,6 +82,7 @@ type DebugPublicHint struct {
 func (s *Service) DebugSnapshot() (DebugSnapshot, error) {
 	s.mu.RLock()
 	keyStore := s.keyStore
+	runtimeGuardRequired := s.runtimeUntrusted || s.runtimeWriteFailed
 	attempts := make([]Attempt, 0, len(s.attempts))
 	for _, attempt := range s.attempts {
 		attempts = append(attempts, cloneAttempt(attempt))
@@ -104,9 +106,10 @@ func (s *Service) DebugSnapshot() (DebugSnapshot, error) {
 	keyNameByFingerprint := keyNamesByFingerprint(keys)
 
 	return DebugSnapshot{
-		Routes:          debugRoutes(routes, refByFingerprint, keyNameByFingerprint),
-		RuntimeAttempts: debugRuntimeAttempts(s.paths.SSHRouteRuntimeDir(), attempts, refByPath, now),
-		PublicHints:     debugPublicHints(s.paths.SSHManagedKeysDir(), refByPath),
+		Routes:               debugRoutes(routes, refByFingerprint, keyNameByFingerprint),
+		RuntimeAttempts:      debugRuntimeAttempts(s.paths.SSHRouteRuntimeDir(), attempts, refByPath, now),
+		PublicHints:          debugPublicHints(s.paths.SSHManagedKeysDir(), refByPath),
+		RuntimeGuardRequired: runtimeGuardRequired,
 	}, nil
 }
 
@@ -158,6 +161,16 @@ func (s *Service) ClearAll() error {
 		}
 		cleared = true
 	}
+	refs := s.routeRefs()
+	s.mu.Lock()
+	s.reconcileRouteAttemptsLocked(s.now(), refs)
+	if s.runtimeUntrusted || s.runtimeWriteFailed {
+		if err := s.resetRouteRuntimeLocked(); err != nil {
+			s.mu.Unlock()
+			return err
+		}
+	}
+	s.mu.Unlock()
 	return nil
 }
 

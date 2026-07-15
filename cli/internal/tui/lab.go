@@ -203,9 +203,13 @@ func (m *model) updateLabRoutingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	case "a", "A":
-		if len(m.lab.routing.Routes) > 0 {
+		if len(m.lab.routing.Routes) > 0 || m.lab.routing.RuntimeGuardRequired {
 			m.lab.clearAll = true
-			m.lab.notice = "Press Enter to clear all learned routes."
+			if m.lab.routing.RuntimeGuardRequired {
+				m.lab.notice = "Close active SSH sessions, then press Enter to reset route memory."
+			} else {
+				m.lab.notice = "Press Enter to clear all learned routes."
+			}
 		}
 		return m, nil
 	default:
@@ -263,7 +267,10 @@ func (m *model) renderLabRouteSummary(width int) string {
 	route, ok := m.selectedLabRoute()
 	title := ""
 	detail := ""
-	if !ok {
+	if m.lab.routing.RuntimeGuardRequired && !m.lab.loading {
+		title = theme.Warning.Render("! SSH route guard needs reset")
+		detail = theme.BodyMuted.Render("Close active SSH sessions, then clear all route memory.")
+	} else if !ok {
 		if m.lab.loading {
 			title = theme.BodyStrong.Render(m.spinner.View() + " Reading SSH route memory")
 		} else {
@@ -419,6 +426,9 @@ func labSummaryRow(left string, right string, width int) string {
 func (m *model) labEmptySubtitle() string {
 	if m.lab.loading {
 		return "Reading learned routes from the daemon"
+	}
+	if m.lab.routing.RuntimeGuardRequired {
+		return "Close active SSH sessions, then clear all route memory"
 	}
 	if strings.TrimSpace(m.lab.err) != "" {
 		return "Forged will retry while this screen is open"

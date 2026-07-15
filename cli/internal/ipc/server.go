@@ -22,7 +22,8 @@ import (
 
 type SSHRouteHandler interface {
 	PrepareContext(context.Context, sshrouting.PrepareRequest) error
-	Success(attempt string, clientPID int) error
+	Success(attempt string, clientPID, helperPID int) error
+	Slot(attempt string, clientPID, helperPID, slot int) error
 	DebugSnapshot() (sshrouting.DebugSnapshot, error)
 	Clear(target string) error
 	ClearAll() error
@@ -207,23 +208,31 @@ func (s *Server) acceptLoop(listener net.Listener) {
 			return
 		}
 		retryDelay = 0
+		peerPID := 0
 		if platform.ControlPeerCredentialsAvailable() {
 			if err := platform.VerifyCurrentUserPeer(conn); err != nil {
 				s.logger.Warn("rejecting IPC peer", "error", err)
 				_ = conn.Close()
 				continue
 			}
+			peer, err := platform.PeerCredentialsForConn(conn)
+			if err != nil {
+				s.logger.Warn("reading IPC peer", "error", err)
+				_ = conn.Close()
+				continue
+			}
+			peerPID = peer.PID
 		}
 		if !s.admit(conn) {
 			_ = conn.Close()
 			return
 		}
-		go func(conn net.Conn) {
+		go func(conn net.Conn, peerPID int) {
 			defer s.wg.Done()
 			defer s.release(conn)
 			defer conn.Close()
-			s.handleConn(conn)
-		}(conn)
+			s.handleConn(conn, peerPID)
+		}(conn, peerPID)
 	}
 }
 
@@ -244,7 +253,7 @@ func (s *Server) release(conn net.Conn) {
 	s.lifecycleMu.Unlock()
 }
 
-func (s *Server) handleConn(conn net.Conn) {
+func (s *Server) handleConn(conn net.Conn, peerPID int) {
 	deadline := time.Now().Add(60 * time.Second)
 	conn.SetDeadline(deadline)
 
@@ -261,6 +270,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	case CmdSSHRoutePrepare:
 		deadline = time.Now().Add(SSHRoutePrepareCallTimeout + 5*time.Second)
 		conn.SetDeadline(deadline)
+	case CmdSSHRouteSuccess, CmdSSHRouteSlot:
+		deadline = time.Now().Add(5 * time.Second)
+		conn.SetDeadline(deadline)
 	case CmdSensitiveAuth, CmdSensitivePassword:
 		deadline = time.Now().Add(5 * time.Minute)
 		conn.SetDeadline(deadline)
@@ -275,7 +287,7 @@ func (s *Server) handleConn(conn net.Conn) {
 		<-watchDone
 	}()
 
-	resp := s.dispatch(ctx, req)
+	resp := s.dispatch(ctx, req, peerPID)
 	defer clear(resp.Data)
 	writeErr := WriteMessage(conn, resp, maxResponseMessageBytes)
 	if err := resp.finalizeDelivery(writeErr == nil && ctx.Err() == nil); err != nil && writeErr == nil {
@@ -298,7 +310,7 @@ func requestContext(conn net.Conn, deadline time.Time) (context.Context, context
 	return ctx, cancel, done
 }
 
-func (s *Server) dispatch(ctx context.Context, req Request) Response {
+func (s *Server) dispatch(ctx context.Context, req Request, peerPID int) Response {
 	switch req.Command {
 	case CmdList:
 		return s.handleList(ctx)
@@ -329,9 +341,11 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	case CmdAccountClear:
 		return s.handleAccountClear()
 	case CmdSSHRoutePrepare:
-		return s.handleSSHRoutePrepare(ctx, req.Args)
+		return s.handleSSHRoutePrepare(ctx, req.Args, peerPID)
 	case CmdSSHRouteSuccess:
-		return s.handleSSHRouteSuccess(req.Args)
+		return s.handleSSHRouteSuccess(req.Args, peerPID)
+	case CmdSSHRouteSlot:
+		return s.handleSSHRouteSlot(req.Args, peerPID)
 	case CmdSSHRoutesList:
 		return s.handleSSHRoutesList(ctx)
 	case CmdSSHRouteClear:
@@ -351,7 +365,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	}
 }
 
-func (s *Server) handleSSHRoutePrepare(deliveryCtx context.Context, raw json.RawMessage) Response {
+func (s *Server) handleSSHRoutePrepare(deliveryCtx context.Context, raw json.RawMessage, helperPID int) Response {
 	if s.sshRoutes == nil {
 		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
 	}
@@ -366,6 +380,7 @@ func (s *Server) handleSSHRoutePrepare(deliveryCtx context.Context, raw json.Raw
 	req := sshrouting.PrepareRequest{
 		Attempt:      args.Attempt,
 		ClientPID:    args.ClientPID,
+		HelperPID:    helperPID,
 		CWD:          args.CWD,
 		Host:         args.Host,
 		OriginalHost: args.OriginalHost,
@@ -418,7 +433,7 @@ func (s *Server) ensureExternalSession(ctx context.Context) (func(bool) error, e
 	return finalize, nil
 }
 
-func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
+func (s *Server) handleSSHRouteSuccess(raw json.RawMessage, helperPID int) Response {
 	if s.sshRoutes == nil {
 		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
 	}
@@ -428,10 +443,26 @@ func (s *Server) handleSSHRouteSuccess(raw json.RawMessage) Response {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
 
-	if err := s.sshRoutes.Success(args.Attempt, args.ClientPID); err != nil {
+	if err := s.sshRoutes.Success(args.Attempt, args.ClientPID, helperPID); err != nil {
 		return ErrorResponse(err)
 	}
 
+	return OkResponse(nil)
+}
+
+func (s *Server) handleSSHRouteSlot(raw json.RawMessage, helperPID int) Response {
+	if s.sshRoutes == nil {
+		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
+	}
+
+	var args SSHRouteSlotArgs
+	if err := json.Unmarshal(raw, &args); err != nil {
+		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
+	}
+
+	if err := s.sshRoutes.Slot(args.Attempt, args.ClientPID, helperPID, args.Slot); err != nil {
+		return ErrorResponse(err)
+	}
 	return OkResponse(nil)
 }
 

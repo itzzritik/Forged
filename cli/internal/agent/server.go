@@ -137,9 +137,19 @@ func (s *Server) acceptLoop(listener net.Listener) {
 			defer cancel()
 			defer conn.Close()
 
-			var scoped agent.ExtendedAgent = s.agent.ForContext(ctx)
-			if pid, err := platform.AgentPeerPID(conn); err == nil {
-				scoped = s.agent.ForClientPIDContext(ctx, pid)
+			var scoped agent.ExtendedAgent
+			release := func() {}
+			defer func() { release() }()
+			if !platform.SSHRoutingSupported() {
+				scoped = s.agent.ForContext(ctx)
+			} else if pid, err := platform.AgentPeerPID(conn); err != nil {
+				s.logger.Warn("rejecting unverified SSH route client", "error", err)
+				scoped = s.agent.ForDeniedClientContext(ctx, 0)
+			} else if process, err := platform.ProcessInfoForPID(pid); err != nil {
+				s.logger.Warn("rejecting unknown SSH route client", "pid", pid, "error", err)
+				scoped = s.agent.ForDeniedClientContext(ctx, pid)
+			} else {
+				scoped, release = s.agent.ForClientProcessSessionContext(ctx, process.Instance)
 			}
 
 			if err := agent.ServeAgent(scoped, conn); err != nil {

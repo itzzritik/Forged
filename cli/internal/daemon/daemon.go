@@ -124,16 +124,15 @@ func (d *Daemon) Run(password []byte) error {
 	d.activityLog = activity.NewActivityLog(1000)
 	d.sessionMu.Lock()
 	d.initSyncLocked()
-	err := d.startIPC()
+	err := d.refreshSSHRoutingLocked()
+	if err == nil {
+		err = d.startIPC()
+	}
 	if err == nil {
 		err = d.startAgentLocked()
 	}
 	d.sessionMu.Unlock()
 	if err != nil {
-		return err
-	}
-
-	if err := d.refreshSSHRouting(); err != nil {
 		return err
 	}
 

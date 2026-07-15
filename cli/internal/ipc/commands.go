@@ -29,6 +29,7 @@ const (
 	CmdStatus            = "status"
 	CmdSSHRoutePrepare   = "ssh-route-prepare"
 	CmdSSHRouteSuccess   = "ssh-route-success"
+	CmdSSHRouteSlot      = "ssh-route-slot"
 	CmdSSHRoutesList     = "ssh-routes-list"
 	CmdSSHRouteClear     = "ssh-route-clear"
 	CmdSSHRoutesClearAll = "ssh-routes-clear-all"
@@ -74,6 +75,12 @@ type SSHRoutePrepareArgs struct {
 type SSHRouteSuccessArgs struct {
 	Attempt   string `json:"attempt"`
 	ClientPID int    `json:"client_pid"`
+}
+
+type SSHRouteSlotArgs struct {
+	Attempt   string `json:"attempt"`
+	ClientPID int    `json:"client_pid"`
+	Slot      int    `json:"slot"`
 }
 
 type SSHRouteClearArgs struct {

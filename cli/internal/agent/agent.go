@@ -12,6 +12,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/activity"
 	"github.com/itzzritik/forged/cli/internal/keytypes"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -89,18 +90,43 @@ func (a *ForgedAgent) ForContext(ctx context.Context) agent.ExtendedAgent {
 }
 
 func (a *ForgedAgent) ForClientPIDContext(ctx context.Context, clientPID int) agent.ExtendedAgent {
+	process, err := platform.ProcessInfoForPID(clientPID)
+	if err != nil {
+		return a.ForDeniedClientContext(ctx, clientPID)
+	}
+	return a.ForClientProcessContext(ctx, process.Instance)
+}
+
+// ForClientProcessContext scopes routing to each operation. Long-lived agent
+// connections must use ForClientProcessSessionContext and its release function.
+func (a *ForgedAgent) ForClientProcessContext(ctx context.Context, process platform.ProcessInstance) agent.ExtendedAgent {
+	scoped, _ := a.ForClientProcessSessionContext(ctx, process)
+	if session, ok := scoped.(*sessionAgent); ok {
+		session.releaseAfterOperation = true
+	}
+	return scoped
+}
+
+// ForClientProcessSessionContext returns a client-scoped agent plus the
+// connection release function that must run after serving the peer.
+func (a *ForgedAgent) ForClientProcessSessionContext(ctx context.Context, process platform.ProcessInstance) (agent.ExtendedAgent, func()) {
 	a.mu.RLock()
 	routes := a.routes
 	a.mu.RUnlock()
 	if routes == nil {
-		return &contextAgent{ForgedAgent: a, ctx: ctx, clientPID: clientPID}
+		return &contextAgent{ForgedAgent: a, ctx: ctx, clientPID: process.PID}, func() {}
 	}
-	return &sessionAgent{
-		base:      a,
-		ctx:       ctx,
-		clientPID: clientPID,
-		routes:    routes,
+	session := &sessionAgent{
+		base:   a,
+		ctx:    ctx,
+		client: process,
+		routes: routes,
 	}
+	return session, session.Close
+}
+
+func (a *ForgedAgent) ForDeniedClientContext(ctx context.Context, clientPID int) agent.ExtendedAgent {
+	return &sessionAgent{base: a, ctx: ctx, clientPID: clientPID, denied: true}
 }
 
 func (a *ForgedAgent) List() ([]*agent.Key, error) {

@@ -90,6 +90,7 @@ func installRootSubcommands(cmd *cobra.Command) {
 		daemonFreshenCmd,
 		sshRoutePrepareCmd,
 		sshRouteSuccessCmd,
+		sshRouteSlotCmd,
 	} {
 		hiddenCmd.Hidden = true
 	}
@@ -102,6 +103,7 @@ func installRootSubcommands(cmd *cobra.Command) {
 		daemonFreshenCmd,
 		sshRoutePrepareCmd,
 		sshRouteSuccessCmd,
+		sshRouteSlotCmd,
 	)
 }
 

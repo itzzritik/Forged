@@ -12,9 +12,10 @@ import (
 )
 
 type SSHRoutingDebug struct {
-	Routes          []SSHRouteDebug          `json:"routes"`
-	RuntimeAttempts []SSHRouteRuntimeAttempt `json:"runtime_attempts"`
-	PublicHints     []SSHRoutePublicHint     `json:"public_hints"`
+	Routes               []SSHRouteDebug          `json:"routes"`
+	RuntimeAttempts      []SSHRouteRuntimeAttempt `json:"runtime_attempts"`
+	PublicHints          []SSHRoutePublicHint     `json:"public_hints"`
+	RuntimeGuardRequired bool                     `json:"runtime_guard_required,omitempty"`
 }
 
 type SSHRouteDebug struct {

@@ -445,7 +445,13 @@ func RenderManagedSSHConfig(paths Paths, routes string) string {
 	}
 	routes = strings.TrimSpace(routes)
 	if routes != "" {
-		lines = append(lines, "    PermitLocalCommand yes")
+		lines = append(lines,
+			"    PermitLocalCommand yes",
+			"    ControlMaster no",
+			"    ControlPath none",
+			"    IdentitiesOnly yes",
+			"    IdentityFile none",
+		)
 		lines = append(lines, "", sshRoutesComment, routes)
 	}
 
