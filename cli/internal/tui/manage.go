@@ -405,7 +405,7 @@ func (m *model) updateManageMasterIntervalKeys(msg tea.KeyMsg) (tea.Model, tea.C
 }
 
 func (m *model) openManageItem(item manageItem) (tea.Model, tea.Cmd) {
-	if m.manage.syncBusy || m.manage.logoutBusy {
+	if m.maintenanceBusy || m.manage.syncBusy || m.manage.logoutBusy {
 		return m, nil
 	}
 

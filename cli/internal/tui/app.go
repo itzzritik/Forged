@@ -1671,6 +1671,9 @@ func (m *model) footerActions() []shell.FooterAction {
 		if m.currentDashboardSection() != nil {
 			if m.session.Current().ID == RouteSyncHome {
 				if !m.snapshot.LoggedIn {
+					if m.maintenanceBusy {
+						return []shell.FooterAction{{Key: "Esc", Label: m.session.EscLabel(EscAuto)}}
+					}
 					return []shell.FooterAction{
 						{Key: "Enter", Label: "Log In"},
 						{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
@@ -1831,6 +1834,9 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "enter":
 			if m.session.Current().ID == RouteSyncHome {
 				if !m.snapshot.LoggedIn {
+					if m.maintenanceBusy {
+						return m, nil
+					}
 					if m.session.Current().ID != RouteAccountLogin {
 						m.session.Push(Route{ID: RouteAccountLogin})
 					}
@@ -2516,6 +2522,10 @@ func (m *model) restoreLinkedVault(id int, password []byte) tea.Cmd {
 }
 
 func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, createVaultFirst bool, title string, authEmail string) tea.Cmd {
+	if m.maintenanceBusy {
+		clear(password)
+		return nil
+	}
 	m.notice = notice{}
 	m.runtimeStatusID++
 	m.snapshotRefreshID++
