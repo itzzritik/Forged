@@ -392,6 +392,7 @@ func (g *syncApplyGate) revoke() {
 type syncInitRun struct {
 	generation uint64
 	vault      *vault.Vault
+	stateGate  *syncApplyGate
 }
 
 // syncStateSnapshot is a stable, parsed view of both account-transition
@@ -438,8 +439,8 @@ func (d *Daemon) expireInitialLink(run *linkRun) {
 		return
 	}
 
-	run.applyGate.revoke()
 	run.cancel()
+	run.applyGate.revoke()
 }
 
 func (d *Daemon) initSyncLocked() {
@@ -450,7 +451,7 @@ func (d *Daemon) initSyncLocked() {
 		return
 	}
 	d.syncGeneration++
-	run := &syncInitRun{generation: d.syncGeneration, vault: d.vault}
+	run := &syncInitRun{generation: d.syncGeneration, vault: d.vault, stateGate: &syncApplyGate{}}
 	d.syncInitRun = run
 	d.syncPending = true
 	go d.finishSyncInit(run)
@@ -537,26 +538,41 @@ func (d *Daemon) finishSyncInit(run *syncInitRun) {
 		}
 		return nil
 	})
+	if err == nil {
+		err = d.persistSyncInitCandidate(run, candidate)
+	}
 
+	var bus *forgedsync.Bus
 	d.sessionMu.Lock()
 	if !d.syncInitRunCurrentLocked(run) {
 		d.sessionMu.Unlock()
 		return
 	}
+	if err != nil {
+		d.clearSyncInitRunLocked(run)
+		d.logger.Warn("initializing sync failed", "error", err)
+		d.sessionMu.Unlock()
+		return
+	}
+	if run.stateGate == nil || !run.stateGate.begin() {
+		d.clearSyncInitRunLocked(run)
+		d.sessionMu.Unlock()
+		return
+	}
+	if err = d.markCandidateDirtyFromFlag(candidate); err == nil {
+		bus, err = d.installSyncCandidateLocked(candidate)
+	}
+	run.stateGate.end()
 	d.clearSyncInitRunLocked(run)
 	if err != nil {
 		d.logger.Warn("initializing sync failed", "error", err)
 		d.sessionMu.Unlock()
 		return
 	}
-	bus, err := d.activateSyncCandidateLocked(candidate)
-	if err != nil {
-		d.logger.Warn("initializing sync failed", "error", err)
-		d.sessionMu.Unlock()
-		return
-	}
 	d.sessionMu.Unlock()
-	go bus.LifecycleRefresh("daemon_start")
+	if bus != nil {
+		go bus.LifecycleRefresh("daemon_start")
+	}
 }
 
 func (d *Daemon) syncInitRunCurrentLocked(run *syncInitRun) bool {
@@ -574,10 +590,45 @@ func (d *Daemon) clearSyncInitRunLocked(run *syncInitRun) bool {
 	return true
 }
 
-func (d *Daemon) cancelSyncInitRunLocked() {
-	if d.syncInitRun != nil {
-		d.syncInitRun = nil
+func (d *Daemon) cancelSyncInitRunLocked() *syncInitRun {
+	run := d.syncInitRun
+	d.syncInitRun = nil
+	return run
+}
+
+func (d *Daemon) persistSyncInitCandidate(run *syncInitRun, candidate *syncCandidate) error {
+	d.sessionMu.Lock()
+	if !d.syncInitRunCurrentLocked(run) || run.stateGate == nil || !run.stateGate.begin() {
+		d.sessionMu.Unlock()
+		return context.Canceled
 	}
+	d.sessionMu.Unlock()
+	defer run.stateGate.end()
+	return d.persistSyncCandidate(candidate)
+}
+
+func (d *Daemon) persistInitialLinkCandidate(run *linkRun) error {
+	d.sessionMu.Lock()
+	if !d.linkRunCurrentLocked(run) {
+		d.sessionMu.Unlock()
+		return context.Canceled
+	}
+	if err := run.ctx.Err(); err != nil {
+		d.sessionMu.Unlock()
+		return err
+	}
+	if !run.applyGate.begin() {
+		d.sessionMu.Unlock()
+		return context.Canceled
+	}
+	if err := run.ctx.Err(); err != nil {
+		run.applyGate.end()
+		d.sessionMu.Unlock()
+		return err
+	}
+	d.sessionMu.Unlock()
+	defer run.applyGate.end()
+	return d.persistSyncCandidate(run.candidate)
 }
 
 func (d *Daemon) prepareSyncCandidate(creds syncCredentials) (*syncCandidate, error) {
@@ -822,7 +873,7 @@ func (d *Daemon) beginAccountChangeLocked() (*linkRun, *forgedsync.Bus, *syncApp
 	d.accountTransition++
 	transition := d.accountTransition
 	d.activeAccountTransition = transition
-	d.cancelSyncInitRunLocked()
+	_ = d.cancelSyncInitRunLocked()
 	run := d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
@@ -1183,7 +1234,7 @@ func (d *Daemon) handleSyncUnlink() error {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
-	d.cancelSyncInitRunLocked()
+	_ = d.cancelSyncInitRunLocked()
 	run := d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
@@ -1258,10 +1309,13 @@ func (d *Daemon) finishInitialSync(run *linkRun, userID string) {
 			return candidate.engine.ReconcileOnLink(run.ctx, candidate.state, userID, candidate.serverURL)
 		})
 	}
+	if err == nil {
+		err = d.persistInitialLinkCandidate(run)
+	}
 
 	d.sessionMu.Lock()
-	defer d.sessionMu.Unlock()
 	if !d.linkRunCurrentLocked(run) {
+		d.sessionMu.Unlock()
 		return
 	}
 	if err == nil {
@@ -1272,25 +1326,26 @@ func (d *Daemon) finishInitialSync(run *linkRun, userID string) {
 		} else if ctxErr := run.ctx.Err(); ctxErr != nil {
 			run.applyGate.end()
 			err = ctxErr
-		} else {
-			defer run.applyGate.end()
 		}
+	}
+	var bus *forgedsync.Bus
+	if err == nil {
+		if err = d.markCandidateDirtyFromFlag(candidate); err == nil {
+			bus, err = d.installSyncCandidateLocked(candidate)
+		}
+		run.applyGate.end()
 	}
 	d.linkRun = nil
 	d.syncPending = false
 	if err != nil {
 		d.logger.Warn("link reconcile failed", "error", err)
 		d.scheduleSyncRetryLocked(candidate.generation)
+		d.sessionMu.Unlock()
 		return
 	}
-	bus, err := d.activateSyncCandidateLocked(candidate)
-	if err != nil {
-		d.logger.Warn("link reconcile failed", "error", err)
-		d.scheduleSyncRetryLocked(candidate.generation)
-		return
-	}
+	d.syncRetryDelay = 0
+	d.sessionMu.Unlock()
 	if bus != nil {
-		d.syncRetryDelay = 0
 		go bus.LifecycleRefresh("link_complete")
 	}
 }
@@ -1409,7 +1464,27 @@ func (d *Daemon) scheduleSyncRetryLocked(generation uint64) {
 	}()
 }
 
-func (d *Daemon) activateSyncCandidateLocked(candidate *syncCandidate) (*forgedsync.Bus, error) {
+func (d *Daemon) markCandidateDirtyFromFlag(candidate *syncCandidate) error {
+	if _, err := os.Stat(d.paths.SyncDirtyFile()); err == nil {
+		candidate.state.MarkDirty("", time.Time{})
+		return nil
+	} else if !os.IsNotExist(err) {
+		return fmt.Errorf("Reading sync dirty marker: %w", err)
+	}
+	return nil
+}
+
+func (d *Daemon) persistSyncCandidate(candidate *syncCandidate) error {
+	if err := d.markCandidateDirtyFromFlag(candidate); err != nil {
+		return err
+	}
+	if err := candidate.stateStore.Save(candidate.state); err != nil {
+		return fmt.Errorf("Saving sync state: %w", err)
+	}
+	return nil
+}
+
+func (d *Daemon) installSyncCandidateLocked(candidate *syncCandidate) (*forgedsync.Bus, error) {
 	if candidate.generation != d.syncGeneration || d.syncSuppressed {
 		return nil, fmt.Errorf("Sync link was superseded")
 	}
@@ -1418,14 +1493,6 @@ func (d *Daemon) activateSyncCandidateLocked(candidate *syncCandidate) (*forgeds
 	}
 	if d.syncDraining != nil {
 		return nil, fmt.Errorf("previous sync work is still stopping")
-	}
-	if _, err := os.Stat(d.paths.SyncDirtyFile()); err == nil {
-		candidate.state.MarkDirty("", time.Time{})
-	} else if !os.IsNotExist(err) {
-		return nil, fmt.Errorf("Reading sync dirty marker: %w", err)
-	}
-	if err := candidate.stateStore.Save(candidate.state); err != nil {
-		return nil, fmt.Errorf("Saving sync state: %w", err)
 	}
 
 	client := forgedsync.NewClientWithTokenSource(candidate.serverURL, candidate.state.DeviceID, d.syncTokenSource(candidate.serverURL, candidate.state.LinkedUserID))
@@ -1673,7 +1740,7 @@ func (d *Daemon) clearActiveSession(reason string) {
 	d.sessionMu.Lock()
 	defer d.sessionMu.Unlock()
 
-	d.cancelSyncInitRunLocked()
+	initRun := d.cancelSyncInitRunLocked()
 	run := d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
@@ -1690,6 +1757,9 @@ func (d *Daemon) clearActiveSession(reason string) {
 		d.agent.SetKeyStore(nil)
 	}
 
+	if initRun != nil && initRun.stateGate != nil {
+		initRun.stateGate.revoke()
+	}
 	revokeSyncApplies(run, applyGate)
 	if d.vault != nil {
 		d.vault.Close()
@@ -1706,11 +1776,11 @@ func (d *Daemon) handleRouteMutation(reason string) {
 	d.sessionMu.Lock()
 	defer d.sessionMu.Unlock()
 
-	if d.syncBus != nil {
-		d.syncBus.LocalMutation(reason)
+	if d.syncSuppressed || d.vault == nil {
 		return
 	}
-	if d.vault == nil {
+	if d.syncBus != nil {
+		d.syncBus.LocalMutation(reason)
 		return
 	}
 	if err := d.markSyncDirtyLocked(); err != nil {
