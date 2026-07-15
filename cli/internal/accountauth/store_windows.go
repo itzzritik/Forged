@@ -4,18 +4,25 @@ package accountauth
 
 import (
 	"context"
-	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
+	"runtime"
+	"unsafe"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"golang.org/x/sys/windows"
 )
 
 const platformCredentialBackend = "windows_dpapi"
+
+const (
+	maxWindowsCredentialPlaintextSize = 64 * 1024
+	maxWindowsCredentialBlobSize      = maxWindowsCredentialPlaintextSize + 4*1024
+)
 
 type windowsCredentialStore struct {
 	paths config.Paths
@@ -27,17 +34,20 @@ func newPlatformCredentialStore(paths config.Paths) credentialStore {
 
 func (s windowsCredentialStore) Backend() string { return platformCredentialBackend }
 
-func (s windowsCredentialStore) Available(context.Context) bool {
-	return powershellPath() != ""
-}
+func (s windowsCredentialStore) Available(context.Context) bool { return true }
 
 func (s windowsCredentialStore) Save(ctx context.Context, credentialID string, secret credentialSecret) error {
 	body, err := json.Marshal(secret)
 	if err != nil {
 		return err
 	}
+	defer zeroBytes(body)
 	encrypted, err := runDPAPI(ctx, "protect", body)
 	if err != nil {
+		return err
+	}
+	defer zeroBytes(encrypted)
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if err := writePrivateFile(s.secretPath(credentialID), encrypted); err != nil {
@@ -47,17 +57,16 @@ func (s windowsCredentialStore) Save(ctx context.Context, credentialID string, s
 }
 
 func (s windowsCredentialStore) Load(ctx context.Context, credentialID string) (credentialSecret, error) {
-	encrypted, err := os.ReadFile(s.secretPath(credentialID))
+	encrypted, err := readWindowsCredentialBlob(s.secretPath(credentialID))
 	if err != nil {
-		if os.IsNotExist(err) {
-			return credentialSecret{}, ErrCredentialSecretNotFound
-		}
 		return credentialSecret{}, err
 	}
+	defer zeroBytes(encrypted)
 	body, err := runDPAPI(ctx, "unprotect", encrypted)
 	if err != nil {
 		return credentialSecret{}, err
 	}
+	defer zeroBytes(body)
 	var secret credentialSecret
 	if err := json.Unmarshal(body, &secret); err != nil {
 		return credentialSecret{}, err
@@ -77,43 +86,95 @@ func (s windowsCredentialStore) secretPath(credentialID string) string {
 }
 
 func runDPAPI(ctx context.Context, mode string, input []byte) ([]byte, error) {
-	powershell := powershellPath()
-	if powershell == "" {
-		return nil, ErrCredentialStoreUnavailable
+	// Use DPAPI directly so plaintext never crosses a child-process boundary.
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
-
-	var script string
+	maxInputSize := maxWindowsCredentialPlaintextSize
+	maxOutputSize := maxWindowsCredentialBlobSize
+	if mode == "unprotect" {
+		maxInputSize = maxWindowsCredentialBlobSize
+		maxOutputSize = maxWindowsCredentialPlaintextSize
+	}
+	inputBlob, err := windowsCredentialDataBlob(input, maxInputSize)
+	if err != nil {
+		return nil, err
+	}
+	var output windows.DataBlob
+	defer freeWindowsCredentialDataBlob(&output)
 	switch mode {
 	case "protect":
-		script = `$ErrorActionPreference = 'Stop'; $b = [Convert]::FromBase64String($env:FORGED_DPAPI_INPUT); $e = [System.Security.Cryptography.ProtectedData]::Protect($b, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($e))`
+		err = windows.CryptProtectData(&inputBlob, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &output)
 	case "unprotect":
-		script = `$ErrorActionPreference = 'Stop'; $b = [Convert]::FromBase64String($env:FORGED_DPAPI_INPUT); $p = [System.Security.Cryptography.ProtectedData]::Unprotect($b, $null, [System.Security.Cryptography.DataProtectionScope]::CurrentUser); [Console]::Out.Write([Convert]::ToBase64String($p))`
+		err = windows.CryptUnprotectData(&inputBlob, nil, nil, 0, nil, windows.CRYPTPROTECT_UI_FORBIDDEN, &output)
 	default:
 		return nil, ErrCredentialStoreBroken
 	}
-
-	cmd := exec.CommandContext(ctx, powershell, "-NoProfile", "-NonInteractive", "-Command", script)
-	cmd.Env = append(os.Environ(), "FORGED_DPAPI_INPUT="+base64.StdEncoding.EncodeToString(input))
-	out, err := cmd.CombinedOutput()
+	runtime.KeepAlive(input)
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	if err != nil {
-		message := strings.ToLower(string(out))
-		if strings.Contains(message, "protecteddata") || strings.Contains(message, "denied") {
+		if errors.Is(err, windows.ERROR_ACCESS_DENIED) ||
+			errors.Is(err, windows.ERROR_FILE_NOT_FOUND) ||
+			errors.Is(err, windows.ERROR_PASSWORD_RESTRICTION) {
 			return nil, ErrCredentialStoreUnavailable
 		}
 		return nil, ErrCredentialStoreBroken
 	}
-	decoded, err := base64.StdEncoding.DecodeString(strings.TrimSpace(string(out)))
+	result, err := copyWindowsCredentialDataBlob(output, maxOutputSize)
 	if err != nil {
-		return nil, ErrCredentialStoreBroken
+		return nil, err
 	}
-	return decoded, nil
+	if err := ctx.Err(); err != nil {
+		zeroBytes(result)
+		return nil, err
+	}
+	return result, nil
 }
 
-func powershellPath() string {
-	for _, name := range []string{"powershell.exe", "powershell", "pwsh.exe", "pwsh"} {
-		if path, err := exec.LookPath(name); err == nil {
-			return path
-		}
+func windowsCredentialDataBlob(data []byte, maxSize int) (windows.DataBlob, error) {
+	if len(data) == 0 || len(data) > maxSize {
+		return windows.DataBlob{}, ErrCredentialStoreBroken
 	}
-	return ""
+	return windows.DataBlob{Size: uint32(len(data)), Data: &data[0]}, nil
+}
+
+func copyWindowsCredentialDataBlob(blob windows.DataBlob, maxSize int) ([]byte, error) {
+	if blob.Data == nil || blob.Size == 0 || blob.Size > uint32(maxSize) {
+		return nil, ErrCredentialStoreBroken
+	}
+	return append([]byte(nil), unsafe.Slice(blob.Data, int(blob.Size))...), nil
+}
+
+func freeWindowsCredentialDataBlob(blob *windows.DataBlob) {
+	if blob.Data == nil {
+		return
+	}
+	if blob.Size > 0 && blob.Size <= maxWindowsCredentialBlobSize {
+		zeroBytes(unsafe.Slice(blob.Data, int(blob.Size)))
+	}
+	_, _ = windows.LocalFree(windows.Handle(unsafe.Pointer(blob.Data)))
+	blob.Data = nil
+	blob.Size = 0
+}
+
+func readWindowsCredentialBlob(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil, ErrCredentialSecretNotFound
+		}
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, int64(maxWindowsCredentialBlobSize)+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) == 0 || len(data) > maxWindowsCredentialBlobSize {
+		zeroBytes(data)
+		return nil, ErrCredentialStoreBroken
+	}
+	return data, nil
 }
