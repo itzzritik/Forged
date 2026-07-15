@@ -418,8 +418,14 @@ func (s *Server) handleSSHRoutesList(ctx context.Context) Response {
 	if s.sshRoutes == nil {
 		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
 	}
+	if _, err := s.requireKeyStore(); err != nil {
+		return ErrorResponse(err)
+	}
 
 	s.refreshForRead(ctx, "ssh_routes_list")
+	if _, err := s.requireKeyStore(); err != nil {
+		return ErrorResponse(err)
+	}
 	snapshot, err := s.sshRoutes.DebugSnapshot()
 	if err != nil {
 		return ErrorResponse(err)
@@ -436,6 +442,9 @@ func (s *Server) handleSSHRouteClear(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &args); err != nil {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
+	if _, err := s.requireKeyStore(); err != nil {
+		return ErrorResponse(err)
+	}
 	if err := s.sshRoutes.Clear(args.Target); err != nil {
 		return ErrorResponse(err)
 	}
@@ -445,6 +454,9 @@ func (s *Server) handleSSHRouteClear(raw json.RawMessage) Response {
 func (s *Server) handleSSHRoutesClearAll() Response {
 	if s.sshRoutes == nil {
 		return ErrorResponse(fmt.Errorf("SSH routing unavailable"))
+	}
+	if _, err := s.requireKeyStore(); err != nil {
+		return ErrorResponse(err)
 	}
 
 	if err := s.sshRoutes.ClearAll(); err != nil {

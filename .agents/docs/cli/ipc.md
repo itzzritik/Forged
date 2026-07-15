@@ -31,7 +31,7 @@ stable: yes
 - `status` advertises `account_change_protocol`. Account actions repair or restart the managed service until it supports the required protocol, then use versioned replace and clear commands with no direct-write fallback. The commands serialize credential and sync publication state; remote reconciliation runs afterward as bounded background work.
 - Hidden SSH route IPC prepares per-attempt snippets from `%C`, `%h`, `%p`, `%r`, and `%n`; prepare failures are quiet so the managed SSH config fails closed with no default identities. Authorization and either probe strategy share one 45-second server work context, the hook waits 50 seconds, and the server connection deadline leaves a final response margin.
 - If route prepare finds no public route cache because the daemon is cold, IPC runs external auth once and retries prepare after hydration.
-- TUI diagnostics use SSH route list/clear IPC. Clearing routes must call the route service so vault tombstones and sync mutation handling stay correct.
+- TUI SSH-route diagnostics require an active broker session; clearing still calls the route service so vault tombstones and sync mutation handling stay correct. The public route cache remains available only to normal route preparation after lock.
 - On Windows, a failed current-token pipe identity lookup is returned directly to IPC callers; it is not reported as a stopped daemon.
 - On Windows, the daemon does not register a route handler. Stale hidden routing helpers fail before IPC and direct route requests return unavailable rather than accepting an untrusted client PID.
 - Windows IPC support is still incomplete.
