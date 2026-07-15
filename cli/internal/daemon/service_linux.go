@@ -206,13 +206,13 @@ func extractSystemdBinary(path string) (string, error) {
 		}
 		if value[0] == '"' {
 			if end := strings.Index(value[1:], "\""); end >= 0 {
-				return value[1 : 1+end], nil
+				return strings.ReplaceAll(value[1:1+end], "%%", "%"), nil
 			}
 		}
 		if idx := strings.IndexAny(value, " \t"); idx > 0 {
-			return value[:idx], nil
+			return strings.ReplaceAll(value[:idx], "%%", "%"), nil
 		}
-		return value, nil
+		return strings.ReplaceAll(value, "%%", "%"), nil
 	}
 	return "", nil
 }
@@ -237,7 +237,7 @@ func formatSystemdExecStart(runtime RuntimeSpec) string {
 	for _, arg := range runtime.Args {
 		parts = append(parts, strconv.Quote(arg))
 	}
-	return strings.Join(parts, " ")
+	return strings.ReplaceAll(strings.Join(parts, " "), "%", "%%")
 }
 
 func systemctlUser(args ...string) *exec.Cmd {
