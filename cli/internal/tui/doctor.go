@@ -100,6 +100,9 @@ func (m *model) moveDoctorOffset(delta int) {
 }
 
 func (m *model) doctorFooterActions(includeTabs bool) []shell.FooterAction {
+	if m.clipboardBusy {
+		return []shell.FooterAction{{Key: theme.Glyphs.Pending, Label: "Copying report"}}
+	}
 	actions := make([]shell.FooterAction, 0, 5)
 	if includeTabs {
 		actions = append(actions, shell.FooterAction{Key: theme.Glyphs.LeftRight, Label: "Tabs"})

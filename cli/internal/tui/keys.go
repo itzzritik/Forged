@@ -453,6 +453,13 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
 		}
 	case RouteKeysDetail:
+		if m.clipboardBusy {
+			actions := []shell.FooterAction{{Key: theme.Glyphs.Pending, Label: "Copying key"}}
+			if m.privateCopyPending {
+				actions = append(actions, shell.FooterAction{Key: "Esc", Label: "Cancel"})
+			}
+			return actions
+		}
 		if m.keyDetail.loading {
 			return []shell.FooterAction{
 				{Key: "Esc", Label: m.session.EscLabel(EscAuto)},
