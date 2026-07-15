@@ -10,6 +10,7 @@ import (
 	"time"
 	"unicode"
 
+	"github.com/itzzritik/forged/cli/internal/activity"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -25,11 +26,13 @@ type ForgedAgent struct {
 	auth     SensitiveAuthorizer
 	syncBus  SyncCoordinator
 	routes   RouteSessions
+	activity *activity.ActivityLog
 }
 
 type contextAgent struct {
 	*ForgedAgent
-	ctx context.Context
+	ctx       context.Context
+	clientPID int
 }
 
 type SensitiveAuthorizer interface {
@@ -70,6 +73,12 @@ func (a *ForgedAgent) SetRouteSessions(routes RouteSessions) {
 	a.routes = routes
 }
 
+func (a *ForgedAgent) SetActivityLog(activityLog *activity.ActivityLog) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.activity = activityLog
+}
+
 func (a *ForgedAgent) ForClientPID(clientPID int) agent.ExtendedAgent {
 	return a.ForClientPIDContext(context.Background(), clientPID)
 }
@@ -83,7 +92,7 @@ func (a *ForgedAgent) ForClientPIDContext(ctx context.Context, clientPID int) ag
 	routes := a.routes
 	a.mu.RUnlock()
 	if routes == nil {
-		return a.ForContext(ctx)
+		return &contextAgent{ForgedAgent: a, ctx: ctx, clientPID: clientPID}
 	}
 	return &sessionAgent{
 		base:      a,
@@ -94,16 +103,18 @@ func (a *ForgedAgent) ForClientPIDContext(ctx context.Context, clientPID int) ag
 }
 
 func (a *ForgedAgent) List() ([]*agent.Key, error) {
-	return a.list(context.Background())
+	return a.listForClient(context.Background(), 0)
 }
 
-func (a *ForgedAgent) list(ctx context.Context) ([]*agent.Key, error) {
+func (a *ForgedAgent) listForClient(ctx context.Context, clientPID int) ([]*agent.Key, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	a.recordAgentAccess("ssh_agent_list")
+	activityLog := a.activityLog()
 
 	if err := a.ensurePrivateKeyAccess(ctx); err != nil {
+		recordSSHListDenial(ctx, activityLog, clientPID, err)
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -142,23 +153,25 @@ func sanitizeKeyComment(name string) string {
 }
 
 func (a *ForgedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
-	return a.signWithFlags(context.Background(), key, data, 0)
+	return a.signWithFlagsForClient(context.Background(), key, data, 0, 0)
 }
 
 func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
-	return a.signWithFlags(context.Background(), key, data, flags)
+	return a.signWithFlagsForClient(context.Background(), key, data, flags, 0)
 }
 
-func (a *ForgedAgent) signWithFlags(ctx context.Context, key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
+func (a *ForgedAgent) signWithFlagsForClient(ctx context.Context, key ssh.PublicKey, data []byte, flags agent.SignatureFlags, clientPID int) (*ssh.Signature, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 	a.recordAgentAccess("ssh_agent_sign")
+	activityLog := a.activityLog()
 
 	a.mu.RLock()
 	if a.keyStore == nil {
 		a.mu.RUnlock()
 		if err := a.ensurePrivateKeyAccess(ctx); err != nil {
+			recordSSHSignDenial(ctx, activityLog, clientPID, err)
 			return nil, err
 		}
 		a.mu.RLock()
@@ -166,6 +179,7 @@ func (a *ForgedAgent) signWithFlags(ctx context.Context, key ssh.PublicKey, data
 	a.mu.RUnlock()
 
 	if err := a.ensurePrivateKeyAccess(ctx); err != nil {
+		recordSSHSignDenial(ctx, activityLog, clientPID, err)
 		return nil, err
 	}
 	if err := ctx.Err(); err != nil {
@@ -176,10 +190,11 @@ func (a *ForgedAgent) signWithFlags(ctx context.Context, key ssh.PublicKey, data
 	defer a.mu.RUnlock()
 
 	if a.keyStore == nil {
+		recordSSHSignActivity(ctx, activityLog, "failed", "", clientPID)
 		return nil, fmt.Errorf("Vault is locked")
 	}
 
-	signer, name, _, err := a.keyStore.SignerByPublicKey(key)
+	signer, name, fingerprint, err := a.keyStore.SignerByPublicKey(key)
 	if err != nil {
 		a.mu.RUnlock()
 		refreshErr := a.refreshMissingKey(ctx, "sign_missing_key")
@@ -188,9 +203,10 @@ func (a *ForgedAgent) signWithFlags(ctx context.Context, key ssh.PublicKey, data
 			return nil, ctxErr
 		}
 		if refreshErr == nil && a.keyStore != nil {
-			signer, name, _, err = a.keyStore.SignerByPublicKey(key)
+			signer, name, fingerprint, err = a.keyStore.SignerByPublicKey(key)
 		}
 		if err != nil {
+			recordSSHSignActivity(ctx, activityLog, "failed", "", clientPID)
 			return nil, err
 		}
 	}
@@ -217,6 +233,7 @@ func (a *ForgedAgent) signWithFlags(ctx context.Context, key ssh.PublicKey, data
 	}
 
 	if err != nil {
+		recordSSHSignActivity(ctx, activityLog, "failed", fingerprint, clientPID)
 		return nil, fmt.Errorf("Signing with key %s: %w", name, err)
 	}
 	if err := ctx.Err(); err != nil {
@@ -224,6 +241,7 @@ func (a *ForgedAgent) signWithFlags(ctx context.Context, key ssh.PublicKey, data
 	}
 
 	a.keyStore.RecordUsage(name)
+	recordSSHSignActivity(ctx, activityLog, "success", fingerprint, clientPID)
 	return sig, nil
 }
 
@@ -306,6 +324,51 @@ func (a *ForgedAgent) recordAgentAccess(reason string) {
 	}
 }
 
+func (a *ForgedAgent) activityLog() *activity.ActivityLog {
+	a.mu.RLock()
+	defer a.mu.RUnlock()
+	return a.activity
+}
+
+func recordSSHSignActivity(ctx context.Context, activityLog *activity.ActivityLog, result, fingerprint string, clientPID int) {
+	if ctx.Err() != nil || activityLog == nil {
+		return
+	}
+	if clientPID < 1 {
+		clientPID = 0
+	}
+	activityLog.Record(activity.ActivityEvent{
+		Type:        "ssh_agent_sign",
+		Fingerprint: fingerprint,
+		Result:      result,
+		ClientPID:   clientPID,
+	})
+}
+
+func recordSSHSignDenial(ctx context.Context, activityLog *activity.ActivityLog, clientPID int, err error) {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sensitiveauth.ErrAuthenticationCanceled) {
+		return
+	}
+	recordSSHSignActivity(ctx, activityLog, "denied", "", clientPID)
+}
+
+func recordSSHListDenial(ctx context.Context, activityLog *activity.ActivityLog, clientPID int, err error) {
+	if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.Is(err, sensitiveauth.ErrAuthenticationCanceled) {
+		return
+	}
+	if activityLog == nil {
+		return
+	}
+	if clientPID < 1 {
+		clientPID = 0
+	}
+	activityLog.Record(activity.ActivityEvent{
+		Type:      "ssh_agent_list",
+		Result:    "denied",
+		ClientPID: clientPID,
+	})
+}
+
 func (a *ForgedAgent) refreshMissingKey(ctx context.Context, reason string) error {
 	if err := ctx.Err(); err != nil {
 		return err
@@ -349,15 +412,15 @@ func (a *ForgedAgent) ensurePrivateKeyAccess(ctx context.Context) error {
 }
 
 func (a *contextAgent) List() ([]*agent.Key, error) {
-	return a.ForgedAgent.list(a.ctx)
+	return a.ForgedAgent.listForClient(a.ctx, a.clientPID)
 }
 
 func (a *contextAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
-	return a.ForgedAgent.signWithFlags(a.ctx, key, data, 0)
+	return a.ForgedAgent.signWithFlagsForClient(a.ctx, key, data, 0, a.clientPID)
 }
 
 func (a *contextAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
-	return a.ForgedAgent.signWithFlags(a.ctx, key, data, flags)
+	return a.ForgedAgent.signWithFlagsForClient(a.ctx, key, data, flags, a.clientPID)
 }
 
 func (a *contextAgent) Signers() ([]ssh.Signer, error) {

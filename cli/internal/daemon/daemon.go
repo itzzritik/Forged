@@ -316,6 +316,7 @@ func (d *Daemon) startAgentLocked() error {
 
 	d.agent = forgedagent.New(d.keyStore)
 	d.agent.SetSyncCoordinator(d.syncBus)
+	d.agent.SetActivityLog(d.activityLog)
 	if d.routeService != nil {
 		d.agent.SetRouteSessions(d.routeService)
 	}

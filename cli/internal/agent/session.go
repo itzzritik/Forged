@@ -27,7 +27,7 @@ func (s *sessionAgent) List() ([]*agent.Key, error) {
 	allowed := map[string]struct{}{}
 	fingerprints, routed := s.routes.AllowedFingerprints(s.clientPID)
 	if !routed {
-		return s.base.list(s.ctx)
+		return s.base.listForClient(s.ctx, s.clientPID)
 	}
 	for _, fingerprint := range fingerprints {
 		allowed[fingerprint] = struct{}{}
@@ -36,7 +36,9 @@ func (s *sessionAgent) List() ([]*agent.Key, error) {
 		return nil, nil
 	}
 
+	activityLog := s.base.activityLog()
 	if err := s.base.ensurePrivateKeyAccess(s.ctx); err != nil {
+		recordSSHListDenial(s.ctx, activityLog, s.clientPID, err)
 		return nil, err
 	}
 	if err := s.ctx.Err(); err != nil {
@@ -83,16 +85,19 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	allowed := map[string]struct{}{}
 	fingerprints, routed := s.routes.AllowedFingerprints(s.clientPID)
 	if !routed {
-		return s.base.signWithFlags(s.ctx, key, data, flags)
+		return s.base.signWithFlagsForClient(s.ctx, key, data, flags, s.clientPID)
 	}
+	activityLog := s.base.activityLog()
 	for _, fingerprint := range fingerprints {
 		allowed[fingerprint] = struct{}{}
 	}
 	if len(allowed) == 0 {
+		recordSSHSignActivity(s.ctx, activityLog, "denied", "", s.clientPID)
 		return nil, fmt.Errorf("No key is allowed for this SSH route")
 	}
 
 	if err := s.base.ensurePrivateKeyAccess(s.ctx); err != nil {
+		recordSSHSignDenial(s.ctx, activityLog, s.clientPID, err)
 		return nil, err
 	}
 	if err := s.ctx.Err(); err != nil {
@@ -103,6 +108,7 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	defer s.base.mu.RUnlock()
 
 	if s.base.keyStore == nil {
+		recordSSHSignActivity(s.ctx, activityLog, "failed", "", s.clientPID)
 		return nil, fmt.Errorf("Vault is locked")
 	}
 
@@ -118,11 +124,13 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 			signer, name, fingerprint, err = s.base.keyStore.SignerByPublicKey(key)
 		}
 		if err != nil {
+			recordSSHSignActivity(s.ctx, activityLog, "failed", "", s.clientPID)
 			return nil, err
 		}
 	}
 
 	if _, ok := allowed[fingerprint]; !ok {
+		recordSSHSignActivity(s.ctx, activityLog, "denied", fingerprint, s.clientPID)
 		return nil, fmt.Errorf("Key not allowed for client")
 	}
 	if err := s.ctx.Err(); err != nil {
@@ -131,6 +139,7 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 
 	sig, err := signWithFlags(signer, data, flags)
 	if err != nil {
+		recordSSHSignActivity(s.ctx, activityLog, "failed", fingerprint, s.clientPID)
 		return nil, fmt.Errorf("Signing with key %s: %w", name, err)
 	}
 	if err := s.ctx.Err(); err != nil {
@@ -139,6 +148,7 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 
 	s.routes.RecordSignature(s.clientPID, fingerprint)
 	s.base.keyStore.RecordUsage(name)
+	recordSSHSignActivity(s.ctx, activityLog, "success", fingerprint, s.clientPID)
 	return sig, nil
 }
 
