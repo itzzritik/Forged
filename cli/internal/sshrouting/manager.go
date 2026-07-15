@@ -60,19 +60,16 @@ func renderRouteHooks(paths config.Paths, selfPath string) string {
 	prepare := strings.Join([]string{
 		shellQuote(selfPath),
 		"__ssh-route-prepare",
-		"--attempt", "%C",
-		"--host", "%h",
-		"--port", "%p",
-		"--user", "%r",
-		"--original-host", "%n",
+		"--attempt", shellQuote("%C"),
+		"--host", shellQuote("%h"),
+		"--port", shellQuote("%p"),
+		"--user", shellQuote("%r"),
+		"--original-host", shellQuote("%n"),
 	}, " ")
 	success := strings.Join([]string{
 		shellQuote(selfPath),
 		"__ssh-route-success",
-		"--attempt", "%C",
-		"--host", "%h",
-		"--port", "%p",
-		"--user", "%r",
+		"--attempt", shellQuote("%C"),
 	}, " ")
 	return strings.Join([]string{
 		fmt.Sprintf("Match exec %s", sshConfigQuote(prepare)),

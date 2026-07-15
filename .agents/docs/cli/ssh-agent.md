@@ -18,6 +18,7 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 ## Must know
 
 - OpenSSH routing is primarily config-driven: managed `Match exec` prepares short-lived `%C` public-key slot files and enables them through per-slot `Match exec test -f ...` blocks with `IdentitiesOnly yes`.
+- Dynamic OpenSSH tokens passed to Forged route hooks are shell-quoted; the success hook carries only `%C`, because it does not need host, port, or user values.
 - `%C` is connection-scope, so concurrent same-host routes share the slot directory. The service tracks attempts by client PID and updates attempt state plus the active-candidate slot union under one route lock; completion or expiry for one PID cannot remove a live sibling's slots. Agent signing still filters by PID.
 - Route attempt tokens reject the `.` and `..` path components before they enter route state or runtime cleanup, so raw same-user IPC cannot make snippet cleanup escape its token directory.
 - The routing service keeps an in-memory public route/key cache after vault lock. This lets route prepare emit candidate public-key hints after system lock so OpenSSH reaches the agent and external System Auth can run at signing time. The service rechecks the broker immediately before private probes, direct-probe signatures, or learned-proof writes, so stale sessions only use that public cache.
