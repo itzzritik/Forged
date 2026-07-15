@@ -295,10 +295,7 @@ func (m *model) doctorCanFixIssues() bool {
 	if !s.IPCSocketReady || !s.AgentSocketReady {
 		return true
 	}
-	if s.AgentDisabled {
-		return true
-	}
-	if !s.SSHEnabled || !s.ManagedConfigReady || !s.IdentityAgentOwner.IsForged() {
+	if !s.AgentDisabled && (!s.SSHEnabled || !s.ManagedConfigReady || !s.IdentityAgentOwner.IsForged()) {
 		return true
 	}
 	return false
@@ -536,7 +533,7 @@ func (m *model) doctorSSHAgentRow() doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "SSH Agent",
 				Status: "! Disabled",
-				Detail: m.doctorRepairDetail("Fix Issues will re-enable it"),
+				Detail: m.doctorRepairDetail("Enable SSH Agent from the Agent tab"),
 				Tone:   doctorscreen.ToneWarning,
 			},
 		}
@@ -574,7 +571,7 @@ func (m *model) doctorSSHConfigRow(paths config.Paths) doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "SSH Config",
 				Status: "! Disabled",
-				Detail: m.doctorRepairDetail("Fix Issues will re-enable it"),
+				Detail: m.doctorRepairDetail("Not needed while SSH integration is disabled"),
 				Tone:   doctorscreen.ToneWarning,
 			},
 		}
@@ -608,7 +605,7 @@ func (m *model) doctorIdentityAgentRow(paths config.Paths) doctorRow {
 			screen: doctorscreen.Row{
 				Check:  "IdentityAgent",
 				Status: "! Disabled",
-				Detail: m.doctorRepairDetail("Fix Issues will re-enable it"),
+				Detail: m.doctorRepairDetail("Not needed while SSH integration is disabled"),
 				Tone:   doctorscreen.ToneWarning,
 			},
 		}

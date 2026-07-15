@@ -46,7 +46,7 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 		state.result.Snapshot.State = classifyState(state.result.Snapshot)
 		return state.result, nil
 	}
-	if err := e.ensureSSHStage(state, opts); err != nil {
+	if err := e.ensureSSHStage(state); err != nil {
 		return state.result, err
 	}
 	if err := e.ensureServiceStage(state, opts); err != nil {
@@ -94,8 +94,8 @@ func (e *Engine) ensureConfigStage(state *repairState) error {
 	return nil
 }
 
-func (e *Engine) ensureSSHStage(state *repairState, opts RunOptions) error {
-	if state.result.Snapshot.AgentDisabled && opts.Mode == ModeInteractiveLauncher {
+func (e *Engine) ensureSSHStage(state *repairState) error {
+	if state.result.Snapshot.AgentDisabled {
 		return nil
 	}
 
