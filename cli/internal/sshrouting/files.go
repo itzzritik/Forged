@@ -185,6 +185,9 @@ func validateAttemptToken(token string) error {
 	if token == "" {
 		return fmt.Errorf("Empty SSH route attempt token")
 	}
+	if token == "." || token == ".." {
+		return fmt.Errorf("SSH route attempt token cannot be a path component")
+	}
 	if len(token) > 256 {
 		return fmt.Errorf("SSH route attempt token is too long")
 	}
