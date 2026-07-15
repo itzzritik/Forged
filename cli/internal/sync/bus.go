@@ -473,8 +473,14 @@ func (b *Bus) executeRefresh(ctx context.Context, reason string) error {
 }
 
 func (b *Bus) remoteNeedsPull(ctx context.Context, checker remoteStatusRuntime, reason string) (bool, error) {
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 	state, _ := b.engineStateSnapshot()
 	status, err := checker.RemoteStatus(ctx, &state)
+	if ctxErr := ctx.Err(); ctxErr != nil {
+		return false, ctxErr
+	}
 	if errors.Is(err, ErrStatusUnsupported) {
 		return true, nil
 	}
@@ -487,6 +493,9 @@ func (b *Bus) remoteNeedsPull(ctx context.Context, checker remoteStatusRuntime, 
 
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return false, err
+	}
 
 	if b.state.Dirty || b.stopped {
 		return false, nil

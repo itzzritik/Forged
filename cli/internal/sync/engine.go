@@ -102,6 +102,9 @@ func (e *Engine) PushCurrent(ctx context.Context, state *SyncState) error {
 	if err != nil {
 		return err
 	}
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 
 	state.MarkClean(result.Version, blob, hashBlob(blob))
 	return nil
