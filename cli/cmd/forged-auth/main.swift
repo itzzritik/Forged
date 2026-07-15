@@ -37,7 +37,6 @@ final class HelperRuntime {
     private let writeQueue = DispatchQueue(label: "me.ritik.forged.auth.write")
     private let stateLock = NSLock()
     private var activeRequests: [String: ActiveRequest] = [:]
-    private var seenRequestIDs = Set<String>()
     private var inputBuffer = Data()
 
     // start wires up stdin and lock observers. The caller runs the NSApplication
@@ -156,8 +155,7 @@ final class HelperRuntime {
     private func claimRequest(id: String) -> Bool {
         stateLock.lock()
         defer { stateLock.unlock() }
-        guard !seenRequestIDs.contains(id) else { return false }
-        seenRequestIDs.insert(id)
+        guard activeRequests[id] == nil else { return false }
         activeRequests[id] = .pending
         return true
     }

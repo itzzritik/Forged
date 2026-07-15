@@ -21,7 +21,6 @@ type helperCall struct {
 type helperCalls struct {
 	mu     sync.Mutex
 	active map[string]*helperCall
-	seen   map[string]struct{}
 	closed bool
 	wg     sync.WaitGroup
 }
@@ -29,7 +28,6 @@ type helperCalls struct {
 func newHelperCalls() *helperCalls {
 	return &helperCalls{
 		active: make(map[string]*helperCall),
-		seen:   make(map[string]struct{}),
 	}
 }
 
@@ -47,12 +45,11 @@ func (c *helperCalls) Start(req sensitiveauth.HelperRequest, run func(context.Co
 		cancel()
 		return
 	}
-	if _, exists := c.seen[req.ID]; exists {
+	if _, exists := c.active[req.ID]; exists {
 		c.mu.Unlock()
 		cancel()
 		return
 	}
-	c.seen[req.ID] = struct{}{}
 	c.active[req.ID] = call
 	c.wg.Add(1)
 	c.mu.Unlock()
