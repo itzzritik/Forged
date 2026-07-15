@@ -18,8 +18,8 @@ type runtimeLock struct {
 }
 
 func acquireRuntimeLock(paths config.Paths) (*runtimeLock, error) {
-	if err := os.MkdirAll(paths.RuntimeDir, 0o700); err != nil {
-		return nil, fmt.Errorf("Creating runtime directory: %w", err)
+	if err := ensureRuntimeDirectory(paths.RuntimeDir); err != nil {
+		return nil, err
 	}
 	path := filepath.Join(paths.RuntimeDir, "daemon.lock")
 	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
@@ -34,6 +34,29 @@ func acquireRuntimeLock(paths config.Paths) (*runtimeLock, error) {
 		return nil, fmt.Errorf("Locking daemon runtime: %w", err)
 	}
 	return &runtimeLock{file: file}, nil
+}
+
+func ensureRuntimeDirectory(path string) error {
+	if err := os.MkdirAll(path, 0o700); err != nil {
+		return fmt.Errorf("creating runtime directory: %w", err)
+	}
+	info, err := os.Lstat(path)
+	if err != nil {
+		return fmt.Errorf("inspecting runtime directory: %w", err)
+	}
+	if !info.IsDir() {
+		return fmt.Errorf("runtime path is not a directory")
+	}
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	if !ok || int(stat.Uid) != os.Geteuid() {
+		return fmt.Errorf("runtime directory is not owned by the current user")
+	}
+	if info.Mode().Perm() != 0o700 {
+		if err := os.Chmod(path, 0o700); err != nil {
+			return fmt.Errorf("securing runtime directory: %w", err)
+		}
+	}
+	return nil
 }
 
 func (l *runtimeLock) Close() {

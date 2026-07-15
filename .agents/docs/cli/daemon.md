@@ -47,6 +47,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Linux service `ExecStart` operands escape literal percent signs for systemd, and service inspection decodes literal `%%` escapes before validating the binary path.
 - macOS service start and removal boot out current and legacy launchd labels before deleting legacy plists, so an old KeepAlive job cannot respawn.
 - Persistent Forged state lives under `~/.config/forged` on every OS. Auth/device trust lives under `~/.config/forged/auth`. Linux keeps runtime sockets under `/run/user/<uid>/forged`; macOS and Windows use `~/.config/forged/runtime` for runtime metadata, with Windows sockets using named pipes.
+- On Unix, the runtime directory must be a real current-user-owned directory and is set to `0700` before daemon-lock or socket work; same-user runtime-file control remains outside that boundary.
 - Windows pipe names are opaque, domain-separated hashes of the current process token SID; startup fails before binding if that identity cannot be resolved.
 - Windows deliberately starts no SSH route service. Startup migrates a uniquely marked Forged routing section in the private managed SSH config to agent-only form and removes local route artifacts; duplicate route markers or a missing generated `PermitLocalCommand` boundary block migration instead of being overwritten. Normal SSH-agent and commit-signing operations remain available.
 - Windows support is still partial around socket transport and platform helpers.

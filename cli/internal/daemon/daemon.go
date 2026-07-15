@@ -277,9 +277,6 @@ func (d *Daemon) writePID() error {
 
 func (d *Daemon) startIPC() error {
 	ctlPath := d.paths.CtlSocket()
-	if err := ensureSocketDirectory(ctlPath); err != nil {
-		return err
-	}
 
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
 	d.ipcServer.SetSyncLinkHandler(d.handleSyncLink)
@@ -315,9 +312,6 @@ func (d *Daemon) startIPC() error {
 
 func (d *Daemon) startAgentLocked() error {
 	agentPath := d.paths.AgentSocket()
-	if err := ensureSocketDirectory(agentPath); err != nil {
-		return err
-	}
 
 	d.agent = forgedagent.New(d.keyStore)
 	d.agent.SetSyncCoordinator(d.syncBus)
@@ -332,16 +326,6 @@ func (d *Daemon) startAgentLocked() error {
 	}
 
 	d.logger.Info("ssh agent started", "socket", agentPath)
-	return nil
-}
-
-func ensureSocketDirectory(socketPath string) error {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0o700); err != nil {
-		return fmt.Errorf("creating socket directory: %w", err)
-	}
 	return nil
 }
 
