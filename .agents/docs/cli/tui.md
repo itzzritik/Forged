@@ -46,7 +46,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Tables and import-review rows size against the real body width, collapse secondary columns before names or status, and truncate by terminal display cells so wide Unicode values cannot overflow.
 - Account profile fields hard-wrap unbroken names and email addresses; compact header greetings truncate by display cells, while post-login identity lines wrap instead of overflowing.
 - Key names are rendered with terminal control characters replaced, including legacy or synced data that predates storage validation.
-- External error text, runtime sync messages, and learned-route labels are rendered with terminal control characters replaced before they reach the terminal.
+- External error text, runtime sync messages, learned-route labels, and Git signing configuration are rendered with terminal control characters replaced before they reach the terminal.
 - On Linux and macOS, the Agent tab includes SSH Routing diagnostics. The page reads and clears route memory through daemon IPC and keeps route memory current with background polling while the page is open. If route runtime state is ambiguous, it surfaces a deny-only guard and permits Clear All even with no learned routes; the confirmation tells the user to close active SSH sessions before the explicit reset.
 - On Windows, the Agent tab omits SSH Routing and Doctor explains that automatic routing is unavailable while the normal SSH agent remains active.
 - SSH Routing diagnostics reuse the Commit Signing browser-table pattern: selected item summary on top, a compact table below, and no manual refresh footer action.

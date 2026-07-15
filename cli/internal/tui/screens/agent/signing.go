@@ -53,14 +53,14 @@ func renderStatusCard(screen SigningScreen, spinner string, width int) string {
 		} else {
 			statusLine = theme.Success.Render(theme.Glyphs.Check + " Signing with Forged")
 		}
-		if publicKey := strings.TrimSpace(screen.Status.PublicKey); publicKey != "" {
+		if publicKey := strings.TrimSpace(theme.SanitizeText(screen.Status.PublicKey)); publicKey != "" {
 			details = append(details, theme.Body.Render(compactSigningValue(publicKey, max(28, width-10))))
-		} else if fingerprint := strings.TrimSpace(screen.Status.Fingerprint); fingerprint != "" {
+		} else if fingerprint := strings.TrimSpace(theme.SanitizeText(screen.Status.Fingerprint)); fingerprint != "" {
 			details = append(details, theme.Body.Render(fingerprint))
 		}
 	case actions.CommitSigningExternal:
 		statusLine = theme.Warning.Render("! External Signing")
-		if publicKey := strings.TrimSpace(screen.Status.PublicKey); publicKey != "" {
+		if publicKey := strings.TrimSpace(theme.SanitizeText(screen.Status.PublicKey)); publicKey != "" {
 			details = append(details, theme.Body.Render(compactSigningValue(publicKey, max(28, width-10))))
 		}
 	default:
