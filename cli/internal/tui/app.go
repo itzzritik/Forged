@@ -531,7 +531,7 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = msg.Width
 		m.height = msg.Height
 		if m.passwordInput != nil {
-			m.passwordInput.SetWidth(max(18, shell.ClampBlockWidth(m.width, 40)-4))
+			m.passwordInput.SetWidth(shell.ClampBlockWidth(m.width, 40) - 4)
 		}
 		m.resizeKeyInputs()
 		m.resizeAgentInputs()
@@ -1463,7 +1463,7 @@ func (m *model) renderPendingBody(contentWidth int, bodyHeight int) string {
 
 func (m *model) renderPasswordBody(contentWidth int) string {
 	sections := make([]string, 0, 5)
-	textWidth := max(28, min(contentWidth, theme.HeroMaxWidth))
+	textWidth := max(1, min(contentWidth, theme.HeroMaxWidth))
 
 	if auth := strings.TrimSpace(theme.SanitizeText(m.passwordAuth)); auth != "" {
 		prefix := theme.Success.Render(theme.Glyphs.Check) + " " + theme.BodyMuted.Render("Logged in as") + " "
@@ -3070,7 +3070,7 @@ func (m *model) showPasswordScreenOnRoute(route RouteID, flow passwordFlow, auth
 		m.passwordContext = "Enter your master password to verify the local vault and finish repairing the background service."
 		m.passwordInput = components.NewUnlockPasswordInput()
 	}
-	m.passwordInput.SetWidth(max(18, shell.ClampBlockWidth(m.width, 40)-4))
+	m.passwordInput.SetWidth(shell.ClampBlockWidth(m.width, 40) - 4)
 	if errorText != "" {
 		m.passwordInput.SetError(errorText)
 	}

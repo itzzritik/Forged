@@ -156,7 +156,7 @@ func (p *PasswordInput) MoveNext() {
 func (p *PasswordInput) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
-		p.SetWidth(max(20, msg.Width/2))
+		p.SetWidth(max(12, msg.Width/2))
 	case tea.KeyMsg:
 		switch msg.String() {
 		case "tab", "shift+tab", "up", "down":
@@ -301,7 +301,7 @@ func (p *PasswordInput) View(spinner string, labels ...string) string {
 			lineStyle.Render(strings.Repeat(theme.Glyphs.Horizontal, min(inputWidth, 36))),
 		}
 		if strings.TrimSpace(label) != "" {
-			lines = append([]string{theme.FieldLabel.Render(label)}, lines...)
+			lines = append([]string{theme.FieldLabel.Width(inputWidth).Render(label)}, lines...)
 		} else {
 			lines = append([]string{""}, lines...)
 		}

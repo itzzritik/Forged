@@ -150,13 +150,15 @@ type keyBrowserState struct {
 }
 
 type keyDetailState struct {
-	loading   bool
-	resolving bool
-	err       string
-	key       actions.KeyDetail
-	busy      bool
-	status    string
-	statusErr string
+	loading      bool
+	resolving    bool
+	err          string
+	key          actions.KeyDetail
+	busy         bool
+	status       string
+	statusErr    string
+	scrollOffset int
+	scrollMax    int
 }
 
 type privateClipboardState struct {
@@ -181,11 +183,13 @@ type keyRenameState struct {
 }
 
 type keyDeleteState struct {
-	loading   bool
-	deleting  bool
-	resolving bool
-	err       string
-	key       actions.KeySummary
+	loading      bool
+	deleting     bool
+	resolving    bool
+	err          string
+	key          actions.KeySummary
+	scrollOffset int
+	scrollMax    int
 }
 
 type keyGenerateState struct {
@@ -461,6 +465,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			}
 		}
 		return []shell.FooterAction{
+			{Key: theme.Glyphs.UpDown, Label: "Scroll"},
 			{Key: "C", Label: "Copy Public"},
 			{Key: "K", Label: "Copy Private"},
 			{Key: "F", Label: "Copy Fingerprint"},
@@ -498,6 +503,7 @@ func (m *model) keyFooterActions() []shell.FooterAction {
 			return []shell.FooterAction{{Key: "Esc", Label: "Cancel"}}
 		}
 		return []shell.FooterAction{
+			{Key: theme.Glyphs.UpDown, Label: "Scroll"},
 			{Key: "Enter", Label: "Confirm Delete"},
 			{Key: "Esc", Label: "Cancel"},
 		}
@@ -624,14 +630,17 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 		if m.signingLoaded {
 			key.GitSigning = m.keyMatchesCurrentSigning(key.PublicKey)
 		}
-		return keyscreen.RenderDetail(keyscreen.DetailScreen{
+		rendered := keyscreen.RenderDetail(keyscreen.DetailScreen{
 			Loading:     m.keyDetail.loading || m.keyDetail.resolving,
 			Error:       m.keyDetail.err,
 			Key:         key,
 			Status:      m.keyDetail.status,
 			StatusError: m.keyDetail.statusErr,
 			Busy:        m.keyDetail.busy,
-		}, m.spinner.View(), contentWidth)
+		}, m.spinner.View(), contentWidth, bodyHeight, m.keyDetail.scrollOffset)
+		m.keyDetail.scrollOffset = rendered.ScrollOffset
+		m.keyDetail.scrollMax = rendered.ScrollMax
+		return rendered.Body
 	case RouteKeysRename:
 		if m.keyRename.resolving {
 			return ""
@@ -648,14 +657,17 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 		if m.keyDelete.resolving {
 			return ""
 		}
-		return keyscreen.RenderDelete(keyscreen.DeleteScreen{
+		rendered := keyscreen.RenderDelete(keyscreen.DeleteScreen{
 			Context: "Review this key before permanently deleting it from the vault",
 			Key:     m.keyDelete.key,
 			Warning: deleteWarning(m.keyDelete.key.Name),
 			Status:  deleteStatus(m.keyDelete.deleting),
 			Error:   m.keyDelete.err,
 			Loading: m.keyDelete.loading,
-		}, m.spinner.View(), contentWidth)
+		}, m.spinner.View(), contentWidth, bodyHeight, m.keyDelete.scrollOffset)
+		m.keyDelete.scrollOffset = rendered.ScrollOffset
+		m.keyDelete.scrollMax = rendered.ScrollMax
+		return rendered.Body
 	case RouteKeysGenerate:
 		return keyscreen.RenderGenerate(keyscreen.GenerateScreen{
 			Context:    "Create a new SSH key and add it to this vault",
@@ -898,6 +910,10 @@ func (m *model) updateKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		if m.keyDetail.err != "" {
 			return m, m.startKeyRouteLoad()
 		}
+	case "up":
+		m.keyDetail.scrollOffset = max(0, m.keyDetail.scrollOffset-1)
+	case "down":
+		m.keyDetail.scrollOffset = min(m.keyDetail.scrollMax, m.keyDetail.scrollOffset+1)
 	case "c", "C":
 		if strings.TrimSpace(m.keyDetail.key.PublicKey) == "" {
 			return m, nil
@@ -989,6 +1005,10 @@ func (m *model) updateKeyDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			return m, m.showCurrentRoute()
 		}
 		return m, tea.Quit
+	case "up":
+		m.keyDelete.scrollOffset = max(0, m.keyDelete.scrollOffset-1)
+	case "down":
+		m.keyDelete.scrollOffset = min(m.keyDelete.scrollMax, m.keyDelete.scrollOffset+1)
 	case "enter":
 		if !keyDeleteReviewValid(m.keyDelete.key) {
 			m.keyDelete = keyDeleteState{loading: true, resolving: true}
@@ -2522,11 +2542,11 @@ func (m *model) selectedKeyRow() (actions.KeySummary, bool) {
 
 func (m *model) resizeKeyInputs() {
 	m.resizeKeyBrowserSearchInput()
-	m.keyRename.input.Width = max(18, min(shell.ClampBlockWidth(m.width, 44), 44))
-	inputWidth := max(18, min(shell.ClampBlockWidth(m.width, 44), 44))
+	m.keyRename.input.Width = shell.ClampBlockWidth(m.width, 44)
+	inputWidth := shell.ClampBlockWidth(m.width, 44)
 	m.keyGenerate.nameInput.Width = inputWidth
-	m.keyImport.pathInput.Width = max(18, min(shell.ClampBlockWidth(m.width, 54), 54))
-	m.keyExport.pathInput.Width = max(18, min(shell.ClampBlockWidth(m.width, 54), 54))
+	m.keyImport.pathInput.Width = shell.ClampBlockWidth(m.width, 54)
+	m.keyExport.pathInput.Width = shell.ClampBlockWidth(m.width, 54)
 }
 
 func (m *model) resizeKeyBrowserSearchInput() {

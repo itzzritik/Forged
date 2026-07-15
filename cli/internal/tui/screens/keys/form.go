@@ -94,95 +94,81 @@ type ExportScreen struct {
 }
 
 func RenderRename(screen RenameScreen, spinner string, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+	contentWidth := max(1, min(width, theme.HeroMaxWidth))
 	fieldWidth := inputFieldWidth(contentWidth)
-	sections := make([]string, 0, 4)
+	top := make([]string, 0, 3)
 	if context := strings.TrimSpace(screen.Context); context != "" {
-		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
+		top = append(top, renderFormText(theme.Body, context, contentWidth))
 	}
 
 	if screen.Loading {
-		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" Loading key"))
-		return strings.Join(sections, "\n")
+		return shell.DockBottom(strings.Join(top, "\n"), renderFormText(theme.BodyStrong, theme.Spinner.Render(spinner)+" Loading key", contentWidth))
 	}
 
-	sections = append(sections, "", renderTextField(screen.FieldView, screen.Focused, fieldWidth))
-	if status := renderStatus(screen.Status, screen.Error, spinner); status != "" {
-		sections = append(sections, status)
-	} else {
-		sections = append(sections, "")
-	}
-	return strings.Join(sections, "\n")
+	top = append(top, "", renderTextField(screen.FieldView, screen.Focused, fieldWidth))
+	return shell.DockBottom(strings.Join(top, "\n"), renderStatus(screen.Status, screen.Error, spinner, contentWidth))
 }
 
-func RenderDelete(screen DeleteScreen, spinner string, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+func RenderDelete(screen DeleteScreen, spinner string, width int, bodyHeight int, scrollOffset int) ViewportRender {
+	contentWidth := max(1, min(width, theme.HeroMaxWidth))
 	sections := make([]string, 0, 4)
 	if context := strings.TrimSpace(screen.Context); context != "" {
 		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
 	}
 
 	if screen.Loading {
-		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" Loading key"))
-		return strings.Join(sections, "\n")
+		sections = append(sections, "", theme.BodyStrong.Width(contentWidth).Render(theme.Spinner.Render(spinner)+" Loading key"))
+		return renderViewport(strings.Join(sections, "\n"), "", bodyHeight, scrollOffset)
 	}
 
-	lines := []string{
-		renderDetailRow("Name", screen.Key.Name),
-		renderDetailRow("Type", strings.ToUpper(screen.Key.Type)),
-		renderDetailRow("Fingerprint", screen.Key.Fingerprint),
+	rows := []detailTableRow{
+		{Label: "Name", Value: screen.Key.Name, Style: theme.BodyStrong},
+		{Label: "Type", Value: strings.ToUpper(screen.Key.Type), Style: theme.BodyStrong},
+		{Label: "Fingerprint", Value: screen.Key.Fingerprint, Style: theme.BodyStrong},
 	}
-	sections = append(sections, "", strings.Join(lines, "\n"))
+	sections = append(sections, "", renderDetailTable(rows, contentWidth))
 
 	feedback := ""
 	switch {
 	case strings.TrimSpace(screen.Error) != "":
-		feedback = renderStatus("", screen.Error, spinner)
+		feedback = renderStatus("", screen.Error, spinner, contentWidth)
 	case strings.TrimSpace(screen.Status) != "":
-		feedback = renderStatus(screen.Status, "", spinner)
+		feedback = renderStatus(screen.Status, "", spinner, contentWidth)
 	case strings.TrimSpace(screen.Warning) != "":
-		feedback = theme.Warning.Width(contentWidth).Render("! " + displayMessage(screen.Warning))
+		feedback = renderFormText(theme.Warning, "! "+displayMessage(screen.Warning), contentWidth)
 	}
-	return shell.DockBottom(strings.Join(sections, "\n"), feedback)
+	return renderViewport(strings.Join(sections, "\n"), feedback, bodyHeight, scrollOffset)
 }
 
 func RenderGenerate(screen GenerateScreen, spinner string, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+	contentWidth := max(1, min(width, theme.HeroMaxWidth))
 	fieldWidth := inputFieldWidth(contentWidth)
-	sections := make([]string, 0, 6)
+	top := make([]string, 0, 3)
 	if context := strings.TrimSpace(screen.Context); context != "" {
-		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
+		top = append(top, renderFormText(theme.Body, context, contentWidth))
 	}
 
 	if screen.Generating {
-		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+screen.Status))
-		return strings.Join(sections, "\n")
+		return shell.DockBottom(strings.Join(top, "\n"), renderFormText(theme.BodyStrong, theme.Spinner.Render(spinner)+" "+screen.Status, contentWidth))
 	}
 
-	sections = append(sections,
+	top = append(top,
 		"",
 		renderTextField(screen.NameView, screen.Focused, fieldWidth),
 	)
-	if status := renderResultStatus(screen.Status, "", screen.Error, false, spinner); status != "" {
-		sections = append(sections, "")
-		sections = append(sections, status)
-	} else {
-		sections = append(sections, "")
-	}
-	return strings.Join(sections, "\n")
+	return shell.DockBottom(strings.Join(top, "\n"), renderResultStatus(screen.Status, "", screen.Error, false, spinner, contentWidth))
 }
 
 func RenderImport(screen ImportScreen, spinner string, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth))
-	fieldWidth := max(28, min(contentWidth, 54))
-	sections := make([]string, 0, 6)
+	contentWidth := max(1, min(width, theme.HeroMaxWidth))
+	fieldWidth := max(1, min(contentWidth, 54))
+	top := make([]string, 0, 5)
 	if context := strings.TrimSpace(screen.Context); context != "" {
-		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
+		top = append(top, renderFormText(theme.Body, context, contentWidth))
 	}
 
 	if screen.Busy {
-		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+screen.Status))
-		return strings.Join(sections, "\n")
+		return shell.DockBottom(strings.Join(top, "\n"), renderFormText(theme.BodyStrong, theme.Spinner.Render(spinner)+" "+screen.Status, contentWidth))
 	}
 
 	if len(screen.Sources) > 0 {
@@ -194,22 +180,21 @@ func RenderImport(screen ImportScreen, spinner string, width int) string {
 				prefix = theme.Kicker.Render(theme.Glyphs.Selection)
 				labelStyle = theme.BodyStrong
 			}
-			lines = append(lines, prefix+" "+labelStyle.Render(source.Label))
+			labelWidth := contentWidth - lipgloss.Width(prefix) - 1
+			if labelWidth <= 0 {
+				lines = append(lines, ansi.Truncate(prefix, contentWidth, theme.Glyphs.Ellipsis))
+				continue
+			}
+			lines = append(lines, prefix+" "+labelStyle.Render(ansi.Truncate(source.Label, labelWidth, theme.Glyphs.Ellipsis)))
 		}
-		sections = append(sections, "", strings.Join(lines, "\n"))
+		top = append(top, "", strings.Join(lines, "\n"))
 	}
 
 	if screen.PathVisible {
-		sections = append(sections, "", renderTextField(screen.PathView, screen.PathFocused, fieldWidth))
+		top = append(top, "", renderTextField(screen.PathView, screen.PathFocused, fieldWidth))
 	}
 
-	if status := renderResultStatus(screen.Status, screen.Warning, screen.Error, false, spinner); status != "" {
-		sections = append(sections, "", status)
-	} else {
-		sections = append(sections, "")
-	}
-
-	return strings.Join(sections, "\n")
+	return shell.DockBottom(strings.Join(top, "\n"), renderResultStatus(screen.Status, screen.Warning, screen.Error, false, spinner, contentWidth))
 }
 
 func RenderImportReview(screen ImportReviewScreen, spinner string, width int, height int) string {
@@ -371,29 +356,30 @@ func importReviewBlockHeight(block string) int {
 }
 
 func RenderExport(screen ExportScreen, spinner string, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth))
-	fieldWidth := max(28, min(contentWidth, 54))
-	sections := make([]string, 0, 5)
+	contentWidth := max(1, min(width, theme.HeroMaxWidth))
+	fieldWidth := max(1, min(contentWidth, 54))
+	top := make([]string, 0, 3)
 	if context := strings.TrimSpace(screen.Context); context != "" {
-		sections = append(sections, theme.Body.Width(contentWidth).Render(context))
-	}
-	if warning := strings.TrimSpace(screen.Warning); warning != "" {
-		sections = append(sections, "", theme.Warning.Width(contentWidth).Render("! "+warning))
+		top = append(top, renderFormText(theme.Body, context, contentWidth))
 	}
 
 	if screen.Busy {
-		sections = append(sections, "", theme.BodyStrong.Render(theme.Spinner.Render(spinner)+" "+screen.Status))
-		return strings.Join(sections, "\n")
+		return shell.DockBottom(strings.Join(top, "\n"), renderExportFeedback(screen, spinner, contentWidth))
 	}
 
 	if screen.PathVisible {
-		sections = append(sections, "", renderTextField(screen.PathView, screen.Focused, fieldWidth))
+		top = append(top, "", renderTextField(screen.PathView, screen.Focused, fieldWidth))
 	}
-	if status := renderResultStatus(screen.Status, "", screen.Error, false, spinner); status != "" {
-		sections = append(sections, "")
+	return shell.DockBottom(strings.Join(top, "\n"), renderExportFeedback(screen, spinner, contentWidth))
+}
+
+func renderExportFeedback(screen ExportScreen, spinner string, width int) string {
+	sections := make([]string, 0, 2)
+	if warning := strings.TrimSpace(screen.Warning); warning != "" {
+		sections = append(sections, renderFormText(theme.Warning, "! "+warning, width))
+	}
+	if status := renderResultStatus(screen.Status, "", screen.Error, screen.Busy, spinner, width); status != "" {
 		sections = append(sections, status)
-	} else {
-		sections = append(sections, "")
 	}
 	return strings.Join(sections, "\n")
 }
@@ -403,13 +389,20 @@ func renderTextField(view string, focused bool, width int) string {
 	if focused {
 		lineStyle = theme.FieldLineActive
 	}
-	fieldWidth := max(24, width)
+	fieldWidth := max(1, width)
 	renderedValue := lipgloss.NewStyle().Width(fieldWidth).Render(view)
 	return strings.Join([]string{
-		"",
 		renderedValue,
 		lineStyle.Render(strings.Repeat(theme.Glyphs.Horizontal, fieldWidth)),
 	}, "\n")
+}
+
+func renderFormText(style lipgloss.Style, value string, width int) string {
+	width = max(1, width)
+	if width < 28 {
+		return style.Render(ansi.Truncate(value, width, theme.Glyphs.Ellipsis))
+	}
+	return style.Width(width).Render(value)
 }
 
 func renderImportReviewRow(item ImportReviewItem, width int) string {
@@ -465,33 +458,35 @@ func truncateImportFingerprint(value string) string {
 }
 
 func inputFieldWidth(contentWidth int) int {
-	return max(28, min(contentWidth, 44))
+	return max(1, min(contentWidth, 44))
 }
 
-func renderStatus(info string, err string, spinner string) string {
+func renderStatus(info string, err string, spinner string, width int) string {
+	width = max(1, width)
 	if strings.TrimSpace(err) != "" {
-		return theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(err))
+		return renderFormText(theme.Danger, theme.Glyphs.Cross+" "+displayMessage(err), width)
 	}
 	if strings.TrimSpace(info) != "" {
-		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + displayMessage(info))
+		return renderFormText(theme.BodyStrong, theme.Spinner.Render(spinner)+" "+displayMessage(info), width)
 	}
 	return ""
 }
 
-func renderResultStatus(info string, warning string, err string, busy bool, spinner string) string {
+func renderResultStatus(info string, warning string, err string, busy bool, spinner string, width int) string {
+	width = max(1, width)
 	if strings.TrimSpace(err) != "" {
-		return theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(err))
+		return renderFormText(theme.Danger, theme.Glyphs.Cross+" "+displayMessage(err), width)
 	}
 	if strings.TrimSpace(warning) != "" {
-		return theme.Warning.Render("! " + displayMessage(warning))
+		return renderFormText(theme.Warning, "! "+displayMessage(warning), width)
 	}
 	if strings.TrimSpace(info) == "" {
 		return ""
 	}
 	if busy {
-		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + displayMessage(info))
+		return renderFormText(theme.BodyStrong, theme.Spinner.Render(spinner)+" "+displayMessage(info), width)
 	}
-	return theme.Success.Render(theme.Glyphs.Check + " " + displayMessage(info))
+	return renderFormText(theme.Success, theme.Glyphs.Check+" "+displayMessage(info), width)
 }
 
 func displayMessage(value string) string {

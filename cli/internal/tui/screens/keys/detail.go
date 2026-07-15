@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
@@ -21,16 +22,22 @@ type DetailScreen struct {
 	Busy        bool
 }
 
-func RenderDetail(screen DetailScreen, spinner string, width int) string {
-	contentWidth := max(28, min(width, theme.HeroMaxWidth+10))
+type ViewportRender struct {
+	Body         string
+	ScrollOffset int
+	ScrollMax    int
+}
+
+func RenderDetail(screen DetailScreen, spinner string, width int, bodyHeight int, scrollOffset int) ViewportRender {
+	contentWidth := max(1, min(width, theme.HeroMaxWidth+10))
 	if screen.Loading {
-		return commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
+		return renderViewport(commonscreen.RenderFullPageLoader(commonscreen.FullPageLoaderScreen{
 			Title:       "Looking up key",
 			Description: "Checking the vault for a matching key",
-		}, spinner, contentWidth)
+		}, spinner, contentWidth), "", bodyHeight, scrollOffset)
 	}
 	if msg := strings.TrimSpace(screen.Error); msg != "" {
-		return theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(msg))
+		return renderViewport(theme.Danger.Width(contentWidth).Render(theme.Glyphs.Cross+" "+displayMessage(msg)), "", bodyHeight, scrollOffset)
 	}
 
 	name := strings.TrimSpace(theme.SanitizeText(screen.Key.Name))
@@ -38,20 +45,24 @@ func RenderDetail(screen DetailScreen, spinner string, width int) string {
 		name = "Unnamed key"
 	}
 
-	sections := []string{
-		theme.SectionTitle.Render("Key Identity"),
-	}
 	identityValueWidth := detailTableValueWidth(contentWidth)
+	if detailTableStacks(contentWidth) {
+		identityValueWidth = contentWidth
+	}
 	identityRows := []detailTableRow{
 		{Label: "Name", Value: name, Style: theme.HeroTitle},
 		{Label: "Type", Value: strings.ToUpper(screen.Key.Type), Style: theme.RowValue},
 		{Label: "Fingerprint", Value: screen.Key.Fingerprint, Style: theme.RowValue},
 		{
 			Label: "Public key",
-			Value: compactPublicKeyPreview(screen.Key.PublicKey, max(24, min(40, identityValueWidth))),
+			Value: compactPublicKeyPreview(screen.Key.PublicKey, max(1, min(40, identityValueWidth))),
 			Style: theme.BodyStrong,
 		},
 		{Label: "Private key", Value: privateKeyVisibilityLabel(), Style: theme.Body},
+	}
+
+	sections := []string{
+		theme.SectionTitle.Render("Key Identity"),
 	}
 	sections = append(sections, "", renderDetailTable(identityRows, contentWidth))
 
@@ -67,11 +78,7 @@ func RenderDetail(screen DetailScreen, spinner string, width int) string {
 		)
 	}
 
-	return shell.DockBottom(strings.Join(sections, "\n"), renderDetailStatus(screen.Status, screen.StatusError, screen.Busy, spinner))
-}
-
-func renderDetailRow(label, value string) string {
-	return padRight(theme.RowLabel.Render(strings.ToUpper(label)), 15) + theme.BodyStrong.Render(theme.SanitizeText(value))
+	return renderViewport(strings.Join(sections, "\n"), renderDetailStatus(screen.Status, screen.StatusError, screen.Busy, spinner, contentWidth), bodyHeight, scrollOffset)
 }
 
 type detailTableRow struct {
@@ -80,9 +87,51 @@ type detailTableRow struct {
 	Style lipgloss.Style
 }
 
+func renderViewport(top string, bottom string, height int, offset int) ViewportRender {
+	if height <= 0 {
+		return ViewportRender{Body: shell.DockBottom(top, bottom)}
+	}
+
+	topLines := detailLines(top)
+	bottomLines := []string(nil)
+	if strings.TrimSpace(bottom) != "" {
+		bottomLines = detailLines(bottom)
+	}
+	availableTop := height - len(bottomLines)
+	if availableTop <= 0 {
+		return ViewportRender{Body: shell.DockBottom("", bottom)}
+	}
+
+	maxOffset := max(0, len(topLines)-availableTop)
+	offset = min(max(0, offset), maxOffset)
+	end := min(len(topLines), offset+availableTop)
+	visibleTop := strings.Join(topLines[offset:end], "\n")
+	return ViewportRender{
+		Body:         shell.DockBottom(visibleTop, bottom),
+		ScrollOffset: offset,
+		ScrollMax:    maxOffset,
+	}
+}
+
+func detailLines(block string) []string {
+	if block == "" {
+		return nil
+	}
+	return strings.Split(block, "\n")
+}
+
 func renderDetailTable(rows []detailTableRow, width int) string {
+	width = max(1, width)
+	if detailTableStacks(width) {
+		blocks := make([]string, 0, len(rows))
+		for _, row := range rows {
+			blocks = append(blocks, renderDetailFieldBlock(row.Label, row.Value, width, row.Style))
+		}
+		return strings.Join(blocks, "\n\n")
+	}
+
 	labelWidth := detailSharedLabelWidth()
-	valueWidth := max(16, width-labelWidth-2)
+	valueWidth := max(1, width-labelWidth-2)
 	lines := make([]string, 0, len(rows)*2)
 
 	for _, row := range rows {
@@ -126,7 +175,11 @@ func detailSharedLabelWidth() int {
 }
 
 func detailTableValueWidth(width int) int {
-	return max(16, width-detailSharedLabelWidth()-2)
+	return max(1, width-detailSharedLabelWidth()-2)
+}
+
+func detailTableStacks(width int) bool {
+	return width < detailSharedLabelWidth()+2+12
 }
 
 func renderDetailFieldBlock(label, value string, width int, style lipgloss.Style) string {
@@ -135,7 +188,10 @@ func renderDetailFieldBlock(label, value string, width int, style lipgloss.Style
 		value = theme.Glyphs.Empty
 	}
 
-	lines := []string{theme.RowLabel.Render(strings.ToUpper(label))}
+	lines := make([]string, 0, 2)
+	for _, line := range wrapDetailText(strings.ToUpper(label), width) {
+		lines = append(lines, theme.RowLabel.Render(line))
+	}
 	for _, line := range wrapDetailText(value, width) {
 		lines = append(lines, style.Render(line))
 	}
@@ -143,6 +199,22 @@ func renderDetailFieldBlock(label, value string, width int, style lipgloss.Style
 }
 
 func buildMetadata(key actions.KeyDetail, width int) []string {
+	rows := metadataRows(key)
+
+	lines := make([]string, 0, 3)
+	if len(rows) > 0 {
+		lines = append(lines, renderDetailTable(rows, width))
+	}
+	if comment := strings.TrimSpace(key.Comment); comment != "" {
+		if len(lines) > 0 {
+			lines = append(lines, "")
+		}
+		lines = append(lines, renderDetailFieldBlock("Comment", comment, width, theme.Body))
+	}
+	return lines
+}
+
+func metadataRows(key actions.KeyDetail) []detailTableRow {
 	rows := make([]detailTableRow, 0, 6)
 	if created := strings.TrimSpace(key.CreatedAt); created != "" {
 		rows = append(rows, detailTableRow{Label: "Created", Value: humanDateTime(created), Style: theme.Body})
@@ -160,18 +232,7 @@ func buildMetadata(key actions.KeyDetail, width int) []string {
 		rows = append(rows, detailTableRow{Label: "Device", Value: origin, Style: theme.Body})
 	}
 	rows = append(rows, detailTableRow{Label: "Git signing", Value: boolLabel(key.GitSigning), Style: theme.Body})
-
-	lines := make([]string, 0, 3)
-	if len(rows) > 0 {
-		lines = append(lines, renderDetailTable(rows, width))
-	}
-	if comment := strings.TrimSpace(key.Comment); comment != "" {
-		if len(lines) > 0 {
-			lines = append(lines, "")
-		}
-		lines = append(lines, renderDetailFieldBlock("Comment", comment, width, theme.Body))
-	}
-	return lines
+	return rows
 }
 
 func boolLabel(value bool) string {
@@ -181,29 +242,39 @@ func boolLabel(value bool) string {
 	return "Disabled"
 }
 
-func renderDetailStatus(status string, statusError string, busy bool, spinner string) string {
+func renderDetailStatus(status string, statusError string, busy bool, spinner string, width int) string {
+	width = max(1, width)
 	if strings.TrimSpace(statusError) != "" {
-		return theme.Danger.Render(theme.Glyphs.Cross + " " + displayMessage(statusError))
+		return renderDetailText(theme.Danger, theme.Glyphs.Cross+" "+displayMessage(statusError), width)
 	}
 	if busy && strings.TrimSpace(status) != "" {
-		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + displayMessage(status))
+		return renderDetailText(theme.BodyStrong, theme.Spinner.Render(spinner)+" "+displayMessage(status), width)
 	}
 	if strings.TrimSpace(status) != "" {
-		return theme.Success.Render(theme.Glyphs.Check + " " + displayMessage(status))
+		return renderDetailText(theme.Success, theme.Glyphs.Check+" "+displayMessage(status), width)
 	}
 	return " "
 }
 
+func renderDetailText(style lipgloss.Style, value string, width int) string {
+	width = max(1, width)
+	if width < 28 {
+		return style.Render(ansi.Truncate(value, width, theme.Glyphs.Ellipsis))
+	}
+	return style.Width(width).Render(value)
+}
+
 func compactPublicKeyPreview(value string, maxRunes int) string {
+	maxRunes = max(1, maxRunes)
 	fields := strings.Fields(strings.TrimSpace(value))
 	if len(fields) == 0 {
 		return ""
 	}
-	if len(fields) == 1 {
+	if len(fields) == 1 || lipgloss.Width(fields[0]) >= maxRunes {
 		return compactMiddle(fields[0], maxRunes)
 	}
 
-	keyBodyWidth := max(12, maxRunes-len(fields[0])-1)
+	keyBodyWidth := max(1, maxRunes-lipgloss.Width(fields[0])-1)
 	preview := fields[0] + " " + compactMiddle(fields[1], keyBodyWidth)
 	if len(fields) < 3 {
 		return preview

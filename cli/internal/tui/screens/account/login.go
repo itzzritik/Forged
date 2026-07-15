@@ -21,7 +21,7 @@ type LoginScreen struct {
 
 func Render(screen LoginScreen, spinner string, width int) string {
 	lines := make([]string, 0, 8)
-	contentWidth := max(28, min(width, theme.HeroMaxWidth))
+	contentWidth := max(1, min(width, theme.HeroMaxWidth))
 
 	if screen.Error != "" {
 		return renderError(screen.Error, contentWidth)
@@ -31,14 +31,14 @@ func Render(screen LoginScreen, spinner string, width int) string {
 		lines = append(lines, theme.Body.Width(contentWidth).Render(screen.Context))
 	}
 
-	if code := renderCode(screen.VerificationCode); code != "" {
+	if code := renderCode(screen.VerificationCode, contentWidth); code != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
 		lines = append(lines, code)
 	}
 
-	if status := renderStatus(screen, spinner); status != "" {
+	if status := renderStatus(screen, spinner, contentWidth); status != "" {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
@@ -55,12 +55,12 @@ func Render(screen LoginScreen, spinner string, width int) string {
 	return strings.Join(lines, "\n")
 }
 
-func renderCode(code string) string {
+func renderCode(code string, width int) string {
 	if strings.TrimSpace(code) == "" {
 		return ""
 	}
 
-	innerWidth := max(13, lipgloss.Width(code)+4)
+	innerWidth := min(max(1, width-theme.CodeFrame.GetHorizontalFrameSize()), max(13, lipgloss.Width(code)+4))
 	inner := lipgloss.NewStyle().
 		Width(innerWidth).
 		Align(lipgloss.Center).
@@ -83,16 +83,16 @@ func renderLink(raw string, copied bool) string {
 	}, "\n")
 }
 
-func renderStatus(screen LoginScreen, spinner string) string {
+func renderStatus(screen LoginScreen, spinner string, width int) string {
 	if screen.Waiting {
 		label := screen.Status
 		if strings.TrimSpace(label) == "" {
 			label = "Waiting for browser approval"
 		}
-		return theme.BodyStrong.Render(theme.Spinner.Render(spinner) + " " + label)
+		return theme.BodyStrong.Width(width).Render(theme.Spinner.Render(spinner) + " " + label)
 	}
 	if strings.TrimSpace(screen.Status) != "" {
-		return theme.BodyStrong.Render(screen.Status)
+		return theme.BodyStrong.Width(width).Render(screen.Status)
 	}
 	return ""
 }
@@ -115,11 +115,9 @@ func renderError(message string, width int) string {
 		detail = "Open the link again to continue."
 	}
 
-	lines := []string{
-		theme.Danger.Render(theme.Glyphs.Cross + " " + title),
-	}
+	lines := []string{theme.Danger.Width(width).Render(theme.Glyphs.Cross + " " + title)}
 	if strings.TrimSpace(detail) != "" {
-		lines = append(lines, theme.Body.Width(max(24, width)).Render(detail))
+		lines = append(lines, theme.Body.Width(width).Render(detail))
 	}
 	return strings.Join(lines, "\n")
 }
