@@ -248,6 +248,9 @@ func (s *Server) handleConn(conn net.Conn) {
 	defer clear(req.Args)
 
 	switch req.Command {
+	case CmdSyncTrigger:
+		deadline = time.Now().Add(ManualSyncCallTimeout)
+		conn.SetDeadline(deadline)
 	case CmdSSHRoutePrepare:
 		deadline = time.Now().Add(SSHRoutePrepareCallTimeout + 5*time.Second)
 		conn.SetDeadline(deadline)

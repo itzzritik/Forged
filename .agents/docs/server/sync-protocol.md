@@ -19,7 +19,7 @@ Sync is encrypted-blob push/pull with optimistic locking. The server stores blob
 - The server never merges plaintext vault data.
 - Push sends `expected_version`; mismatch returns 409.
 - The client rejects malformed, zero, or negative successful Push/Pull versions before sync state or vault work consumes them. Status requires `has_vault`; its version is positive only when a vault exists and omitted/zero otherwise.
-- Normal conflict handling is pull -> three-way merge -> one retry push.
+- Normal conflict handling is push -> pull -> three-way merge -> one retry push. Manual sync has a two-minute IPC budget for that bounded path; each remote call remains limited to 30 seconds.
 - First-link bootstrap merge is separate from normal three-way merge.
 - Key deletes and SSH-route deletes use tombstones.
 - Local sync state keeps the last synced base blob and last known server version.

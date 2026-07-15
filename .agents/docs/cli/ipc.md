@@ -26,6 +26,7 @@ stable: yes
 - Key list, single-key view/export, and full-vault export handlers ask the sync bus for a lightweight foreground refresh before reading local vault data.
 - Key removal uses the exact reviewed name and can bind the request to its reviewed fingerprint so a stale confirmation cannot remove a different key.
 - Manual sync captures the encrypted blob, KDF parameters, and protected key from one vault snapshot.
+- Manual sync uses a two-minute IPC deadline on both client and daemon, so its bounded 30-second push, pull, and retry-push conflict path can complete.
 - Manual sync fails closed when the stateful sync bus is unavailable; it never performs a stateless push over unknown remote data.
 - A missing remote vault after prior linked history is a retryable status error; local sync state retains that condition across restart and the client never recreates the remote automatically.
 - When sync history is quarantined, `status` still exposes its safe recovery error without a sync bus and manual sync returns that error instead of suggesting a restart.

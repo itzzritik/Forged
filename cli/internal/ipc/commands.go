@@ -7,6 +7,7 @@ const (
 
 	SSHRoutePrepareWorkTimeout = 45 * time.Second
 	SSHRoutePrepareCallTimeout = SSHRoutePrepareWorkTimeout + 5*time.Second
+	ManualSyncCallTimeout      = 2 * time.Minute
 
 	CmdList              = "list"
 	CmdAdd               = "add"

@@ -13,9 +13,9 @@ func TriggerSync(paths config.Paths) error {
 		return err
 	}
 
-	_, err = ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdSyncTrigger, map[string]string{
+	_, err = ipc.NewClient(paths.CtlSocket()).CallWithTimeout(ipc.CmdSyncTrigger, map[string]string{
 		"server_url": creds.ServerURL,
 		"token":      creds.Token,
-	})
+	}, ipc.ManualSyncCallTimeout)
 	return err
 }
