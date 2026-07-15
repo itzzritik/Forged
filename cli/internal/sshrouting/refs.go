@@ -28,7 +28,7 @@ func BuildKeyRefs(keys []vault.Key, dir string) ([]KeyRef, error) {
 	byFingerprint := make(map[string]vault.Key, len(keys))
 	for _, key := range keys {
 		fingerprint := strings.TrimSpace(key.Fingerprint)
-		if fingerprint == "" || strings.TrimSpace(key.PublicKey) == "" {
+		if fingerprint == "" || strings.TrimSpace(key.PublicKey) == "" || !supportsSSHSigningKey(key) {
 			continue
 		}
 		if _, exists := byFingerprint[fingerprint]; !exists {

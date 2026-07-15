@@ -439,9 +439,7 @@ func (ks *KeyStore) SignerByPublicKey(pub ssh.PublicKey) (ssh.Signer, string, st
 	if err != nil {
 		return nil, "", "", fmt.Errorf("Parsing requested public key: %w", err)
 	}
-	switch requested.Type() {
-	case ssh.KeyAlgoRSA, ssh.InsecureKeyAlgoDSA, ssh.KeyAlgoECDSA256, ssh.KeyAlgoECDSA384, ssh.KeyAlgoECDSA521, ssh.KeyAlgoED25519:
-	default:
+	if !keytypes.SupportsSSHSigning(requested.Type()) {
 		return nil, "", "", fmt.Errorf("Unsupported public key type %q", requested.Type())
 	}
 
@@ -469,6 +467,9 @@ func (ks *KeyStore) SignerByPublicKey(pub ssh.PublicKey) (ssh.Signer, string, st
 		if err != nil {
 			return nil, "", "", fmt.Errorf("Parsing private key for %s: %w", key.Name, err)
 		}
+		if !keytypes.SupportsSSHSigning(signer.PublicKey().Type()) {
+			return nil, "", "", fmt.Errorf("Unsupported private key type %q", signer.PublicKey().Type())
+		}
 		return signer, key.Name, key.Fingerprint, nil
 	}
 	return nil, "", "", ErrKeyNotFound
@@ -484,6 +485,10 @@ func (ks *KeyStore) Signers() ([]ssh.Signer, error) {
 
 	signers := make([]ssh.Signer, 0, len(ks.vault.data.Keys))
 	for i := range ks.vault.data.Keys {
+		publicKey, err := parseAuthorizedPublicKey(ks.vault.data.Keys[i].PublicKey)
+		if err == nil && !keytypes.SupportsSSHSigning(publicKey.Type()) {
+			continue
+		}
 		privateKey, err := ks.decryptPrivateKeyLocked(&ks.vault.data.Keys[i])
 		if err != nil {
 			return nil, err
@@ -496,6 +501,9 @@ func (ks *KeyStore) Signers() ([]ssh.Signer, error) {
 		_ = platform.Munlock(privateKey)
 		if err != nil {
 			return nil, fmt.Errorf("Parsing private key for %s: %w", ks.vault.data.Keys[i].Name, err)
+		}
+		if !keytypes.SupportsSSHSigning(signer.PublicKey().Type()) {
+			continue
 		}
 		signers = append(signers, signer)
 	}

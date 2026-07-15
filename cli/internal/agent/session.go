@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"github.com/itzzritik/forged/cli/internal/vault"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -63,6 +64,9 @@ func (s *sessionAgent) List() ([]*agent.Key, error) {
 		}
 		pub, err := parsePublicKey(key.PublicKey)
 		if err != nil {
+			continue
+		}
+		if !keytypes.SupportsSSHSigning(pub.Type()) {
 			continue
 		}
 		out = append(out, &agent.Key{

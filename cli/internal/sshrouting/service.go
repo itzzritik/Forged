@@ -460,6 +460,9 @@ func (s *Service) refreshCacheFromKeyStoreLocked(keyStore *vault.KeyStore) {
 func publicRoutingKeys(keys []vault.Key) []vault.Key {
 	out := make([]vault.Key, 0, len(keys))
 	for _, key := range keys {
+		if !supportsSSHSigningKey(key) {
+			continue
+		}
 		key.EncryptedPrivateKey = ""
 		key.EncryptedCipherKey = ""
 		key.PrivateKey = nil

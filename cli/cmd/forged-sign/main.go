@@ -10,6 +10,7 @@ import (
 	"github.com/hiddeco/sshsig"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"github.com/itzzritik/forged/cli/internal/platform"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -69,16 +70,6 @@ func signFile(keyFile, bufferFile, namespace string) error {
 		namespace = "git"
 	}
 
-	paths := config.DefaultPaths()
-	if err := actions.AuthorizeExternalUse(paths); err != nil {
-		return err
-	}
-
-	data, err := os.ReadFile(bufferFile)
-	if err != nil {
-		return fmt.Errorf("Reading buffer file: %w", err)
-	}
-
 	var signingPubKey ssh.PublicKey
 	if keyFile != "" {
 		keyData, err := os.ReadFile(keyFile)
@@ -89,7 +80,20 @@ func signFile(keyFile, bufferFile, namespace string) error {
 		if err != nil {
 			return fmt.Errorf("Parsing public key: %w", err)
 		}
+		if !keytypes.SupportsSSHSigning(pub.Type()) {
+			return fmt.Errorf("SSH key type %q is not supported for Forged signing; choose an RSA, ECDSA, or Ed25519 key", pub.Type())
+		}
 		signingPubKey = pub
+	}
+
+	paths := config.DefaultPaths()
+	if err := actions.AuthorizeExternalUse(paths); err != nil {
+		return err
+	}
+
+	data, err := os.ReadFile(bufferFile)
+	if err != nil {
+		return fmt.Errorf("Reading buffer file: %w", err)
 	}
 
 	socketPath := paths.AgentSocket()

@@ -60,3 +60,12 @@ func Normalize(raw string) string {
 func FromSSHPublicKeyType(raw string) string {
 	return Normalize(raw)
 }
+
+func SupportsSSHSigning(raw string) bool {
+	switch strings.ToLower(strings.TrimSpace(raw)) {
+	case "ssh-rsa", "ecdsa-sha2-nistp256", "ecdsa-sha2-nistp384", "ecdsa-sha2-nistp521", "ssh-ed25519":
+		return true
+	default:
+		return false
+	}
+}

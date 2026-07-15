@@ -11,6 +11,7 @@ import (
 	"unicode"
 
 	"github.com/itzzritik/forged/cli/internal/activity"
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"golang.org/x/crypto/ssh"
 	"golang.org/x/crypto/ssh/agent"
@@ -132,6 +133,9 @@ func (a *ForgedAgent) listForClient(ctx context.Context, clientPID int) ([]*agen
 	for _, k := range keys {
 		pub, err := parsePublicKey(k.PublicKey)
 		if err != nil {
+			continue
+		}
+		if !keytypes.SupportsSSHSigning(pub.Type()) {
 			continue
 		}
 		out = append(out, &agent.Key{

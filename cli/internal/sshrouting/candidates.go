@@ -5,7 +5,9 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"github.com/itzzritik/forged/cli/internal/vault"
+	"golang.org/x/crypto/ssh"
 )
 
 type PlanRequest struct {
@@ -41,7 +43,7 @@ func PlanCandidatesForRequest(req PlanRequest) CandidatePlan {
 
 	keyByFingerprint := make(map[string]vault.Key, len(req.Keys))
 	for _, key := range req.Keys {
-		if strings.TrimSpace(key.Fingerprint) == "" {
+		if strings.TrimSpace(key.Fingerprint) == "" || !supportsSSHSigningKey(key) {
 			continue
 		}
 		if _, ok := keyByFingerprint[key.Fingerprint]; !ok {
@@ -151,6 +153,11 @@ func PlanCandidatesForRequest(req PlanRequest) CandidatePlan {
 		plan.HadExact = true
 	}
 	return plan
+}
+
+func supportsSSHSigningKey(key vault.Key) bool {
+	pub, _, _, _, err := ssh.ParseAuthorizedKey([]byte(key.PublicKey))
+	return err == nil && keytypes.SupportsSSHSigning(pub.Type())
 }
 
 func PlanCandidates(target Target, routes map[string]vault.SSHRoute, keys []vault.Key, limit int) CandidatePlan {

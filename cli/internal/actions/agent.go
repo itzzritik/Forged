@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -85,6 +86,13 @@ func EnableCommitSigning(paths config.Paths, keyName string) (CommitSigningStatu
 	if err != nil {
 		return CommitSigningStatus{}, err
 	}
+	publicKey, _, _, _, err := ssh.ParseAuthorizedKey([]byte(exported.PublicKey))
+	if err != nil {
+		return CommitSigningStatus{}, fmt.Errorf("Parsing Forged signing key: %w", err)
+	}
+	if err := requireSupportedForgedSigningKey(publicKey); err != nil {
+		return CommitSigningStatus{}, err
+	}
 
 	signPath, err := findSignBinary()
 	if err != nil {
@@ -135,6 +143,9 @@ func matchForgedSigningKey(paths config.Paths, publicKey string) (*matchedSignin
 	if err != nil {
 		return nil, err
 	}
+	if err := requireSupportedForgedSigningKey(configuredKey); err != nil {
+		return nil, err
+	}
 	fingerprint := ssh.FingerprintSHA256(configuredKey)
 	canonicalPublicKey := strings.TrimSpace(string(ssh.MarshalAuthorizedKey(configuredKey)))
 
@@ -150,6 +161,13 @@ func matchForgedSigningKey(paths config.Paths, publicKey string) (*matchedSignin
 	}
 
 	return nil, nil
+}
+
+func requireSupportedForgedSigningKey(key ssh.PublicKey) error {
+	if keytypes.SupportsSSHSigning(key.Type()) {
+		return nil
+	}
+	return fmt.Errorf("SSH key type %q is not supported for Forged signing; choose an RSA, ECDSA, or Ed25519 key", key.Type())
 }
 
 func loadGlobalGitSigningConfig() (map[string]string, error) {
