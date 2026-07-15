@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"runtime"
 	"strings"
 	"time"
 
@@ -70,6 +71,13 @@ func RequireServiceOwnership(paths config.Paths) error {
 		return nil
 	}
 	return fmt.Errorf("%w; stop the running Forged daemon or service and try again", ErrDaemonServiceOwnership)
+}
+
+func requireServiceOwnershipForFreshness(paths config.Paths) error {
+	if runtime.GOOS == "windows" {
+		return nil
+	}
+	return RequireServiceOwnership(paths)
 }
 
 func normalizeRuntimeSpec(runtime RuntimeSpec) (RuntimeSpec, error) {
@@ -140,7 +148,13 @@ func ServiceFresh(paths config.Paths, expectedBuildID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	return buildID != "" && buildID == expectedBuildID, nil
+	if buildID == "" || buildID != expectedBuildID {
+		return false, nil
+	}
+	if err := requireServiceOwnershipForFreshness(paths); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 func RunningBuildID(paths config.Paths) (string, error) {
@@ -171,7 +185,13 @@ func WaitForBuildID(paths config.Paths, expectedBuildID string, timeout time.Dur
 	for time.Now().Before(deadline) {
 		buildID, err := RunningBuildID(paths)
 		if err == nil && buildID != "" && buildID == expectedBuildID {
-			return nil
+			err = requireServiceOwnershipForFreshness(paths)
+			if err == nil {
+				return nil
+			}
+			if errors.Is(err, ErrDaemonServiceOwnership) {
+				return err
+			}
 		}
 		if err != nil {
 			lastErr = err
