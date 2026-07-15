@@ -3,11 +3,14 @@ package cmd
 import (
 	"fmt"
 	"os"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/spf13/cobra"
 )
+
+const sshRouteSuccessCallTimeout = 5 * time.Second
 
 var (
 	sshRouteAttempt      string
@@ -60,10 +63,10 @@ var sshRouteSuccessCmd = &cobra.Command{
 		if !platform.SSHRoutingSupported() {
 			return fmt.Errorf("SSH routing is unavailable on this platform")
 		}
-		_, err := ctlClient().Call(ipc.CmdSSHRouteSuccess, ipc.SSHRouteSuccessArgs{
+		_, err := ctlClient().CallWithTimeout(ipc.CmdSSHRouteSuccess, ipc.SSHRouteSuccessArgs{
 			Attempt:   sshRouteAttempt,
 			ClientPID: os.Getppid(),
-		})
+		}, sshRouteSuccessCallTimeout)
 		if err != nil {
 			debugSSHRoute("success: %v", err)
 		}
