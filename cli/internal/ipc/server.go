@@ -305,7 +305,7 @@ func (s *Server) dispatch(ctx context.Context, req Request) Response {
 	case CmdView:
 		return s.handleView(ctx, req.Args)
 	case CmdExportAll:
-		return s.handleExportAll(req.Args)
+		return s.handleExportAll(ctx, req.Args)
 	case CmdActivity:
 		return s.handleActivity(req.Args)
 	case CmdSyncTrigger:
@@ -710,7 +710,7 @@ type exportAllArgs struct {
 	Token string `json:"token"`
 }
 
-func (s *Server) handleExportAll(raw json.RawMessage) Response {
+func (s *Server) handleExportAll(ctx context.Context, raw json.RawMessage) Response {
 	if s.authBroker == nil {
 		return ErrorResponse(fmt.Errorf("Sensitive auth broker unavailable"))
 	}
@@ -719,13 +719,24 @@ func (s *Server) handleExportAll(raw json.RawMessage) Response {
 	if err := json.Unmarshal(raw, &a); err != nil {
 		return ErrorResponse(fmt.Errorf("Invalid args: %w", err))
 	}
-	if a.Token == "" || !s.authBroker.ConsumeExportToken(a.Token) {
+	if a.Token == "" {
 		return ErrorResponse(fmt.Errorf("Sensitive export requires fresh authentication"))
+	}
+
+	if _, _, err := s.requireVaultAndKeyStore(); err != nil {
+		return ErrorResponse(err)
+	}
+	s.refreshForRead(ctx, "export_vault")
+	if err := ctx.Err(); err != nil {
+		return ErrorResponse(err)
 	}
 
 	_, keyStore, err := s.requireVaultAndKeyStore()
 	if err != nil {
 		return ErrorResponse(err)
+	}
+	if !s.authBroker.ConsumeExportToken(a.Token) {
+		return ErrorResponse(fmt.Errorf("Sensitive export requires fresh authentication"))
 	}
 
 	type exportedKey struct {

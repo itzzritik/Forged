@@ -23,7 +23,7 @@ stable: yes
 - `sensitive-auth` takes an `action` and optional `force`. Its shared-session actions expire stale state first; `force=true` then skips the initial active-session fast path and follows normal reauthorization policy. `private-key` and `export` are password-only. Normal TUI launch sends `view` with `false` and reuses a valid shared session.
 - Full private-key views require a separate one-use, short-lived token issued only after verified master-password authorization. A shared SSH/signing session alone never authorizes PEM delivery.
 - `status` exposes sensitive session state and daemon build id so the TUI/readiness layer can detect cold, active, and stale daemon states.
-- Key list/view/export handlers ask the sync bus for a lightweight foreground refresh before reading local vault data.
+- Key list, single-key view/export, and full-vault export handlers ask the sync bus for a lightweight foreground refresh before reading local vault data.
 - Key removal uses the exact reviewed name and can bind the request to its reviewed fingerprint so a stale confirmation cannot remove a different key.
 - Manual sync captures the encrypted blob, KDF parameters, and protected key from one vault snapshot.
 - Manual sync fails closed when the stateful sync bus is unavailable; it never performs a stateless push over unknown remote data.
