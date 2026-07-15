@@ -32,8 +32,8 @@ import (
 )
 
 type Daemon struct {
-	// syncTransitionMu serializes account and sync-state transitions. It is
-	// never held by link network work or manual/session locking.
+	// syncTransitionMu serializes account and local sync-state transitions.
+	// It is never held by link network work; workers take it before sessionMu.
 	syncTransitionMu        sync.Mutex
 	sessionMu               sync.Mutex
 	paths                   config.Paths
@@ -53,6 +53,7 @@ type Daemon struct {
 	syncSuppressed          bool
 	accountTransition       uint64
 	activeAccountTransition uint64
+	syncInitRun             *syncInitRun
 	syncRetryDelay          time.Duration
 	syncError               string
 	linkRun                 *linkRun
@@ -360,6 +361,11 @@ type linkRun struct {
 	done      chan struct{}
 }
 
+type syncInitRun struct {
+	generation uint64
+	vault      *vault.Vault
+}
+
 // syncStateSnapshot is a stable, parsed view of both account-transition
 // state files. It is loaded without sessionMu, then its encrypted history is
 // validated during a short live-session section before a credential commit.
@@ -409,24 +415,47 @@ func (d *Daemon) initSyncLocked() {
 	if d.activeAccountTransition != 0 || d.syncSuppressed || d.syncPending || d.syncDraining != nil {
 		return
 	}
-	if d.syncBus != nil {
+	if d.syncBus != nil || d.vault == nil {
 		return
 	}
-	if d.syncStateRecoveryMarkedLocked() || d.vault == nil {
-		return
-	}
+	d.syncGeneration++
+	run := &syncInitRun{generation: d.syncGeneration, vault: d.vault}
+	d.syncInitRun = run
+	d.syncPending = true
+	go d.finishSyncInit(run)
+}
+
+func (d *Daemon) finishSyncInit(run *syncInitRun) {
+	d.syncTransitionMu.Lock()
+	defer d.syncTransitionMu.Unlock()
 
 	creds, err := accountauth.Load(d.paths)
+
+	d.sessionMu.Lock()
+	if !d.syncInitRunCurrentLocked(run) {
+		d.sessionMu.Unlock()
+		return
+	}
 	if err != nil || creds.ServerURL == "" || accountauth.CurrentToken(creds) == "" {
+		d.clearSyncInitRunLocked(run)
+		d.sessionMu.Unlock()
+		return
+	}
+	if d.syncStateRecoveryMarkedLocked() {
+		d.clearSyncInitRunLocked(run)
+		d.sessionMu.Unlock()
 		return
 	}
 	if err := d.recoverSyncStateLocked(creds); err != nil {
+		d.clearSyncInitRunLocked(run)
 		if errors.Is(err, forgedsync.ErrStateCorrupt) || errors.Is(err, forgedsync.ErrStateRecoveryRequired) {
 			d.setSyncStateRecoveryLocked()
+			d.sessionMu.Unlock()
 			return
 		}
 		d.logger.Warn("recovering sync state transaction failed", "error", err)
-		d.scheduleSyncRetryLocked(d.syncGeneration)
+		d.scheduleSyncRetryLocked(run.generation)
+		d.sessionMu.Unlock()
 		return
 	}
 
@@ -436,47 +465,86 @@ func (d *Daemon) initSyncLocked() {
 		Token:     accountauth.CurrentToken(creds),
 	})
 	if err != nil {
+		d.clearSyncInitRunLocked(run)
 		if d.handleSyncStateFailureLocked(forgedsync.NewStateStore(d.paths.SyncStateFile()), err) {
+			d.sessionMu.Unlock()
 			return
 		}
 		d.logger.Warn("initializing sync failed", "error", err)
+		d.sessionMu.Unlock()
 		return
 	}
-	d.syncGeneration++
-	candidate.generation = d.syncGeneration
+	candidate.generation = run.generation
 
 	if creds.UserID != "" && (candidate.state.LinkedUserID != creds.UserID || (candidate.state.LastKnownServerVersion == 0 && len(candidate.state.LastSyncedBaseBlob) == 0)) {
 		if err := d.markSyncDirtyLocked(); err != nil {
+			d.clearSyncInitRunLocked(run)
 			d.logger.Warn("initializing sync failed", "error", err)
+			d.sessionMu.Unlock()
 			return
 		}
-		d.syncPending = true
+		d.syncInitRun = nil
 		ctx, cancel := d.initialSyncContext()
-		run := &linkRun{
+		link := &linkRun{
 			candidate: candidate,
 			ctx:       ctx,
 			cancel:    cancel,
 			done:      make(chan struct{}),
 		}
-		d.linkRun = run
-		go d.finishInitialSync(run, creds.UserID)
+		d.linkRun = link
+		d.sessionMu.Unlock()
+		go d.finishInitialSync(link, creds.UserID)
 		return
 	}
 
-	var bus *forgedsync.Bus
+	d.sessionMu.Unlock()
 	err = accountauth.WithCredentials(d.paths, func(stored accountauth.Credentials) error {
 		if err := validateSyncIdentity(stored, candidate.serverURL, candidate.userID); err != nil {
 			return err
 		}
-		var err error
-		bus, err = d.activateSyncCandidateLocked(candidate)
-		return err
+		return nil
 	})
-	if err != nil {
-		d.logger.Warn("initializing sync failed", "error", err)
+
+	d.sessionMu.Lock()
+	if !d.syncInitRunCurrentLocked(run) {
+		d.sessionMu.Unlock()
 		return
 	}
+	d.clearSyncInitRunLocked(run)
+	if err != nil {
+		d.logger.Warn("initializing sync failed", "error", err)
+		d.sessionMu.Unlock()
+		return
+	}
+	bus, err := d.activateSyncCandidateLocked(candidate)
+	if err != nil {
+		d.logger.Warn("initializing sync failed", "error", err)
+		d.sessionMu.Unlock()
+		return
+	}
+	d.sessionMu.Unlock()
 	go bus.LifecycleRefresh("daemon_start")
+}
+
+func (d *Daemon) syncInitRunCurrentLocked(run *syncInitRun) bool {
+	return run != nil && d.syncInitRun == run && run.generation == d.syncGeneration &&
+		run.vault != nil && d.vault == run.vault && d.activeAccountTransition == 0 &&
+		!d.syncSuppressed && d.syncPending && d.syncBus == nil && d.syncDraining == nil && d.linkRun == nil
+}
+
+func (d *Daemon) clearSyncInitRunLocked(run *syncInitRun) bool {
+	if d.syncInitRun != run {
+		return false
+	}
+	d.syncInitRun = nil
+	d.syncPending = false
+	return true
+}
+
+func (d *Daemon) cancelSyncInitRunLocked() {
+	if d.syncInitRun != nil {
+		d.syncInitRun = nil
+	}
 }
 
 func (d *Daemon) prepareSyncCandidate(creds syncCredentials) (*syncCandidate, error) {
@@ -540,12 +608,13 @@ func (d *Daemon) handleSyncLink(args ipc.SyncLinkArgs) error {
 	}
 	waitForLinkRun(run)
 	waitForSyncBus(bus)
+	_, identityErr := d.requireSyncIdentity(args.ServerURL, args.UserID)
 
 	d.sessionMu.Lock()
 	defer d.sessionMu.Unlock()
-	if _, err := d.requireSyncIdentity(args.ServerURL, args.UserID); err != nil {
-		d.finishAccountTransitionLocked(transition, true, err)
-		return err
+	if identityErr != nil {
+		d.finishAccountTransitionLocked(transition, true, identityErr)
+		return identityErr
 	}
 	d.finishAccountTransitionLocked(transition, true, nil)
 	d.logger.Info("sync link scheduled", "user_id", args.UserID)
@@ -717,6 +786,7 @@ func (d *Daemon) beginAccountChangeLocked() (*linkRun, *forgedsync.Bus, uint64, 
 	d.accountTransition++
 	transition := d.accountTransition
 	d.activeAccountTransition = transition
+	d.cancelSyncInitRunLocked()
 	run := d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
@@ -1076,6 +1146,7 @@ func (d *Daemon) handleSyncUnlink() error {
 	d.syncTransitionMu.Lock()
 	defer d.syncTransitionMu.Unlock()
 	d.sessionMu.Lock()
+	d.cancelSyncInitRunLocked()
 	run := d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
@@ -1485,6 +1556,7 @@ func (d *Daemon) clearActiveSession(reason string) {
 	d.sessionMu.Lock()
 	defer d.sessionMu.Unlock()
 
+	d.cancelSyncInitRunLocked()
 	d.cancelLinkRunLocked()
 	d.syncGeneration++
 	d.syncPending = false
