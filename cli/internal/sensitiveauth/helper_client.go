@@ -14,6 +14,9 @@ import (
 	"time"
 )
 
+// Native password responses include base64 and JSON framing.
+const maxHelperResponseBytes = 128 << 10
+
 type HelperClient struct {
 	logger           *slog.Logger
 	path             string
@@ -78,7 +81,9 @@ func (c *HelperClient) Start(ctx context.Context, onLock, onExit func()) error {
 	c.terminalNotified = false
 	c.mu.Unlock()
 
-	go c.readLoop(bufio.NewScanner(stdout), run)
+	responseScanner := bufio.NewScanner(stdout)
+	responseScanner.Buffer(make([]byte, 4<<10), maxHelperResponseBytes)
+	go c.readLoop(responseScanner, run)
 
 	subscribeCtx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
