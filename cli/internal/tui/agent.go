@@ -587,6 +587,10 @@ func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m *model) openAgentItem(item agentItem) (tea.Model, tea.Cmd) {
+	if m.agent.sshBusy {
+		return m, nil
+	}
+
 	switch item.ID {
 	case agentItemSSHToggle:
 		return m, m.runAgentSSHToggle()
@@ -631,6 +635,9 @@ func (m *model) startAgentSigningRoute() tea.Cmd {
 }
 
 func (m *model) runAgentSSHToggle() tea.Cmd {
+	if m.agent.sshBusy {
+		return nil
+	}
 	if strings.TrimSpace(m.snapshot.RuntimePathError) != "" || m.snapshot.IdentityAgentOwner.IsForged() {
 		return m.disableSSHAgentCmd()
 	}

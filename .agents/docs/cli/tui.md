@@ -23,6 +23,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Vault-backed launch gives an installed running service a bounded boot grace, then repairs degraded, stale, or wrong-owner state before showing the auth wall so unlock uses the daemon that will remain active.
 - Maintenance stays on the current route: dashboard repairs run in the background with header status, while password setup and recovery use the existing busy state.
 - TUI maintenance is single-flight: while a repair is active, Manage and unauthenticated Sync cannot start login or another repair; read-only assessment refreshes remain independent.
+- SSH-agent integration toggling is single-flight: while its config update runs, Agent actions are inert and its Enter footer action is hidden, while selection and exit remain available.
 - First setup or restore reuses the verified master password to hydrate the launch session and skips the duplicate startup auth wall when that succeeds.
 - Header status must settle from explicit model messages; startup unlock finalizes health from the current snapshot, runtime sync polls daemon status, and signing load errors render as an issue instead of an endless spinner.
 - Runtime and snapshot health checks accept only their newest generation; daemon transport loss and recovery each trigger one readiness refresh, including for local-only vaults.
