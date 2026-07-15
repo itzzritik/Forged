@@ -190,6 +190,10 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 	if !serviceNeedsRepair(state.result.Snapshot) {
 		return nil
 	}
+	if !state.result.Snapshot.Service.Repairable {
+		e.markFailed(&state.result.Summary, "service")
+		return nil
+	}
 	if serviceMayBeBooting(state.result.Snapshot) {
 		updated, err := e.waitForServiceReadyWhile(serviceMayBeBooting)
 		if err != nil {
