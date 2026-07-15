@@ -119,6 +119,13 @@ func (s *Server) acceptLoop(listener net.Listener) {
 			return
 		}
 		retryDelay = 0
+		if platform.ControlPeerCredentialsAvailable() {
+			if err := platform.VerifyCurrentUserPeer(conn); err != nil {
+				s.logger.Warn("rejecting SSH agent peer", "error", err)
+				_ = conn.Close()
+				continue
+			}
+		}
 		ctx, cancel, ok := s.admit(conn)
 		if !ok {
 			_ = conn.Close()
