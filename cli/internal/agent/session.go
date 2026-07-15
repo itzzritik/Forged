@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"fmt"
 
 	"golang.org/x/crypto/ssh"
@@ -14,15 +15,19 @@ type RouteSessions interface {
 
 type sessionAgent struct {
 	base      *ForgedAgent
+	ctx       context.Context
 	clientPID int
 	routes    RouteSessions
 }
 
 func (s *sessionAgent) List() ([]*agent.Key, error) {
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
 	allowed := map[string]struct{}{}
 	fingerprints, routed := s.routes.AllowedFingerprints(s.clientPID)
 	if !routed {
-		return s.base.List()
+		return s.base.list(s.ctx)
 	}
 	for _, fingerprint := range fingerprints {
 		allowed[fingerprint] = struct{}{}
@@ -31,7 +36,10 @@ func (s *sessionAgent) List() ([]*agent.Key, error) {
 		return nil, nil
 	}
 
-	if err := s.base.ensurePrivateKeyAccess(); err != nil {
+	if err := s.base.ensurePrivateKeyAccess(s.ctx); err != nil {
+		return nil, err
+	}
+	if err := s.ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -67,12 +75,15 @@ func (s *sessionAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, err
 }
 
 func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
 	s.base.recordAgentAccess("ssh_agent_sign")
 
 	allowed := map[string]struct{}{}
 	fingerprints, routed := s.routes.AllowedFingerprints(s.clientPID)
 	if !routed {
-		return s.base.SignWithFlags(key, data, flags)
+		return s.base.signWithFlags(s.ctx, key, data, flags)
 	}
 	for _, fingerprint := range fingerprints {
 		allowed[fingerprint] = struct{}{}
@@ -81,7 +92,10 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 		return nil, fmt.Errorf("No key is allowed for this SSH route")
 	}
 
-	if err := s.base.ensurePrivateKeyAccess(); err != nil {
+	if err := s.base.ensurePrivateKeyAccess(s.ctx); err != nil {
+		return nil, err
+	}
+	if err := s.ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -95,13 +109,13 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	signer, name, fingerprint, err := s.base.keyStore.SignerByPublicKey(key)
 	if err != nil {
 		s.base.mu.RUnlock()
-		if refreshErr := s.base.refreshMissingKey("sign_missing_key"); refreshErr == nil {
-			s.base.mu.RLock()
-			if s.base.keyStore != nil {
-				signer, name, fingerprint, err = s.base.keyStore.SignerByPublicKey(key)
-			}
-		} else {
-			s.base.mu.RLock()
+		refreshErr := s.base.refreshMissingKey(s.ctx, "sign_missing_key")
+		s.base.mu.RLock()
+		if ctxErr := s.ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if refreshErr == nil && s.base.keyStore != nil {
+			signer, name, fingerprint, err = s.base.keyStore.SignerByPublicKey(key)
 		}
 		if err != nil {
 			return nil, err
@@ -111,10 +125,16 @@ func (s *sessionAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent
 	if _, ok := allowed[fingerprint]; !ok {
 		return nil, fmt.Errorf("Key not allowed for client")
 	}
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
 
 	sig, err := signWithFlags(signer, data, flags)
 	if err != nil {
 		return nil, fmt.Errorf("Signing with key %s: %w", name, err)
+	}
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	s.routes.RecordSignature(s.clientPID, fingerprint)
@@ -128,8 +148,11 @@ func (s *sessionAgent) RemoveAll() error               { return s.base.RemoveAll
 func (s *sessionAgent) Lock(passphrase []byte) error   { return s.base.Lock(passphrase) }
 func (s *sessionAgent) Unlock(passphrase []byte) error { return s.base.Unlock(passphrase) }
 func (s *sessionAgent) Signers() ([]ssh.Signer, error) {
+	if err := s.ctx.Err(); err != nil {
+		return nil, err
+	}
 	if _, routed := s.routes.AllowedFingerprints(s.clientPID); !routed {
-		return s.base.Signers()
+		return s.base.signers(s.ctx)
 	}
 	return nil, fmt.Errorf("Signers are not exposed for routed SSH clients")
 }

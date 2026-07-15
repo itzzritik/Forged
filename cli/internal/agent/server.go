@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"context"
 	"errors"
 	"log/slog"
 	"net"
@@ -18,16 +19,21 @@ type Server struct {
 	listener    net.Listener
 	connections map[net.Conn]struct{}
 	stopping    bool
+	stopCtx     context.Context
+	stopCancel  context.CancelFunc
 	logger      *slog.Logger
 	wg          sync.WaitGroup
 }
 
 func NewServer(socketPath string, a *ForgedAgent, logger *slog.Logger) *Server {
+	stopCtx, stopCancel := context.WithCancel(context.Background())
 	return &Server{
 		socketPath:  socketPath,
 		agent:       a,
 		logger:      logger,
 		connections: make(map[net.Conn]struct{}),
+		stopCtx:     stopCtx,
+		stopCancel:  stopCancel,
 	}
 }
 
@@ -72,6 +78,7 @@ func (s *Server) BeginStop() {
 	}
 	s.lifecycleMu.Unlock()
 
+	s.stopCancel()
 	if listener != nil {
 		_ = listener.Close()
 	}
@@ -112,36 +119,39 @@ func (s *Server) acceptLoop(listener net.Listener) {
 			return
 		}
 		retryDelay = 0
-		if !s.admit(conn) {
+		ctx, cancel, ok := s.admit(conn)
+		if !ok {
 			_ = conn.Close()
 			return
 		}
-		go func(conn net.Conn) {
+		go func(conn net.Conn, ctx context.Context, cancel context.CancelFunc) {
 			defer s.wg.Done()
 			defer s.release(conn)
+			defer cancel()
 			defer conn.Close()
 
-			var scoped agent.ExtendedAgent = s.agent
+			var scoped agent.ExtendedAgent = s.agent.ForContext(ctx)
 			if pid, err := platform.AgentPeerPID(conn); err == nil {
-				scoped = s.agent.ForClientPID(pid)
+				scoped = s.agent.ForClientPIDContext(ctx, pid)
 			}
 
 			if err := agent.ServeAgent(scoped, conn); err != nil {
 				s.logger.Debug("agent connection closed", "error", err)
 			}
-		}(conn)
+		}(conn, ctx, cancel)
 	}
 }
 
-func (s *Server) admit(conn net.Conn) bool {
+func (s *Server) admit(conn net.Conn) (context.Context, context.CancelFunc, bool) {
 	s.lifecycleMu.Lock()
 	defer s.lifecycleMu.Unlock()
 	if s.stopping {
-		return false
+		return nil, nil, false
 	}
+	ctx, cancel := context.WithCancel(s.stopCtx)
 	s.connections[conn] = struct{}{}
 	s.wg.Add(1)
-	return true
+	return ctx, cancel, true
 }
 
 func (s *Server) release(conn net.Conn) {

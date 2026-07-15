@@ -27,6 +27,11 @@ type ForgedAgent struct {
 	routes   RouteSessions
 }
 
+type contextAgent struct {
+	*ForgedAgent
+	ctx context.Context
+}
+
 type SensitiveAuthorizer interface {
 	IsUnlocked() bool
 	Authorize(context.Context, sensitiveauth.Action) (sensitiveauth.AuthorizeResult, error)
@@ -66,23 +71,42 @@ func (a *ForgedAgent) SetRouteSessions(routes RouteSessions) {
 }
 
 func (a *ForgedAgent) ForClientPID(clientPID int) agent.ExtendedAgent {
+	return a.ForClientPIDContext(context.Background(), clientPID)
+}
+
+func (a *ForgedAgent) ForContext(ctx context.Context) agent.ExtendedAgent {
+	return &contextAgent{ForgedAgent: a, ctx: ctx}
+}
+
+func (a *ForgedAgent) ForClientPIDContext(ctx context.Context, clientPID int) agent.ExtendedAgent {
 	a.mu.RLock()
 	routes := a.routes
 	a.mu.RUnlock()
 	if routes == nil {
-		return a
+		return a.ForContext(ctx)
 	}
 	return &sessionAgent{
 		base:      a,
+		ctx:       ctx,
 		clientPID: clientPID,
 		routes:    routes,
 	}
 }
 
 func (a *ForgedAgent) List() ([]*agent.Key, error) {
+	return a.list(context.Background())
+}
+
+func (a *ForgedAgent) list(ctx context.Context) ([]*agent.Key, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	a.recordAgentAccess("ssh_agent_list")
 
-	if err := a.ensurePrivateKeyAccess(); err != nil {
+	if err := a.ensurePrivateKeyAccess(ctx); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -118,23 +142,33 @@ func sanitizeKeyComment(name string) string {
 }
 
 func (a *ForgedAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
-	return a.SignWithFlags(key, data, 0)
+	return a.signWithFlags(context.Background(), key, data, 0)
 }
 
 func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
+	return a.signWithFlags(context.Background(), key, data, flags)
+}
+
+func (a *ForgedAgent) signWithFlags(ctx context.Context, key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	a.recordAgentAccess("ssh_agent_sign")
 
 	a.mu.RLock()
 	if a.keyStore == nil {
 		a.mu.RUnlock()
-		if err := a.ensurePrivateKeyAccess(); err != nil {
+		if err := a.ensurePrivateKeyAccess(ctx); err != nil {
 			return nil, err
 		}
 		a.mu.RLock()
 	}
 	a.mu.RUnlock()
 
-	if err := a.ensurePrivateKeyAccess(); err != nil {
+	if err := a.ensurePrivateKeyAccess(ctx); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -148,13 +182,13 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 	signer, name, _, err := a.keyStore.SignerByPublicKey(key)
 	if err != nil {
 		a.mu.RUnlock()
-		if refreshErr := a.refreshMissingKey("sign_missing_key"); refreshErr == nil {
-			a.mu.RLock()
-			if a.keyStore != nil {
-				signer, name, _, err = a.keyStore.SignerByPublicKey(key)
-			}
-		} else {
-			a.mu.RLock()
+		refreshErr := a.refreshMissingKey(ctx, "sign_missing_key")
+		a.mu.RLock()
+		if ctxErr := ctx.Err(); ctxErr != nil {
+			return nil, ctxErr
+		}
+		if refreshErr == nil && a.keyStore != nil {
+			signer, name, _, err = a.keyStore.SignerByPublicKey(key)
 		}
 		if err != nil {
 			return nil, err
@@ -166,6 +200,9 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 		algo = ssh.KeyAlgoRSASHA256
 	} else if flags&agent.SignatureFlagRsaSha512 != 0 {
 		algo = ssh.KeyAlgoRSASHA512
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	var sig *ssh.Signature
@@ -181,6 +218,9 @@ func (a *ForgedAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.
 
 	if err != nil {
 		return nil, fmt.Errorf("Signing with key %s: %w", name, err)
+	}
+	if err := ctx.Err(); err != nil {
+		return nil, err
 	}
 
 	a.keyStore.RecordUsage(name)
@@ -208,19 +248,29 @@ func (a *ForgedAgent) Unlock([]byte) error {
 }
 
 func (a *ForgedAgent) Signers() ([]ssh.Signer, error) {
+	return a.signers(context.Background())
+}
+
+func (a *ForgedAgent) signers(ctx context.Context) ([]ssh.Signer, error) {
+	if err := ctx.Err(); err != nil {
+		return nil, err
+	}
 	a.recordAgentAccess("ssh_agent_signers")
 
 	a.mu.RLock()
 	if a.keyStore == nil {
 		a.mu.RUnlock()
-		if err := a.ensurePrivateKeyAccess(); err != nil {
+		if err := a.ensurePrivateKeyAccess(ctx); err != nil {
 			return nil, err
 		}
 		a.mu.RLock()
 	}
 	a.mu.RUnlock()
 
-	if err := a.ensurePrivateKeyAccess(); err != nil {
+	if err := a.ensurePrivateKeyAccess(ctx); err != nil {
+		return nil, err
+	}
+	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
@@ -256,7 +306,10 @@ func (a *ForgedAgent) recordAgentAccess(reason string) {
 	}
 }
 
-func (a *ForgedAgent) refreshMissingKey(reason string) error {
+func (a *ForgedAgent) refreshMissingKey(ctx context.Context, reason string) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	a.mu.RLock()
 	syncBus := a.syncBus
 	a.mu.RUnlock()
@@ -265,12 +318,15 @@ func (a *ForgedAgent) refreshMissingKey(reason string) error {
 		return nil
 	}
 
-	ctx, cancel := context.WithTimeout(context.Background(), 750*time.Millisecond)
+	ctx, cancel := context.WithTimeout(ctx, 750*time.Millisecond)
 	defer cancel()
 	return syncBus.RefreshMissingKey(ctx, reason)
 }
 
-func (a *ForgedAgent) ensurePrivateKeyAccess() error {
+func (a *ForgedAgent) ensurePrivateKeyAccess(ctx context.Context) error {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	a.mu.RLock()
 	auth := a.auth
 	a.mu.RUnlock()
@@ -279,14 +335,33 @@ func (a *ForgedAgent) ensurePrivateKeyAccess() error {
 		return nil
 	}
 
-	result, err := auth.Authorize(context.Background(), sensitiveauth.ActionExternal)
+	result, err := auth.Authorize(ctx, sensitiveauth.ActionExternal)
 	if err != nil {
+		return err
+	}
+	if err := ctx.Err(); err != nil {
 		return err
 	}
 	if result.PasswordRequired {
 		return fmt.Errorf("System Auth is required for external use")
 	}
 	return nil
+}
+
+func (a *contextAgent) List() ([]*agent.Key, error) {
+	return a.ForgedAgent.list(a.ctx)
+}
+
+func (a *contextAgent) Sign(key ssh.PublicKey, data []byte) (*ssh.Signature, error) {
+	return a.ForgedAgent.signWithFlags(a.ctx, key, data, 0)
+}
+
+func (a *contextAgent) SignWithFlags(key ssh.PublicKey, data []byte, flags agent.SignatureFlags) (*ssh.Signature, error) {
+	return a.ForgedAgent.signWithFlags(a.ctx, key, data, flags)
+}
+
+func (a *contextAgent) Signers() ([]ssh.Signer, error) {
+	return a.ForgedAgent.signers(a.ctx)
 }
 
 func normalizeSyncCoordinator(syncBus SyncCoordinator) SyncCoordinator {
@@ -304,3 +379,4 @@ func normalizeSyncCoordinator(syncBus SyncCoordinator) SyncCoordinator {
 }
 
 var _ agent.ExtendedAgent = (*ForgedAgent)(nil)
+var _ agent.ExtendedAgent = (*contextAgent)(nil)
