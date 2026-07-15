@@ -76,6 +76,9 @@ func unlockPrompt(err error, fallback string) string {
 func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []byte) (result ChangePasswordResult, resultErr error) {
 	check, err := vault.OpenReadOnly(paths.VaultFile(), currentPassword)
 	if err != nil {
+		if errors.Is(err, vault.ErrUnsupportedVaultVersion) {
+			return ChangePasswordResult{}, err
+		}
 		return ChangePasswordResult{}, fmt.Errorf("Wrong password or corrupted vault")
 	}
 	symmetricKey := check.Key()
@@ -106,6 +109,9 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 	v, err := vault.OpenWithSymmetricKey(paths.VaultFile(), symmetricKey)
 	clear(symmetricKey)
 	if err != nil {
+		if errors.Is(err, vault.ErrUnsupportedVaultVersion) {
+			return ChangePasswordResult{}, err
+		}
 		if errors.Is(err, vault.ErrVaultLocked) {
 			return ChangePasswordResult{}, fmt.Errorf("Vault is busy. Try again.")
 		}

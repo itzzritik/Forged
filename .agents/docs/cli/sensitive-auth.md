@@ -45,6 +45,7 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
 - An unexpected System Auth helper exit marks native auth broken and immediately clears the shared session; an intentional daemon shutdown is handled by its normal lock path.
 - IPC cancellation sends the helper a one-way request-ID cancel. macOS invalidates the matching `LAContext` or password alert, Linux/Windows cancel the matching child process, helper lock monitors share the helper shutdown context, late results are suppressed, and one canceled broker waiter cannot abort a prompt still needed by another waiter.
 - Password verification and vault hydration cannot be interrupted mid-derivation. Password verification only proves the password; for IPC, enrollment refresh waits for successful response delivery, while cancellation or a write failure clears a newly hydrated session and revokes scoped tokens before the authorization can persist.
+- Password paths preserve only an unsupported vault-version error, so a newer or legacy vault directs the user to a compatible Forged release. Wrong-password, corrupted-vault, and other verification failures remain generic.
 - A direct password or System Auth hydration grant stays single-flight until its delivery result resolves, so one canceled submission cannot leave another provisional submission behind. Concurrent callers retry after that short delivery window.
 
 ## Decisions

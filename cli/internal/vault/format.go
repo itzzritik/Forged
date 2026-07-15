@@ -3,11 +3,14 @@ package vault
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"fmt"
 	"io"
 )
 
 var Magic = [8]byte{'F', 'O', 'R', 'G', 'E', 'D', 0x00, 0x01}
+
+var ErrUnsupportedVaultVersion = errors.New("unsupported vault version")
 
 const CurrentVersion uint16 = 2
 
@@ -64,8 +67,11 @@ func ReadHeader(r io.Reader) (Header, error) {
 	if err := binary.Read(r, binary.LittleEndian, &h.Version); err != nil {
 		return Header{}, fmt.Errorf("Reading version: %w", err)
 	}
-	if h.Version != CurrentVersion {
-		return Header{}, fmt.Errorf("Vault version %d is not supported (expected %d), please recreate your vault", h.Version, CurrentVersion)
+	if h.Version > CurrentVersion {
+		return Header{}, fmt.Errorf("%w: vault version %d requires a newer version of Forged (this version supports %d); upgrade Forged before opening this vault and do not delete, recreate, or overwrite it", ErrUnsupportedVaultVersion, h.Version, CurrentVersion)
+	}
+	if h.Version < CurrentVersion {
+		return Header{}, fmt.Errorf("%w: vault version %d is not supported by this version of Forged (expected %d); use a compatible Forged version and do not delete, recreate, or overwrite this vault", ErrUnsupportedVaultVersion, h.Version, CurrentVersion)
 	}
 
 	if _, err := io.ReadFull(r, h.KDF.Salt[:]); err != nil {

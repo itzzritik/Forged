@@ -20,6 +20,7 @@ The local vault is the encrypted source of truth for keys, metadata, and synced 
 - Writable opens acquire the persistent OS lock file before reading vault state. Creation and linked restore use that same lock and refuse an existing target, so neither can replace a concurrently published vault. The lock path is never unlinked during release, so every process keeps locking the same file identity.
 - Closing a vault makes stale references unusable before its symmetric key is zeroed.
 - Password verification can recover the vault symmetric key without opening the whole vault for normal use.
+- Unsupported vault headers fail closed. A newer header tells the user to upgrade Forged; an older header tells them to use a compatible release. Neither path suggests recreating or overwriting the vault.
 - Password change rewraps the vault symmetric key. It does not rotate that key today.
 - A failed password-change save restores the vault's previous in-memory KDF and protected-key header, so any later save cannot silently activate a password reported as failed.
 - Local unlock trust is device-local even though the vault itself is shared.

@@ -1,6 +1,7 @@
 package sensitiveauth
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -20,6 +21,9 @@ func (v *PasswordVerifier) Verify(password []byte) error {
 		return fmt.Errorf("Master password required")
 	}
 	if err := vault.VerifyPassword(v.paths.VaultFile(), password); err != nil {
+		if errors.Is(err, vault.ErrUnsupportedVaultVersion) {
+			return err
+		}
 		return fmt.Errorf("Authentication failed")
 	}
 	return nil

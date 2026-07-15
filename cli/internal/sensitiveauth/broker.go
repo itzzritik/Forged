@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
 type Broker struct {
@@ -347,6 +348,9 @@ func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, 
 		return nil, ErrAuthenticationCanceled
 	}
 	if err := b.password.Verify(password); err != nil {
+		if errors.Is(err, vault.ErrUnsupportedVaultVersion) {
+			return nil, err
+		}
 		return nil, fmt.Errorf("Authentication failed")
 	}
 	if err := ctx.Err(); err != nil {
@@ -793,6 +797,9 @@ func (b *Broker) authorizationInterrupted(action Action) (AuthorizeResult, error
 func (b *Broker) handleMissingDeviceUnlock(action Action, prompt string, err error) (AuthorizeResult, error) {
 	if b.logger != nil {
 		b.logger.Warn("device unlock hydration failed", "action", action, "error", err)
+	}
+	if errors.Is(err, vault.ErrUnsupportedVaultVersion) {
+		return AuthorizeResult{}, err
 	}
 	if action == ActionExternal {
 		if errors.Is(err, ErrLocalUnlockTrustUnavailable) {
