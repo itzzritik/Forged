@@ -49,6 +49,23 @@ func IsSSHAgentEnabled(paths Paths) bool {
 	return false
 }
 
+func hasDisabledForgedInclude(paths Paths) bool {
+	data, err := os.ReadFile(paths.SSHUserConfig())
+	if err != nil {
+		return false
+	}
+	includes := forgedIncludeLines(paths)
+	for _, line := range strings.Split(string(data), "\n") {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "#") {
+			if _, ok := includes[trimmed]; ok {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func EnableSSHAgent(paths Paths) error {
 	if err := paths.ValidateRuntimePaths(); err != nil {
 		return err

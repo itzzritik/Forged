@@ -131,7 +131,7 @@ func IsAgentDisabled(paths Paths) bool {
 	if err != nil {
 		return false
 	}
-	return cfg.Agent.Disabled
+	return cfg.Agent.Disabled || hasDisabledForgedInclude(paths)
 }
 
 type agentSocketUpdatePolicy uint8
@@ -177,7 +177,9 @@ func EnsureDefault(paths Paths) error {
 		} else if !os.IsNotExist(err) {
 			return fmt.Errorf("Inspecting config: %w", err)
 		}
-		return saveConfigLocked(paths, path, Config{}, true)
+		return saveConfigLocked(paths, path, Config{
+			Agent: AgentConfig{Disabled: hasDisabledForgedInclude(paths)},
+		}, true)
 	})
 }
 
