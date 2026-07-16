@@ -82,7 +82,7 @@ type DebugPublicHint struct {
 func (s *Service) DebugSnapshot() (DebugSnapshot, error) {
 	s.mu.RLock()
 	keyStore := s.keyStore
-	runtimeGuardRequired := s.runtimeUntrusted || s.runtimeWriteFailed
+	runtimeGuardRequired := s.routeScopeGuardLocked()
 	attempts := make([]Attempt, 0, len(s.attempts))
 	for _, attempt := range s.attempts {
 		attempts = append(attempts, cloneAttempt(attempt))
@@ -164,8 +164,8 @@ func (s *Service) ClearAll() error {
 	refs := s.routeRefs()
 	s.mu.Lock()
 	s.reconcileRouteAttemptsLocked(s.now(), refs)
-	if s.runtimeUntrusted || s.runtimeWriteFailed {
-		if err := s.resetRouteRuntimeLocked(); err != nil {
+	if s.routeScopeGuardLocked() {
+		if err := s.resetRouteRuntimeLocked(false); err != nil {
 			s.mu.Unlock()
 			return err
 		}

@@ -99,6 +99,14 @@ func (d *Daemon) Run(password []byte) error {
 	if platform.SSHRoutingSupported() {
 		d.routeService = sshrouting.NewService(d.paths, nil)
 		d.routeService.SetOnMutation(d.handleRouteMutation)
+		if process, err := platform.ProcessInfoForPID(os.Getpid()); err != nil {
+			d.routeService.RequireStartupRouteGuard()
+			d.logger.Warn("could not identify daemon process for SSH route recovery; leaving route guard active", "error", err)
+		} else if recovered, err := d.routeService.PrepareStartupRuntime(process.Instance); err != nil {
+			d.logger.Warn("could not recover stale SSH route runtime; leaving route guard active", "error", err)
+		} else if recovered {
+			d.logger.Info("reset prior SSH route runtime", "pre_daemon_clients_denied", true)
+		}
 	}
 	d.sshRouting = sshrouting.NewManager(d.paths, d.selfBinaryPath())
 	d.authBroker = sensitiveauth.NewBroker(d.paths, d.helperBinaryPath(), d.logger, d)

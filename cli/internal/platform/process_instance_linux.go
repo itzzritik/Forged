@@ -54,3 +54,35 @@ func ProcessInfoForPID(pid int) (ProcessInfo, error) {
 		ParentPID: parentPID,
 	}, nil
 }
+
+// ProcessStartedNoLaterThan reports whether candidate began at or before reference.
+// It fails closed when either process start identity cannot be ordered.
+func ProcessStartedNoLaterThan(candidate, reference ProcessInstance) (bool, error) {
+	candidateBootID, candidateTicks, err := linuxProcessStart(candidate)
+	if err != nil {
+		return false, err
+	}
+	referenceBootID, referenceTicks, err := linuxProcessStart(reference)
+	if err != nil {
+		return false, err
+	}
+	if candidateBootID != referenceBootID {
+		return false, fmt.Errorf("%w: process start identities have different boot ids", ErrProcessIdentityUnavailable)
+	}
+	return candidateTicks <= referenceTicks, nil
+}
+
+func linuxProcessStart(instance ProcessInstance) (string, uint64, error) {
+	if !instance.Valid() {
+		return "", 0, ErrProcessIdentityUnavailable
+	}
+	bootID, ticksText, ok := strings.Cut(instance.ID, ":")
+	if !ok || strings.TrimSpace(bootID) == "" {
+		return "", 0, fmt.Errorf("%w: malformed linux process start identity", ErrProcessIdentityUnavailable)
+	}
+	ticks, err := strconv.ParseUint(ticksText, 10, 64)
+	if err != nil {
+		return "", 0, fmt.Errorf("%w: invalid linux process start ticks", ErrProcessIdentityUnavailable)
+	}
+	return bootID, ticks, nil
+}

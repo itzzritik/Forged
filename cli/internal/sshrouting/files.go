@@ -281,10 +281,13 @@ func (s *Service) writeRouteStateLocked() error {
 	return nil
 }
 
-func (s *Service) resetRouteRuntimeLocked() error {
+func (s *Service) resetRouteRuntimeLocked(discardAttempts bool) error {
+	if s.startupIdentityUnavailable {
+		return fmt.Errorf("daemon process identity is unavailable")
+	}
 	s.runtimeUntrusted = true
 	s.runtimeWriteFailed = true
-	if len(s.attempts) > 0 || len(s.unscoped) > 0 {
+	if len(s.unscoped) > 0 || (!discardAttempts && len(s.attempts) > 0) {
 		return fmt.Errorf("close active SSH sessions before resetting route runtime")
 	}
 	if err := os.RemoveAll(s.paths.SSHRouteRuntimeDir()); err != nil {

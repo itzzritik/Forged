@@ -48,23 +48,25 @@ type Attempt struct {
 }
 
 type Service struct {
-	mu                 sync.RWMutex
-	paths              config.Paths
-	keyStore           *vault.KeyStore
-	sessionChecker     SessionChecker
-	cachedKeys         []vault.Key
-	cachedRoutes       map[string]vault.SSHRoute
-	now                func() time.Time
-	attempts           map[string]Attempt
-	attemptOwners      map[string]uint64
-	attemptSeq         uint64
-	clientAttempt      map[int]string
-	unscoped           map[platform.ProcessInstance]int
-	unscopedChanged    chan struct{}
-	runtimeUntrusted   bool
-	runtimeWriteFailed bool
-	prober             ProviderProber
-	onMutation         func(reason string)
+	mu                         sync.RWMutex
+	paths                      config.Paths
+	keyStore                   *vault.KeyStore
+	sessionChecker             SessionChecker
+	cachedKeys                 []vault.Key
+	cachedRoutes               map[string]vault.SSHRoute
+	now                        func() time.Time
+	attempts                   map[string]Attempt
+	attemptOwners              map[string]uint64
+	attemptSeq                 uint64
+	clientAttempt              map[int]string
+	unscoped                   map[platform.ProcessInstance]int
+	unscopedChanged            chan struct{}
+	runtimeUntrusted           bool
+	runtimeWriteFailed         bool
+	recoveryBarrier            platform.ProcessInstance
+	startupIdentityUnavailable bool
+	prober                     ProviderProber
+	onMutation                 func(reason string)
 }
 
 func NewService(paths config.Paths, keyStore *vault.KeyStore) *Service {
@@ -103,6 +105,36 @@ func (s *Service) restoreRouteState() {
 		s.attemptOwners[key] = s.attemptSeq
 		s.clientAttempt[attempt.ClientPID] = key
 	}
+}
+
+// PrepareStartupRuntime records this daemon lifetime before listeners open. It
+// clears route state that is ambiguous or belongs to an earlier daemon.
+func (s *Service) PrepareStartupRuntime(daemon platform.ProcessInstance) (bool, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if !daemon.Valid() {
+		s.startupIdentityUnavailable = true
+		s.runtimeUntrusted = true
+		return false, fmt.Errorf("daemon process identity is unavailable")
+	}
+	s.startupIdentityUnavailable = false
+	s.recoveryBarrier = daemon
+	if !s.runtimeUntrusted && len(s.attempts) == 0 {
+		return false, nil
+	}
+	if err := s.resetRouteRuntimeLocked(true); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+// RequireStartupRouteGuard leaves route access deny-only when startup cannot
+// establish a daemon process lifetime.
+func (s *Service) RequireStartupRouteGuard() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.startupIdentityUnavailable = true
+	s.runtimeUntrusted = true
 }
 
 func (s *Service) SetKeyStore(keyStore *vault.KeyStore) {
@@ -145,6 +177,10 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 	var replacedToken string
 	s.mu.Lock()
 	s.reconcileRouteAttemptsLocked(now, currentRefs)
+	if s.recoveryClientDeniedLocked(process) {
+		s.mu.Unlock()
+		return fmt.Errorf("SSH route client predates daemon restart")
+	}
 	if s.routeScopeGuardLocked() {
 		s.mu.Unlock()
 		return fmt.Errorf("SSH route runtime needs reset")
@@ -343,6 +379,10 @@ func (s *Service) Success(attempt string, clientPID, helperPID int) error {
 
 	s.mu.Lock()
 	s.reconcileRouteAttemptsLocked(now, refs)
+	if s.recoveryClientDeniedLocked(process) {
+		s.mu.Unlock()
+		return fmt.Errorf("SSH route client predates daemon restart")
+	}
 	current, ok := s.attemptBySuccessLocked(attempt, clientPID)
 	if !ok || current.Process != process {
 		s.mu.Unlock()
@@ -405,6 +445,9 @@ func (s *Service) Slot(attempt string, clientPID, helperPID, slot int) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.reconcileRouteAttemptsLocked(now, refs)
+	if s.recoveryClientDeniedLocked(process) {
+		return fmt.Errorf("SSH route client predates daemon restart")
+	}
 	if s.routeScopeGuardLocked() {
 		return fmt.Errorf("SSH route runtime needs reset")
 	}
@@ -449,6 +492,10 @@ func (s *Service) AllowedFingerprints(process platform.ProcessInstance) ([]strin
 	refs := s.routeRefs()
 	s.mu.Lock()
 	s.reconcileRouteAttemptsLocked(now, refs)
+	if s.recoveryClientDeniedLocked(process) {
+		s.mu.Unlock()
+		return nil, true
+	}
 	if s.routeScopeGuardLocked() {
 		s.mu.Unlock()
 		return nil, true
@@ -498,6 +545,10 @@ func (s *Service) OpenRouteSession(process platform.ProcessInstance) (func(), bo
 	refs := s.routeRefs()
 	s.mu.Lock()
 	s.reconcileRouteAttemptsLocked(s.now(), refs)
+	if s.recoveryClientDeniedLocked(process) {
+		s.mu.Unlock()
+		return func() {}, true
+	}
 	if s.routeScopeGuardLocked() {
 		s.mu.Unlock()
 		return func() {}, true
@@ -769,11 +820,19 @@ func (s *Service) demoteAttemptLocked(attemptKey string, refs map[string]KeyRef)
 }
 
 func (s *Service) routeScopeGuardLocked() bool {
-	return s.runtimeUntrusted || s.runtimeWriteFailed
+	return s.startupIdentityUnavailable || s.runtimeUntrusted || s.runtimeWriteFailed
+}
+
+func (s *Service) recoveryClientDeniedLocked(process platform.ProcessInstance) bool {
+	if !s.recoveryBarrier.Valid() {
+		return false
+	}
+	predatesDaemon, err := platform.ProcessStartedNoLaterThan(process, s.recoveryBarrier)
+	return err != nil || predatesDaemon
 }
 
 func (s *Service) recoverRouteRuntimeLocked(refs map[string]KeyRef) {
-	if s.runtimeUntrusted || !s.runtimeWriteFailed {
+	if s.startupIdentityUnavailable || s.runtimeUntrusted || !s.runtimeWriteFailed {
 		return
 	}
 	if err := s.writeRouteStateLocked(); err != nil {
