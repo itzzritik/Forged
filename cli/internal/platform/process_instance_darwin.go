@@ -18,7 +18,8 @@ func ProcessInfoForPID(pid int) (ProcessInfo, error) {
 
 	process, err := unix.SysctlKinfoProc("kern.proc.pid", pid)
 	if err != nil {
-		if errors.Is(err, unix.ESRCH) || errors.Is(err, unix.ENOENT) {
+		if errors.Is(err, unix.ESRCH) || errors.Is(err, unix.ENOENT) || errors.Is(err, unix.EIO) {
+			// kern.proc.pid reports EIO after a PID exits on current macOS.
 			return ProcessInfo{}, fmt.Errorf("%w: pid %d", ErrProcessNotFound, pid)
 		}
 		return ProcessInfo{}, fmt.Errorf("reading process info: %w", err)
