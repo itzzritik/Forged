@@ -26,7 +26,7 @@ One manual GitHub Actions workflow publishes CLI releases.
 - macOS binaries are not notarized. Windows binaries are not Authenticode-signed. Linux archives are unsigned.
 - The macOS Swift helper must be built on macOS and passed into the release flow as an artifact.
 - The npm wrapper is a launcher for native platform packages, not a JS implementation.
-- The npm wrapper runs a best-effort `postinstall` daemon freshen after install/update. It must never fail package installation; TUI boot and Doctor remain the repair fallback. npm 12+ skips install scripts unless the user allows the package (`--allow-scripts`), so on current npm the next `forged` launch is the usual upgrade path.
+- The npm packages have no install scripts: npm 12+ blocks them and warns on every install. After an upgrade the daemon restarts itself onto the new build (see daemon docs); the next `forged` launch's build-id check is the fallback.
 - CLI builds embed a daemon build id. Local `just build-cli` refreshes an installed daemon after rebuilding; releases use the commit id for the daemon freshness check.
 - GoReleaser artifact metadata can be either a top-level array or an object with `artifacts`; npm packaging must accept both.
 

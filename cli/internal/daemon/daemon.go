@@ -75,6 +75,8 @@ func New(paths config.Paths) *Daemon {
 
 func (d *Daemon) Run(password []byte) error {
 	defer zeroSecret(password)
+	executable := d.selfBinaryPath()
+	executableInfo, executableErr := os.Stat(executable)
 	if err := d.paths.ValidateRuntimePaths(); err != nil {
 		return fmt.Errorf("resolving runtime socket paths: %w", err)
 	}
@@ -155,6 +157,10 @@ func (d *Daemon) Run(password []byte) error {
 		"ctl_socket", d.paths.CtlSocket(),
 	)
 
+	// Windows upgrades go through the next forged launch.
+	if executableErr == nil && runtime.GOOS != "windows" {
+		go d.watchInstalledBinary(executable, executableInfo)
+	}
 	d.waitForSignal()
 	return nil
 }

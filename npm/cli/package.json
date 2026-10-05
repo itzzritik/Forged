@@ -14,9 +14,6 @@
   "bin": {
     "forged": "bin/forged.js"
   },
-  "scripts": {
-    "postinstall": "node bin/postinstall.js"
-  },
   "optionalDependencies": {
     "@getforged/cli-darwin-x64": "0.1.24",
     "@getforged/cli-darwin-arm64": "0.1.24",

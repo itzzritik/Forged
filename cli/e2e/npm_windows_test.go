@@ -51,8 +51,8 @@ func TestNPMInstallFlow(t *testing.T) {
 		t.Fatalf("daemon runs %s; want a staged copy, not the npm install", image)
 	}
 
-	// npm must replace its files under the live daemon, and postinstall must
-	// move the daemon to the new build.
+	// npm must replace its files under the live daemon without install
+	// scripts, and the next normal launch must move the daemon to the new build.
 	nextBin := filepath.Join(h.root, "bin-next")
 	nextBuild := h.buildID + "-npm2"
 	if err := goBuild(filepath.Join(nextBin, "forged.exe"), "./cmd/forged", nextBuild); err != nil {
@@ -64,20 +64,20 @@ func TestNPMInstallFlow(t *testing.T) {
 		}
 	}
 	v2 := npmPackages(t, "0.0.0-e2e.2", nextBin)
-	start := time.Now()
 	out, err := h.run(t, h.root, "npm", "install", "-g", "--prefix", prefix, "--no-audit", "--no-fund", v2)
-	if err != nil {
+	if err != nil || strings.Contains(out, "warn") {
 		t.Fatalf("npm upgrade while the daemon runs: %v\n%s", err, out)
 	}
-	// npm 12+ skips install scripts it hasn't been told to allow, so run the
-	// wrapper's postinstall the way an allowed or older npm would.
-	postinstall := filepath.Join(prefix, "node_modules", "@getforged", "cli", "bin", "postinstall.js")
-	if out, err = h.run(t, h.root, "node", postinstall); err != nil {
-		t.Fatalf("postinstall: %v\n%s", err, out)
+
+	p, err = startPTY([]string{filepath.Join(os.Getenv("SystemRoot"), "System32", "cmd.exe"), "/d", "/c", shim}, h.env, h.home, 120, 40)
+	if err != nil {
+		t.Fatal(err)
 	}
-	t.Logf("npm upgrade took %s", time.Since(start).Round(time.Millisecond))
+	t.Cleanup(p.Kill)
+	mustSee(t, p, 40*time.Second, "DASHBOARD", "System healthy")
+	quitTUI(t, p)
 	if got, err := daemon.RunningBuildID(paths); err != nil || got != nextBuild {
-		t.Fatalf("after npm upgrade the daemon runs build %q (err=%v), want %q from postinstall freshen\n%s", got, err, nextBuild, out)
+		t.Fatalf("after npm upgrade and relaunch the daemon runs build %q (err=%v), want %q", got, err, nextBuild)
 	}
 	assertServiceOwned(t, s)
 }
@@ -114,7 +114,7 @@ func npmPackages(t *testing.T, version, bin string) string {
 	}
 	platformTgz := npmPack(t, platform, work)
 
-	for _, name := range []string{"forged.js", "postinstall.js"} {
+	for _, name := range []string{"forged.js"} {
 		if err := copyFile(filepath.Join(repo, "npm", "cli", "bin", name), filepath.Join(wrapper, "bin", name)); err != nil {
 			t.Fatal(err)
 		}
