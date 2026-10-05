@@ -8,7 +8,7 @@ applies_to:
   - npm/**
 depends_on:
   - ops/release.md
-last_verified: 2026-04-23
+last_verified: 2026-10-05
 stable: yes
 ---
 
@@ -19,7 +19,8 @@ The repo holds separate CLI, server, web, npm-wrapper, proto, and agent-doc tree
 ## Must know
 
 - `cli/` and `server/` are separate Go modules. There is no `go.work`.
-- `web/` is the only pnpm app. `npm/` is a release wrapper, not dev tooling.
+- `server/Dockerfile`'s `golang` image must be at least `server/go.mod`'s `go` version: official images set `GOTOOLCHAIN=local`, so they cannot fetch a newer toolchain.
+- `web/` is the only JS app; bun installs and runs its scripts (`bun.lock`), while Next itself still runs on Node. `npm/` is a release wrapper published to and installed from npm, not dev tooling.
 - `just` is the top-level task runner. It mainly `cd`s into the right subtree and runs native tools.
 - `proto/*.md` is the shared wire-format source of truth. There is no generated shared client package.
 - Release workflow is manual; there is no broad push-trigger CI.
