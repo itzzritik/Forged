@@ -43,6 +43,8 @@ var retiredCommandHints = map[string]string{
 }
 
 func Execute() error {
+	// Allow launching from Explorer.
+	cobra.MousetrapHelpText = ""
 	cmd := newRootCmd()
 	if err := cmd.Execute(); err != nil {
 		err = rewriteCLIError(err)

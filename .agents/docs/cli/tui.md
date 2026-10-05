@@ -4,7 +4,7 @@ applies_to:
   - cli/internal/tui/**
 depends_on:
   - cli/ipc.md
-last_verified: 2026-07-15
+last_verified: 2026-10-05
 stable: yes
 ---
 
@@ -48,7 +48,8 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Key names are rendered with terminal control characters replaced, including legacy or synced data that predates storage validation.
 - External error text, runtime sync messages, learned-route labels, and Git signing configuration are rendered with terminal control characters replaced before they reach the terminal.
 - On Linux and macOS, the Agent tab includes SSH Routing diagnostics. The page reads and clears route memory through daemon IPC and keeps route memory current with background polling while the page is open. If route runtime state is ambiguous, it surfaces a deny-only guard and permits Clear All even with no learned routes; the confirmation tells the user to close active SSH sessions before the explicit reset.
-- On Windows, the Agent tab omits SSH Routing and Doctor explains that automatic routing is unavailable while the normal SSH agent remains active.
+- On Windows, the Agent tab omits SSH Routing and Doctor explains that automatic routing is unavailable while the normal SSH agent remains active. With Git for Windows, Doctor adds a Git SSH row and Fix Issues sets an unset `core.sshCommand`.
+- On Windows, clipboard writes use the Win32 API: private-key copies carry the history/cloud exclusion formats `clip.exe` cannot set. The file picker returns base64 UTF-8 paths because redirected PowerShell output uses the console code page.
 - SSH Routing diagnostics reuse the Commit Signing browser-table pattern: selected item summary on top, a compact table below, and no manual refresh footer action.
 - SSH Routing row pages shrink with available height; when the table cannot fit, the selected-route summary remains navigable instead of showing clipped table chrome.
 - SSH Routing keeps its route count and polling/clear feedback in the two-line summary so errors and progress remain visible without adding table chrome.

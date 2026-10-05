@@ -325,7 +325,7 @@ func (m *model) doctorCanFixIssues() bool {
 	if !s.IPCSocketReady || !s.AgentSocketReady {
 		return true
 	}
-	if !s.AgentDisabled && (!s.SSHEnabled || !s.ManagedConfigReady || !s.IdentityAgentOwner.IsForged()) {
+	if !s.AgentDisabled && !s.SSHHealthy() {
 		return true
 	}
 	return false
@@ -343,12 +343,31 @@ func (m *model) doctorRows() []doctorRow {
 		m.doctorSSHAgentRow(),
 		m.doctorSSHConfigRow(paths),
 		m.doctorIdentityAgentRow(paths),
+	}
+	if m.snapshot.GitSSH.Applicable {
+		rows = append(rows, m.doctorGitSSHRow())
+	}
+	return append(rows,
 		m.doctorSystemAuthRow(),
 		m.doctorSecureStoreRow(),
 		m.doctorSyncAccountRow(),
-	}
+	)
+}
 
-	return rows
+func (m *model) doctorGitSSHRow() doctorRow {
+	status := m.snapshot.GitSSH
+	row := doctorscreen.Row{Check: "Git SSH", Tone: doctorscreen.ToneWarning}
+	switch {
+	case status.Native:
+		row.Status, row.Detail, row.Tone = theme.Glyphs.Check+" Win32-OpenSSH", "Git uses Win32-OpenSSH", doctorscreen.ToneSuccess
+	case status.NeedsFix():
+		row.Status, row.Detail = "! Bundled ssh", m.doctorRepairDetail("Git's bundled ssh can't reach the Forged agent; Fix Issues sets core.sshCommand")
+	case status.Source != "":
+		row.Status, row.Detail = "! "+status.Source, "Git's configured ssh can't reach the Forged agent; point it at Win32-OpenSSH"
+	default:
+		row.Status, row.Detail = "! Bundled ssh", "Git's bundled ssh can't reach the Forged agent; install the Windows OpenSSH Client"
+	}
+	return doctorRow{screen: row}
 }
 
 func (m *model) doctorRepairDetail(detail string) string {

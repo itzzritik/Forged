@@ -14,6 +14,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"github.com/itzzritik/forged/cli/internal/tui"
@@ -119,8 +120,10 @@ const clipboardCommandTimeout = 5 * time.Second
 const clipboardCloseAttempts = 3
 
 type clipboardBackend struct {
-	write []string
-	read  []string
+	write     []string
+	read      []string
+	native    bool
+	sensitive bool
 }
 
 type clipboardManager struct {
@@ -244,14 +247,16 @@ func copyToClipboard(value []byte, sensitive bool, requireRead bool) (clipboardB
 	}
 	var lastErr error
 	for _, backend := range backends {
-		if _, err := exec.LookPath(backend.write[0]); err != nil {
-			lastErr = err
-			continue
-		}
-		if requireRead {
-			if _, err := exec.LookPath(backend.read[0]); err != nil {
+		if !backend.native {
+			if _, err := exec.LookPath(backend.write[0]); err != nil {
 				lastErr = err
 				continue
+			}
+			if requireRead {
+				if _, err := exec.LookPath(backend.read[0]); err != nil {
+					lastErr = err
+					continue
+				}
 			}
 		}
 		if err := writeClipboard(backend, value); err != nil {
@@ -284,16 +289,16 @@ func clipboardBackends(sensitive bool) ([]clipboardBackend, error) {
 			clipboardBackend{write: []string{"xsel", "--clipboard", "--input"}, read: []string{"xsel", "--clipboard", "--output"}},
 		), nil
 	case "windows":
-		return []clipboardBackend{{
-			write: []string{"clip"},
-			read:  []string{"powershell.exe", "-NoProfile", "-NonInteractive", "-Command", "[Console]::Out.Write((Get-Clipboard -Raw))"},
-		}}, nil
+		return []clipboardBackend{{native: true, sensitive: sensitive}}, nil
 	default:
 		return nil, fmt.Errorf("Clipboard copy is not supported on %s", runtime.GOOS)
 	}
 }
 
 func writeClipboard(backend clipboardBackend, value []byte) error {
+	if backend.native {
+		return platform.ClipboardWriteText(value, backend.sensitive)
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), clipboardCommandTimeout)
 	defer cancel()
 	cmd := exec.CommandContext(ctx, backend.write[0], backend.write[1:]...)
@@ -305,6 +310,9 @@ func writeClipboard(backend clipboardBackend, value []byte) error {
 }
 
 func readClipboard(backend clipboardBackend) ([]byte, error) {
+	if backend.native {
+		return platform.ClipboardReadText()
+	}
 	ctx, cancel := context.WithTimeout(context.Background(), clipboardCommandTimeout)
 	defer cancel()
 	output, err := exec.CommandContext(ctx, backend.read[0], backend.read[1:]...).Output()

@@ -31,6 +31,8 @@ type Engine struct {
 	isSSHEnabled     func(config.Paths) bool
 	isManagedSSH     func(config.Paths) bool
 	detectOwner      func(config.Paths) (config.SSHAgentOwner, error)
+	inspectGitSSH    func() config.GitSSHStatus
+	fixGitSSH        func() error
 	loadCredentials  func(config.Paths) (bool, error)
 	loadDaemonStatus func(string) (DaemonRuntimeStatus, error)
 	ensureConfig     func(config.Paths) error
@@ -51,6 +53,8 @@ func New(paths config.Paths) *Engine {
 		isSSHEnabled:     config.IsSSHAgentEnabled,
 		isManagedSSH:     config.IsManagedSSHIntegrationEnabled,
 		detectOwner:      config.DetectSSHAgentOwner,
+		inspectGitSSH:    config.InspectGitSSH,
+		fixGitSSH:        config.EnsureGitUsesNativeSSH,
 		loadCredentials:  defaultCredentialsValid,
 		loadDaemonStatus: defaultDaemonRuntimeStatus,
 		ensureConfig:     ensureDefaultConfigFile,
@@ -112,6 +116,7 @@ func (e *Engine) Assess() (Snapshot, error) {
 	if owner, err := e.owner(e.Paths); err == nil {
 		snapshot.IdentityAgentOwner = owner
 	}
+	snapshot.GitSSH = e.gitSSH()
 
 	if snapshot.IPCSocketReady {
 		if status, err := e.daemonStatus(e.Paths.CtlSocket()); err == nil {
@@ -140,9 +145,6 @@ func classifyState(s Snapshot) State {
 		return StateUninitialized
 	}
 
-	sshHealthy := s.SSHEnabled &&
-		s.ManagedConfigReady &&
-		s.IdentityAgentOwner.IsForged()
 	healthy := s.ConfigExists &&
 		s.ConfigValid &&
 		s.Service.Installed &&
@@ -152,7 +154,7 @@ func classifyState(s Snapshot) State {
 		serviceBuildFresh(s) &&
 		s.IPCSocketReady &&
 		s.AgentSocketReady &&
-		(s.AgentDisabled || sshHealthy)
+		(s.AgentDisabled || s.SSHHealthy())
 	if healthy {
 		if s.KeyCount == 0 {
 			return StateReadyEmpty
@@ -232,6 +234,20 @@ func (e *Engine) owner(paths config.Paths) (config.SSHAgentOwner, error) {
 		return e.detectOwner(paths)
 	}
 	return config.DetectSSHAgentOwner(paths)
+}
+
+func (e *Engine) gitSSH() config.GitSSHStatus {
+	if e != nil && e.inspectGitSSH != nil {
+		return e.inspectGitSSH()
+	}
+	return config.InspectGitSSH()
+}
+
+func (e *Engine) fixGitSSHConfig() error {
+	if e != nil && e.fixGitSSH != nil {
+		return e.fixGitSSH()
+	}
+	return config.EnsureGitUsesNativeSSH()
 }
 
 func (e *Engine) credentials(paths config.Paths) (bool, error) {

@@ -3,6 +3,7 @@ package cmd
 import (
 	"fmt"
 	"io"
+	"runtime"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -62,20 +63,21 @@ func renderRootHelp(w io.Writer) {
 	fmt.Fprintln(w)
 	writeHelpSections(w, sections)
 
+	headless := runtime.GOOS == "linux"
+	examples := []string{"  forged", "  forged doctor --fix"}
+	if headless {
+		examples = append(examples, "  forged --headless")
+	}
 	fmt.Fprintln(w, "Examples:")
-	for _, example := range []string{
-		"  forged",
-		"  forged doctor --fix",
-		"  forged --headless",
-		"  forged logs",
-		"  forged version",
-	} {
+	for _, example := range append(examples, "  forged logs", "  forged version") {
 		fmt.Fprintln(w, example)
 	}
 
 	fmt.Fprintln(w)
 	fmt.Fprintln(w, "Flags:")
-	fmt.Fprintln(w, "      --headless   persistently use file-backed unlock (set false to disable)")
+	if headless {
+		fmt.Fprintln(w, "      --headless   persistently use file-backed unlock (set false to disable)")
+	}
 	fmt.Fprintln(w, "  -h, --help       help for forged")
 	fmt.Fprintln(w, "  -v, --version    print version information")
 }

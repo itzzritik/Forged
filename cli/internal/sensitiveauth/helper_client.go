@@ -12,6 +12,8 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 // Native password responses include base64 and JSON framing.
@@ -56,6 +58,7 @@ func NewHelperClient(path string, logger *slog.Logger) *HelperClient {
 
 func (c *HelperClient) Start(ctx context.Context, onLock, onExit func()) error {
 	cmd := exec.CommandContext(ctx, c.path)
+	platform.HideChildConsole(cmd)
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return err

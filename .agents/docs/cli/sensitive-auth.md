@@ -7,7 +7,7 @@ depends_on:
   - architecture/security-model.md
   - cli/daemon.md
   - cli/ipc.md
-last_verified: 2026-07-15
+last_verified: 2026-10-05
 stable: partial
 ---
 
@@ -23,7 +23,8 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
   - system lock/sleep
   - explicit TUI idle lock
   - daemon restart
-- Helpers emit that lock event on macOS screen lock/screensaver and will-sleep, Linux ScreenSaver lock and logind `PrepareForSleep(true)`, and Windows session lock and WMI entering suspend. Linux system-bus access and Windows Modern Standby behavior still require native validation.
+- Helpers emit that lock event on macOS screen lock/screensaver and will-sleep, Linux ScreenSaver lock and logind `PrepareForSleep(true)`, and Windows WTS session lock/console or remote disconnect plus `RegisterSuspendResumeNotification` suspend, delivered to a message-only window (broadcast power messages never reach one) that is rebuilt with backoff when registration fails, e.g. before Remote Desktop Services is ready at logon. Linux system-bus access and Windows Modern Standby behavior still require native validation.
+- Windows Hello runs through the WinRT projection of Windows PowerShell 5.1 by absolute System32 path: PowerShell 7 has no projection, `Add-Type` against `WinMetadata\Windows.winmd` fails on current Windows, and a PATH-resolved `powershell.exe` could answer "verified".
 - An expired shared-session timestamp remains as cleanup evidence until the broker clears or replaces it; token pruning cannot hide session expiry.
 - Lease expiry, daemon hydration, authorization grants, and session clearing share one broker transition lock; native prompts run outside it.
 - Non-export `sensitive-auth` requests perform expiry cleanup before force can skip the initial active-session fast path, so it cannot revive a stale in-memory vault session.
@@ -38,7 +39,7 @@ Sensitive auth is the gate for private-key use and live daemon-session hydrate. 
 - Export, private-key clipboard views, and change-password are always master-password-only. Export and private-key views each use a scoped short-lived one-use token and do not rely on System Auth. A successful password authorization also establishes the normal bounded shared session, so the daemon never retains an untracked hydrated vault.
 - Full-vault export atomically reserves its one-use token before materializing private keys. Only a locally rejected oversized IPC response restores that reservation; lock/session invalidation prevents restoration.
 - Open TUI sessions relock after system lock/sleep and after 4 minutes of idle time.
-- External System Auth prompts are single-flight with a short failure cooldown so parallel SSH/signing requests do not spam prompts.
+- External System Auth prompts are single-flight with a 10-second failure cooldown so parallel SSH/signing requests do not spam prompts. A denial served from an active cooldown never re-arms it; otherwise any client retrying faster than the window would suppress System Auth indefinitely.
 - SSH route preparation normally uses public in-memory route data and does not prompt. If a cold daemon has no route cache, it may trigger external auth once to hydrate the vault before writing the route snippet.
 - `broken` and `unavailable` are separate states. Unavailable means no System Auth path, usually headless; broken means the desktop System Auth path exists but failed unexpectedly.
 - `Master Password Interval` is a local device policy because device unlock enrollment is per-device. It now bounds *inactivity*, not time-since-password: each successful biometric unlock slides the window forward (throttled), so an actively-used device never expires. A 90-day hard cap since the last master-password entry (`localEnrollmentHardCap`) still forces one periodic re-verification regardless of activity.

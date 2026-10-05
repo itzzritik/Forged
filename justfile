@@ -25,6 +25,10 @@ lint-web:
 
 lint: lint-cli lint-server
 
+# Windows end-to-end suite (drives real forged.exe; see cli/e2e)
+e2e:
+    cd cli && go test -tags e2e ./e2e -v -count=1 -timeout 20m
+
 # Run
 dev:
     just build-cli

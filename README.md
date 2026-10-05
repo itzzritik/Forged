@@ -45,13 +45,12 @@ git push origin main
 
 ## Key management
 
-```bash
-forged key generate my-key                       # new Ed25519 key
-forged key import --file ~/.ssh/id_ed25519       # import existing
-forged key list                                  # show all keys
-forged key view my-key                           # inspect a key
-forged key delete old-key                        # delete a key
-```
+Keys are managed in the `forged` interactive shell:
+
+- **Key** tab: generate Ed25519 keys, import (SSH directory, key file, 1Password, Bitwarden, Forged export), view, rename, delete, export
+- **Agent** tab: SSH integration and Git commit signing
+- **Manage** tab: log in / sync, lock, master password settings
+- **Doctor** tab: health checks and repair
 
 ## How it works
 
@@ -60,28 +59,28 @@ Forged runs as a background daemon. `forged` and `forged doctor --fix` repair an
 ```
 forged daemon
 ├── SSH Agent          standard protocol, ssh-add works
-├── Encrypted Vault    Argon2id + XChaCha20-Poly1305
+├── Encrypted Vault    Argon2id + AES-256-GCM
 ├── SSH Integration    standard IdentityAgent setup
 └── Key Store          in-memory, mlock'd, zeroed on shutdown
 ```
 
-No browser. No Electron. No local web server. Just a Unix socket and a CLI.
+No browser. No Electron. No local web server. Just a Unix socket (a named pipe on Windows) and a CLI.
 
 ## SSH integration
 
 Forged keeps SSH integration low-touch. It manages its own SSH file under `~/.config/forged/ssh/forged.conf` and adds at most one `Include` line to your main `~/.ssh/config`.
 
-On Linux and macOS, when the same host accepts multiple keys, Forged narrows each SSH or Git connection with per-attempt OpenSSH snippets and public-key hint files, so OpenSSH normally sees one proven key or a tiny ordered fallback set. GitHub and GitLab repo routes are learned with strict host-key provider probes; broader same-owner and same-host history is used only as a hint for ordering. Windows keeps the standard `IdentityAgent` integration, but automatic per-connection routing is unavailable.
+On Linux and macOS, when the same host accepts multiple keys, Forged narrows each SSH or Git connection with per-attempt OpenSSH snippets and public-key hint files, so OpenSSH normally sees one proven key or a tiny ordered fallback set. GitHub and GitLab repo routes are learned with strict host-key provider probes; broader same-owner and same-host history is used only as a hint for ordering. Windows keeps the standard `IdentityAgent` integration, but automatic per-connection routing is unavailable. Git for Windows ships its own ssh, which cannot reach a named-pipe agent, so setup and `forged doctor --fix` point `core.sshCommand` at Windows OpenSSH unless you already set it.
 
 Forged does not rewrite your existing host blocks or repo-local Git config.
 
-Use `forged doctor` to see which SSH agent currently owns `IdentityAgent`. If you want to switch to another tool or uninstall Forged, run `forged agent disable` first. That removes only Forged-managed SSH config and leaves the rest of your `~/.ssh` setup alone.
+Use `forged doctor` to see which SSH agent currently owns `IdentityAgent`. If you want to switch to another tool or uninstall Forged, turn off SSH integration in the Agent tab first. That removes only Forged-managed SSH config and leaves the rest of your `~/.ssh` setup alone.
 
 ## Security
 
-Keys are encrypted with Argon2id (64MB memory-hard KDF) and XChaCha20-Poly1305. The vault file is written atomically to prevent corruption and locked to prevent concurrent access. Private keys live in mlock'd memory pages and are explicitly zeroed on shutdown.
+Keys are encrypted with Argon2id (64MB memory-hard KDF) and AES-256-GCM. The vault file is written atomically to prevent corruption and locked to prevent concurrent access. Private keys live in mlock'd memory pages and are explicitly zeroed on shutdown.
 
-The daemon is the only process that touches the vault. CLI commands talk to it over a control socket. The agent socket is 0600, owner-only.
+The daemon is the only process that touches the vault. CLI commands talk to it over a control socket. The agent socket is 0600, owner-only; on Windows the named pipes are restricted to your account.
 
 Cloud sync (coming soon) is zero-knowledge. The server stores opaque encrypted blobs. It never sees your master password, encryption key, or private keys.
 
@@ -101,21 +100,8 @@ Cloud sync (coming soon) is zero-knowledge. The server stores opaque encrypted b
 
 ```
 forged                           open Forged and auto-repair this machine
-forged doctor --fix              diagnose and repair from the terminal
+forged doctor [--fix]            diagnose (and repair) from the terminal
+forged logs [daemon|stderr|tui]  follow logs
+forged version                   print version information
 forged daemon                    start daemon in foreground (debug/service entrypoint)
-
-forged key generate <name>       new Ed25519 key pair
-forged key import --file <path>  import an existing key
-forged key list                  all keys in vault
-forged key delete <name>         delete a key
-forged key view <name>           inspect a key
-forged key export                export the full vault
-forged key rename <old> <new>    rename a key
-
-forged vault                     manage vault access
-forged agent                     manage SSH and Git signing
-forged login / logout / sync     manage cloud linking and sync
-forged logs                      tail daemon logs
 ```
-
-All commands support `--json` for scripting.

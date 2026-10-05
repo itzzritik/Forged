@@ -3,6 +3,7 @@ package actions
 import (
 	"crypto/sha256"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -109,7 +110,8 @@ func appendTUILogLine(paths config.Paths, line string) error {
 	}
 	defer platform.UnlockFile(lockFile)
 
-	file, err := os.OpenFile(path, os.O_CREATE|os.O_APPEND|os.O_RDWR, 0o600)
+	// No O_APPEND: on Windows it drops the write access Truncate needs.
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR, 0o600)
 	if err != nil {
 		return fmt.Errorf("opening TUI log: %w", err)
 	}
@@ -123,6 +125,9 @@ func appendTUILogLine(paths config.Paths, line string) error {
 		if err := file.Truncate(0); err != nil {
 			return fmt.Errorf("resetting full TUI log: %w", err)
 		}
+	}
+	if _, err := file.Seek(0, io.SeekEnd); err != nil {
+		return fmt.Errorf("seeking TUI log: %w", err)
 	}
 	if _, err := file.WriteString(line); err != nil {
 		return fmt.Errorf("writing TUI log: %w", err)

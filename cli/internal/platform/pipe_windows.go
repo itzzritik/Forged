@@ -15,6 +15,7 @@ import (
 
 var currentUserPipes struct {
 	once  sync.Once
+	sid   *windows.SID
 	agent string
 	ctl   string
 	err   error
@@ -35,11 +36,13 @@ func CurrentUserPipePaths() (agent, ctl string, err error) {
 			return
 		}
 
+		copied, copyErr := user.User.Sid.Copy()
 		sid := user.User.Sid.String()
-		if sid == "" {
+		if copyErr != nil || sid == "" {
 			currentUserPipes.err = fmt.Errorf("%w: converting process token SID", ErrCurrentUserPipeIdentity)
 			return
 		}
+		currentUserPipes.sid = copied
 		currentUserPipes.agent = userPipePath("agent", sid)
 		currentUserPipes.ctl = userPipePath("ctl", sid)
 	})
@@ -49,6 +52,13 @@ func CurrentUserPipePaths() (agent, ctl string, err error) {
 func CurrentUserPipeIdentityError() error {
 	_, _, err := CurrentUserPipePaths()
 	return err
+}
+
+func currentUserSID() (*windows.SID, error) {
+	if _, _, err := CurrentUserPipePaths(); err != nil {
+		return nil, err
+	}
+	return currentUserPipes.sid, nil
 }
 
 func userPipePath(kind, sid string) string {

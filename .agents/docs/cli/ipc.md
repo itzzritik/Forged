@@ -2,7 +2,7 @@
 title: Daemon IPC
 applies_to:
   - cli/internal/ipc/**
-last_verified: 2026-07-15
+last_verified: 2026-10-05
 stable: yes
 ---
 
@@ -12,7 +12,7 @@ stable: yes
 
 ## Must know
 
-- Socket ownership and `0600` perms are the main access control. On Linux and macOS, the daemon also requires the kernel-reported peer UID and clients compare the kernel peer UID/PID with a stable `daemon.pid` record before marshaling or sending a request. A verified endpoint mismatch blocks readiness repair, service freshening, and account-service restart instead of restarting against a live untrusted socket. Sensitive operations still add broker checks on top. Windows control-pipe server identity still needs a trusted executable-identity design.
+- Socket ownership and `0600` perms are the main access control. On Linux and macOS, the daemon also requires the kernel-reported peer UID and clients compare the kernel peer UID/PID with a stable `daemon.pid` record before marshaling or sending a request. A verified endpoint mismatch blocks readiness repair, service freshening, and account-service restart instead of restarting against a live untrusted socket. Sensitive operations still add broker checks on top. Windows pipes carry an explicit current-user owner and DACL, and every client dial rejects a pipe whose owner SID is not the current user or whose mandatory label is below Medium (a sandboxed same-user process): pipe names derive from the public SID, so another account could otherwise create the name first and receive unlock passwords. Executable identity is still not attested.
 - Mutable JSON and framing buffers are cleared after use to shorten sensitive-data lifetime; the compatible wire format still uses transient JSON strings.
 - IPC accepts bounded directional frames: requests are capped at 100 MiB so a 16 MiB imported textual key remains transportable after JSON escaping, while responses are capped at 64 MiB. Full-vault export validates that response bound after atomically reserving its one-use token and restores it when the local preflight rejects the response.
 - Vault-backed handlers can be called while the daemon is cold; they should return a locked error, not panic.
@@ -39,9 +39,8 @@ stable: yes
 - Hidden SSH route IPC prepares per-attempt snippets from `%C`, `%h`, `%p`, `%r`, and `%n`; prepare, success, and each static slot check require a positive client PID and bind it to the kernel-derived direct helper parent. The managed prepare hook clears its ready marker before IPC, then each shell-`exec`ed slot verifier confirms that exact live process owns the requested fingerprint before its `IdentityFile` applies. Prepare failures stay quiet but stale markers and shared `%C` directories cannot activate a slot. Preparation expires a stale broker session at entry, then route service rechecks the session immediately before each private probe, direct-probe signature, or learned-proof write; a locked session falls back to public cached candidates without prompting. Authorization and either probe strategy share one 45-second server work context, the hook waits 50 seconds, and the server connection deadline leaves a final response margin.
 - If route prepare finds no public route cache because the daemon is cold, IPC runs external auth once and retries prepare after hydration.
 - TUI SSH-route diagnostics require an active broker session; clearing still calls the route service so vault tombstones and sync mutation handling stay correct. The public route cache remains available only to normal route preparation after lock.
-- On Windows, a failed current-token pipe identity lookup is returned directly to IPC callers; it is not reported as a stopped daemon.
+- On Windows, a failed current-token pipe identity lookup is returned directly to IPC callers, and a pipe-owner mismatch is reported as `ErrDaemonIdentity`; neither is reported as a stopped daemon.
 - On Windows, the daemon does not register a route handler. Stale hidden routing helpers fail before IPC and direct route requests return unavailable rather than accepting an untrusted client PID.
-- Windows IPC support is still incomplete.
 
 ## Decisions
 

@@ -33,7 +33,7 @@ func IsManagedSSHIntegrationEnabled(paths Paths) bool {
 	if err := paths.ValidateRuntimePaths(); err != nil {
 		return false
 	}
-	data, err := os.ReadFile(paths.SSHUserConfig())
+	data, err := readConfigFile(paths.SSHUserConfig())
 	if err != nil {
 		return false
 	}
@@ -69,7 +69,7 @@ func IsSSHAgentEnabled(paths Paths) bool {
 	if err := paths.ValidateRuntimePaths(); err != nil {
 		return false
 	}
-	data, err := os.ReadFile(paths.SSHUserConfig())
+	data, err := readConfigFile(paths.SSHUserConfig())
 	if err != nil {
 		return false
 	}
@@ -86,7 +86,7 @@ func IsSSHAgentEnabled(paths Paths) bool {
 			return true
 		}
 
-		if strings.Contains(trimmed, "IdentityAgent") && agentSocket != "" && strings.Contains(trimmed, agentSocket) {
+		if value, ok := identityAgentValue(trimmed); ok && agentSocket != "" && sameAgentPath(value, agentSocket) {
 			return true
 		}
 	}
@@ -95,7 +95,7 @@ func IsSSHAgentEnabled(paths Paths) bool {
 }
 
 func hasDisabledForgedInclude(paths Paths) bool {
-	data, err := os.ReadFile(paths.SSHUserConfig())
+	data, err := readConfigFile(paths.SSHUserConfig())
 	if err != nil {
 		return false
 	}
@@ -189,10 +189,13 @@ func includeLine(path string) string {
 	return fmt.Sprintf("Include %q", path)
 }
 
+const utf8BOM = string(rune(0xFEFF))
+
 func readConfigFile(path string) (string, error) {
 	data, err := os.ReadFile(path)
 	if err == nil {
-		return string(data), nil
+		// OpenSSH accepts a BOM only at byte 0, above any inserted Include.
+		return strings.TrimPrefix(string(data), utf8BOM), nil
 	}
 	if os.IsNotExist(err) {
 		return "", nil
@@ -441,11 +444,40 @@ func insertForgedInclude(content, block string) string {
 	return strings.Join(parts, "\n\n") + "\n"
 }
 
+// Unquoted //./pipe/: OpenSSH before and after 8.7 disagree on backslash escapes.
+func identityAgentDirective(socket string) string {
+	if name, ok := strings.CutPrefix(socket, `\\.\pipe\`); ok {
+		return "    IdentityAgent //./pipe/" + name
+	}
+	return fmt.Sprintf("    IdentityAgent %q", socket)
+}
+
+func sameAgentPath(a, b string) bool {
+	if runtime.GOOS == "windows" {
+		return strings.EqualFold(filepath.FromSlash(a), filepath.FromSlash(b))
+	}
+	return a == b
+}
+
+func identityAgentValue(line string) (string, bool) {
+	line = strings.TrimSpace(line)
+	split := strings.IndexAny(line, " \t=")
+	if split < 0 || !strings.EqualFold(line[:split], "IdentityAgent") {
+		return "", false
+	}
+	value := strings.TrimSpace(line[split:])
+	value = strings.TrimSpace(strings.TrimPrefix(value, "="))
+	if len(value) >= 2 && value[0] == '"' && value[len(value)-1] == '"' {
+		value = strings.NewReplacer(`\\`, `\`, `\"`, `"`).Replace(value[1 : len(value)-1])
+	}
+	return value, value != ""
+}
+
 func RenderManagedSSHConfig(paths Paths, routes string) string {
 	lines := []string{
 		sshAgentComment,
 		"Host *",
-		fmt.Sprintf("    IdentityAgent %q", paths.AgentSocket()),
+		identityAgentDirective(paths.AgentSocket()),
 	}
 
 	if !platform.SSHRoutingSupported() {
@@ -620,7 +652,7 @@ func updateManagedSSHIdentityAgent(content, agentSocket string) (string, error) 
 			break
 		}
 	}
-	identity := fmt.Sprintf("    IdentityAgent %q", agentSocket)
+	identity := identityAgentDirective(agentSocket)
 	for i := host + 1; i < end; i++ {
 		fields := strings.Fields(lines[i])
 		if len(fields) > 0 && strings.EqualFold(fields[0], "IdentityAgent") {

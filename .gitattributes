@@ -1,0 +1,2 @@
+# Git for Windows defaults to core.autocrlf=true; CRLF scripts break under WSL/Linux sh.
+*.sh text eol=lf

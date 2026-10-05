@@ -8,7 +8,7 @@ repo_root=$(
 mkdir -p "$repo_root/bin"
 cd "$repo_root/cli"
 
-output="$repo_root/bin/forged-auth"
+output="$repo_root/bin/forged-auth$(go env GOEXE)"
 
 case "$(uname -s)" in
   Darwin)

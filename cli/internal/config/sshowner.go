@@ -23,7 +23,7 @@ func DetectSSHAgentOwner(paths Paths) (SSHAgentOwner, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), sshConfigProbeTimeout)
 	defer cancel()
 
-	cmd := exec.CommandContext(ctx, "ssh", "-G", "github.com")
+	cmd := exec.CommandContext(ctx, sshClientPath(), "-G", "github.com")
 	cmd.Env = append(os.Environ(), "FORGED_SSH_ROUTE_SKIP=1")
 	out, err := cmd.Output()
 	if err != nil {
@@ -33,6 +33,9 @@ func DetectSSHAgentOwner(paths Paths) (SSHAgentOwner, error) {
 	raw := parseIdentityAgent(out)
 	if raw == "" {
 		raw = strings.TrimSpace(os.Getenv("SSH_AUTH_SOCK"))
+	}
+	if raw == "" {
+		raw = defaultAgentEndpoint
 	}
 	if raw == "" || strings.EqualFold(raw, "none") {
 		return SSHAgentOwner{Name: "None"}, nil
@@ -51,8 +54,12 @@ func DetectSSHAgentOwner(paths Paths) (SSHAgentOwner, error) {
 	lower := strings.ToLower(raw)
 
 	switch {
-	case raw == paths.AgentSocket():
+	case sameAgentPath(raw, paths.AgentSocket()):
 		return SSHAgentOwner{Name: "Forged", Path: raw}, nil
+	case isLegacyForgedAgent(raw, paths):
+		return SSHAgentOwner{Name: "Legacy Forged", Path: raw}, nil
+	case defaultAgentEndpoint != "" && sameAgentPath(raw, defaultAgentEndpoint):
+		return SSHAgentOwner{Name: "Default agent pipe", Path: raw}, nil
 	case strings.Contains(lower, "1password"):
 		return SSHAgentOwner{Name: "1Password", Path: raw}, nil
 	case strings.Contains(lower, "bitwarden"):
@@ -62,6 +69,15 @@ func DetectSSHAgentOwner(paths Paths) (SSHAgentOwner, error) {
 	default:
 		return SSHAgentOwner{Name: "Custom", Path: raw}, nil
 	}
+}
+
+func isLegacyForgedAgent(raw string, paths Paths) bool {
+	for _, socket := range legacyForgedAgentSockets(paths)[1:] {
+		if sameAgentPath(raw, socket) {
+			return true
+		}
+	}
+	return false
 }
 
 func parseIdentityAgent(out []byte) string {

@@ -832,11 +832,17 @@ func (b *Broker) externalCooldownErr(now time.Time) error {
 	if b.cooldown.err == nil || b.cooldown.until.IsZero() || !now.Before(b.cooldown.until) {
 		return nil
 	}
-	return b.cooldown.err
+	return externalCooldownError{err: b.cooldown.err}
 }
 
+// Denials served from an active cooldown must not re-arm it.
+type externalCooldownError struct{ err error }
+
+func (e externalCooldownError) Error() string { return e.err.Error() }
+func (e externalCooldownError) Unwrap() error { return e.err }
+
 func (b *Broker) recordExternalCooldown(err error) {
-	if err == nil {
+	if err == nil || errors.As(err, new(externalCooldownError)) {
 		return
 	}
 	b.systemMu.Lock()

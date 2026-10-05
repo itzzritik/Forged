@@ -11,26 +11,18 @@ import (
 	"github.com/Microsoft/go-winio"
 )
 
-// pipeSecurityDescriptor is the SDDL applied to the daemon's named pipes.
-//
-// D:P protects the DACL from inheritance.
-// (A;;GA;;;OW) grants GENERIC_ALL to the user running the daemon.
-// (A;;GA;;;SY) grants GENERIC_ALL to LocalSystem for platform services.
-//
-// We intentionally do NOT grant BUILTIN\Administrators here, so an
-// administrator on a shared Windows machine cannot connect to another
-// user's daemon. Root/admin can still take ownership through other Win32
-// primitives — see SEC-DAEMON-004 — but the daemon's intent is owner-only.
-const pipeSecurityDescriptor = "D:P(A;;GA;;;OW)(A;;GA;;;SY)"
-
 // Listen binds the daemon's agent / ctl pipe. addr must be a full named-pipe
 // path (e.g. \\.\pipe\<name>).
 func Listen(addr string) (net.Listener, error) {
-	if err := CurrentUserPipeIdentityError(); err != nil {
+	sid, err := currentUserSID()
+	if err != nil {
 		return nil, err
 	}
+	// Explicit user owner, not OW: an elevated daemon would otherwise be
+	// owned by Administrators. Administrators are deliberately not granted.
+	user := sid.String()
 	cfg := &winio.PipeConfig{
-		SecurityDescriptor: pipeSecurityDescriptor,
+		SecurityDescriptor: "O:" + user + "D:P(A;;GA;;;" + user + ")(A;;GA;;;SY)",
 		InputBufferSize:    65536,
 		OutputBufferSize:   65536,
 	}
@@ -49,12 +41,23 @@ func Dial(addr string, timeout time.Duration) (net.Conn, error) {
 	if timeout <= 0 {
 		timeout = 2 * time.Second
 	}
-	return winio.DialPipe(addr, &timeout)
+	return verifiedPipe(winio.DialPipe(addr, &timeout))
 }
 
 func DialContext(ctx context.Context, addr string) (net.Conn, error) {
 	if err := CurrentUserPipeIdentityError(); err != nil {
 		return nil, err
 	}
-	return winio.DialPipeContext(ctx, addr)
+	return verifiedPipe(winio.DialPipeContext(ctx, addr))
+}
+
+func verifiedPipe(conn net.Conn, err error) (net.Conn, error) {
+	if err != nil {
+		return nil, err
+	}
+	if err := verifyPipeServerUser(conn); err != nil {
+		conn.Close()
+		return nil, err
+	}
+	return conn, nil
 }

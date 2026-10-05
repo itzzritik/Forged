@@ -2161,7 +2161,11 @@ func IsRunning(paths config.Paths) (int, bool) {
 	if runtime.GOOS == "windows" {
 		// Windows PID files are advisory: a later unrelated process can reuse
 		// the recorded PID. The per-user control pipe is the liveness authority.
-		return 0, platform.IsSocketAlive(paths.CtlSocket())
+		pid, err := platform.PipeServerProcessID(paths.CtlSocket())
+		if err != nil && !errors.Is(err, platform.ErrPeerPIDUnavailable) {
+			return 0, false
+		}
+		return pid, true
 	}
 
 	data, err := os.ReadFile(paths.PIDFile())

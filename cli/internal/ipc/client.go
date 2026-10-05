@@ -51,6 +51,9 @@ func (c *Client) CallContext(ctx context.Context, command string, args any) (Res
 		if errors.Is(err, platform.ErrCurrentUserPipeIdentity) {
 			return Response{}, fmt.Errorf("connecting to daemon: %w", err)
 		}
+		if errors.Is(err, platform.ErrPeerIdentityMismatch) || errors.Is(err, platform.ErrPeerIdentityUnavailable) {
+			return Response{}, fmt.Errorf("%w: %w", ErrDaemonIdentity, err)
+		}
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return Response{}, fmt.Errorf("Connecting to daemon: %w", ctxErr)
 		}

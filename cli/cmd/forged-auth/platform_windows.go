@@ -3,300 +3,259 @@
 package main
 
 import (
-	"bufio"
 	"context"
-	"encoding/base64"
 	"errors"
+	"os"
 	"os/exec"
-	"strings"
+	"path/filepath"
+	"runtime"
 	"time"
-	"unicode/utf16"
+	"unsafe"
 
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
+	"golang.org/x/sys/windows"
 )
 
 func providerName() string { return "windows-hello" }
 
 func authorize(ctx context.Context, action sensitiveauth.Action) string {
-	shell, err := windowsPowerShellPath()
-	if err != nil {
-		return "unavailable_by_environment"
-	}
-
-	cmd := exec.CommandContext(
-		ctx,
-		shell,
-		"-NoProfile",
-		"-NonInteractive",
-		"-ExecutionPolicy",
-		"Bypass",
-		"-EncodedCommand",
-		encodePowerShellCommand(windowsHelloScript(action.NativeReason())),
-	)
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
-		return "canceled"
-	}
-	if err == nil {
-		return "ok"
-	}
-
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return "failed"
-	}
-
-	switch exitErr.ExitCode() {
-	case 2:
-		return "unavailable_by_environment"
-	case 3:
-		return "canceled"
-	default:
-		if strings.Contains(strings.ToLower(string(output)), "notsupportedexception") {
-			return "unavailable_by_platform"
-		}
-		return "failed"
-	}
+	return runWindowsHello(ctx, windowsHelloAuthorizeScript, action.NativeReason(), "failed",
+		map[int]string{2: "unavailable_by_environment", 3: "canceled"})
 }
 
 func status(ctx context.Context) string {
-	shell, err := windowsPowerShellPath()
+	return runWindowsHello(ctx, windowsHelloStatusScript, "", "broken",
+		map[int]string{2: "unavailable_by_environment", 4: "unavailable_by_platform"})
+}
+
+// Absolute path: only Windows PowerShell 5.1 has the WinRT projection, and a
+// PATH-resolved powershell.exe could answer "verified".
+func runWindowsHello(ctx context.Context, script, reason, fallback string, exitCodes map[int]string) string {
+	system, err := windows.GetSystemDirectory()
 	if err != nil {
 		return "unavailable_by_environment"
 	}
-
-	cmd := exec.CommandContext(
-		ctx,
-		shell,
-		"-NoProfile",
-		"-NonInteractive",
-		"-ExecutionPolicy",
-		"Bypass",
-		"-EncodedCommand",
-		encodePowerShellCommand(windowsHelloStatusScript()),
-	)
-	output, err := cmd.CombinedOutput()
-	if ctx.Err() != nil {
+	shell := filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe")
+	cmd := exec.CommandContext(ctx, shell,
+		"-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+		"-EncodedCommand", platform.PowerShellEncodedCommand(script))
+	cmd.Env = append(os.Environ(), "FORGED_AUTH_REASON="+reason)
+	platform.HideChildConsole(cmd)
+	err = cmd.Run()
+	switch {
+	case ctx.Err() != nil:
 		return "canceled"
-	}
-	if err == nil {
+	case err == nil:
 		return "ok"
 	}
-
 	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
-		return "broken"
-	}
-
-	switch exitErr.ExitCode() {
-	case 2:
-		return "unavailable_by_environment"
-	case 4:
-		return "unavailable_by_platform"
-	default:
-		if strings.Contains(strings.ToLower(string(output)), "notsupportedexception") {
-			return "unavailable_by_platform"
+	if errors.As(err, &exitErr) {
+		if result, ok := exitCodes[exitErr.ExitCode()]; ok {
+			return result
 		}
-		return "broken"
+	} else if errors.Is(err, os.ErrNotExist) {
+		return "unavailable_by_environment"
 	}
+	return fallback
 }
+
+// Add-Type against System32\WinMetadata\Windows.winmd fails on current Windows.
+const windowsHelloPrelude = `
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -AssemblyName System.Runtime.WindowsRuntime
+  $null = [Windows.Security.Credentials.UI.UserConsentVerifier, Windows.Security.Credentials.UI, ContentType = WindowsRuntime]
+  $asTask = [System.WindowsRuntimeSystemExtensions].GetMethods() |
+    Where-Object { $_.Name -eq 'AsTask' -and $_.IsGenericMethod -and $_.GetParameters().Count -eq 1 -and $_.GetParameters()[0].ParameterType.Name -eq 'IAsyncOperation` + "`" + `1' } |
+    Select-Object -First 1
+  if ($null -eq $asTask) { exit 2 }
+} catch {
+  exit 2
+}
+function Wait-WinRT($operation, [Type]$resultType) {
+  $task = $asTask.MakeGenericMethod($resultType).Invoke($null, @($operation))
+  $task.Wait(-1) | Out-Null
+  return $task.Result
+}
+$verifier = [Windows.Security.Credentials.UI.UserConsentVerifier]
+`
+
+const windowsHelloStatusScript = windowsHelloPrelude + `
+try {
+  $availability = Wait-WinRT ($verifier::CheckAvailabilityAsync()) ([Windows.Security.Credentials.UI.UserConsentVerifierAvailability])
+} catch {
+  exit 1
+}
+switch ($availability.ToString()) {
+  'Available' { exit 0 }
+  'DeviceBusy' { exit 1 }
+  'RetriesExhausted' { exit 1 }
+  'Canceled' { exit 1 }
+  default { exit 4 }
+}
+`
+
+const windowsHelloAuthorizeScript = windowsHelloPrelude + `
+try {
+  $availability = Wait-WinRT ($verifier::CheckAvailabilityAsync()) ([Windows.Security.Credentials.UI.UserConsentVerifierAvailability])
+  if ($availability.ToString() -ne 'Available') { exit 2 }
+  $result = Wait-WinRT ($verifier::RequestVerificationAsync([string]$env:FORGED_AUTH_REASON)) ([Windows.Security.Credentials.UI.UserConsentVerificationResult])
+} catch {
+  exit 1
+}
+switch ($result.ToString()) {
+  'Verified' { exit 0 }
+  'Canceled' { exit 3 }
+  'DeviceNotPresent' { exit 2 }
+  'NotConfiguredForUser' { exit 2 }
+  'DisabledByPolicy' { exit 2 }
+  default { exit 1 }
+}
+`
 
 func startLockLoop(ctx context.Context, onLock func()) {
 	if onLock == nil {
 		return
 	}
-	watchWindowsLocks(ctx, onLock)
-}
-
-func windowsPowerShellPath() (string, error) {
-	for _, candidate := range []string{"powershell.exe", "pwsh.exe"} {
-		if path, err := exec.LookPath(candidate); err == nil {
-			return path, nil
+	lockMonitorOnLock = onLock
+	// Backoff: WTS registration fails until Remote Desktop Services starts.
+	delay := time.Second
+	for ctx.Err() == nil {
+		if runLockMonitor(ctx) {
+			delay = time.Second
 		}
-	}
-	return "", exec.ErrNotFound
-}
-
-func encodePowerShellCommand(script string) string {
-	encoded := utf16.Encode([]rune(script))
-	bytes := make([]byte, len(encoded)*2)
-	for i, r := range encoded {
-		bytes[i*2] = byte(r)
-		bytes[i*2+1] = byte(r >> 8)
-	}
-	return base64.StdEncoding.EncodeToString(bytes)
-}
-
-func powershellQuote(value string) string {
-	return strings.ReplaceAll(value, "'", "''")
-}
-
-func windowsHelloScript(reason string) string {
-	return `
-$ErrorActionPreference = 'Stop'
-try {
-  Add-Type -ReferencedAssemblies @('System.Runtime.WindowsRuntime', "$env:SystemRoot\System32\WinMetadata\Windows.winmd") -TypeDefinition @'
-using System;
-using Windows.Security.Credentials.UI;
-
-public static class ForgedWindowsHello {
-    public static int Run(string message) {
-        try {
-            var availability = UserConsentVerifier.CheckAvailabilityAsync().AsTask().GetAwaiter().GetResult();
-            if (availability != UserConsentVerifierAvailability.Available) {
-                return 2;
-            }
-
-            var result = UserConsentVerifier.RequestVerificationAsync(message).AsTask().GetAwaiter().GetResult();
-            switch (result) {
-                case UserConsentVerificationResult.Verified:
-                    return 0;
-                case UserConsentVerificationResult.Canceled:
-                    return 3;
-                case UserConsentVerificationResult.DeviceNotPresent:
-                case UserConsentVerificationResult.NotConfiguredForUser:
-                case UserConsentVerificationResult.DisabledByPolicy:
-                    return 2;
-                default:
-                    return 1;
-            }
-        } catch {
-            return 1;
-        }
-    }
-}
-'@
-} catch {
-  exit 2
-}
-
-exit [ForgedWindowsHello]::Run('` + powershellQuote(reason) + `')
-`
-}
-
-func windowsHelloStatusScript() string {
-	return `
-$ErrorActionPreference = 'Stop'
-try {
-  Add-Type -ReferencedAssemblies @('System.Runtime.WindowsRuntime', "$env:SystemRoot\System32\WinMetadata\Windows.winmd") -TypeDefinition @'
-using System;
-using Windows.Security.Credentials.UI;
-
-public static class ForgedWindowsHelloStatus {
-    public static int Run() {
-        try {
-            var availability = UserConsentVerifier.CheckAvailabilityAsync().AsTask().GetAwaiter().GetResult();
-            switch (availability) {
-                case UserConsentVerifierAvailability.Available:
-                    return 0;
-                case UserConsentVerifierAvailability.DeviceBusy:
-                case UserConsentVerifierAvailability.RetriesExhausted:
-                case UserConsentVerifierAvailability.Canceled:
-                    return 1;
-                default:
-                    return 4;
-            }
-        } catch {
-            return 1;
-        }
-    }
-}
-'@
-} catch {
-  exit 2
-}
-
-exit [ForgedWindowsHelloStatus]::Run()
-`
-}
-
-func watchWindowsLocks(ctx context.Context, onLock func()) {
-	shell, err := windowsPowerShellPath()
-	if err != nil {
-		return
-	}
-
-	script := `
-	$lockSource = 'ForgedSessionLock'
-	$sleepSource = 'ForgedSleep'
-	$registered = @()
-try {
-	try {
-	  Register-WmiEvent -Class Win32_SessionChangeEvent -SourceIdentifier $lockSource -ErrorAction Stop | Out-Null
-	  $registered += $lockSource
-	} catch {}
-	try {
-	  Register-WmiEvent -Class Win32_PowerManagementEvent -SourceIdentifier $sleepSource -ErrorAction Stop | Out-Null
-	  $registered += $sleepSource
-	} catch {}
-	if ($registered.Count -eq 0) { exit 1 }
-  while ($true) {
-    $event = Wait-Event
-    if ($null -eq $event) { continue }
-    try {
-	  if ($event.SourceIdentifier -eq $lockSource -and $event.SourceEventArgs.NewEvent.Reason -eq 7) {
-        Write-Output 'LOCK'
-      }
-	  if ($event.SourceIdentifier -eq $sleepSource -and $event.SourceEventArgs.NewEvent.EventType -eq 4) {
-		Write-Output 'LOCK'
-	  }
-    } finally {
-      Remove-Event -EventIdentifier $event.EventIdentifier -ErrorAction SilentlyContinue | Out-Null
-    }
-  }
-} finally {
-	foreach ($source in $registered) {
-	  Get-EventSubscriber -SourceIdentifier $source -ErrorAction SilentlyContinue | Unregister-Event -Force -ErrorAction SilentlyContinue
-	}
-}
-`
-
-	for {
-		cmd := exec.CommandContext(
-			ctx,
-			shell,
-			"-NoProfile",
-			"-NonInteractive",
-			"-ExecutionPolicy",
-			"Bypass",
-			"-Command",
-			script,
-		)
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			if !retryLockMonitor(ctx) {
-				return
-			}
-			continue
-		}
-		if err := cmd.Start(); err != nil {
-			if !retryLockMonitor(ctx) {
-				return
-			}
-			continue
-		}
-
-		scanner := bufio.NewScanner(stdout)
-		for scanner.Scan() {
-			if strings.TrimSpace(scanner.Text()) == "LOCK" {
-				onLock()
-			}
-		}
-
-		_ = cmd.Wait()
-		if !retryLockMonitor(ctx) {
+		select {
+		case <-ctx.Done():
 			return
+		case <-time.After(delay):
 		}
+		delay = min(2*delay, 30*time.Second)
 	}
 }
 
-func retryLockMonitor(ctx context.Context) bool {
-	timer := time.NewTimer(time.Second)
-	defer timer.Stop()
-	select {
-	case <-timer.C:
-		return true
-	case <-ctx.Done():
+const (
+	wmClose            = 0x0010
+	wmPowerBroadcast   = 0x0218
+	wmWTSSessionChange = 0x02B1
+
+	pbtAPMSuspend = 0x0004
+
+	wtsConsoleDisconnect = 0x2
+	wtsRemoteDisconnect  = 0x4
+	wtsSessionLock       = 0x7
+)
+
+var (
+	user32                           = windows.NewLazySystemDLL("user32.dll")
+	wtsapi32                         = windows.NewLazySystemDLL("wtsapi32.dll")
+	procRegisterClassExW             = user32.NewProc("RegisterClassExW")
+	procCreateWindowExW              = user32.NewProc("CreateWindowExW")
+	procDestroyWindow                = user32.NewProc("DestroyWindow")
+	procDefWindowProcW               = user32.NewProc("DefWindowProcW")
+	procGetMessageW                  = user32.NewProc("GetMessageW")
+	procDispatchMessageW             = user32.NewProc("DispatchMessageW")
+	procPostMessageW                 = user32.NewProc("PostMessageW")
+	procPostQuitMessage              = user32.NewProc("PostQuitMessage")
+	procRegisterSuspendResumeNotif   = user32.NewProc("RegisterSuspendResumeNotification")
+	procUnregisterSuspendResumeNotif = user32.NewProc("UnregisterSuspendResumeNotification")
+	procWTSRegisterSessionNotif      = wtsapi32.NewProc("WTSRegisterSessionNotification")
+	procWTSUnRegisterSessionNotif    = wtsapi32.NewProc("WTSUnRegisterSessionNotification")
+)
+
+type wndClassEx struct {
+	size       uint32
+	style      uint32
+	wndProc    uintptr
+	clsExtra   int32
+	wndExtra   int32
+	instance   windows.Handle
+	icon       windows.Handle
+	cursor     windows.Handle
+	background windows.Handle
+	menuName   *uint16
+	className  *uint16
+	iconSm     windows.Handle
+}
+
+type winMsg struct {
+	hwnd    uintptr
+	message uint32
+	wParam  uintptr
+	lParam  uintptr
+	time    uint32
+	pt      struct{ x, y int32 }
+}
+
+// Only the single startLockLoop goroutine touches these.
+var (
+	lockMonitorOnLock     func()
+	lockMonitorProc       = windows.NewCallback(handleLockMonitorMessage)
+	lockMonitorClass, _   = windows.UTF16PtrFromString("ForgedAuthLockMonitor")
+	lockMonitorRegistered bool
+)
+
+func handleLockMonitorMessage(hwnd, msg, wParam, lParam uintptr) uintptr {
+	switch uint32(msg) {
+	case wmWTSSessionChange:
+		switch wParam {
+		case wtsSessionLock, wtsConsoleDisconnect, wtsRemoteDisconnect:
+			lockMonitorOnLock()
+		}
+		return 0
+	case wmPowerBroadcast:
+		if wParam == pbtAPMSuspend {
+			lockMonitorOnLock()
+		}
+		return 1
+	case wmClose:
+		_, _, _ = procDestroyWindow.Call(hwnd)
+		_, _, _ = procPostQuitMessage.Call(0)
+		return 0
+	}
+	ret, _, _ := procDefWindowProcW.Call(hwnd, msg, wParam, lParam)
+	return ret
+}
+
+// Session notifications go to the registered window directly; broadcast
+// power messages never reach a message-only window, hence the suspend hook.
+func runLockMonitor(ctx context.Context) bool {
+	runtime.LockOSThread()
+	defer runtime.UnlockOSThread()
+
+	if !lockMonitorRegistered {
+		class := wndClassEx{wndProc: lockMonitorProc, className: lockMonitorClass}
+		class.size = uint32(unsafe.Sizeof(class))
+		atom, _, _ := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&class)))
+		if lockMonitorRegistered = atom != 0; !lockMonitorRegistered {
+			return false
+		}
+	}
+	const hwndMessage = ^uintptr(2) // HWND_MESSAGE (-3)
+	hwnd, _, _ := procCreateWindowExW.Call(0, uintptr(unsafe.Pointer(lockMonitorClass)), 0, 0, 0, 0, 0, 0, hwndMessage, 0, 0, 0)
+	if hwnd == 0 {
 		return false
+	}
+	if ok, _, _ := procWTSRegisterSessionNotif.Call(hwnd, 0); ok == 0 {
+		_, _, _ = procDestroyWindow.Call(hwnd)
+		return false
+	}
+	defer procWTSUnRegisterSessionNotif.Call(hwnd)
+	if handle, _, _ := procRegisterSuspendResumeNotif.Call(hwnd, 0); handle != 0 {
+		defer procUnregisterSuspendResumeNotif.Call(handle)
+	}
+
+	stop := context.AfterFunc(ctx, func() {
+		_, _, _ = procPostMessageW.Call(hwnd, wmClose, 0, 0)
+	})
+	defer stop()
+
+	var msg winMsg
+	for {
+		ret, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&msg)), 0, 0, 0)
+		if int32(ret) <= 0 {
+			return true
+		}
+		_, _, _ = procDispatchMessageW.Call(uintptr(unsafe.Pointer(&msg)))
 	}
 }

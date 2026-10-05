@@ -7,6 +7,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -24,6 +25,7 @@ var daemonCmd = &cobra.Command{
 		if err != nil {
 			return err
 		}
+		platform.DetachOwnedConsole()
 
 		d := daemon.New(paths)
 		return d.Run(password)

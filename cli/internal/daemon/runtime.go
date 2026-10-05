@@ -4,7 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"runtime"
 	"strings"
 	"time"
 
@@ -55,6 +54,11 @@ func EnsureService(paths config.Paths, runtime RuntimeSpec) error {
 }
 
 func RequireServiceOwnership(paths config.Paths) error {
+	return requireServiceOwnership(paths, nil)
+}
+
+// status, when set, is an inspection the caller just made.
+func requireServiceOwnership(paths config.Paths, status *ServiceStatus) error {
 	daemonPID, running := IsRunning(paths)
 	if !running {
 		if platform.IsSocketAlive(paths.CtlSocket()) {
@@ -63,21 +67,17 @@ func RequireServiceOwnership(paths config.Paths) error {
 		return nil
 	}
 
-	status, err := InspectService(paths)
-	if err != nil {
-		return fmt.Errorf("Inspecting local service: %w", err)
+	if status == nil {
+		inspected, err := InspectService(paths)
+		if err != nil {
+			return fmt.Errorf("Inspecting local service: %w", err)
+		}
+		status = &inspected
 	}
 	if status.Installed && status.PIDKnown && status.PID == daemonPID {
 		return nil
 	}
 	return fmt.Errorf("%w; stop the running Forged daemon or service and try again", ErrDaemonServiceOwnership)
-}
-
-func requireServiceOwnershipForFreshness(paths config.Paths) error {
-	if runtime.GOOS == "windows" {
-		return nil
-	}
-	return RequireServiceOwnership(paths)
 }
 
 func normalizeRuntimeSpec(runtime RuntimeSpec) (RuntimeSpec, error) {
@@ -170,7 +170,7 @@ func ServiceFresh(paths config.Paths, expectedBuildID string) (bool, error) {
 	if buildID == "" || buildID != expectedBuildID {
 		return false, nil
 	}
-	if err := requireServiceOwnershipForFreshness(paths); err != nil {
+	if err := requireServiceOwnership(paths, &status); err != nil {
 		return false, err
 	}
 	return true, nil
@@ -228,7 +228,7 @@ func WaitForServiceReady(paths config.Paths, expectedBuildID string, timeout tim
 			time.Sleep(150 * time.Millisecond)
 			continue
 		}
-		if err := requireServiceOwnershipForFreshness(paths); err != nil {
+		if err := requireServiceOwnership(paths, &status); err != nil {
 			lastErr = err
 			time.Sleep(150 * time.Millisecond)
 			continue

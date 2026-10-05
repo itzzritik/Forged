@@ -5,6 +5,9 @@ package daemon
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -12,11 +15,11 @@ import (
 	"os/exec"
 	"os/user"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 const (
@@ -63,6 +66,18 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	if err := os.MkdirAll(logDir, 0o700); err != nil {
 		return fmt.Errorf("creating log directory: %w", err)
 	}
+	// Held through registration so a concurrent install can't prune our copy.
+	root := stagedBinariesRoot(paths)
+	unlock, err := lockStagedBinaries(root)
+	if err != nil {
+		return fmt.Errorf("locking staged daemon binaries: %w", err)
+	}
+	defer unlock()
+	staged, err := stageDaemonBinaries(root, runtime.Binary)
+	if err != nil {
+		return fmt.Errorf("staging daemon binary: %w", err)
+	}
+	runtime.Binary = staged
 
 	userID := currentTaskUser()
 	userBlock := ""
@@ -83,7 +98,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
   </Principals>`, xmlEscape(userID))
 	}
 
-	xmlBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-8"?>
+	xmlBody := fmt.Sprintf(`<?xml version="1.0" encoding="UTF-16"?>
 <Task version="1.2" xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task">
   <RegistrationInfo>
     <Description>Forged SSH Agent daemon</Description>
@@ -135,7 +150,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	}
 	tmpFile := tmp.Name()
 	defer os.Remove(tmpFile)
-	if _, err := tmp.WriteString(xmlBody); err != nil {
+	if _, err := tmp.Write(taskXML(xmlBody)); err != nil {
 		tmp.Close()
 		return fmt.Errorf("writing task XML: %w", err)
 	}
@@ -159,7 +174,106 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		return fmt.Errorf("Creating scheduled task failed: %w; output: %q; xml saved to %s",
 			err, strings.TrimSpace(string(out)), diagPath)
 	}
+	pruneStagedDaemonBinaries(root, filepath.Dir(staged))
 	return nil
+}
+
+// Windows can't replace a running exe, so the task runs a content-addressed
+// copy; the auth helper sits beside it because the daemon looks there.
+const (
+	stagedDaemon = "forged.exe"
+	stagedHelper = "forged-auth.exe"
+)
+
+func stagedBinariesRoot(paths config.Paths) string {
+	if local := os.Getenv("LOCALAPPDATA"); local != "" {
+		return filepath.Join(local, "Programs", "Forged", "daemon")
+	}
+	return filepath.Join(paths.ConfigDir, "bin")
+}
+
+func stageDaemonBinaries(root, binary string) (string, error) {
+	if rel, err := filepath.Rel(root, binary); err == nil && !strings.HasPrefix(rel, "..") {
+		return binary, nil
+	}
+	daemon, err := os.ReadFile(binary)
+	if err != nil {
+		return "", err
+	}
+	helper, err := os.ReadFile(filepath.Join(filepath.Dir(binary), stagedHelper))
+	if err != nil && !errors.Is(err, os.ErrNotExist) {
+		return "", err
+	}
+	// Both files name the copy, so a changed helper never targets a running one.
+	digest := sha256.New()
+	fmt.Fprintf(digest, "%d:", len(daemon))
+	digest.Write(daemon)
+	digest.Write(helper)
+	dir := filepath.Join(root, hex.EncodeToString(digest.Sum(nil)[:8]))
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return "", err
+	}
+	if err := writeStagedFile(filepath.Join(dir, stagedDaemon), daemon); err != nil {
+		return "", err
+	}
+	if helper != nil {
+		if err := writeStagedFile(filepath.Join(dir, stagedHelper), helper); err != nil {
+			return "", err
+		}
+	}
+	return filepath.Join(dir, stagedDaemon), nil
+}
+
+func lockStagedBinaries(root string) (func(), error) {
+	if err := os.MkdirAll(root, 0o700); err != nil {
+		return nil, err
+	}
+	file, err := os.OpenFile(filepath.Join(root, ".lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return nil, err
+	}
+	if err := platform.LockFileWait(file); err != nil {
+		file.Close()
+		return nil, err
+	}
+	return func() {
+		_ = platform.UnlockFile(file)
+		_ = file.Close()
+	}, nil
+}
+
+// Copies are only ever completed by rename, so an existing one is whole.
+func writeStagedFile(target string, data []byte) error {
+	if info, err := os.Stat(target); err == nil && info.Size() == int64(len(data)) {
+		return nil
+	}
+	tmp, err := os.CreateTemp(filepath.Dir(target), ".stage-*.tmp")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(tmp.Name())
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return err
+	}
+	if err := tmp.Close(); err != nil {
+		return err
+	}
+	return os.Rename(tmp.Name(), target)
+}
+
+// A copy a running daemon still holds fails to delete and is retried later.
+func pruneStagedDaemonBinaries(root, keep string) {
+	entries, err := os.ReadDir(root)
+	if err != nil {
+		return
+	}
+	for _, entry := range entries {
+		dir := filepath.Join(root, entry.Name())
+		if entry.IsDir() && !strings.EqualFold(dir, keep) {
+			_ = os.RemoveAll(dir)
+		}
+	}
 }
 
 func windowsTaskXMLCreationError(paths config.Paths, xmlBody string, createErr error) error {
@@ -178,10 +292,16 @@ func writeWindowsTaskDiagnostic(paths config.Paths, xmlBody string) (string, err
 	if err := os.MkdirAll(filepath.Dir(diagPath), 0o700); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(diagPath, []byte(xmlBody), 0o600); err != nil {
+	if err := os.WriteFile(diagPath, taskXML(xmlBody), 0o600); err != nil {
 		return "", err
 	}
 	return diagPath, nil
+}
+
+// schtasks rejects UTF-8 with an XML declaration; UTF-16LE+BOM also keeps
+// non-ASCII paths intact.
+func taskXML(body string) []byte {
+	return append([]byte{0xFF, 0xFE}, platform.UTF16LE(body)...)
 }
 
 func xmlEscape(value string) string {
@@ -235,30 +355,29 @@ func UninstallService() error {
 	if err != nil {
 		return err
 	}
-	if !installed {
-		return nil
-	}
-	if err := runScheduledTaskCommand("delete", "/Delete", "/TN", taskName(), "/F"); err != nil {
-		_, installed, queryErr := queryWindowsTaskState()
-		if queryErr == nil && !installed {
-			return nil
+	if installed {
+		if err := runScheduledTaskCommand("delete", "/Delete", "/TN", taskName(), "/F"); err != nil {
+			_, installed, queryErr := queryWindowsTaskState()
+			if queryErr != nil {
+				return errors.Join(err, fmt.Errorf("rechecking scheduled task state: %w", queryErr))
+			}
+			if installed {
+				return err
+			}
 		}
-		if queryErr != nil {
-			return errors.Join(err, fmt.Errorf("rechecking scheduled task state: %w", queryErr))
-		}
-		return err
 	}
+	_ = os.RemoveAll(stagedBinariesRoot(config.DefaultPaths()))
 	return nil
 }
 
 func ServiceInstalled() (bool, error) {
-	_, installed, err := queryWindowsTaskState()
+	_, installed, err := queryWindowsTask()
 	return installed, err
 }
 
 func InspectService(_ config.Paths) (ServiceStatus, error) {
 	status := DefaultServiceStatus()
-	state, installed, err := queryWindowsTaskState()
+	task, installed, err := queryWindowsTask()
 	if err != nil {
 		return status, err
 	}
@@ -270,7 +389,7 @@ func InspectService(_ config.Paths) (ServiceStatus, error) {
 	status.Installed = true
 	status.ConfigValid = true
 
-	binary, args, err := extractWindowsTaskCommand(taskName())
+	binary, args, err := task.command()
 	if err != nil {
 		invalidateServiceConfig(&status, fmt.Sprintf("reading scheduled task config: %v", err))
 		return status, nil
@@ -287,8 +406,12 @@ func InspectService(_ config.Paths) (ServiceStatus, error) {
 	}
 
 	status.Loaded = true
-	status.Running = state == windowsTaskStateRunning
-	switch state {
+	status.Running = task.State == windowsTaskStateRunning
+	if status.Running && len(task.PIDs) == 1 && task.PIDs[0] > 0 {
+		status.PID = task.PIDs[0]
+		status.PIDKnown = true
+	}
+	switch task.State {
 	case windowsTaskStateUnknown:
 		status.Detail = "unknown"
 	case windowsTaskStateDisabled:
@@ -304,35 +427,65 @@ func InspectService(_ config.Paths) (ServiceStatus, error) {
 	return status, nil
 }
 
+const windowsTaskActionExec = 0
+
+type windowsTask struct {
+	State   int                 `json:"state"`
+	Actions []windowsTaskAction `json:"actions"`
+	PIDs    []int               `json:"pids"`
+}
+
+type windowsTaskAction struct {
+	Type      int    `json:"type"`
+	Path      string `json:"path"`
+	Arguments string `json:"arguments"`
+}
+
+func (t windowsTask) command() (string, []string, error) {
+	if len(t.Actions) != 1 || t.Actions[0].Type != windowsTaskActionExec {
+		return "", nil, fmt.Errorf("expected one Exec action")
+	}
+	action := t.Actions[0]
+	return strings.Trim(strings.TrimSpace(action.Path), `"`), strings.Fields(action.Arguments), nil
+}
+
 func queryWindowsTaskState() (int, bool, error) {
+	task, installed, err := queryWindowsTask()
+	return task.State, installed, err
+}
+
+// COM, not `schtasks /Query`: its output is localized and mislabeled UTF-16.
+func queryWindowsTask() (windowsTask, bool, error) {
 	powershell, err := windowsServicePowerShellPath()
 	if err != nil {
-		return 0, false, fmt.Errorf("finding PowerShell for scheduled task state: %w", err)
+		return windowsTask{}, false, fmt.Errorf("finding PowerShell for scheduled task state: %w", err)
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, powershell, "-NoProfile", "-NonInteractive", "-Command", windowsTaskStateScript)
+	cmd := exec.CommandContext(ctx, powershell, "-NoProfile", "-NonInteractive", "-Command", windowsTaskQueryScript)
 	cmd.Env = append(os.Environ(), "FORGED_TASK_NAME="+taskName())
-	out, err := cmd.CombinedOutput()
+	var stderr bytes.Buffer
+	cmd.Stderr = &stderr
+	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) && exitErr.ExitCode() == 3 {
-			return 0, false, nil
+			return windowsTask{}, false, nil
 		}
-		message := strings.TrimSpace(string(out))
+		message := strings.TrimSpace(stderr.String())
 		if message == "" {
-			return 0, false, fmt.Errorf("reading scheduled task state: %w", err)
+			return windowsTask{}, false, fmt.Errorf("reading scheduled task state: %w", err)
 		}
-		return 0, false, fmt.Errorf("reading scheduled task state: %s: %w", message, err)
+		return windowsTask{}, false, fmt.Errorf("reading scheduled task state: %s: %w", message, err)
 	}
-	state, err := strconv.Atoi(strings.TrimSpace(string(out)))
-	if err != nil {
-		return 0, false, fmt.Errorf("parsing scheduled task state %q: %w", strings.TrimSpace(string(out)), err)
+	var task windowsTask
+	if err := json.Unmarshal(bytes.TrimSpace(out), &task); err != nil {
+		return windowsTask{}, false, fmt.Errorf("parsing scheduled task state %q: %w", strings.TrimSpace(string(out)), err)
 	}
-	if state < windowsTaskStateUnknown || state > windowsTaskStateRunning {
-		return 0, false, fmt.Errorf("scheduled task returned unknown state %d", state)
+	if task.State < windowsTaskStateUnknown || task.State > windowsTaskStateRunning {
+		return windowsTask{}, false, fmt.Errorf("scheduled task returned unknown state %d", task.State)
 	}
-	return state, true, nil
+	return task, true, nil
 }
 
 func windowsTaskStateActive(state int) bool {
@@ -377,12 +530,23 @@ func windowsServicePowerShellPath() (string, error) {
 	return "", exec.ErrNotFound
 }
 
-const windowsTaskStateScript = `$ErrorActionPreference = 'Stop'
+// \u escapes keep the JSON independent of the console code page.
+const windowsTaskQueryScript = `$ErrorActionPreference = 'Stop'
 try {
   $service = New-Object -ComObject 'Schedule.Service'
   $service.Connect()
   $task = $service.GetFolder('\').GetTask($env:FORGED_TASK_NAME)
-  [Console]::Out.Write([int]$task.State)
+  $actions = @(foreach ($action in $task.Definition.Actions) {
+    if ($action.Type -eq 0) {
+      @{ type = 0; path = [string]$action.Path; arguments = [string]$action.Arguments }
+    } else {
+      @{ type = [int]$action.Type }
+    }
+  })
+  $pids = @(foreach ($instance in $task.GetInstances(0)) { [int]$instance.EnginePID })
+  $json = ConvertTo-Json -Compress -Depth 4 -InputObject @{ state = [int]$task.State; actions = $actions; pids = $pids }
+  $json = [regex]::Replace($json, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
+  [Console]::Out.Write($json)
   exit 0
 } catch {
   $exception = $_.Exception
@@ -402,29 +566,6 @@ func findBinary() (string, error) {
 		return "", fmt.Errorf("Cannot find Forged binary: %w", err)
 	}
 	return filepath.Abs(self)
-}
-
-func extractWindowsTaskCommand(name string) (string, []string, error) {
-	out, err := exec.Command("schtasks", "/Query", "/TN", name, "/XML").Output()
-	if err != nil {
-		return "", nil, err
-	}
-	var task struct {
-		Actions struct {
-			Exec []struct {
-				Command   string `xml:"Command"`
-				Arguments string `xml:"Arguments"`
-			} `xml:"Exec"`
-		} `xml:"Actions"`
-	}
-	if err := xml.Unmarshal(out, &task); err != nil {
-		return "", nil, err
-	}
-	if len(task.Actions.Exec) != 1 {
-		return "", nil, fmt.Errorf("expected one Exec action")
-	}
-	action := task.Actions.Exec[0]
-	return strings.TrimSpace(action.Command), strings.Fields(action.Arguments), nil
 }
 
 func binaryExecutable(path string) bool {

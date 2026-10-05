@@ -50,6 +50,7 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 	if err := e.ensureSSHStage(state); err != nil {
 		return state.result, err
 	}
+	e.ensureGitSSHStage(state)
 	if err := e.ensureServiceStage(state, opts); err != nil {
 		return state.result, err
 	}
@@ -89,7 +90,7 @@ func (e *Engine) ensureSSHStage(state *repairState) error {
 		return nil
 	}
 
-	if sshHealthy(state.result.Snapshot) && !state.result.Snapshot.AgentDisabled {
+	if sshConfigHealthy(state.result.Snapshot) && !state.result.Snapshot.AgentDisabled {
 		return nil
 	}
 
@@ -100,7 +101,7 @@ func (e *Engine) ensureSSHStage(state *repairState) error {
 	if err := e.refreshSnapshot(state); err != nil {
 		return err
 	}
-	if sshHealthy(state.result.Snapshot) && !state.result.Snapshot.AgentDisabled {
+	if sshConfigHealthy(state.result.Snapshot) && !state.result.Snapshot.AgentDisabled {
 		e.markFixed(&state.result.Summary, "ssh")
 		return nil
 	}
@@ -108,10 +109,24 @@ func (e *Engine) ensureSSHStage(state *repairState) error {
 	return nil
 }
 
-func sshHealthy(snapshot Snapshot) bool {
+func sshConfigHealthy(snapshot Snapshot) bool {
 	return snapshot.SSHEnabled &&
 		snapshot.ManagedConfigReady &&
 		snapshot.IdentityAgentOwner.IsForged()
+}
+
+func (e *Engine) ensureGitSSHStage(state *repairState) {
+	if state.result.Snapshot.AgentDisabled || !state.result.Snapshot.GitSSH.NeedsFix() {
+		return
+	}
+	if err := e.fixGitSSHConfig(); err == nil {
+		state.result.Snapshot.GitSSH = e.gitSSH()
+	}
+	if state.result.Snapshot.GitSSH.NeedsFix() {
+		e.markFailed(&state.result.Summary, "git-ssh")
+		return
+	}
+	e.markFixed(&state.result.Summary, "git-ssh")
 }
 
 func (e *Engine) ensureVaultAndCredentialsStage(state *repairState, opts RunOptions) error {
