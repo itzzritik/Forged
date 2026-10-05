@@ -37,8 +37,9 @@ func getStartupPassword() ([]byte, error) {
 		return nil, fmt.Errorf("FORGED_MASTER_PASSWORD is unsupported; remove it and run forged doctor --fix")
 	}
 
-	fd := int(os.Stdin.Fd())
-	if term.IsTerminal(fd) {
+	// mintty without ConPTY connects stdin to a pipe, which would otherwise be
+	// read as a startup password and block until the terminal closes.
+	if term.IsTerminal(int(os.Stdin.Fd())) || platform.IsMSYSTerminal(os.Stdin) {
 		return nil, nil
 	}
 

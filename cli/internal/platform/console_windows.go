@@ -3,7 +3,10 @@
 package platform
 
 import (
+	"encoding/binary"
+	"os"
 	"os/exec"
+	"regexp"
 	"syscall"
 	"unsafe"
 
@@ -31,4 +34,27 @@ func HideChildConsole(cmd *exec.Cmd) {
 	}
 	cmd.SysProcAttr.HideWindow = true
 	cmd.SysProcAttr.CreationFlags |= windows.CREATE_NO_WINDOW
+}
+
+// mintty without ConPTY hands console programs these pipes instead of a
+// console; current MSYS runtimes append "-nat" for native programs.
+var msysPTYPipe = regexp.MustCompile(`^\\(?:Device\\NamedPipe\\)?(?:cygwin|msys)-[^-]+-pty\d+-(?:from|to)-master(?:-\w+)?$`)
+
+// IsMSYSTerminal reports whether f is a Cygwin/MSYS pseudo-terminal pipe.
+func IsMSYSTerminal(f *os.File) bool {
+	handle := windows.Handle(f.Fd())
+	if kind, err := windows.GetFileType(handle); err != nil || kind != windows.FILE_TYPE_PIPE {
+		return false
+	}
+	// FILE_NAME_INFO: a byte length followed by the UTF-16 name.
+	buf := make([]byte, 4+2*windows.MAX_PATH)
+	if err := windows.GetFileInformationByHandleEx(handle, windows.FileNameInfo, &buf[0], uint32(len(buf))); err != nil {
+		return false
+	}
+	size := binary.LittleEndian.Uint32(buf)
+	if int(size) > len(buf)-4 {
+		return false
+	}
+	name := windows.UTF16ToString(unsafe.Slice((*uint16)(unsafe.Pointer(&buf[4])), size/2))
+	return msysPTYPipe.MatchString(name)
 }

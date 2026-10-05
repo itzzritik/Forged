@@ -4,12 +4,15 @@ package platform
 
 import (
 	"errors"
+	"os"
 	"os/exec"
 )
 
 var errWindowsOnly = errors.New("only available on Windows")
 
 func DetachOwnedConsole() {}
+
+func IsMSYSTerminal(*os.File) bool { return false }
 
 func HideChildConsole(*exec.Cmd) {}
 

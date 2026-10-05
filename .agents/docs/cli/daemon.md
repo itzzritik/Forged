@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-10-05
+last_verified: 2026-10-06
 stable: partial
 ---
 
@@ -23,7 +23,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
   - `agent.sock` for SSH clients
   - `ctl.sock` for CLI/TUI control
 - It now boots cold by default. Installed services and foreground `forged daemon` no longer depend on a stored plaintext master password.
-- A foreground daemon accepts an optional startup password only from an explicit non-terminal stdin stream, never an environment variable; it trims one LF or CRLF delimiter and clears the buffer after startup hydration.
+- A foreground daemon accepts an optional startup password only from an explicit non-terminal stdin stream, never an environment variable; it trims one LF or CRLF delimiter and clears the buffer after startup hydration. Cygwin/MSYS pty pipes (mintty without ConPTY, named `\msys-<hash>-ptyN-from-master[-nat]`) count as terminals, or the daemon would block reading them.
 - A live vault session exists only after sensitive auth or password fallback hydrates it.
 - A foreground startup password hydrates through the broker, so it establishes the same active session as an interactive password unlock.
 - A delivered master-password authorization refreshes local unlock enrollment from the active vault session; a canceled or failed response does not change that durable trust.
