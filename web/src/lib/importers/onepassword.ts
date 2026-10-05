@@ -76,8 +76,12 @@ function parse1PasswordCSV(text: string): ImportedKey[] {
 }
 
 function looksLikeZipArchive(data: Uint8Array): boolean {
-	return data.length >= 4 && data[0] === 0x50 && data[1] === 0x4b &&
-		((data[2] === 0x03 && data[3] === 0x04) || (data[2] === 0x05 && data[3] === 0x06) || (data[2] === 0x07 && data[3] === 0x08));
+	return (
+		data.length >= 4 &&
+		data[0] === 0x50 &&
+		data[1] === 0x4b &&
+		((data[2] === 0x03 && data[3] === 0x04) || (data[2] === 0x05 && data[3] === 0x06) || (data[2] === 0x07 && data[3] === 0x08))
+	);
 }
 
 function parseCSV(text: string): string[][] {
@@ -89,9 +93,9 @@ function parseCSV(text: string): string[][] {
 	for (let i = 0; i < text.length; i++) {
 		const ch = text[i];
 		if (inQuotes) {
-			if (ch === "\"") {
-				if (text[i + 1] === "\"") {
-					field += "\"";
+			if (ch === '"') {
+				if (text[i + 1] === '"') {
+					field += '"';
 					i++;
 					continue;
 				}
@@ -102,7 +106,7 @@ function parseCSV(text: string): string[][] {
 			continue;
 		}
 
-		if (ch === "\"") {
+		if (ch === '"') {
 			inQuotes = true;
 			continue;
 		}
@@ -158,6 +162,8 @@ function detectCSVHeader(row: string[]): { hasHeader: boolean; titleIndex: numbe
 			case "archived":
 			case "one-timepassword":
 				hasHeader = true;
+				break;
+			default:
 				break;
 		}
 	}

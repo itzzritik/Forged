@@ -74,13 +74,29 @@
 	--modal-titlebar: var(--surface-inset);
 	--modal-titlebar-border: var(--border);
 	--modal-traffic-close: var(--destructive);
-	--modal-traffic-close-soft: color-mix(in srgb, var(--destructive) 12%, transparent);
-	--modal-traffic-close-glow: color-mix(in srgb, var(--destructive) 32%, transparent);
+	--modal-traffic-close-soft: color-mix(
+		in srgb,
+		var(--destructive) 12%,
+		transparent
+	);
+	--modal-traffic-close-glow: color-mix(
+		in srgb,
+		var(--destructive) 32%,
+		transparent
+	);
 	--modal-traffic-close-icon: rgba(55, 21, 24, 0.92);
 	--modal-traffic-warning: var(--warning);
-	--modal-traffic-warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
+	--modal-traffic-warning-soft: color-mix(
+		in srgb,
+		var(--warning) 12%,
+		transparent
+	);
 	--modal-traffic-success: var(--success);
-	--modal-traffic-success-soft: color-mix(in srgb, var(--success) 12%, transparent);
+	--modal-traffic-success-soft: color-mix(
+		in srgb,
+		var(--success) 12%,
+		transparent
+	);
 
 	--command-shell: var(--card);
 	--command-shell-border: var(--border);
@@ -92,8 +108,16 @@
 	--data-view-shell: var(--card);
 	--data-view-border: var(--border);
 	--data-view-sticky: var(--surface-inset);
-	--key-details-surface: color-mix(in srgb, var(--surface-inset) 82%, var(--card) 18%);
-	--key-details-surface-strong: color-mix(in srgb, var(--surface) 86%, var(--foreground) 14%);
+	--key-details-surface: color-mix(
+		in srgb,
+		var(--surface-inset) 82%,
+		var(--card) 18%
+	);
+	--key-details-surface-strong: color-mix(
+		in srgb,
+		var(--surface) 86%,
+		var(--foreground) 14%
+	);
 	--key-details-border: var(--border);
 }
 
@@ -165,13 +189,29 @@
 	--modal-titlebar: var(--surface-inset);
 	--modal-titlebar-border: var(--border);
 	--modal-traffic-close: var(--destructive);
-	--modal-traffic-close-soft: color-mix(in srgb, var(--destructive) 12%, transparent);
-	--modal-traffic-close-glow: color-mix(in srgb, var(--destructive) 36%, transparent);
+	--modal-traffic-close-soft: color-mix(
+		in srgb,
+		var(--destructive) 12%,
+		transparent
+	);
+	--modal-traffic-close-glow: color-mix(
+		in srgb,
+		var(--destructive) 36%,
+		transparent
+	);
 	--modal-traffic-close-icon: rgba(52, 18, 21, 0.94);
 	--modal-traffic-warning: var(--warning);
-	--modal-traffic-warning-soft: color-mix(in srgb, var(--warning) 12%, transparent);
+	--modal-traffic-warning-soft: color-mix(
+		in srgb,
+		var(--warning) 12%,
+		transparent
+	);
 	--modal-traffic-success: var(--success);
-	--modal-traffic-success-soft: color-mix(in srgb, var(--success) 12%, transparent);
+	--modal-traffic-success-soft: color-mix(
+		in srgb,
+		var(--success) 12%,
+		transparent
+	);
 
 	--command-shell: var(--card);
 	--command-shell-border: var(--border);
@@ -183,8 +223,16 @@
 	--data-view-shell: var(--card);
 	--data-view-border: var(--border);
 	--data-view-sticky: var(--surface-inset);
-	--key-details-surface: color-mix(in srgb, var(--surface-inset) 90%, var(--card) 10%);
-	--key-details-surface-strong: color-mix(in srgb, var(--surface) 82%, var(--foreground) 18%);
+	--key-details-surface: color-mix(
+		in srgb,
+		var(--surface-inset) 90%,
+		var(--card) 10%
+	);
+	--key-details-surface-strong: color-mix(
+		in srgb,
+		var(--surface) 82%,
+		var(--foreground) 18%
+	);
 	--key-details-border: var(--border);
 }
 
@@ -303,16 +351,28 @@ body {
 }
 
 @layer components {
-	.modal-window-controls:has(.modal-close-control:hover) .modal-traffic-secondary-warning,
-	.modal-window-controls:has(.modal-close-control:focus-visible) .modal-traffic-secondary-warning {
-		border-color: color-mix(in srgb, var(--modal-traffic-warning) 25%, transparent);
+	.modal-window-controls:has(.modal-close-control:hover)
+		.modal-traffic-secondary-warning,
+	.modal-window-controls:has(.modal-close-control:focus-visible)
+		.modal-traffic-secondary-warning {
 		background-color: var(--modal-traffic-warning);
+		border-color: color-mix(
+			in srgb,
+			var(--modal-traffic-warning) 25%,
+			transparent
+		);
 	}
 
-	.modal-window-controls:has(.modal-close-control:hover) .modal-traffic-secondary-success,
-	.modal-window-controls:has(.modal-close-control:focus-visible) .modal-traffic-secondary-success {
-		border-color: color-mix(in srgb, var(--modal-traffic-success) 25%, transparent);
+	.modal-window-controls:has(.modal-close-control:hover)
+		.modal-traffic-secondary-success,
+	.modal-window-controls:has(.modal-close-control:focus-visible)
+		.modal-traffic-secondary-success {
 		background-color: var(--modal-traffic-success);
+		border-color: color-mix(
+			in srgb,
+			var(--modal-traffic-success) 25%,
+			transparent
+		);
 	}
 }
 

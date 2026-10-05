@@ -3,42 +3,42 @@ import type { DataViewFeatures } from "./features";
 
 export type { DataViewColumnMeta, DataViewResponsive } from "./features";
 
-export type DataViewAction<TData = unknown> = {
+export interface DataViewAction<TData = unknown> {
 	id: string;
 	label: string;
 	onClick: (item: TData) => void;
 	variant?: "default" | "destructive";
-};
+}
 
-export type DataViewEmptyState = {
-	title: string;
-	description?: string;
+export interface DataViewEmptyState {
 	actionLabel?: string;
+	description?: string;
 	onAction?: () => void;
-};
+	title: string;
+}
 
 export type DataViewColumn<TData extends RowData> = ColumnDef<DataViewFeatures, TData, unknown>;
 
-export type DataViewSelectionToolbar<TData> = {
+export interface DataViewSelectionToolbar<TData> {
 	label: (selectedRows: TData[]) => string;
-	primaryActionLabel: (selectedRows: TData[]) => string;
 	onPrimaryAction: (selectedRows: TData[]) => void;
-};
+	primaryActionLabel: (selectedRows: TData[]) => string;
+}
 
-export type DataViewProps<TData extends RowData> = {
-	data: TData[];
+export interface DataViewProps<TData extends RowData> {
+	actions?: DataViewAction<TData>[] | ((item: TData) => DataViewAction<TData>[]);
 	columns: DataViewColumn<TData>[];
+	data: TData[];
+	emptyState?: DataViewEmptyState;
+	enableSelection?: boolean;
 	entityLabel: string;
-	globalFilterPlaceholder?: string;
 	getRowId?: (item: TData, index: number) => string;
 	getSearchText?: (item: TData) => string;
-	isLoading?: boolean;
-	emptyState?: DataViewEmptyState;
-	initialSorting?: SortingState;
+	globalFilterPlaceholder?: string;
 	initialColumnVisibility?: ColumnVisibilityState;
-	rowHeight?: number;
+	initialSorting?: SortingState;
+	isLoading?: boolean;
 	onRowClick?: (item: TData) => void;
-	actions?: DataViewAction<TData>[] | ((item: TData) => DataViewAction<TData>[]);
-	enableSelection?: boolean;
+	rowHeight?: number;
 	selectionToolbar?: DataViewSelectionToolbar<TData>;
-};
+}

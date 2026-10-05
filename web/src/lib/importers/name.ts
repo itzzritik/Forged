@@ -1,5 +1,6 @@
 export const DEFAULT_IMPORTED_NAME = "Imported";
 
+// biome-ignore lint/suspicious/noControlCharactersInRegex: stripping control characters from imported names is the point.
 const CONTROL_RE = /[\u0000-\u001f\u007f]+/g;
 const SPACE_RE = /\s+/g;
 

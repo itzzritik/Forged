@@ -11,7 +11,7 @@ import { parseForged } from "@/lib/importers/forged-format";
 import { normalizeImportedName } from "@/lib/importers/name";
 import { parse1Password } from "@/lib/importers/onepassword";
 import type { ImportedKey } from "@/lib/importers/types";
-import { parseSSHKeyFile, type ParsedSSHKey } from "@/lib/ssh-key-parser";
+import { type ParsedSSHKey, parseSSHKeyFile } from "@/lib/ssh-key-parser";
 import { computeFingerprintFromBlob, formatSSHPublicKeyFromBlob } from "@/lib/ssh-key-utils";
 import { cn } from "@/lib/utils";
 import { addKeyToVault, encryptNewItemKey, encryptPrivateKey } from "@/lib/vault-crypto";
@@ -217,7 +217,13 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 	const keyCount = reviewKeys.length;
 	const keyLabel = (n: number) => (n === 1 ? "Key" : "Keys");
 	const primaryImportLabel =
-		checkedCount === 0 ? "Import Keys" : checkedCount === keyCount ? (keyCount === 1 ? "Import Key" : "Import All Keys") : `Import ${checkedCount.toLocaleString()} ${keyLabel(checkedCount)}`;
+		checkedCount === 0
+			? "Import Keys"
+			: checkedCount === keyCount
+				? keyCount === 1
+					? "Import Key"
+					: "Import All Keys"
+				: `Import ${checkedCount.toLocaleString()} ${keyLabel(checkedCount)}`;
 	const bulkToggleLabel = hasVaultDuplicates
 		? allChecked
 			? "Deselect all"
@@ -280,22 +286,26 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 				const encryptedPrivateKeyB64 = await encryptPrivateKey(cipherKey, parsed.privateKeyBytes);
 
 				const now = new Date().toISOString();
-				current = addKeyToVault(current, {
-					id: crypto.randomUUID(),
-					name: key.name,
-					type: parsed.type,
-					public_key: publicKeyStr,
-					fingerprint,
-					comment: parsed.comment,
-					created_at: now,
-					updated_at: now,
-					git_signing: false,
-					tags: [],
-					version: 1,
-					device_origin: "web",
-					encrypted_cipher_key: encryptedCipherKeyB64,
-					encrypted_private_key: encryptedPrivateKeyB64,
-				}, deviceId);
+				current = addKeyToVault(
+					current,
+					{
+						id: crypto.randomUUID(),
+						name: key.name,
+						type: parsed.type,
+						public_key: publicKeyStr,
+						fingerprint,
+						comment: parsed.comment,
+						created_at: now,
+						updated_at: now,
+						git_signing: false,
+						tags: [],
+						version: 1,
+						device_origin: "web",
+						encrypted_cipher_key: encryptedCipherKeyB64,
+						encrypted_private_key: encryptedPrivateKeyB64,
+					},
+					deviceId
+				);
 			}
 
 			await pushVault(current);
@@ -393,7 +403,11 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 							<p className="text-muted-foreground text-xs">
 								{keyCount.toLocaleString()} {keyLabel(keyCount).toLowerCase()} found
 							</p>
-							<button className="text-muted-foreground text-xs underline-offset-2 transition-colors hover:text-foreground hover:underline" onClick={toggleAll} type="button">
+							<button
+								className="text-muted-foreground text-xs underline-offset-2 transition-colors hover:text-foreground hover:underline"
+								onClick={toggleAll}
+								type="button"
+							>
 								{bulkToggleLabel}
 							</button>
 						</div>
@@ -416,16 +430,13 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 											)}
 											key={`${reviewKey.entry.fingerprint}-${idx}`}
 										>
-											<input
-												checked={isChecked}
-												className="mt-1 size-4 shrink-0 accent-primary"
-												onChange={() => toggleOne(idx)}
-												type="checkbox"
-											/>
+											<input checked={isChecked} className="mt-1 size-4 shrink-0 accent-primary" onChange={() => toggleOne(idx)} type="checkbox" />
 											<div className="min-w-0 flex-1">
 												<div className="flex items-center justify-between gap-3">
 													<button className="min-w-0 flex-1 text-left" onClick={() => toggleOne(idx)} type="button">
-														<div className={cn("truncate text-sm", isChecked ? "text-foreground" : "text-muted-foreground")}>{reviewKey.entry.key.name}</div>
+														<div className={cn("truncate text-sm", isChecked ? "text-foreground" : "text-muted-foreground")}>
+															{reviewKey.entry.key.name}
+														</div>
 														<div className="mt-1 truncate font-mono text-muted-foreground text-xs">{fingerprint}</div>
 													</button>
 													<div className="flex shrink-0 flex-wrap items-center justify-end gap-1.5 self-center">
@@ -470,7 +481,7 @@ export const ImportKeyModal = ({ onClose }: ImportKeyModalProps) => {
 							</div>
 						</div>
 						{summaryLines.length > 0 && (
-							<div className="mb-4 mt-2 border border-primary/15 bg-linear-to-b from-primary/8 to-surface/60 px-4 py-3 shadow-sm">
+							<div className="mt-2 mb-4 border border-primary/15 bg-linear-to-b from-primary/8 to-surface/60 px-4 py-3 shadow-sm">
 								<p className="mb-1.5 text-[11px] text-primary/80 uppercase tracking-[0.16em]">Import Summary</p>
 								<div className="flex flex-col gap-0.5 text-muted-foreground text-xs leading-5">
 									{summaryLines.map((line) => (

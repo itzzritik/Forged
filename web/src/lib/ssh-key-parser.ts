@@ -3,9 +3,9 @@ import { KEY_TYPE_ECDSA, KEY_TYPE_ED25519, KEY_TYPE_RSA, type KeyTypeId } from "
 export interface ParsedSSHKey {
 	comment: string;
 	convertedToOpenSSH: boolean;
-	sourceFormat: "openssh" | "pkcs8-pem" | "legacy-pem";
 	privateKeyBytes: Uint8Array;
 	publicKeyBlob: Uint8Array;
+	sourceFormat: "openssh" | "pkcs8-pem" | "legacy-pem";
 	type: KeyTypeId;
 }
 
@@ -13,6 +13,8 @@ const OPENSSH_HEADER = "-----BEGIN OPENSSH PRIVATE KEY-----";
 const OPENSSH_FOOTER = "-----END OPENSSH PRIVATE KEY-----";
 const OPENSSH_MAGIC = "openssh-key-v1\0";
 const PEM_HEADER_RE = /^-----BEGIN ([A-Z0-9 ]+)-----$/;
+const LINE_BREAK_RE = /\r?\n/;
+const ENCRYPTED_RE = /ENCRYPTED/i;
 
 const OID_EC_PUBLIC_KEY = "1.2.840.10045.2.1";
 const OID_NIST_P256 = "1.2.840.10045.3.1.7";
@@ -21,15 +23,15 @@ const OID_NIST_P521 = "1.3.132.0.35";
 const OID_RSA_ENCRYPTION = "1.2.840.113549.1.1.1";
 const OID_ED25519 = "1.3.101.112";
 
-type ParsedPem = {
+interface ParsedPem {
 	body: Uint8Array;
 	label: string;
-};
+}
 
-type ImportSpec = {
+interface ImportSpec {
 	algorithm: AlgorithmIdentifier | EcKeyImportParams | RsaHashedImportParams;
 	type: ParsedSSHKey["type"];
-};
+}
 
 class SSHBuffer {
 	private readonly view: DataView;
@@ -142,12 +144,12 @@ function encodeOid(oid: string): Uint8Array {
 	return encodeDer(0x06, encodeOidValue(oid));
 }
 
-type DerElement = {
+interface DerElement {
 	length: number;
+	nextOffset: number;
 	tag: number;
 	value: Uint8Array;
-	nextOffset: number;
-};
+}
 
 function readDerElement(data: Uint8Array, offset = 0): DerElement {
 	if (offset >= data.length) {
@@ -286,7 +288,7 @@ function parseOpenSSHKey(content: string): ParsedSSHKey {
 
 function parsePemBlock(content: string): ParsedPem {
 	const normalizedText = normalizePrivateKeyText(content);
-	const lines = normalizedText.trim().split(/\r?\n/);
+	const lines = normalizedText.trim().split(LINE_BREAK_RE);
 	const header = lines[0]?.match(PEM_HEADER_RE);
 	if (!header) {
 		throw new Error("UNKNOWN_FORMAT");
@@ -316,7 +318,7 @@ function parsePemBlock(content: string): ParsedPem {
 		base64Lines.push(line.trim());
 	}
 
-	if (header[1] === "ENCRYPTED PRIVATE KEY" || headers.some((line) => /ENCRYPTED/i.test(line))) {
+	if (header[1] === "ENCRYPTED PRIVATE KEY" || headers.some((line) => ENCRYPTED_RE.test(line))) {
 		throw new Error("PASSPHRASE_PROTECTED");
 	}
 	if (base64Lines.length === 0) {
@@ -486,9 +488,9 @@ function buildPublicKeyBlobFromJwk(jwk: JsonWebKey, type: ParsedSSHKey["type"]):
 			}
 			return concatBytes(encodeSSHString(new TextEncoder().encode("ssh-ed25519")), encodeSSHString(decodeBase64Url(jwk.x)));
 		}
+		default:
+			throw new Error("UNKNOWN_FORMAT");
 	}
-
-	throw new Error("UNKNOWN_FORMAT");
 }
 
 function buildEd25519PublicKeyBlob(publicKeyRaw: Uint8Array): Uint8Array {

@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronDownIcon, ChevronRightIcon, CopyIcon, EyeIcon, EyeOffIcon, PencilIcon } from "lucide-react";
-import { type CSSProperties, useCallback, useEffect, useMemo, useState } from "react";
+import { type CSSProperties, useCallback, useEffect, useId, useMemo, useState } from "react";
 import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
@@ -118,12 +118,12 @@ function DetailRow({
 	value: React.ReactNode;
 }) {
 	return (
-		<div className="overflow-hidden rounded-lg border border-key-details-border bg-key-details-surface shadow-[0_20px_50px_-42px_rgba(0,0,0,0.55)] animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+		<div className="fade-in-0 slide-in-from-bottom-2 animate-in overflow-hidden rounded-lg border border-key-details-border bg-key-details-surface shadow-[0_20px_50px_-42px_rgba(0,0,0,0.55)] duration-300">
 			<div className="grid min-h-[60px] grid-cols-[112px_minmax(0,1fr)_auto] items-center gap-4 px-4 py-3 sm:min-h-[58px] sm:py-0">
 				<p className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.12em]">{label}</p>
 				<div
 					className={cn(
-						"min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-sm text-foreground",
+						"min-w-0 overflow-hidden text-ellipsis whitespace-nowrap text-foreground text-sm",
 						mono && "font-mono text-xs sm:text-sm",
 						dim && "text-muted-foreground"
 					)}
@@ -146,7 +146,11 @@ function TimelineSection({ events, open, onToggle }: { events: TimelineEvent[]; 
 
 	return (
 		<div className="pt-1">
-			<button className="group flex w-full items-center gap-3 rounded-md px-1 py-1 text-left text-muted-foreground transition-colors hover:text-foreground" onClick={onToggle} type="button">
+			<button
+				className="group flex w-full items-center gap-3 rounded-md px-1 py-1 text-left text-muted-foreground transition-colors hover:text-foreground"
+				onClick={onToggle}
+				type="button"
+			>
 				{open ? (
 					<ChevronDownIcon className="size-4 shrink-0 transition-transform group-hover:text-foreground" />
 				) : (
@@ -156,12 +160,12 @@ function TimelineSection({ events, open, onToggle }: { events: TimelineEvent[]; 
 			</button>
 
 			{open ? (
-				<div className="ml-[0.95rem] mt-2 border-key-details-border border-l pl-4 animate-in fade-in-0 slide-in-from-bottom-2 duration-300">
+				<div className="fade-in-0 slide-in-from-bottom-2 mt-2 ml-[0.95rem] animate-in border-key-details-border border-l pl-4 duration-300">
 					<div className="space-y-3 py-1">
 						{events.map((event) => (
 							<div className="space-y-0.5" key={event.id}>
 								<p className="text-[12px] text-foreground/90 leading-5 sm:text-[13px]">{event.title}</p>
-								{event.subtitle ? <p className="text-muted-foreground text-[11px] leading-4">{event.subtitle}</p> : null}
+								{event.subtitle ? <p className="text-[11px] text-muted-foreground leading-4">{event.subtitle}</p> : null}
 							</div>
 						))}
 					</div>
@@ -177,7 +181,9 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 	const [isRevealing, setIsRevealing] = useState(false);
 	const [privateKeyError, setPrivateKeyError] = useState<string | null>(null);
 	const [timelineOpen, setTimelineOpen] = useState(false);
+	const nameId = useId();
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the draft resets whenever the key or mode changes.
 	useEffect(() => {
 		setDraftName(keyDetails?.name ?? "");
 	}, [keyDetails?.id, keyDetails?.name, mode]);
@@ -191,6 +197,7 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 		}
 	}, [open]);
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: revealed secrets reset whenever the key or mode changes.
 	useEffect(() => {
 		setRevealedPrivateKey(null);
 		setPrivateKeyError(null);
@@ -243,7 +250,7 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 				<ModalBody className="gap-0 p-0">
 					<div className="overflow-y-auto px-6 py-6" style={{ maxHeight: "calc(100vh - 6rem)" }}>
 						<div className="rounded-lg border border-key-details-border bg-key-details-surface px-4 py-4">
-							<p className="font-semibold text-lg text-foreground">Key not found</p>
+							<p className="font-semibold text-foreground text-lg">Key not found</p>
 							<p className="mt-2 text-muted-foreground text-sm">This key is no longer available in the current vault state.</p>
 						</div>
 					</div>
@@ -265,12 +272,16 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 				<div className="overflow-y-auto px-6 py-6" style={{ maxHeight: "calc(100vh - 6rem)" }}>
 					{mode === "view" ? (
 						<div className="space-y-4">
-							<div className="rounded-lg border border-key-details-border bg-key-details-surface px-5 py-4 shadow-[0_24px_60px_-40px_rgba(0,0,0,0.55)] transition-colors duration-200 animate-in fade-in-0 slide-in-from-bottom-2">
+							<div className="fade-in-0 slide-in-from-bottom-2 animate-in rounded-lg border border-key-details-border bg-key-details-surface px-5 py-4 shadow-[0_24px_60px_-40px_rgba(0,0,0,0.55)] transition-colors duration-200">
 								<div className="flex gap-4 sm:items-center sm:justify-between">
 									<div className="min-w-0 flex-1">
 										<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-											<h2 className="min-w-0 truncate font-semibold text-2xl tracking-tight text-foreground sm:text-3xl">{keyDetails.name}</h2>
-											<Badge className="h-6 rounded-md border px-2.5 font-mono text-[11px] tracking-[0.06em]" style={keyTypeBadgeStyle} variant="outline">
+											<h2 className="min-w-0 truncate font-semibold text-2xl text-foreground tracking-tight sm:text-3xl">{keyDetails.name}</h2>
+											<Badge
+												className="h-6 rounded-md border px-2.5 font-mono text-[11px] tracking-[0.06em]"
+												style={keyTypeBadgeStyle}
+												variant="outline"
+											>
 												{keyDetails.type}
 											</Badge>
 										</div>
@@ -281,7 +292,14 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 							</div>
 
 							<DetailRow
-								action={<IconButton icon={<CopyIcon className="size-4" />} label="Copy public key" onClick={() => void handleCopy(keyDetails.publicKey, "Public key copied to clipboard")} variant="ghost" />}
+								action={
+									<IconButton
+										icon={<CopyIcon className="size-4" />}
+										label="Copy public key"
+										onClick={() => void handleCopy(keyDetails.publicKey, "Public key copied to clipboard")}
+										variant="ghost"
+									/>
+								}
 								label="Public key"
 								mono
 								value={keyDetails.publicKey}
@@ -311,7 +329,9 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 								dim
 								expanded={
 									revealedPrivateKey ? (
-										<pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[12px] leading-7 text-foreground">{revealedPrivateKey}</pre>
+										<pre className="overflow-x-auto whitespace-pre-wrap break-all font-mono text-[12px] text-foreground leading-7">
+											{revealedPrivateKey}
+										</pre>
 									) : null
 								}
 								label="Private key"
@@ -325,11 +345,15 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 						</div>
 					) : (
 						<div className="space-y-5">
-							<div className="rounded-lg border border-key-details-border bg-key-details-surface px-5 py-4 shadow-[0_24px_60px_-40px_rgba(0,0,0,0.55)] transition-colors duration-200 animate-in fade-in-0 slide-in-from-bottom-2">
+							<div className="fade-in-0 slide-in-from-bottom-2 animate-in rounded-lg border border-key-details-border bg-key-details-surface px-5 py-4 shadow-[0_24px_60px_-40px_rgba(0,0,0,0.55)] transition-colors duration-200">
 								<div className="min-w-0">
 									<div className="flex flex-wrap items-center gap-x-3 gap-y-2">
-										<h2 className="min-w-0 truncate font-semibold text-2xl tracking-tight text-foreground sm:text-3xl">Edit {keyDetails.name}</h2>
-										<Badge className="h-6 rounded-md border px-2.5 font-mono text-[11px] tracking-[0.06em]" style={keyTypeBadgeStyle} variant="outline">
+										<h2 className="min-w-0 truncate font-semibold text-2xl text-foreground tracking-tight sm:text-3xl">Edit {keyDetails.name}</h2>
+										<Badge
+											className="h-6 rounded-md border px-2.5 font-mono text-[11px] tracking-[0.06em]"
+											style={keyTypeBadgeStyle}
+											variant="outline"
+										>
 											{keyDetails.type}
 										</Badge>
 									</div>
@@ -337,12 +361,15 @@ export function KeyDetailsModal({ open, keyDetails, mode, onClose, onModeChange,
 								</div>
 							</div>
 
-							<div className="rounded-lg border border-key-details-border bg-key-details-surface px-5 py-5 shadow-[0_24px_60px_-40px_rgba(0,0,0,0.55)] transition-colors duration-200 animate-in fade-in-0 slide-in-from-bottom-2">
+							<div className="fade-in-0 slide-in-from-bottom-2 animate-in rounded-lg border border-key-details-border bg-key-details-surface px-5 py-5 shadow-[0_24px_60px_-40px_rgba(0,0,0,0.55)] transition-colors duration-200">
 								<div className="space-y-2">
-									<label className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.12em]">Name</label>
+									<label className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.12em]" htmlFor={nameId}>
+										Name
+									</label>
 									<Input
 										autoFocus
 										className="h-10 border-key-details-border bg-key-details-surface-strong font-mono text-sm"
+										id={nameId}
 										onChange={(event) => setDraftName(event.target.value)}
 										onKeyDown={(event) => {
 											if (event.key === "Enter" && !isSaving) {

@@ -108,13 +108,7 @@ function ContextMenuSubTrigger({
 	);
 }
 
-function ContextMenuSubContent({
-	align = "start",
-	alignOffset = -3,
-	sideOffset = 0,
-	className,
-	...props
-}: React.ComponentProps<typeof ContextMenuContent>) {
+function ContextMenuSubContent({ align = "start", alignOffset = -3, sideOffset = 0, className, ...props }: React.ComponentProps<typeof ContextMenuContent>) {
 	return (
 		<ContextMenuContent
 			align={align}

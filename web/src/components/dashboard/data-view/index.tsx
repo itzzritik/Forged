@@ -12,8 +12,8 @@ import {
 	useTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { CheckIcon, ChevronDownIcon, ChevronUpIcon, Columns3Icon, MoreHorizontalIcon, SearchIcon } from "lucide-react";
-import { type CSSProperties, type MouseEvent, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDownIcon, ChevronUpIcon, Columns3Icon, MoreHorizontalIcon, SearchIcon } from "lucide-react";
+import { type CSSProperties, type MouseEvent, useCallback, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuTrigger } from "@/components/ui/context-menu";
@@ -31,7 +31,7 @@ import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
 import { type DataViewFeatures, dataViewFeatures } from "./features";
-import { type DataViewAction, type DataViewColumn, type DataViewProps } from "./types";
+import type { DataViewAction, DataViewProps } from "./types";
 import { useDataViewColumns } from "./use-data-view-columns";
 
 const responsiveCN = {
@@ -57,7 +57,10 @@ function normalizeSearchValue(value: unknown): string {
 	if (typeof value === "number" || typeof value === "bigint" || typeof value === "boolean") return String(value).toLowerCase();
 	if (value instanceof Date) return value.toISOString().toLowerCase();
 	if (Array.isArray(value)) return value.map((item) => normalizeSearchValue(item)).join(" ");
-	if (typeof value === "object") return Object.values(value as Record<string, unknown>).map((entry) => normalizeSearchValue(entry)).join(" ");
+	if (typeof value === "object")
+		return Object.values(value as Record<string, unknown>)
+			.map((entry) => normalizeSearchValue(entry))
+			.join(" ");
 	return String(value).toLowerCase();
 }
 
@@ -120,13 +123,7 @@ function isInteractiveTarget(target: HTMLElement) {
 	return Boolean(target.closest("button,input,a,[role='menuitem'],[data-slot='dropdown-menu-trigger']"));
 }
 
-function DataViewActionMenuItems<TData>({
-	actions,
-	onAction,
-}: {
-	actions: DataViewAction<TData>[];
-	onAction: (action: DataViewAction<TData>) => void;
-}) {
+function DataViewActionMenuItems<TData>({ actions, onAction }: { actions: DataViewAction<TData>[]; onAction: (action: DataViewAction<TData>) => void }) {
 	return (
 		<>
 			{actions.map((action) => (
@@ -241,7 +238,7 @@ function DataViewColumnToggle<TData extends RowData>({
 	);
 }
 
-export function DataView<TData extends RowData>({
+export function DataViewTable<TData extends RowData>({
 	actions,
 	columns,
 	data,
@@ -263,7 +260,7 @@ export function DataView<TData extends RowData>({
 	const [searchText, setSearchText] = useState("");
 	const deferredSearchText = useDeferredValue(searchText);
 	const scrollRef = useRef<HTMLDivElement>(null);
-	const resolveRowActions = (item: TData): DataViewAction<TData>[] => (typeof actions === "function" ? actions(item) : actions ?? []);
+	const resolveRowActions = useCallback((item: TData): DataViewAction<TData>[] => (typeof actions === "function" ? actions(item) : (actions ?? [])), [actions]);
 
 	const filteredData = useMemo(() => {
 		const query = deferredSearchText.trim().toLowerCase();
@@ -295,20 +292,16 @@ export function DataView<TData extends RowData>({
 				id: "__select",
 				enableHiding: false,
 				enableSorting: false,
-				header: ({ table }) => (
+				header: ({ table: headerTable }) => (
 					<SelectionCheckbox
 						ariaLabel={`Select all ${entityLabel}`}
-						checked={table.getIsAllPageRowsSelected()}
-						indeterminate={table.getIsSomePageRowsSelected()}
-						onChange={(checked) => table.toggleAllPageRowsSelected(checked)}
+						checked={headerTable.getIsAllPageRowsSelected()}
+						indeterminate={headerTable.getIsSomePageRowsSelected()}
+						onChange={(checked) => headerTable.toggleAllPageRowsSelected(checked)}
 					/>
 				),
 				cell: ({ row }) => (
-					<SelectionCheckbox
-						ariaLabel={`Select ${entityLabel}`}
-						checked={row.getIsSelected()}
-						onChange={(checked) => row.toggleSelected(checked)}
-					/>
+					<SelectionCheckbox ariaLabel={`Select ${entityLabel}`} checked={row.getIsSelected()} onChange={(checked) => row.toggleSelected(checked)} />
 				),
 				meta: {
 					align: "center",
@@ -327,9 +320,7 @@ export function DataView<TData extends RowData>({
 				enableHiding: false,
 				enableSorting: false,
 				header: () => null,
-				cell: ({ row }) => {
-					return <DataViewRowActions actions={resolveRowActions(row.original)} item={row.original} />;
-				},
+				cell: ({ row }) => <DataViewRowActions actions={resolveRowActions(row.original)} item={row.original} />,
 				meta: {
 					align: "end",
 					cellClassName: "w-16",
@@ -340,7 +331,7 @@ export function DataView<TData extends RowData>({
 		}
 
 		return nextColumns;
-	}, [actions, columns, enableSelection, entityLabel]);
+	}, [actions, columns, enableSelection, entityLabel, resolveRowActions]);
 
 	const table = useTable({
 		columns: tableColumns,
@@ -379,266 +370,275 @@ export function DataView<TData extends RowData>({
 	});
 
 	const virtualRows = rowVirtualizer.getVirtualItems();
-	const paddingTop = virtualRows.length > 0 ? virtualRows[0]?.start ?? 0 : 0;
-	const paddingBottom =
-		virtualRows.length > 0 ? rowVirtualizer.getTotalSize() - (virtualRows[virtualRows.length - 1]?.end ?? 0) : 0;
+	const paddingTop = virtualRows.length > 0 ? (virtualRows[0]?.start ?? 0) : 0;
+	const paddingBottom = virtualRows.length > 0 ? rowVirtualizer.getTotalSize() - (virtualRows.at(-1)?.end ?? 0) : 0;
 
 	return (
 		<div className="overflow-hidden border border-[var(--data-view-border)] bg-[var(--data-view-shell)]">
-				<div className="border-b border-[var(--data-view-border)] bg-[var(--data-view-sticky)]">
-					{selectionToolbar && selectedRows.length > 0 && (
-						<div className="flex flex-wrap items-center justify-between gap-3 border-b border-[var(--data-view-border)] px-3 py-2">
-							<p className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.12em]">{selectionToolbar.label(selectedRows)}</p>
-							<Button onClick={() => selectionToolbar.onPrimaryAction(selectedRows)} size="sm" variant="destructive">
-								{selectionToolbar.primaryActionLabel(selectedRows)}
-							</Button>
-						</div>
-					)}
-					<div className="flex flex-wrap items-center gap-3 px-3 py-2.5">
-						<div className="relative min-w-0 flex-1">
-							{isLoading ? (
-								<Skeleton className="h-8 w-full border border-[var(--data-view-border)]" />
-							) : (
-								<>
-									<SearchIcon className="-translate-y-1/2 pointer-events-none absolute top-1/2 left-2.5 size-4 text-muted-foreground/60" />
-									<Input
-										className="h-8 border-[var(--data-view-border)] bg-background pl-8 font-mono text-sm"
-										disabled={isLoading}
-										onChange={(event) => setSearchText(event.target.value)}
-										placeholder={globalFilterPlaceholder ?? `Search ${entityLabel}`}
-										value={searchText}
-									/>
-								</>
-							)}
-						</div>
-						{isLoading ? <Skeleton className="h-7 w-7 border border-[var(--data-view-border)]" /> : <DataViewColumnToggle disabled={isLoading} onReset={resetColumnVisibility} table={table} />}
+			<div className="border-[var(--data-view-border)] border-b bg-[var(--data-view-sticky)]">
+				{selectionToolbar && selectedRows.length > 0 && (
+					<div className="flex flex-wrap items-center justify-between gap-3 border-[var(--data-view-border)] border-b px-3 py-2">
+						<p className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.12em]">{selectionToolbar.label(selectedRows)}</p>
+						<Button onClick={() => selectionToolbar.onPrimaryAction(selectedRows)} size="sm" variant="destructive">
+							{selectionToolbar.primaryActionLabel(selectedRows)}
+						</Button>
 					</div>
-				</div>
-
-				{totalCount === 0 && !isLoading ? (
-					<div className="flex min-h-48 flex-col items-center justify-center gap-2 px-6 py-12 text-center">
-						<p className="font-medium text-sm">{emptyState?.title ?? `No ${entityLabel} yet`}</p>
-						{emptyState?.description && <p className="max-w-md text-muted-foreground text-sm">{emptyState.description}</p>}
-						{emptyState?.actionLabel && emptyState.onAction && (
-							<Button onClick={emptyState.onAction} variant="outline">
-								{emptyState.actionLabel}
-							</Button>
+				)}
+				<div className="flex flex-wrap items-center gap-3 px-3 py-2.5">
+					<div className="relative min-w-0 flex-1">
+						{isLoading ? (
+							<Skeleton className="h-8 w-full border border-[var(--data-view-border)]" />
+						) : (
+							<>
+								<SearchIcon className="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground/60" />
+								<Input
+									className="h-8 border-[var(--data-view-border)] bg-background pl-8 font-mono text-sm"
+									disabled={isLoading}
+									onChange={(event) => setSearchText(event.target.value)}
+									placeholder={globalFilterPlaceholder ?? `Search ${entityLabel}`}
+									value={searchText}
+								/>
+							</>
 						)}
 					</div>
-				) : (
-					<>
-						<div className="max-h-[min(65vh,42rem)] overflow-auto" ref={scrollRef}>
-							<table className="w-full border-separate border-spacing-0 font-mono text-sm">
-								<thead className="sticky top-0 z-10">
-									{headerGroups.map((headerGroup) => (
-										<tr key={headerGroup.id}>
-											{headerGroup.headers.map((header) => {
-												const align = header.column.columnDef.meta?.align ?? "start";
-												const responsive = header.column.columnDef.meta?.responsive ?? "base";
-												const sortDirection = header.column.getIsSorted();
-												const sortable = header.column.getCanSort();
+					{isLoading ? (
+						<Skeleton className="h-7 w-7 border border-[var(--data-view-border)]" />
+					) : (
+						<DataViewColumnToggle disabled={isLoading} onReset={resetColumnVisibility} table={table} />
+					)}
+				</div>
+			</div>
+
+			{totalCount === 0 && !isLoading ? (
+				<div className="flex min-h-48 flex-col items-center justify-center gap-2 px-6 py-12 text-center">
+					<p className="font-medium text-sm">{emptyState?.title ?? `No ${entityLabel} yet`}</p>
+					{emptyState?.description && <p className="max-w-md text-muted-foreground text-sm">{emptyState.description}</p>}
+					{emptyState?.actionLabel && emptyState.onAction && (
+						<Button onClick={emptyState.onAction} variant="outline">
+							{emptyState.actionLabel}
+						</Button>
+					)}
+				</div>
+			) : (
+				<>
+					<div className="max-h-[min(65vh,42rem)] overflow-auto" ref={scrollRef}>
+						<table className="w-full border-separate border-spacing-0 font-mono text-sm">
+							<thead className="sticky top-0 z-10">
+								{headerGroups.map((headerGroup) => (
+									<tr key={headerGroup.id}>
+										{headerGroup.headers.map((header) => {
+											const align = header.column.columnDef.meta?.align ?? "start";
+											const responsive = header.column.columnDef.meta?.responsive ?? "base";
+											const sortDirection = header.column.getIsSorted();
+											const sortable = header.column.getCanSort();
+											return (
+												<th
+													className={cn(
+														"border-[var(--data-view-border)] border-r border-b bg-[var(--data-view-sticky)] px-3 py-2 font-medium text-[11px] uppercase tracking-[0.12em] last:border-r-0",
+														getPinnedCellClassName(header.column, "header"),
+														alignCN[align],
+														responsiveCN[responsive],
+														header.column.columnDef.meta?.headerClassName
+													)}
+													key={header.id}
+													style={getPinnedCellStyle(header.column, "header")}
+												>
+													{header.isPlaceholder ? null : isLoading ? (
+														header.column.id === "__actions" ? null : (
+															<Skeleton className={cn("h-3", header.column.id === "__select" ? "mx-auto w-4" : "w-16")} />
+														)
+													) : sortable ? (
+														<button
+															className={cn(
+																"flex w-full items-center gap-1.5",
+																align === "end" ? "justify-end" : align === "center" ? "justify-center" : "justify-start"
+															)}
+															onClick={header.column.getToggleSortingHandler()}
+															type="button"
+														>
+															{flexRender(header.column.columnDef.header, header.getContext())}
+															{sortDirection === "asc" ? (
+																<ChevronUpIcon className="size-3.5 text-primary" />
+															) : sortDirection === "desc" ? (
+																<ChevronDownIcon className="size-3.5 text-primary" />
+															) : null}
+														</button>
+													) : (
+														flexRender(header.column.columnDef.header, header.getContext())
+													)}
+												</th>
+											);
+										})}
+									</tr>
+								))}
+							</thead>
+							<tbody>
+								{isLoading ? (
+									Array.from({ length: 8 }, (_, rowIndex) => (
+										<tr className="border-[var(--data-view-border)] border-b" key={`loading-${rowIndex}`}>
+											{visibleColumns.map((column) => {
+												const align = column.columnDef.meta?.align ?? "start";
+												const responsive = column.columnDef.meta?.responsive ?? "base";
+												const isSelectionColumn = column.id === "__select";
+												const isActionsColumn = column.id === "__actions";
+												const isPrimaryColumn = column.id === firstDataColumnId;
 												return (
-													<th
+													<td
 														className={cn(
-															"border-b border-r border-[var(--data-view-border)] bg-[var(--data-view-sticky)] px-3 py-2 font-medium text-[11px] uppercase tracking-[0.12em] last:border-r-0",
-															getPinnedCellClassName(header.column, "header"),
+															"border-[var(--data-view-border)] border-r border-b px-3 py-2.5 align-middle last:border-r-0",
+															getPinnedCellClassName(column, "body"),
 															alignCN[align],
 															responsiveCN[responsive],
-															header.column.columnDef.meta?.headerClassName
+															column.columnDef.meta?.cellClassName
 														)}
-														key={header.id}
-														style={getPinnedCellStyle(header.column, "header")}
+														key={`${rowIndex}-${column.id}`}
+														style={getPinnedCellStyle(column, "body")}
 													>
-														{header.isPlaceholder ? null : isLoading ? (
-															header.column.id === "__actions" ? null : (
-																<Skeleton className={cn("h-3", header.column.id === "__select" ? "mx-auto w-4" : "w-16")} />
-															)
-														) : sortable ? (
-															<button
-																className={cn("flex w-full items-center gap-1.5", align === "end" ? "justify-end" : align === "center" ? "justify-center" : "justify-start")}
-																onClick={header.column.getToggleSortingHandler()}
-																type="button"
-															>
-																{flexRender(header.column.columnDef.header, header.getContext())}
-																{sortDirection === "asc" ? (
-																	<ChevronUpIcon className="size-3.5 text-primary" />
-																) : sortDirection === "desc" ? (
-																	<ChevronDownIcon className="size-3.5 text-primary" />
-																) : null}
-															</button>
+														{isSelectionColumn ? (
+															<Skeleton className="h-4 w-4" />
+														) : isActionsColumn ? (
+															<Skeleton className="ml-auto h-7 w-7" />
+														) : isPrimaryColumn ? (
+															<div className="space-y-2">
+																<Skeleton className="h-4 w-32" />
+																<Skeleton className="h-3 w-44" />
+															</div>
 														) : (
-															flexRender(header.column.columnDef.header, header.getContext())
+															<Skeleton className="h-4 w-full max-w-[14rem]" />
 														)}
-													</th>
+													</td>
 												);
 											})}
 										</tr>
-									))}
-								</thead>
-								<tbody>
-									{isLoading ? (
-										Array.from({ length: 8 }, (_, rowIndex) => (
-											<tr className="border-b border-[var(--data-view-border)]" key={`loading-${rowIndex}`}>
-												{visibleColumns.map((column) => {
-													const align = column.columnDef.meta?.align ?? "start";
-													const responsive = column.columnDef.meta?.responsive ?? "base";
-													const isSelectionColumn = column.id === "__select";
-													const isActionsColumn = column.id === "__actions";
-													const isPrimaryColumn = column.id === firstDataColumnId;
-													return (
-														<td
-															className={cn(
-																"border-b border-r border-[var(--data-view-border)] px-3 py-2.5 align-middle last:border-r-0",
-																getPinnedCellClassName(column, "body"),
-																alignCN[align],
-																responsiveCN[responsive],
-																column.columnDef.meta?.cellClassName
-															)}
-															key={`${rowIndex}-${column.id}`}
-															style={getPinnedCellStyle(column, "body")}
-														>
-															{isSelectionColumn ? (
-																<Skeleton className="h-4 w-4" />
-															) : isActionsColumn ? (
-																<Skeleton className="ml-auto h-7 w-7" />
-															) : isPrimaryColumn ? (
-																<div className="space-y-2">
-																	<Skeleton className="h-4 w-32" />
-																	<Skeleton className="h-3 w-44" />
-																</div>
-															) : (
-																<Skeleton className="h-4 w-full max-w-[14rem]" />
-															)}
-														</td>
-													);
-												})}
-											</tr>
-										))
-									) : filteredCount === 0 ? (
-										<tr>
-											<td className="px-6 py-12 text-center" colSpan={table.getVisibleLeafColumns().length}>
-												<p className="font-medium text-sm">No matching {entityLabel}</p>
-												<p className="mt-1 text-muted-foreground text-sm">Try a different search query.</p>
-											</td>
-										</tr>
-									) : (
-										<>
-											{paddingTop > 0 && (
-												<tr>
-													<td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingTop }} />
-												</tr>
-											)}
-											{virtualRows.map((virtualRow) => {
-												const row = rows[virtualRow.index];
-												if (!row) return null;
-												const visibleCells = row.getVisibleCells();
-												const rowActions = resolveRowActions(row.original);
-												const hasRowContextMenu = rowActions.length > 1;
-												const rowCells = visibleCells.map((cell) => {
-													const align = cell.column.columnDef.meta?.align ?? "start";
-													const responsive = cell.column.columnDef.meta?.responsive ?? "base";
-													return (
-														<td
-															className={cn(
-																"border-b border-r border-[var(--data-view-border)] px-3 py-2.5 align-middle last:border-r-0",
-																getPinnedCellClassName(cell.column, "body"),
-																alignCN[align],
-																responsiveCN[responsive],
-																cell.column.columnDef.meta?.cellClassName
-															)}
-															key={cell.id}
-															style={getPinnedCellStyle(cell.column, "body")}
-														>
-															{flexRender(cell.column.columnDef.cell, cell.getContext())}
-														</td>
-													);
-												});
-
-												const rowClassName = cn("group/row border-b border-[var(--data-view-border)] transition-colors hover:bg-muted/30", onRowClick && "cursor-pointer");
-												const rowOnClick = onRowClick
-													? (event: MouseEvent<HTMLElement>) => {
-															const target = event.target as HTMLElement;
-															if (isInteractiveTarget(target)) return;
-															onRowClick(row.original);
-														}
-													: undefined;
-
-												if (!hasRowContextMenu) {
-													return (
-														<tr className={rowClassName} key={row.id} onClick={rowOnClick}>
-															{rowCells}
-														</tr>
-													);
-												}
-
-												return (
-													<ContextMenu key={row.id}>
-														<ContextMenuTrigger
-															className={rowClassName}
-															onClick={rowOnClick}
-															onContextMenu={(event) => {
-																const target = event.target as HTMLElement;
-																if (isInteractiveTarget(target)) {
-																	event.preventBaseUIHandler();
-																}
-															}}
-															render={<tr />}
-														>
-															{rowCells}
-														</ContextMenuTrigger>
-														<ContextMenuContent className="w-40">
-															{rowActions.map((action) => (
-																<ContextMenuItem
-																	key={action.id}
-																	onClick={(event) => {
-																		event.stopPropagation();
-																		action.onClick(row.original);
-																	}}
-																	variant={action.variant === "destructive" ? "destructive" : "default"}
-																>
-																	{action.label}
-																</ContextMenuItem>
-															))}
-														</ContextMenuContent>
-													</ContextMenu>
-												);
-											})}
-											{paddingBottom > 0 && (
-												<tr>
-													<td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingBottom }} />
-												</tr>
-											)}
-										</>
-									)}
-								</tbody>
-							</table>
-						</div>
-
-						<div className="flex h-8 items-center justify-between border-t border-[var(--data-view-border)] bg-[var(--data-view-sticky)] px-3 text-xs text-muted-foreground">
-							{isLoading ? (
-								<>
-									<Skeleton className="h-3 w-20" />
-									<Skeleton className="h-5 w-16" />
-								</>
-							) : (
-								<>
-									<span>
-										{filteredCount !== totalCount ? (
-									<>
-										<span className="text-foreground">{filteredCount}</span> of {totalCount} {entityLabel}
-									</>
+									))
+								) : filteredCount === 0 ? (
+									<tr>
+										<td className="px-6 py-12 text-center" colSpan={table.getVisibleLeafColumns().length}>
+											<p className="font-medium text-sm">No matching {entityLabel}</p>
+											<p className="mt-1 text-muted-foreground text-sm">Try a different search query.</p>
+										</td>
+									</tr>
 								) : (
 									<>
-										{totalCount} {entityLabel}
+										{paddingTop > 0 && (
+											<tr>
+												<td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingTop }} />
+											</tr>
+										)}
+										{virtualRows.map((virtualRow) => {
+											const row = rows[virtualRow.index];
+											if (!row) return null;
+											const visibleCells = row.getVisibleCells();
+											const rowActions = resolveRowActions(row.original);
+											const hasRowContextMenu = rowActions.length > 1;
+											const rowCells = visibleCells.map((cell) => {
+												const align = cell.column.columnDef.meta?.align ?? "start";
+												const responsive = cell.column.columnDef.meta?.responsive ?? "base";
+												return (
+													<td
+														className={cn(
+															"border-[var(--data-view-border)] border-r border-b px-3 py-2.5 align-middle last:border-r-0",
+															getPinnedCellClassName(cell.column, "body"),
+															alignCN[align],
+															responsiveCN[responsive],
+															cell.column.columnDef.meta?.cellClassName
+														)}
+														key={cell.id}
+														style={getPinnedCellStyle(cell.column, "body")}
+													>
+														{flexRender(cell.column.columnDef.cell, cell.getContext())}
+													</td>
+												);
+											});
+
+											const rowClassName = cn(
+												"group/row border-[var(--data-view-border)] border-b transition-colors hover:bg-muted/30",
+												onRowClick && "cursor-pointer"
+											);
+											const rowOnClick = onRowClick
+												? (event: MouseEvent<HTMLElement>) => {
+														const target = event.target as HTMLElement;
+														if (isInteractiveTarget(target)) return;
+														onRowClick(row.original);
+													}
+												: undefined;
+
+											if (!hasRowContextMenu) {
+												return (
+													<tr className={rowClassName} key={row.id} onClick={rowOnClick}>
+														{rowCells}
+													</tr>
+												);
+											}
+
+											return (
+												<ContextMenu key={row.id}>
+													<ContextMenuTrigger
+														className={rowClassName}
+														onClick={rowOnClick}
+														onContextMenu={(event) => {
+															const target = event.target as HTMLElement;
+															if (isInteractiveTarget(target)) {
+																event.preventBaseUIHandler();
+															}
+														}}
+														render={<tr />}
+													>
+														{rowCells}
+													</ContextMenuTrigger>
+													<ContextMenuContent className="w-40">
+														{rowActions.map((action) => (
+															<ContextMenuItem
+																key={action.id}
+																onClick={(event) => {
+																	event.stopPropagation();
+																	action.onClick(row.original);
+																}}
+																variant={action.variant === "destructive" ? "destructive" : "default"}
+															>
+																{action.label}
+															</ContextMenuItem>
+														))}
+													</ContextMenuContent>
+												</ContextMenu>
+											);
+										})}
+										{paddingBottom > 0 && (
+											<tr>
+												<td colSpan={table.getVisibleLeafColumns().length} style={{ height: paddingBottom }} />
+											</tr>
+										)}
 									</>
 								)}
-									</span>
-									{selectedRows.length > 0 && <Badge variant="outline">{selectedRows.length} selected</Badge>}
-								</>
-							)}
-						</div>
-					</>
-				)}
+							</tbody>
+						</table>
+					</div>
+
+					<div className="flex h-8 items-center justify-between border-[var(--data-view-border)] border-t bg-[var(--data-view-sticky)] px-3 text-muted-foreground text-xs">
+						{isLoading ? (
+							<>
+								<Skeleton className="h-3 w-20" />
+								<Skeleton className="h-5 w-16" />
+							</>
+						) : (
+							<>
+								<span>
+									{filteredCount === totalCount ? (
+										<>
+											{totalCount} {entityLabel}
+										</>
+									) : (
+										<>
+											<span className="text-foreground">{filteredCount}</span> of {totalCount} {entityLabel}
+										</>
+									)}
+								</span>
+								{selectedRows.length > 0 && <Badge variant="outline">{selectedRows.length} selected</Badge>}
+							</>
+						)}
+					</div>
+				</>
+			)}
 		</div>
 	);
 }

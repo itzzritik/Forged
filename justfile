@@ -23,7 +23,7 @@ lint-server:
 lint-web:
     cd web && bun run check
 
-lint: lint-cli lint-server
+lint: lint-cli lint-server lint-web
 
 # Windows end-to-end suite (drives real forged.exe; see cli/e2e)
 e2e:

@@ -277,14 +277,7 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
 		status: "ok",
 		brightness: 1.1,
 		pace: "slow",
-		lines: [
-			"> forged",
-			"[TUI] Agent",
-			"SSH Agent: enabled",
-			"Keys:   4 loaded",
-			"Socket: managed per-user endpoint",
-			"[OK] SSH agent available",
-		],
+		lines: ["> forged", "[TUI] Agent", "SSH Agent: enabled", "Keys:   4 loaded", "Socket: managed per-user endpoint", "[OK] SSH agent available"],
 	},
 	{
 		title: "DOCTOR // CHECK",
@@ -400,13 +393,7 @@ export const TERMINAL_CARDS: TerminalCardDef[] = [
 		status: "ok",
 		brightness: 1.1,
 		pace: "fast",
-		lines: [
-			"> forged",
-			"[TUI] Key > Export",
-			"[AUTH] Touch ID approved",
-			"[SAVE] /Users/user/Downloads/forged-export.json",
-			"[OK] Export written",
-		],
+		lines: ["> forged", "[TUI] Key > Export", "[AUTH] Touch ID approved", "[SAVE] /Users/user/Downloads/forged-export.json", "[OK] Export written"],
 	},
 	{ title: "AGENT // ENABLE", status: "ok", brightness: 1.0, pace: "fast", lines: ["> forged", "[TUI] Agent > Enable SSH Agent", "[OK] SSH Agent enabled"] },
 ];
@@ -425,7 +412,6 @@ export function AnimatedTerminalGrid({ cards }: { cards: TerminalCardDef[] }) {
 		let active = true;
 		const start = performance.now();
 
-		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: animation tick function requires complex state management
 		function tick(now: number) {
 			for (let t = 0; t < cards.length; t++) {
 				const card: TerminalCardDef = cards[t];
@@ -719,7 +705,6 @@ export function AnimatedBigTerminal({ steps }: { steps: TerminalStep[] }) {
 			return 25 + Math.random() * 28;
 		};
 
-		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: terminal animation requires sequential async state machine
 		async function animate() {
 			await sleep(700);
 

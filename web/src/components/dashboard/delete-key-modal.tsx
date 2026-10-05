@@ -17,10 +17,10 @@ export function DeleteKeyModal({ open, keyName, fingerprint, isDeleting, onClose
 		<Modal closable onOpenChange={onClose} open={open} size="sm" title="Delete Key">
 			<ModalBody>
 				<div className="space-y-3">
-					<p className="font-semibold text-lg text-foreground">Delete SSH Key</p>
+					<p className="font-semibold text-foreground text-lg">Delete SSH Key</p>
 					<p className="text-muted-foreground text-sm">This will permanently remove the selected key from your vault.</p>
 					<div className="space-y-1 border border-border bg-background/60 px-3 py-2">
-						<p className="font-medium text-sm text-foreground">{keyName}</p>
+						<p className="font-medium text-foreground text-sm">{keyName}</p>
 						<p className="truncate font-mono text-muted-foreground text-xs">{fingerprint}</p>
 					</div>
 				</div>

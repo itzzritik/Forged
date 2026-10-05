@@ -2,7 +2,7 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { Badge } from "@/components/ui/badge";
-import { DataView, type DataViewColumn } from "./data-view";
+import { type DataViewColumn, DataViewTable } from "./data-view";
 
 interface Device {
 	approved: boolean;
@@ -91,7 +91,7 @@ export const DeviceTable = () => {
 	);
 
 	return (
-		<DataView
+		<DataViewTable
 			columns={columns}
 			data={devices}
 			emptyState={{
@@ -100,7 +100,9 @@ export const DeviceTable = () => {
 			}}
 			entityLabel="devices"
 			getRowId={(device) => device.id}
-			getSearchText={(device) => [device.name, device.hostname, device.platform, device.approved ? "approved" : "pending", relativeTime(device.last_seen_at)].join(" ")}
+			getSearchText={(device) =>
+				[device.name, device.hostname, device.platform, device.approved ? "approved" : "pending", relativeTime(device.last_seen_at)].join(" ")
+			}
 			globalFilterPlaceholder="Search devices, hostnames, or platforms"
 			initialSorting={[{ id: "name", desc: false }]}
 			isLoading={loading}

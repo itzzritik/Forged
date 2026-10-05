@@ -3,12 +3,12 @@
 	"version": "0.1.0",
 	"private": true,
 	"scripts": {
-		"dev": "doppler run -- next dev -p 3035",
 		"build": "next build",
-		"start": "next start",
 		"check": "ultracite check",
+		"clean": "rm -rf node_modules bun.lock .next; bun install",
+		"dev": "doppler run -- next dev -p 3035",
 		"fix": "ultracite fix",
-		"clean": "rm -rf node_modules bun.lock .next; bun install"
+		"start": "next start"
 	},
 	"dependencies": {
 		"@base-ui/react": "^1.8.0",

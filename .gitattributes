@@ -1,2 +1,4 @@
 # Git for Windows defaults to core.autocrlf=true; CRLF scripts break under WSL/Linux sh.
 *.sh text eol=lf
+# Biome formats web/ with LF; keep Windows checkouts from failing every file.
+web/** text=auto eol=lf

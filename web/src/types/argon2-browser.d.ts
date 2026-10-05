@@ -21,7 +21,7 @@ declare module "argon2-browser/dist/argon2-bundled.min.js" {
 			Argon2i: 1;
 			Argon2id: 2;
 		};
-		hash(params: Argon2HashParams): Promise<Argon2HashResult>;
+		hash: (params: Argon2HashParams) => Promise<Argon2HashResult>;
 	}
 
 	const argon2: Argon2Module;

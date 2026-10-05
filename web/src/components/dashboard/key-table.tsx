@@ -5,7 +5,7 @@ import { toast } from "sonner";
 import { useVaultContext } from "@/hooks/use-vault";
 import { getVaultKeyDetails, removeKeyFromVault, updateKeyInVault, type VaultKeyMetadata } from "@/lib/vault-crypto";
 import { BulkDeleteKeysModal } from "./bulk-delete-keys-modal";
-import { DataView, type DataViewAction, type DataViewColumn } from "./data-view";
+import { type DataViewAction, type DataViewColumn, DataViewTable } from "./data-view";
 import { DeleteKeyModal } from "./delete-key-modal";
 import { KeyDetailsModal } from "./key-details-modal";
 
@@ -91,6 +91,7 @@ export const KeyTable = () => {
 		}
 	};
 
+	// biome-ignore lint/correctness/useExhaustiveDependencies: the handlers only call state setters and the clipboard; rebuilding them would rebuild every row's actions.
 	const actions = useMemo(
 		() =>
 			(key: VaultKeyMetadata): DataViewAction<VaultKeyMetadata>[] => [
@@ -136,7 +137,9 @@ export const KeyTable = () => {
 			{
 				accessorKey: "type",
 				header: "Type",
-				cell: ({ row }) => <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-muted-foreground text-xs">{row.original.type}</span>,
+				cell: ({ row }) => (
+					<span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-muted-foreground text-xs">{row.original.type}</span>
+				),
 				meta: {
 					cellClassName: "w-[10rem]",
 					headerClassName: "w-[10rem]",
@@ -146,7 +149,9 @@ export const KeyTable = () => {
 			{
 				accessorKey: "fingerprint",
 				header: "Fingerprint",
-				cell: ({ row }) => <span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-muted-foreground text-xs">{row.original.fingerprint}</span>,
+				cell: ({ row }) => (
+					<span className="block overflow-hidden text-ellipsis whitespace-nowrap font-mono text-muted-foreground text-xs">{row.original.fingerprint}</span>
+				),
 				meta: {
 					cellClassName: "min-w-[20rem]",
 					headerClassName: "min-w-[20rem]",
@@ -159,7 +164,7 @@ export const KeyTable = () => {
 
 	return (
 		<>
-			<DataView
+			<DataViewTable
 				actions={actions}
 				columns={columns}
 				data={keys}

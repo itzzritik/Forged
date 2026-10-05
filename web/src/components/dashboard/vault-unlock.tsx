@@ -13,21 +13,21 @@ interface VaultUnlockProps {
 }
 
 const LockIcon = () => (
-	<svg fill="none" height="24" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="24">
+	<svg aria-hidden="true" fill="none" height="24" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="24">
 		<rect height="11" rx="2" ry="2" width="18" x="3" y="11" />
 		<path d="M7 11V7a5 5 0 0 1 10 0v4" />
 	</svg>
 );
 
 const EyeIcon = () => (
-	<svg fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
+	<svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
 		<path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z" />
 		<circle cx="12" cy="12" r="3" />
 	</svg>
 );
 
 const EyeOffIcon = () => (
-	<svg fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
+	<svg aria-hidden="true" fill="none" height="14" stroke="currentColor" strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" viewBox="0 0 24 24" width="14">
 		<path d="M17.94 17.94A10.07 10.07 0 0 1 12 20c-7 0-11-8-11-8a18.45 18.45 0 0 1 5.06-5.94" />
 		<path d="M9.9 4.24A9.12 9.12 0 0 1 12 4c7 0 11 8 11 8a18.5 18.5 0 0 1-2.16 3.19" />
 		<line x1="1" x2="23" y1="1" y2="23" />
@@ -36,6 +36,7 @@ const EyeOffIcon = () => (
 
 const SpinnerIcon = () => (
 	<svg
+		aria-hidden="true"
 		className="animate-spin"
 		fill="none"
 		height="14"
@@ -87,7 +88,7 @@ export const VaultUnlock = ({ onUnlock, error }: VaultUnlockProps) => {
 	};
 
 	return (
-		<Modal closable={false} onOpenChange={() => {}} open size="sm" title="Vault // Unlock">
+		<Modal closable={false} onOpenChange={() => undefined} open size="sm" title="Vault // Unlock">
 			<ModalBody className="gap-5">
 				<motion.div animate={shake ? { x: [0, -12, 12, -8, 8, -4, 4, 0] } : { x: 0 }} transition={{ duration: 0.5 }}>
 					<div className="flex flex-col gap-5">
@@ -118,6 +119,7 @@ export const VaultUnlock = ({ onUnlock, error }: VaultUnlockProps) => {
 									value={password}
 								/>
 								<button
+									aria-label={showPassword ? "Hide password" : "Show password"}
 									className="absolute top-1/2 right-2.5 -translate-y-1/2 text-muted-foreground transition-colors hover:text-foreground"
 									onClick={() => setShowPassword((v) => !v)}
 									tabIndex={-1}

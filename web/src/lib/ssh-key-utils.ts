@@ -1,4 +1,4 @@
-const TRAILING_EQUALS = /=+$/;
+const TRAILING_EQUALS = /[=]+$/;
 
 function encodeSSHString(data: Uint8Array): Uint8Array {
 	const buf = new Uint8Array(4 + data.length);

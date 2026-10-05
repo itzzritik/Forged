@@ -45,7 +45,13 @@ export function mergeThreeWayRaw(baseRaw: string, localRaw: string, remoteRaw: s
 	return JSON.stringify(merged);
 }
 
-function mergeThreeWayDocument(base: RawVaultDocument, local: RawVaultDocument, remote: RawVaultDocument, localDeviceId: string, remoteDeviceId: string): RawVaultDocument {
+function mergeThreeWayDocument(
+	base: RawVaultDocument,
+	local: RawVaultDocument,
+	remote: RawVaultDocument,
+	localDeviceId: string,
+	remoteDeviceId: string
+): RawVaultDocument {
 	const merged: RawVaultDocument = {
 		key_generation: maxNumber(base.key_generation ?? 1, local.key_generation ?? 1, remote.key_generation ?? 1),
 		metadata: mergeMetadata(base.metadata, local.metadata, remote.metadata),

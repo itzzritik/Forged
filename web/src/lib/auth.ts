@@ -1,23 +1,23 @@
 import { cookies } from "next/headers";
-import { NextResponse } from "next/server";
+import type { NextResponse } from "next/server";
 
 export const COOKIE_NAME = "forged_session";
 const THIRTY_DAYS = 60 * 60 * 24 * 30;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
-export type SessionUser = {
-	id: string;
+export interface SessionUser {
 	email: string;
+	id: string;
 	name: string;
-};
+}
 
-export type AuthSession = {
-	accessToken: string;
+export interface AuthSession {
 	accessExpiresAt: string;
-	refreshToken: string;
+	accessToken: string;
 	refreshExpiresAt: string;
+	refreshToken: string;
 	user: SessionUser;
-};
+}
 
 let cachedSecret: ArrayBuffer | null = null;
 function getSecret(): ArrayBuffer {

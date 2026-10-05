@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Modal, ModalBody, ModalFooter } from "@/components/ui/modal";
@@ -17,6 +17,7 @@ interface BulkDeleteKeysModalProps {
 
 export function BulkDeleteKeysModal({ open, keyNames, isDeleting, onClose, onConfirm }: BulkDeleteKeysModalProps) {
 	const [value, setValue] = useState("");
+	const confirmId = useId();
 
 	useEffect(() => {
 		if (open) setValue("");
@@ -30,24 +31,24 @@ export function BulkDeleteKeysModal({ open, keyNames, isDeleting, onClose, onCon
 			<ModalBody>
 				<div className="space-y-4">
 					<div className="space-y-2">
-						<p className="font-semibold text-lg text-foreground">Delete {keyNames.length} SSH Keys</p>
+						<p className="font-semibold text-foreground text-lg">Delete {keyNames.length} SSH Keys</p>
 						<p className="text-muted-foreground text-sm">This action cannot be undone. Type DELETE to confirm permanent removal.</p>
 					</div>
 
 					<div className="space-y-1 border border-border bg-background/60 px-3 py-2">
 						{previewNames.map((name) => (
-							<p className="truncate font-mono text-sm text-foreground" key={name}>
+							<p className="truncate font-mono text-foreground text-sm" key={name}>
 								{name}
 							</p>
 						))}
-						{keyNames.length > previewNames.length && (
-							<p className="pt-1 text-muted-foreground text-xs">and {keyNames.length - previewNames.length} more</p>
-						)}
+						{keyNames.length > previewNames.length && <p className="pt-1 text-muted-foreground text-xs">and {keyNames.length - previewNames.length} more</p>}
 					</div>
 
 					<div className="space-y-2">
-						<label className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.12em]">Type DELETE to confirm</label>
-						<Input autoComplete="off" onChange={(event) => setValue(event.target.value)} value={value} />
+						<label className="font-mono text-[11px] text-muted-foreground uppercase tracking-[0.12em]" htmlFor={confirmId}>
+							Type DELETE to confirm
+						</label>
+						<Input autoComplete="off" id={confirmId} onChange={(event) => setValue(event.target.value)} value={value} />
 					</div>
 				</div>
 				<ModalFooter>

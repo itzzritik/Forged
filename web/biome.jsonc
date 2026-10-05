@@ -42,7 +42,7 @@
 	"linter": {
 		"enabled": true,
 		"rules": {
-			"recommended": true,
+			"preset": "recommended",
 			"a11y": {
 				"useButtonType": "off",
 				"noStaticElementInteractions": "off",
@@ -53,17 +53,35 @@
 				"noConsole": "off",
 				"useIterableCallbackReturn": "off",
 				"noArrayIndexKey": "off",
-				"noImplicitAnyLet": "off"
+				"noImplicitAnyLet": "off",
+				// `== null` deliberately matches null and undefined.
+				"noEqualsToNull": "off",
+				// Vault, crypto, and importer code re-checks untrusted data that its types claim is valid.
+				"noUnnecessaryConditions": "off",
+				// Dropping `async` turns rejections into synchronous throws for callers.
+				"useAwait": "off"
 			},
 			"style": {
 				"noMagicNumbers": "off",
-				"useBlockStatements": "off"
+				"useBlockStatements": "off",
+				"noNestedTernary": "off",
+				"noIncrementDecrement": "off",
+				"useDestructuring": "off"
 			},
 			"complexity": {
-				"noForEach": "off"
+				"noForEach": "off",
+				"noExcessiveCognitiveComplexity": "off",
+				"useSimplifiedLogicExpression": "off",
+				// `void promise` marks intentional fire-and-forget calls.
+				"noVoid": "off"
 			},
 			"performance": {
-				"noBarrelFile": "off"
+				"noBarrelFile": "off",
+				"noJsxPropsBind": "off",
+				// Vault pushes and imports run sequentially on purpose.
+				"noAwaitInLoops": "off",
+				// Its autofix leaves undefined-valued keys behind.
+				"noDelete": "off"
 			},
 			"security": {
 				"noDangerouslySetInnerHtml": "off"
@@ -80,11 +98,27 @@
 	"assist": {
 		"actions": {
 			"source": {
-				"organizeImports": "on"
+				"organizeImports": "on",
+				// Object key order is meaningful in places, e.g. table feature registration.
+				"useSortedKeys": "off"
 			}
 		}
 	},
 	"overrides": [
+		{
+			// Binary SSH key parsing needs bitwise math and advancing offset parameters.
+			"includes": ["src/lib/ssh-key-parser.ts"],
+			"linter": {
+				"rules": {
+					"suspicious": {
+						"noBitwiseOperators": "off"
+					},
+					"style": {
+						"noParameterAssign": "off"
+					}
+				}
+			}
+		},
 		{
 			"includes": ["src/components/ui/input-group.tsx"],
 			"linter": {

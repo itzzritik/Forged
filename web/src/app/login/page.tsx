@@ -201,7 +201,9 @@ function LoginContent() {
 									<p className="font-mono text-[#a1a1aa] text-[10px] uppercase tracking-widest">Verify this code matches your terminal</p>
 									<div className="flex h-10 items-center justify-center">
 										{verification ? (
-											<p className="font-bold font-mono text-2xl leading-none text-[#ea580c] tracking-[0.2em]">FORGE-{verification.toUpperCase()}</p>
+											<p className="font-bold font-mono text-2xl text-[#ea580c] leading-none tracking-[0.2em]">
+												FORGE-{verification.toUpperCase()}
+											</p>
 										) : (
 											<div className="flex h-10 w-10 items-center justify-center">
 												<div className="h-5 w-5 animate-spin rounded-full border-2 border-[#27272a] border-t-[#ea580c]" />

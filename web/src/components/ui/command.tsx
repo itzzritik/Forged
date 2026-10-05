@@ -56,7 +56,7 @@ function CommandInput({ className, ...props }: React.ComponentProps<typeof Comma
 				<SearchIcon className="size-4 shrink-0 text-muted-foreground" />
 				<CommandPrimitive.Input
 					className={cn(
-						"h-8 w-full border-0 bg-transparent text-sm text-foreground outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
+						"h-8 w-full border-0 bg-transparent text-foreground text-sm outline-hidden placeholder:text-muted-foreground disabled:cursor-not-allowed disabled:opacity-50",
 						className
 					)}
 					data-slot="command-input"
@@ -102,7 +102,7 @@ function CommandItem({ className, children, ...props }: React.ComponentProps<typ
 	return (
 		<CommandPrimitive.Item
 			className={cn(
-				"group/command-item relative flex cursor-default select-none items-center gap-2 border border-transparent px-2.5 py-2 text-sm outline-hidden transition-colors data-[disabled=true]:pointer-events-none data-[disabled=true]:opacity-50 data-selected:border-primary/25 data-selected:bg-command-item-selected data-selected:text-foreground [&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 data-selected:*:[svg]:text-foreground",
+				"group/command-item relative flex cursor-default select-none items-center gap-2 border border-transparent px-2.5 py-2 text-sm outline-hidden transition-colors data-[disabled=true]:pointer-events-none data-selected:border-primary/25 data-selected:bg-command-item-selected data-selected:text-foreground data-[disabled=true]:opacity-50 [&_svg:not([class*='size-'])]:size-4 [&_svg]:pointer-events-none [&_svg]:shrink-0 data-selected:*:[svg]:text-foreground",
 				className
 			)}
 			data-slot="command-item"

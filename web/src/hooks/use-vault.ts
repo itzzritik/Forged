@@ -2,9 +2,18 @@
 
 import { useRouter } from "next/navigation";
 import { createContext, useCallback, useContext, useEffect, useRef, useState } from "react";
-import { cancelDerivation, decryptBlob, decryptProtectedKey, deriveStretchedKey, encryptBlob, vaultDataFromRaw, type KDFParams, type VaultData } from "@/lib/vault-crypto";
 import { getBrowserDeviceId } from "@/lib/sync/device";
 import { mergeThreeWayRaw } from "@/lib/sync/merge";
+import {
+	cancelDerivation,
+	decryptBlob,
+	decryptProtectedKey,
+	deriveStretchedKey,
+	encryptBlob,
+	type KDFParams,
+	type VaultData,
+	vaultDataFromRaw,
+} from "@/lib/vault-crypto";
 import { clearSyncKey, getSyncKey, storeSyncKey, touchActivity } from "@/lib/vault-store";
 
 export type VaultStatus = "loading" | "no-vault" | "locked" | "unlocked" | "error";
@@ -91,7 +100,6 @@ export const useVault = (): UseVaultReturn => {
 		if (initialized.current) return;
 		initialized.current = true;
 
-		// biome-ignore lint/complexity/noExcessiveCognitiveComplexity: vault initialization requires cascading async state logic
 		const init = async () => {
 			// check IndexedDB for a cached key first
 			const stored = await getSyncKey();
