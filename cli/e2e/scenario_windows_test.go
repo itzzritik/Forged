@@ -15,6 +15,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/platform"
+	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 )
 
 const e2ePassword = "correct horse battery staple"
@@ -48,6 +49,7 @@ func TestWindowsScenario(t *testing.T) {
 		{"locked vault unlocks through System Auth for ssh", stepLockSystemAuth},
 		{"canceled System Auth denies ssh", stepSystemAuthCanceled},
 		{"OS session lock clears the session", stepOSLockEvent},
+		{"lapsed device unlock prompts for the master password", stepPasswordPopup},
 		{"daemon restart at logon keeps working", stepDaemonRestart},
 		{"upgraded binary refreshes the running daemon", stepUpgrade},
 		{"doctor --fix repairs a broken install", stepDoctorFix},
@@ -185,6 +187,32 @@ func stepLockSystemAuth(t *testing.T, s *scenario) {
 		t.Error("System Auth helper was never asked to authorize")
 	}
 	waitUnlocked(t, s, true)
+}
+
+func stepPasswordPopup(t *testing.T, s *scenario) {
+	if err := actions.LockSensitive(s.paths); err != nil {
+		t.Fatalf("lock: %v", err)
+	}
+	waitUnlocked(t, s, false)
+	// Without usable device unlock, System Auth cannot restart the session.
+	if err := os.Remove(s.paths.LocalUnlockBlobFile()); err != nil {
+		t.Fatalf("drop device unlock: %v", err)
+	}
+	h.setAuth(t, "password", e2ePassword)
+	defer h.setAuth(t, "password", "")
+	if out, err := s.ssh(t); err == nil {
+		t.Fatalf("ssh succeeded while locked without device unlock:\n%s", out)
+	}
+	// The popup unlocks in the background, so the next connection succeeds.
+	if out, err := s.sshEventually(t, 20*time.Second); err != nil {
+		t.Fatalf("ssh after the master-password popup: %v\n%s", err, out)
+	}
+	if !strings.Contains(readFileQuiet(filepath.Join(h.authDir, "requests.log")), "collect-password") {
+		t.Error("helper was never asked for the master password")
+	}
+	if !sensitiveauth.LocalEnrollmentUsable(s.paths) {
+		t.Error("master-password unlock did not re-enroll device unlock")
+	}
 }
 
 func stepSystemAuthCanceled(t *testing.T, s *scenario) {

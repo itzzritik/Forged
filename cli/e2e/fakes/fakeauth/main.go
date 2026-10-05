@@ -4,12 +4,14 @@
 // Windows Hello prompt on the developer's desktop. Results are scripted
 // through files in FORGED_E2E_AUTH_DIR:
 //
-//	result  authorize outcome (ok, canceled, failed, unavailable_by_environment)
-//	lock    present => emit one session_locked event, then deleted
+//	result    authorize outcome (ok, canceled, failed, unavailable_by_environment)
+//	lock      present => emit one session_locked event, then deleted
+//	password  present => collect-password "types" its contents; absent => unavailable
 package main
 
 import (
 	"bufio"
+	"encoding/base64"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -48,6 +50,12 @@ func main() {
 			resp.Status = "ok"
 		case "collect-password":
 			resp.Status = "unavailable_by_platform"
+			if dir != "" {
+				if password, err := os.ReadFile(filepath.Join(dir, "password")); err == nil {
+					resp.Status = "ok"
+					resp.Secret = base64.StdEncoding.EncodeToString(password)
+				}
+			}
 		default:
 			resp.Status = "failed"
 			resp.Message = "unsupported request"

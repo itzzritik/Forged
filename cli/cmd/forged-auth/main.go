@@ -164,15 +164,14 @@ func main() {
 		case "cancel":
 			calls.Cancel(req.ID)
 		case "collect-password":
-			calls.Start(req, func(context.Context) sensitiveauth.HelperResponse {
-				// TODO(windows): wire CredUIPromptForWindowsCredentials for a native
-				// password popup. Until then, report unavailable so the broker falls
-				// back to the "open Forged" deny message instead of hanging.
+			calls.Start(req, func(ctx context.Context) sensitiveauth.HelperResponse {
+				status, secret := collectPassword(ctx, req.Reason)
 				return sensitiveauth.HelperResponse{
 					ID:       req.ID,
 					Type:     req.Type,
-					Status:   "unavailable_by_platform",
+					Status:   status,
 					Provider: providerName(),
+					Secret:   secret,
 				}
 			}, emit)
 		case "subscribe-locks":

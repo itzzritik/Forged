@@ -3,12 +3,15 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"time"
 	"unsafe"
 
@@ -20,21 +23,57 @@ import (
 func providerName() string { return "windows-hello" }
 
 func authorize(ctx context.Context, action sensitiveauth.Action) string {
-	return runWindowsHello(ctx, windowsHelloAuthorizeScript, action.NativeReason(), "failed",
+	cmd, err := powerShell(ctx, windowsHelloAuthorizeScript, action.NativeReason())
+	if err != nil {
+		return "unavailable_by_environment"
+	}
+	return scriptStatus(ctx, runPrompt(cmd, helloPromptFinder()), "failed",
 		map[int]string{2: "unavailable_by_environment", 3: "canceled"})
 }
 
 func status(ctx context.Context) string {
-	return runWindowsHello(ctx, windowsHelloStatusScript, "", "broken",
+	cmd, err := powerShell(ctx, windowsHelloStatusScript, "")
+	if err != nil {
+		return "unavailable_by_environment"
+	}
+	return scriptStatus(ctx, cmd.Run(), "broken",
 		map[int]string{2: "unavailable_by_environment", 4: "unavailable_by_platform"})
+}
+
+// collectPassword shows the master-password dialog and returns the password
+// base64-encoded; the script emits base64 because PowerShell writes stdout in
+// the OEM code page, which would mangle non-ASCII passwords.
+func collectPassword(ctx context.Context, reason string) (string, string) {
+	cmd, err := powerShell(ctx, passwordPromptScript, reason)
+	if err != nil {
+		return "unavailable_by_environment", ""
+	}
+	// HideWindow puts SW_HIDE in STARTUPINFO, which Windows applies to the
+	// child's first ShowWindow: the dialog itself.
+	cmd.SysProcAttr.HideWindow = false
+	var stdout bytes.Buffer
+	cmd.Stdout = &stdout
+	err = runPrompt(cmd, passwordPromptFinder)
+	out := stdout.Bytes()
+	defer clear(out)
+	if status := scriptStatus(ctx, err, "failed", map[int]string{2: "unavailable_by_environment", 3: "canceled"}); status != "ok" {
+		return status, ""
+	}
+	secret := strings.TrimSpace(string(out))
+	password, err := base64.StdEncoding.DecodeString(secret)
+	clear(password)
+	if err != nil {
+		return "failed", ""
+	}
+	return "ok", secret
 }
 
 // Absolute path: only Windows PowerShell 5.1 has the WinRT projection, and a
 // PATH-resolved powershell.exe could answer "verified".
-func runWindowsHello(ctx context.Context, script, reason, fallback string, exitCodes map[int]string) string {
+func powerShell(ctx context.Context, script, reason string) (*exec.Cmd, error) {
 	system, err := windows.GetSystemDirectory()
 	if err != nil {
-		return "unavailable_by_environment"
+		return nil, err
 	}
 	shell := filepath.Join(system, "WindowsPowerShell", "v1.0", "powershell.exe")
 	cmd := exec.CommandContext(ctx, shell,
@@ -42,7 +81,10 @@ func runWindowsHello(ctx context.Context, script, reason, fallback string, exitC
 		"-EncodedCommand", platform.PowerShellEncodedCommand(script))
 	cmd.Env = append(os.Environ(), "FORGED_AUTH_REASON="+reason)
 	platform.HideChildConsole(cmd)
-	err = cmd.Run()
+	return cmd, nil
+}
+
+func scriptStatus(ctx context.Context, err error, fallback string, exitCodes map[int]string) string {
 	switch {
 	case ctx.Err() != nil:
 		return "canceled"
@@ -112,6 +154,79 @@ switch ($result.ToString()) {
   'DisabledByPolicy' { exit 2 }
   default { exit 1 }
 }
+`
+
+// Exit 2: WinForms is unavailable (e.g. Constrained Language Mode or no
+// desktop). Exit 3: the user canceled. TopMost because a background helper
+// cannot always take the foreground.
+const passwordPromptScript = `
+$ErrorActionPreference = 'Stop'
+try {
+  Add-Type -AssemblyName System.Windows.Forms, System.Drawing
+  [System.Windows.Forms.Application]::EnableVisualStyles()
+  $font = [System.Drawing.SystemFonts]::MessageBoxFont
+  $form = New-Object System.Windows.Forms.Form
+} catch {
+  exit 2
+}
+$form.SuspendLayout()
+$form.AutoScaleDimensions = New-Object System.Drawing.SizeF(96, 96)
+$form.AutoScaleMode = [System.Windows.Forms.AutoScaleMode]::Dpi
+$form.Text = 'Forged'
+$form.Font = $font
+$form.FormBorderStyle = [System.Windows.Forms.FormBorderStyle]::FixedDialog
+$form.MaximizeBox = $false
+$form.MinimizeBox = $false
+$form.StartPosition = [System.Windows.Forms.FormStartPosition]::CenterScreen
+$form.TopMost = $true
+$form.AutoSize = $true
+$form.AutoSizeMode = [System.Windows.Forms.AutoSizeMode]::GrowAndShrink
+
+$layout = New-Object System.Windows.Forms.TableLayoutPanel
+$layout.AutoSize = $true
+$layout.ColumnCount = 1
+$layout.Padding = New-Object System.Windows.Forms.Padding(16)
+
+$title = New-Object System.Windows.Forms.Label
+$title.Text = 'Forged is locked'
+$title.AutoSize = $true
+$title.Font = New-Object System.Drawing.Font($font.FontFamily, ($font.Size + 3), [System.Drawing.FontStyle]::Bold)
+$title.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 6)
+
+$message = New-Object System.Windows.Forms.Label
+$message.Text = if ($env:FORGED_AUTH_REASON) { $env:FORGED_AUTH_REASON } else { 'Enter your Forged master password to continue.' }
+$message.AutoSize = $true
+$message.MaximumSize = New-Object System.Drawing.Size(320, 0)
+$message.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 12)
+
+$box = New-Object System.Windows.Forms.TextBox
+$box.UseSystemPasswordChar = $true
+$box.Width = 320
+$box.Margin = New-Object System.Windows.Forms.Padding(0, 0, 0, 16)
+
+$unlock = New-Object System.Windows.Forms.Button
+$unlock.Text = 'Unlock'
+$unlock.DialogResult = [System.Windows.Forms.DialogResult]::OK
+$cancel = New-Object System.Windows.Forms.Button
+$cancel.Text = 'Cancel'
+$cancel.DialogResult = [System.Windows.Forms.DialogResult]::Cancel
+$buttons = New-Object System.Windows.Forms.FlowLayoutPanel
+$buttons.FlowDirection = [System.Windows.Forms.FlowDirection]::RightToLeft
+$buttons.AutoSize = $true
+$buttons.Dock = [System.Windows.Forms.DockStyle]::Fill
+$buttons.Margin = New-Object System.Windows.Forms.Padding(0)
+$buttons.Controls.AddRange(@($cancel, $unlock))
+
+$layout.Controls.AddRange(@($title, $message, $box, $buttons))
+$form.Controls.Add($layout)
+$form.AcceptButton = $unlock
+$form.CancelButton = $cancel
+$form.Add_Shown({ $form.Activate(); $box.Focus() })
+$form.ResumeLayout($true)
+
+if ($form.ShowDialog() -ne [System.Windows.Forms.DialogResult]::OK) { exit 3 }
+[Console]::Out.Write([Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($box.Text)))
+exit 0
 `
 
 func startLockLoop(ctx context.Context, onLock func()) {

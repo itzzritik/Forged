@@ -254,11 +254,9 @@ func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watch
 		// device-unlock window has lapsed (or was never enrolled), a Touch ID prompt
 		// can't restart it. ssh won't wait for a human, so we fire the master-password
 		// popup in the background to unlock the shared session and fail this request;
-		// the next connection then succeeds.
-		// ponytail: darwin-only gate — the collect-password popup is macOS-only for
-		// now. Extend when Windows CredUI / Linux zenity land.
+		// the next connection then succeeds. Linux has no native popup yet.
 		if action == ActionExternal && !LocalEnrollmentUsable(b.paths) {
-			if runtime.GOOS == "darwin" {
+			if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
 				b.promptPasswordUnlock(generation)
 				return AuthorizeResult{}, nil, externalUseLockedError()
 			}

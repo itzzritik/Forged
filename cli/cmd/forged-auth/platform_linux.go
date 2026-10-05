@@ -63,6 +63,12 @@ func status(context.Context) string {
 	return "ok"
 }
 
+// Linux has no native master-password prompt yet; the broker denies with an
+// "open Forged" message instead.
+func collectPassword(context.Context, string) (string, string) {
+	return "unavailable_by_platform", ""
+}
+
 func hasGraphicalSession() bool {
 	return strings.TrimSpace(os.Getenv("DISPLAY")) != "" ||
 		strings.TrimSpace(os.Getenv("WAYLAND_DISPLAY")) != ""
