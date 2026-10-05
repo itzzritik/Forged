@@ -5,9 +5,9 @@ import (
 	"strings"
 	"unicode"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 
@@ -58,11 +58,9 @@ func newPasswordInput(kind PasswordKind) *PasswordInput {
 		input.EchoCharacter = []rune(theme.Glyphs.Mask)[0]
 		input.Prompt = ""
 		input.CharLimit = 128
-		input.Cursor.Style = theme.FooterKey
-		input.TextStyle = theme.FieldValue
-		input.PlaceholderStyle = theme.BodyMuted
+		StyleTextInput(&input)
 		input.SetValue("")
-		input.Width = 32
+		input.SetWidth(32)
 		fields = append(fields, input)
 	}
 	fields[0].Placeholder = "Enter master password"
@@ -93,7 +91,7 @@ func (p *PasswordInput) SetWidth(width int) {
 	}
 	p.width = width
 	for index := range p.fields {
-		p.fields[index].Width = max(12, width)
+		p.fields[index].SetWidth(max(12, width))
 	}
 }
 
@@ -157,7 +155,7 @@ func (p *PasswordInput) Update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.WindowSizeMsg:
 		p.SetWidth(max(12, msg.Width/2))
-	case tea.KeyMsg:
+	case tea.KeyPressMsg:
 		switch msg.String() {
 		case "tab", "shift+tab", "up", "down":
 			p.moveFocus(msg.String())

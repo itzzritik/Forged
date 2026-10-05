@@ -3,7 +3,7 @@ package components
 import (
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
+	"charm.land/bubbles/v2/spinner"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
 

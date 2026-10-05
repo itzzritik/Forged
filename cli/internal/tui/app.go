@@ -8,10 +8,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/charmbracelet/bubbles/spinner"
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/spinner"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/actions"
@@ -437,7 +437,7 @@ func Run(intent Intent, deps Dependencies) (Result, error) {
 	}
 
 	initial := newModel(intent, deps, components.NewSpinner())
-	final, err := tea.NewProgram(initial, tea.WithAltScreen()).Run()
+	final, err := tea.NewProgram(initial).Run()
 	initial.stopLifetime()
 	initial.cancelLoginFlow()
 	initial.invalidateStartupUnlock()
@@ -493,6 +493,10 @@ func (m *model) initializePendingRouteState() {
 }
 
 func (m *model) Init() tea.Cmd {
+	return tea.Batch(tea.RequestBackgroundColor, m.initRoute())
+}
+
+func (m *model) initRoute() tea.Cmd {
 	switch m.intent.Entry {
 	case RouteAccountLogin:
 		m.screen = screenLogin
@@ -975,21 +979,13 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.loginScreen.Copied = true
 		m.loginScreen.Status = "Waiting for browser approval"
 		return m, nil
-	case tea.KeyMsg:
-		nextModel, cmd := m.updateKeys(msg)
-		next, ok := nextModel.(*model)
-		if !ok {
-			return nextModel, cmd
-		}
-		idleCmd := next.resetIdleLockCmd()
-		switch {
-		case cmd != nil && idleCmd != nil:
-			return next, tea.Batch(cmd, idleCmd)
-		case idleCmd != nil:
-			return next, idleCmd
-		default:
-			return next, cmd
-		}
+	case tea.BackgroundColorMsg:
+		theme.SetDarkBackground(msg.IsDark())
+		return m, nil
+	case tea.KeyPressMsg:
+		return m.afterUserInput(m.updateKeys(msg))
+	case tea.PasteMsg:
+		return m.afterUserInput(m, m.updatePaste(msg))
 	}
 
 	if m.screen == screenPassword && m.passwordInput != nil {
@@ -999,7 +995,30 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) View() string {
+// afterUserInput restarts the idle-lock timer after a key press or paste.
+func (m *model) afterUserInput(nextModel tea.Model, cmd tea.Cmd) (tea.Model, tea.Cmd) {
+	next, ok := nextModel.(*model)
+	if !ok {
+		return nextModel, cmd
+	}
+	idleCmd := next.resetIdleLockCmd()
+	switch {
+	case cmd != nil && idleCmd != nil:
+		return next, tea.Batch(cmd, idleCmd)
+	case idleCmd != nil:
+		return next, idleCmd
+	default:
+		return next, cmd
+	}
+}
+
+func (m *model) View() tea.View {
+	view := tea.NewView(m.render())
+	view.AltScreen = true
+	return view
+}
+
+func (m *model) render() string {
 	contentWidth := shell.ContentWidth(m.width)
 	bodyWidth := shell.BodyWidth(m.width)
 	if m.isCenteredStartupUnlockScreen() {
@@ -1821,7 +1840,7 @@ func (m *model) footerActions() []shell.FooterAction {
 	}
 }
 
-func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "ctrl+c":
 		if m.passwordBusy && m.passwordFlow == passwordManageChange {
@@ -1854,7 +1873,34 @@ func (m *model) updateKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// updatePaste sends a bracketed paste to the input that typed text would reach, behind the
+// same guards as updateKeys. Bubble Tea v1 delivered pastes as key messages; v2 does not.
+func (m *model) updatePaste(msg tea.PasteMsg) tea.Cmd {
+	if m.idleLockInFlight || (m.clipboardBusy && m.screen != screenLogin) {
+		return nil
+	}
+	switch m.screen {
+	case screenLogin:
+		return nil
+	case screenPassword:
+		if m.passwordBusy || m.passwordInput == nil {
+			return nil
+		}
+		return m.passwordInput.Update(msg)
+	}
+	switch {
+	case !m.bootAssessed:
+		return nil
+	case m.isKeyRoute():
+		return m.pasteKeyRoute(msg)
+	case m.isAgentSigningRoute():
+		return m.pasteAgentSigning(msg)
+	default:
+		return nil
+	}
+}
+
+func (m *model) updateDashboardKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if !m.bootAssessed {
 		switch msg.String() {
 		case "esc":
@@ -2083,7 +2129,7 @@ func (m *model) updateDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateLoginKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.loginCommitting {
 		return m, nil
 	}
@@ -2120,7 +2166,7 @@ func (m *model) updateLoginKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) updatePasswordKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updatePasswordKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.passwordBusy {
 		if msg.String() == "esc" && m.passwordFlow == passwordKeyView && m.privateCopyPending {
 			m.cancelPrivateKeyCopy()

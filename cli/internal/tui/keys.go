@@ -8,12 +8,13 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/picker"
+	"github.com/itzzritik/forged/cli/internal/tui/components"
 	commonscreen "github.com/itzzritik/forged/cli/internal/tui/screens/common"
 	keyscreen "github.com/itzzritik/forged/cli/internal/tui/screens/keys"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
@@ -790,7 +791,7 @@ func (m *model) renderKeyBody(contentWidth int, bodyHeight int) string {
 	}
 }
 
-func (m *model) updateKeyKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKeyKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch m.session.Current().ID {
 	case RouteKeysBrowser:
 		return m.updateKeyBrowser(msg)
@@ -811,7 +812,7 @@ func (m *model) updateKeyKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKeyBrowser(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.ensureKeyBrowserInput()
 
 	if m.keyBrowser.loading {
@@ -849,10 +850,7 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.keyBrowser.input.Blur()
 			return m, nil
 		}
-		var cmd tea.Cmd
-		m.keyBrowser.input, cmd = m.keyBrowser.input.Update(msg)
-		m.refreshKeyBrowserRows()
-		return m, cmd
+		return m, m.updateKeyBrowserSearch(msg)
 	}
 
 	switch msg.String() {
@@ -895,7 +893,7 @@ func (m *model) updateKeyBrowser(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) updateKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKeyDetail(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.keyDetail.loading || m.keyDetail.busy {
 		if msg.String() == "esc" {
 			m.cancelPrivateKeyCopy()
@@ -950,7 +948,7 @@ func (m *model) updateKeyDetail(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) updateKeyRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKeyRename(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.keyRename.saving {
 		return m, nil
 	}
@@ -985,14 +983,10 @@ func (m *model) updateKeyRename(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, tea.Batch(m.spinner.Tick, m.renameKey(m.keyRename.original, newName))
 	}
 
-	var cmd tea.Cmd
-	m.keyRename.input, cmd = m.keyRename.input.Update(msg)
-	sanitizeKeyNameInput(&m.keyRename.input)
-	m.keyRename.err = ""
-	return m, cmd
+	return m, m.updateKeyRenameInput(msg)
 }
 
-func (m *model) updateKeyDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKeyDelete(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.keyDelete.deleting {
 		return m, nil
 	}
@@ -1028,7 +1022,7 @@ func (m *model) updateKeyDelete(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) updateKeyGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKeyGenerate(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.keyGenerate.generating {
 		return m, nil
 	}
@@ -1055,7 +1049,7 @@ func (m *model) updateKeyGenerate(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKeyImport(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.keyImport.importing {
 		return m, nil
 	}
@@ -1109,7 +1103,7 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		case "down", "j":
 			m.moveKeyImportReviewCursor(1)
 			return m, nil
-		case " ":
+		case "space":
 			m.toggleCurrentImportReviewItem()
 			return m, nil
 		case "a", "A":
@@ -1133,7 +1127,7 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 
 	source := m.currentImportSource()
-	if m.keyImport.pathVisible && m.keyImport.focus == 1 && len(msg.Runes) > 0 {
+	if m.keyImport.pathVisible && m.keyImport.focus == 1 && len(msg.Text) > 0 {
 		return m, m.updateKeyImportPath(msg)
 	}
 	switch msg.String() {
@@ -1215,7 +1209,7 @@ func (m *model) updateKeyImport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateKeyExport(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.keyExport.exporting {
 		return m, nil
 	}
@@ -1270,14 +1264,69 @@ func (m *model) updateKeyExport(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.keyExport.exporting = true
 		return m, tea.Batch(m.spinner.Tick, m.exportVault())
 	default:
-		var cmd tea.Cmd
-		m.keyExport.pathInput, cmd = m.keyExport.pathInput.Update(msg)
-		m.keyExport.err = ""
-		return m, cmd
+		return m, m.updateKeyExportPath(msg)
 	}
 }
 
-func (m *model) updateKeyGenerateInputs(msg tea.KeyMsg) tea.Cmd {
+// pasteKeyRoute delivers a paste where the route's key handler would send typed text.
+func (m *model) pasteKeyRoute(msg tea.PasteMsg) tea.Cmd {
+	switch m.session.Current().ID {
+	case RouteKeysBrowser:
+		m.ensureKeyBrowserInput()
+		if m.keyBrowser.loading || m.keyBrowser.err != "" || !m.keyBrowser.searchActive {
+			return nil
+		}
+		return m.updateKeyBrowserSearch(msg)
+	case RouteKeysRename:
+		if m.keyRename.saving || m.keyRename.loading {
+			return nil
+		}
+		return m.updateKeyRenameInput(msg)
+	case RouteKeysGenerate:
+		if m.keyGenerate.generating {
+			return nil
+		}
+		return m.updateKeyGenerateInputs(msg)
+	case RouteKeysImport:
+		ki := &m.keyImport
+		if ki.importing || ki.loading || ki.pickerOpening || ki.success != nil ||
+			ki.step == keyImportStepResult || ki.step == keyImportStepReview || ki.focus != 1 {
+			return nil
+		}
+		return m.updateKeyImportPath(msg)
+	case RouteKeysExport:
+		if m.keyExport.exporting || m.keyExport.pickerOpening || m.keyExport.success != nil {
+			return nil
+		}
+		return m.updateKeyExportPath(msg)
+	default:
+		return nil
+	}
+}
+
+func (m *model) updateKeyBrowserSearch(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.keyBrowser.input, cmd = m.keyBrowser.input.Update(msg)
+	m.refreshKeyBrowserRows()
+	return cmd
+}
+
+func (m *model) updateKeyRenameInput(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.keyRename.input, cmd = m.keyRename.input.Update(msg)
+	sanitizeKeyNameInput(&m.keyRename.input)
+	m.keyRename.err = ""
+	return cmd
+}
+
+func (m *model) updateKeyExportPath(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.keyExport.pathInput, cmd = m.keyExport.pathInput.Update(msg)
+	m.keyExport.err = ""
+	return cmd
+}
+
+func (m *model) updateKeyGenerateInputs(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	m.keyGenerate.nameInput, cmd = m.keyGenerate.nameInput.Update(msg)
 	sanitizeKeyNameInput(&m.keyGenerate.nameInput)
@@ -1286,7 +1335,7 @@ func (m *model) updateKeyGenerateInputs(msg tea.KeyMsg) tea.Cmd {
 	return cmd
 }
 
-func (m *model) updateKeyImportPath(msg tea.KeyMsg) tea.Cmd {
+func (m *model) updateKeyImportPath(msg tea.Msg) tea.Cmd {
 	var cmd tea.Cmd
 	m.keyImport.pathInput, cmd = m.keyImport.pathInput.Update(msg)
 	m.keyImport.err = ""
@@ -2315,7 +2364,7 @@ func (m *model) prepareKeyBrowser(keys []actions.KeySummary, query string, notic
 }
 
 func (m *model) ensureKeyBrowserInput() {
-	if m.keyBrowser.input.Cursor.BlinkSpeed != 0 {
+	if keyInputReady(m.keyBrowser.input) {
 		return
 	}
 
@@ -2549,11 +2598,11 @@ func (m *model) selectedKeyRow() (actions.KeySummary, bool) {
 
 func (m *model) resizeKeyInputs() {
 	m.resizeKeyBrowserSearchInput()
-	m.keyRename.input.Width = shell.ClampBlockWidth(m.width, 44)
+	m.keyRename.input.SetWidth(shell.ClampBlockWidth(m.width, 44))
 	inputWidth := shell.ClampBlockWidth(m.width, 44)
-	m.keyGenerate.nameInput.Width = inputWidth
-	m.keyImport.pathInput.Width = shell.ClampBlockWidth(m.width, 54)
-	m.keyExport.pathInput.Width = shell.ClampBlockWidth(m.width, 54)
+	m.keyGenerate.nameInput.SetWidth(inputWidth)
+	m.keyImport.pathInput.SetWidth(shell.ClampBlockWidth(m.width, 54))
+	m.keyExport.pathInput.SetWidth(shell.ClampBlockWidth(m.width, 54))
 }
 
 func (m *model) resizeKeyBrowserSearchInput() {
@@ -2562,7 +2611,7 @@ func (m *model) resizeKeyBrowserSearchInput() {
 	if countLabel := strings.TrimSpace(m.keyBrowserCountLabelForWidth(rowWidth)); countLabel != "" {
 		searchWidth = max(1, rowWidth-lipgloss.Width(countLabel)-keyBrowserSearchPrefixWidth-keyBrowserSearchGapWidth-keyBrowserSearchCursorWidth)
 	}
-	m.keyBrowser.input.Width = searchWidth
+	m.keyBrowser.input.SetWidth(searchWidth)
 }
 
 func chooseKeyBrowserCountLabel(width int, variants ...string) string {
@@ -2579,12 +2628,16 @@ func newKeyInput(placeholder string) textinput.Model {
 	input := textinput.New()
 	input.Prompt = ""
 	input.CharLimit = 128
-	input.Width = 32
-	input.Cursor.Style = theme.FooterKey
-	input.TextStyle = theme.FieldValue
-	input.PlaceholderStyle = theme.BodyMuted
+	input.SetWidth(32)
+	components.StyleTextInput(&input)
 	input.Placeholder = placeholder
 	return input
+}
+
+// keyInputReady reports whether input came from newKeyInput: a zero textinput.Model has
+// no styles, while StyleTextInput keeps the default blinking cursor.
+func keyInputReady(input textinput.Model) bool {
+	return input.Styles().Cursor.Blink
 }
 
 func sanitizeKeyNameInput(input *textinput.Model) {

@@ -4,9 +4,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/charmbracelet/bubbles/textinput"
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/bubbles/v2/textinput"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/platform"
@@ -317,7 +317,7 @@ func (m *model) keyMatchesCurrentSigning(publicKey string) bool {
 }
 
 func (m *model) ensureAgentSigningInput() {
-	if m.agent.signing.input.Cursor.BlinkSpeed != 0 {
+	if keyInputReady(m.agent.signing.input) {
 		m.resizeAgentInputs()
 		return
 	}
@@ -344,11 +344,11 @@ func (m *model) resizeAgentSigningSearchInput() {
 	if countLabel := strings.TrimSpace(m.agentSigningCountLabelForWidth(rowWidth)); countLabel != "" {
 		searchWidth = max(1, rowWidth-lipgloss.Width(countLabel)-keyBrowserSearchPrefixWidth-keyBrowserSearchGapWidth-keyBrowserSearchCursorWidth)
 	}
-	m.agent.signing.input.Width = searchWidth
+	m.agent.signing.input.SetWidth(searchWidth)
 }
 
 func (m *model) ensureAgentSigningInputState() {
-	if m.agent.signing.input.Cursor.BlinkSpeed == 0 {
+	if !keyInputReady(m.agent.signing.input) {
 		m.agent.signing.input = newKeyInput("Search keys")
 	}
 }
@@ -493,7 +493,7 @@ func (m *model) selectAgentSigningByName(name string) bool {
 	return false
 }
 
-func (m *model) updateAgentKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateAgentKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	items := m.agentItems()
 	m.normalizeAgentSelection(items)
 
@@ -528,7 +528,24 @@ func (m *model) updateAgentKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+// pasteAgentSigning delivers a paste to the signing search, the only text input on the route.
+func (m *model) pasteAgentSigning(msg tea.PasteMsg) tea.Cmd {
+	m.ensureAgentSigningInput()
+	s := &m.agent.signing
+	if s.busy || s.loading || !m.signingLoaded || s.disableArmed || !s.searchActive {
+		return nil
+	}
+	return m.updateAgentSigningSearch(msg)
+}
+
+func (m *model) updateAgentSigningSearch(msg tea.Msg) tea.Cmd {
+	var cmd tea.Cmd
+	m.agent.signing.input, cmd = m.agent.signing.input.Update(msg)
+	m.refreshAgentSigningRows()
+	return cmd
+}
+
+func (m *model) updateAgentSigningKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	m.ensureAgentSigningInput()
 
 	if m.agent.signing.busy {
@@ -572,10 +589,7 @@ func (m *model) updateAgentSigningKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.agent.signing.input.Blur()
 			return m, nil
 		}
-		var cmd tea.Cmd
-		m.agent.signing.input, cmd = m.agent.signing.input.Update(msg)
-		m.refreshAgentSigningRows()
-		return m, cmd
+		return m, m.updateAgentSigningSearch(msg)
 	}
 
 	if m.agent.signing.err != "" {

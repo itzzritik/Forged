@@ -3,7 +3,7 @@ package shell
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
 )
@@ -85,7 +85,8 @@ func renderHeaderBox(width int, data HeaderData) string {
 		}, "\n")
 	}
 
-	return theme.HeaderFrame.Width(innerWidth).Render(content)
+	// Lip Gloss v2 counts the border inside Width; v1 drew it outside.
+	return theme.HeaderFrame.Width(innerWidth + theme.HeaderFrame.GetHorizontalBorderSize()).Render(content)
 }
 
 func renderBrandBanner(width int) string {

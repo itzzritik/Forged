@@ -5,7 +5,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/platform"
@@ -148,7 +148,7 @@ func (m *model) scheduleLabRoutingPoll() tea.Cmd {
 	})
 }
 
-func (m *model) updateLabRoutingKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateLabRoutingKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.lab.busy {
 		switch msg.String() {
 		case "esc":

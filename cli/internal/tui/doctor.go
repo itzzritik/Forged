@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/platform"
 	dashboardscreen "github.com/itzzritik/forged/cli/internal/tui/screens/dashboard"
@@ -119,7 +119,7 @@ func (m *model) doctorFooterActions(includeTabs bool) []shell.FooterAction {
 	return actions
 }
 
-func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateDoctorKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	switch msg.String() {
 	case "esc":
 		if m.session.Back() {
@@ -149,7 +149,7 @@ func (m *model) updateDoctorKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	}
 }
 
-func (m *model) updateDoctorDashboardKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateDoctorDashboardKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	tabs := m.dashboardTabs()
 	m.normalizeDashboardSelection(tabs)
 

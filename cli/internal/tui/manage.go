@@ -6,8 +6,8 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -355,7 +355,7 @@ func (m *model) renderManageSuccessBody(contentWidth int) string {
 	}, contentWidth)
 }
 
-func (m *model) updateManageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateManageKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.manage.logoutBusy {
 		return m, nil
 	}
@@ -399,7 +399,7 @@ func (m *model) updateManageKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-func (m *model) updateManageMasterIntervalKeys(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
+func (m *model) updateManageMasterIntervalKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 	if m.manage.settingBusy {
 		return m, nil
 	}

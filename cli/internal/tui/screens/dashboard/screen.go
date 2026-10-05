@@ -3,7 +3,7 @@ package dashboard
 import (
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	"github.com/itzzritik/forged/cli/internal/tui/components"
 	"github.com/itzzritik/forged/cli/internal/tui/shell"
 	"github.com/itzzritik/forged/cli/internal/tui/theme"
@@ -476,8 +476,9 @@ func renderWelcomeCard(option Option, cardWidth int, bodyHeight int) string {
 	frame := lipgloss.NewStyle().
 		BorderStyle(theme.RoundedBorder()).
 		BorderForeground(borderColor).
-		Padding(padding[0], padding[1]).
-		Width(cardWidth)
+		Padding(padding[0], padding[1])
+	// Lip Gloss v2 counts the border inside Width; v1 drew it outside.
+	frame = frame.Width(cardWidth + frame.GetHorizontalBorderSize())
 
 	innerWidth := max(1, cardWidth-padding[1]*2)
 	body := renderWelcomeCardBody(option, titleStyle, descriptionStyle, innerWidth)
