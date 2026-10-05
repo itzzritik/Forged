@@ -4,12 +4,12 @@ import {
 	type Column,
 	type ColumnDef,
 	type ColumnPinningState,
+	flexRender,
+	type ReactTable,
+	type RowData,
 	type RowSelectionState,
 	type SortingState,
-	flexRender,
-	getCoreRowModel,
-	getSortedRowModel,
-	useReactTable,
+	useTable,
 } from "@tanstack/react-table";
 import { useVirtualizer } from "@tanstack/react-virtual";
 import { CheckIcon, ChevronDownIcon, ChevronUpIcon, Columns3Icon, MoreHorizontalIcon, SearchIcon } from "lucide-react";
@@ -30,6 +30,7 @@ import {
 import { Input } from "@/components/ui/input";
 import { Skeleton } from "@/components/ui/skeleton";
 import { cn } from "@/lib/utils";
+import { type DataViewFeatures, dataViewFeatures } from "./features";
 import { type DataViewAction, type DataViewColumn, type DataViewProps } from "./types";
 import { useDataViewColumns } from "./use-data-view-columns";
 
@@ -47,8 +48,8 @@ const alignCN = {
 	end: "text-right",
 } as const;
 
-const PINNED_LEFT_SHADOW = "shadow-[inset_-1px_0_0_0_var(--data-view-border),8px_0_12px_-12px_rgba(0,0,0,0.35)]";
-const PINNED_RIGHT_SHADOW = "shadow-[inset_1px_0_0_0_var(--data-view-border),-8px_0_12px_-12px_rgba(0,0,0,0.35)]";
+const PINNED_START_SHADOW = "shadow-[inset_-1px_0_0_0_var(--data-view-border),8px_0_12px_-12px_rgba(0,0,0,0.35)]";
+const PINNED_END_SHADOW = "shadow-[inset_1px_0_0_0_var(--data-view-border),-8px_0_12px_-12px_rgba(0,0,0,0.35)]";
 
 function normalizeSearchValue(value: unknown): string {
 	if (value == null) return "";
@@ -89,29 +90,29 @@ function SelectionCheckbox({
 	);
 }
 
-function getPinnedCellStyle<TData>(column: Column<TData, unknown>, scope: "header" | "body"): CSSProperties | undefined {
+function getPinnedCellStyle<TData extends RowData>(column: Column<DataViewFeatures, TData, unknown>, scope: "header" | "body"): CSSProperties | undefined {
 	const pinned = column.getIsPinned();
 	if (!pinned) return undefined;
 
 	return {
 		backgroundColor: scope === "header" ? "var(--data-view-sticky)" : "var(--data-view-shell)",
 		backgroundClip: "padding-box",
+		insetInlineEnd: pinned === "end" ? `${column.getAfter("end")}px` : undefined,
+		insetInlineStart: pinned === "start" ? `${column.getStart("start")}px` : undefined,
 		isolation: "isolate",
-		left: pinned === "left" ? `${column.getStart("left")}px` : undefined,
 		position: "sticky",
-		right: pinned === "right" ? `${column.getAfter("right")}px` : undefined,
 	};
 }
 
-function getPinnedCellClassName<TData>(column: Column<TData, unknown>, scope: "header" | "body") {
+function getPinnedCellClassName<TData extends RowData>(column: Column<DataViewFeatures, TData, unknown>, scope: "header" | "body") {
 	const pinned = column.getIsPinned();
 	if (!pinned) return null;
 
 	return cn(
 		"sticky",
 		scope === "header" ? "z-20" : "z-10 bg-[var(--data-view-shell)]",
-		pinned === "left" && column.getIsLastColumn("left") && PINNED_LEFT_SHADOW,
-		pinned === "right" && column.getIsFirstColumn("right") && PINNED_RIGHT_SHADOW
+		pinned === "start" && column.getIsLastColumn("start") && PINNED_START_SHADOW,
+		pinned === "end" && column.getIsFirstColumn("end") && PINNED_END_SHADOW
 	);
 }
 
@@ -182,14 +183,14 @@ function DataViewRowActions<TData>({ actions, item }: { actions: DataViewAction<
 	);
 }
 
-function DataViewColumnToggle<TData>({
+function DataViewColumnToggle<TData extends RowData>({
 	disabled,
 	table,
 	onReset,
 }: {
 	disabled?: boolean;
 	onReset?: () => void;
-	table: ReturnType<typeof useReactTable<TData>>;
+	table: ReactTable<DataViewFeatures, TData>;
 }) {
 	const columns = table.getAllColumns().filter((column) => {
 		if (column.id === "__select" || column.id === "__actions") return false;
@@ -240,7 +241,7 @@ function DataViewColumnToggle<TData>({
 	);
 }
 
-export function DataView<TData>({
+export function DataView<TData extends RowData>({
 	actions,
 	columns,
 	data,
@@ -280,14 +281,14 @@ export function DataView<TData>({
 	const { cols: columnVisibility, setCols: setColumnVisibility, reset: resetColumnVisibility } = useDataViewColumns(entityLabel, initialVisibilityRecord);
 	const columnPinning = useMemo<ColumnPinningState>(
 		() => ({
-			left: enableSelection ? ["__select"] : [],
-			right: actions ? ["__actions"] : [],
+			start: enableSelection ? ["__select"] : [],
+			end: actions ? ["__actions"] : [],
 		}),
 		[actions, enableSelection]
 	);
 
-	const tableColumns = useMemo<ColumnDef<TData, unknown>[]>(() => {
-		const nextColumns: ColumnDef<TData, unknown>[] = [];
+	const tableColumns = useMemo<ColumnDef<DataViewFeatures, TData, unknown>[]>(() => {
+		const nextColumns: ColumnDef<DataViewFeatures, TData, unknown>[] = [];
 
 		if (enableSelection) {
 			nextColumns.push({
@@ -341,13 +342,12 @@ export function DataView<TData>({
 		return nextColumns;
 	}, [actions, columns, enableSelection, entityLabel]);
 
-	const table = useReactTable({
+	const table = useTable({
 		columns: tableColumns,
 		data: filteredData,
 		enableColumnPinning: true,
-		getCoreRowModel: getCoreRowModel(),
+		features: dataViewFeatures,
 		getRowId,
-		getSortedRowModel: getSortedRowModel(),
 		onColumnVisibilityChange: (updater) => {
 			const next = typeof updater === "function" ? updater(columnVisibility) : updater;
 			setColumnVisibility(next);

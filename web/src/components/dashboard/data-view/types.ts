@@ -1,4 +1,7 @@
-import type { ColumnDef, RowData, SortingState, VisibilityState } from "@tanstack/react-table";
+import type { ColumnDef, ColumnVisibilityState, RowData, SortingState } from "@tanstack/react-table";
+import type { DataViewFeatures } from "./features";
+
+export type { DataViewColumnMeta, DataViewResponsive } from "./features";
 
 export type DataViewAction<TData = unknown> = {
 	id: string;
@@ -14,19 +17,7 @@ export type DataViewEmptyState = {
 	onAction?: () => void;
 };
 
-export type DataViewResponsive = "base" | "sm" | "md" | "lg" | "xl";
-
-declare module "@tanstack/react-table" {
-	interface ColumnMeta<TData extends RowData, TValue> {
-		align?: "start" | "center" | "end";
-		cellClassName?: string;
-		headerClassName?: string;
-		responsive?: DataViewResponsive;
-		toggleable?: boolean;
-	}
-}
-
-export type DataViewColumn<TData> = ColumnDef<TData, unknown>;
+export type DataViewColumn<TData extends RowData> = ColumnDef<DataViewFeatures, TData, unknown>;
 
 export type DataViewSelectionToolbar<TData> = {
 	label: (selectedRows: TData[]) => string;
@@ -34,7 +25,7 @@ export type DataViewSelectionToolbar<TData> = {
 	onPrimaryAction: (selectedRows: TData[]) => void;
 };
 
-export type DataViewProps<TData> = {
+export type DataViewProps<TData extends RowData> = {
 	data: TData[];
 	columns: DataViewColumn<TData>[];
 	entityLabel: string;
@@ -44,7 +35,7 @@ export type DataViewProps<TData> = {
 	isLoading?: boolean;
 	emptyState?: DataViewEmptyState;
 	initialSorting?: SortingState;
-	initialColumnVisibility?: VisibilityState;
+	initialColumnVisibility?: ColumnVisibilityState;
 	rowHeight?: number;
 	onRowClick?: (item: TData) => void;
 	actions?: DataViewAction<TData>[] | ((item: TData) => DataViewAction<TData>[]);
