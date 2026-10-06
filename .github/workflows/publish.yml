@@ -82,34 +82,8 @@ jobs:
                   retention-days: 1
                   if-no-files-found: error
 
-    checks:
-        if: github.actor != 'github-actions[bot]'
-        name: Checks
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v7
-              with:
-                  fetch-depth: 1
-
-            # A cache key apart from the release job's: this faster job would
-            # otherwise save first and leave the release's cross-builds cold.
-            - uses: actions/setup-go@v7
-              with:
-                  go-version-file: cli/go.mod
-                  check-latest: true
-                  cache-dependency-path: |
-                      cli/go.sum
-                      cli/go.mod
-
-            - name: CLI vet and test
-              working-directory: cli
-              run: |
-                  go vet ./...
-                  go vet -tags e2e ./...
-                  go test ./...
-
     release:
-        needs: [version, swift-helpers, checks]
+        needs: [version, swift-helpers]
         if: github.actor != 'github-actions[bot]'
         name: Publish ${{ needs.version.outputs.tag }} to npm + GitHub Releases
         runs-on: ubuntu-latest
@@ -123,6 +97,14 @@ jobs:
                   go-version-file: cli/go.mod
                   check-latest: true
                   cache-dependency-path: cli/go.sum
+
+            # Before anything is versioned, tagged or published.
+            - name: CLI vet and test
+              working-directory: cli
+              run: |
+                  go vet ./...
+                  go vet -tags e2e ./...
+                  go test ./...
 
             - uses: actions/setup-node@v7
               with:
