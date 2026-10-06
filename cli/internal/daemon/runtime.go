@@ -159,7 +159,8 @@ func ServiceFresh(paths config.Paths, expectedBuildID string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if !status.Installed || !status.ConfigValid || !status.Running {
+	// Older installs ran the service straight from the npm install.
+	if !status.Installed || !status.ConfigValid || !status.Running || !InInstallDir(status.BinaryPath) {
 		return false, nil
 	}
 

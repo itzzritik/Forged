@@ -157,9 +157,14 @@ func (d *Daemon) Run(password []byte) error {
 		"ctl_socket", d.paths.CtlSocket(),
 	)
 
-	// Windows upgrades go through the next forged launch.
+	// Windows upgrades go through the next forged launch. An installed copy
+	// follows the binary it was installed from, since upgrades replace that.
 	if executableErr == nil && runtime.GOOS != "windows" {
-		go d.watchInstalledBinary(executable, executableInfo)
+		if source := recordedSource(executable); source == "" {
+			go d.watchInstalledBinary(executable, executableInfo, false)
+		} else if info, err := os.Stat(source); err == nil {
+			go d.watchInstalledBinary(source, info, true)
+		}
 	}
 	d.waitForSignal()
 	return nil

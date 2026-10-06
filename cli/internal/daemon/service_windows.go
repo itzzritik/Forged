@@ -77,6 +77,9 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	if err != nil {
 		return fmt.Errorf("staging daemon binary: %w", err)
 	}
+	if err := InstallBinaries(runtime.Binary); err != nil {
+		return fmt.Errorf("installing Forged binaries: %w", err)
+	}
 	runtime.Binary = staged
 
 	userID := currentTaskUser()
@@ -186,8 +189,8 @@ const (
 )
 
 func stagedBinariesRoot(paths config.Paths) string {
-	if local := os.Getenv("LOCALAPPDATA"); local != "" {
-		return filepath.Join(local, "Programs", "Forged", "daemon")
+	if root := InstallDir(); root != "" {
+		return filepath.Join(root, "daemon")
 	}
 	return filepath.Join(paths.ConfigDir, "bin")
 }
@@ -367,6 +370,7 @@ func UninstallService() error {
 		}
 	}
 	_ = os.RemoveAll(stagedBinariesRoot(config.DefaultPaths()))
+	_ = os.RemoveAll(filepath.Join(InstallDir(), "bin"))
 	return nil
 }
 

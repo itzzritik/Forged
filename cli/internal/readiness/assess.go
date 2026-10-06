@@ -117,6 +117,7 @@ func (e *Engine) Assess() (Snapshot, error) {
 		snapshot.IdentityAgentOwner = owner
 	}
 	snapshot.GitSSH = e.gitSSH()
+	snapshot.GitSigningStale = config.GitSigningProgramStale(daemon.InstalledBinary("forged-sign"))
 
 	if snapshot.IPCSocketReady {
 		if status, err := e.daemonStatus(e.Paths.CtlSocket()); err == nil {
@@ -152,6 +153,8 @@ func classifyState(s Snapshot) State {
 		s.Service.Running &&
 		serviceOwnsDaemon(s) &&
 		serviceBuildFresh(s) &&
+		serviceRunsInstalledCopy(s) &&
+		!s.GitSigningStale &&
 		s.IPCSocketReady &&
 		s.AgentSocketReady &&
 		(s.AgentDisabled || s.SSHHealthy())
@@ -185,6 +188,11 @@ func serviceBuildFresh(s Snapshot) bool {
 		return true
 	}
 	return strings.TrimSpace(s.DaemonBuildID) == current
+}
+
+// Older installs ran the service straight from the npm install.
+func serviceRunsInstalledCopy(s Snapshot) bool {
+	return daemon.InInstallDir(s.Service.BinaryPath)
 }
 
 func (e *Engine) pathExists(path string) bool {

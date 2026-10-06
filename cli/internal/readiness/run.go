@@ -4,6 +4,7 @@ import (
 	"errors"
 	"strings"
 
+	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 )
 
@@ -54,6 +55,7 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 	if err := e.ensureServiceStage(state, opts); err != nil {
 		return state.result, err
 	}
+	e.ensureGitSigningStage(state)
 	if err := e.ensureSocketStage(state); err != nil {
 		return state.result, err
 	}
@@ -127,6 +129,28 @@ func (e *Engine) ensureGitSSHStage(state *repairState) {
 		return
 	}
 	e.markFixed(&state.result.Summary, "git-ssh")
+}
+
+// ensureGitSigningStage moves a Forged gpg.ssh.program into the install
+// folder, so commit signing survives the CLI's install moving.
+func (e *Engine) ensureGitSigningStage(state *repairState) {
+	if !state.result.Snapshot.GitSigningStale {
+		return
+	}
+	installed := daemon.InstalledBinary("forged-sign")
+	runtime, err := e.serviceRuntimeSpec()
+	if err == nil {
+		err = daemon.InstallBinaries(runtime.Binary)
+	}
+	if err == nil {
+		err = config.RepointGitSigningProgram(installed)
+	}
+	state.result.Snapshot.GitSigningStale = config.GitSigningProgramStale(installed)
+	if err != nil || state.result.Snapshot.GitSigningStale {
+		e.markFailed(&state.result.Summary, "git-signing")
+		return
+	}
+	e.markFixed(&state.result.Summary, "git-signing")
 }
 
 func (e *Engine) ensureVaultAndCredentialsStage(state *repairState, opts RunOptions) error {

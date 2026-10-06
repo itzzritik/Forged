@@ -9,8 +9,10 @@ const binaryWatchInterval = 15 * time.Second
 
 // Package managers replace the installed binary without telling the daemon;
 // stopping once the replacement settles lets launchd/systemd restart it on
-// the new build. A missing binary never stops it, so the service can't loop.
-func (d *Daemon) watchInstalledBinary(path string, started os.FileInfo) {
+// the new build. With reinstall, path is the source of the installed copy,
+// which is refreshed first. A missing binary never stops it, so the service
+// can't loop.
+func (d *Daemon) watchInstalledBinary(path string, started os.FileInfo, reinstall bool) {
 	ticker := time.NewTicker(binaryWatchInterval)
 	defer ticker.Stop()
 	var pending os.FileInfo
@@ -25,12 +27,20 @@ func (d *Daemon) watchInstalledBinary(path string, started os.FileInfo) {
 			pending = nil
 			continue
 		}
-		if pending != nil && sameBinary(current, pending) {
-			d.logger.Info("installed binary changed; restarting", "path", path)
-			d.Stop()
-			return
+		if pending == nil || !sameBinary(current, pending) {
+			pending = current
+			continue
 		}
-		pending = current
+		if reinstall {
+			if err := InstallBinaries(path); err != nil {
+				d.logger.Warn("installing upgraded binary failed", "path", path, "error", err)
+				started, pending = current, nil
+				continue
+			}
+		}
+		d.logger.Info("installed binary changed; restarting", "path", path)
+		d.Stop()
+		return
 	}
 }
 

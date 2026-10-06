@@ -68,6 +68,7 @@ type Snapshot struct {
 	ManagedConfigReady    bool
 	IdentityAgentOwner    config.SSHAgentOwner
 	GitSSH                config.GitSSHStatus
+	GitSigningStale       bool
 }
 
 func (s Snapshot) SSHHealthy() bool {

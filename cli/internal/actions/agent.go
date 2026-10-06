@@ -11,6 +11,7 @@ import (
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/keytypes"
 	"golang.org/x/crypto/ssh"
 )
@@ -63,7 +64,7 @@ func LoadCommitSigningStatus(paths config.Paths) (CommitSigningStatus, error) {
 	if signProgram == "" || gpgFormat != "ssh" {
 		return status, nil
 	}
-	if !isForgedSigningProgram(signProgram) {
+	if !config.IsForgedSignProgram(signProgram) {
 		return status, nil
 	}
 	if allowedSignersFile == "" {
@@ -265,31 +266,25 @@ func parseGitBool(value string, present bool) (bool, error) {
 	return number != 0, nil
 }
 
-func isForgedSigningProgram(program string) bool {
-	program = strings.TrimSpace(program)
-	if program == "" {
-		return false
-	}
-
-	binary := filepath.Base(program)
-	return binary == "forged-sign" || binary == "forged-sign.exe"
-}
-
+// findSignBinary returns forged-sign from Forged's install folder, so git
+// keeps signing when the CLI's own install (npm, Node version) moves.
+// Service installs keep that copy current.
 func findSignBinary() (string, error) {
-	if path, err := exec.LookPath("forged-sign"); err == nil {
+	path := daemon.InstalledBinary("forged-sign")
+	if _, err := os.Stat(path); err == nil {
 		return path, nil
 	}
-
 	self, err := os.Executable()
 	if err != nil {
-		return "", fmt.Errorf("Cannot find forged-sign binary")
+		return "", fmt.Errorf("Cannot find the Forged binary: %w", err)
 	}
-
-	candidate := filepath.Join(filepath.Dir(self), "forged-sign")
-	if path, err := exec.LookPath(candidate); err == nil {
-		return path, nil
+	if err := daemon.InstallBinaries(self); err != nil {
+		return "", fmt.Errorf("Installing Forged binaries: %w", err)
 	}
-	return "", fmt.Errorf("Forged-sign not found in PATH or next to the Forged binary")
+	if _, err := os.Stat(path); err != nil {
+		return "", fmt.Errorf("Forged-sign was not found next to the Forged binary")
+	}
+	return path, nil
 }
 
 func writeAllowedSigners(publicKey string) (string, error) {

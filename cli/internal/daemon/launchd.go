@@ -101,6 +101,13 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		return fmt.Errorf("Restricting daemon stderr log: %w", err)
 	}
 
+	if err := InstallBinaries(runtime.Binary); err != nil {
+		return fmt.Errorf("Installing Forged binaries: %w", err)
+	}
+	if !InInstallDir(runtime.Binary) {
+		runtime.Binary = InstalledBinary("forged")
+	}
+
 	plist := plistPath()
 	if err := os.MkdirAll(filepath.Dir(plist), 0755); err != nil {
 		return err
@@ -224,6 +231,7 @@ func UninstallService() error {
 			return fmt.Errorf("Removing launchd service %s: %w", path, err)
 		}
 	}
+	_ = os.RemoveAll(filepath.Join(InstallDir(), "bin"))
 	return nil
 }
 

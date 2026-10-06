@@ -40,6 +40,12 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	if err != nil {
 		return err
 	}
+	if err := InstallBinaries(runtime.Binary); err != nil {
+		return fmt.Errorf("Installing Forged binaries: %w", err)
+	}
+	if !InInstallDir(runtime.Binary) {
+		runtime.Binary = InstalledBinary("forged")
+	}
 
 	unitDir := filepath.Dir(unitPath())
 	if err := os.MkdirAll(unitDir, 0755); err != nil {
@@ -113,6 +119,7 @@ func UninstallService() error {
 		os.Remove(path)
 	}
 	systemctlUser("daemon-reload").Run()
+	_ = os.RemoveAll(filepath.Join(InstallDir(), "bin"))
 	return nil
 }
 

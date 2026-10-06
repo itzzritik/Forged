@@ -46,6 +46,7 @@ func TestWindowsScenario(t *testing.T) {
 		{"ssh.exe authenticates through the agent pipe", stepSSHLogin},
 		{"git over SSH uses Win32-OpenSSH and the agent", stepGitOverSSH},
 		{"git commit signing through forged-sign", stepCommitSigning},
+		{"signing and ssh survive the install moving", stepInstallMoved},
 		{"locked vault unlocks through System Auth for ssh", stepLockSystemAuth},
 		{"canceled System Auth denies ssh", stepSystemAuthCanceled},
 		{"OS session lock clears the session", stepOSLockEvent},
@@ -144,8 +145,8 @@ func stepCommitSigning(t *testing.T, s *scenario) {
 	}
 	t.Logf("signing status: %+v", status)
 	program, _ := h.run(t, h.home, "git", "config", "--global", "gpg.ssh.program")
-	if !strings.EqualFold(filepath.Clean(strings.TrimSpace(program)), filepath.Join(h.bin, "forged-sign.exe")) {
-		t.Errorf("gpg.ssh.program = %q", strings.TrimSpace(program))
+	if !strings.EqualFold(filepath.Clean(strings.TrimSpace(program)), installedSign()) {
+		t.Errorf("gpg.ssh.program = %q, want the installed %s", strings.TrimSpace(program), installedSign())
 	}
 
 	repo := filepath.Join(h.root, "repo")
@@ -171,6 +172,35 @@ func stepCommitSigning(t *testing.T, s *scenario) {
 		t.Errorf("load signing status: %v", err)
 	}
 	t.Logf("loaded signing status: %+v", loaded)
+}
+
+// installedSign is forged-sign in Forged's per-user install folder.
+func installedSign() string {
+	return filepath.Join(h.home, "AppData", "Local", "Programs", "Forged", "bin", "forged-sign.exe")
+}
+
+// npm keeps Forged under the active Node version; switching Node or
+// reinstalling must not break signing or SSH, which use the installed copy.
+func stepInstallMoved(t *testing.T, s *scenario) {
+	moved := h.bin + "-moved"
+	if err := os.Rename(h.bin, moved); err != nil {
+		t.Fatalf("moving the install: %v", err)
+	}
+	defer func() {
+		if err := os.Rename(moved, h.bin); err != nil {
+			t.Fatalf("restoring the install: %v", err)
+		}
+	}()
+	repo := filepath.Join(h.root, "repo")
+	if out, err := h.run(t, repo, "git", "commit", "--allow-empty", "-q", "-m", "signed after the install moved"); err != nil {
+		t.Fatalf("signed commit without the original install: %v\n%s", err, out)
+	}
+	if out, err := h.run(t, repo, "git", "verify-commit", "HEAD"); err != nil {
+		t.Fatalf("git verify-commit: %v\n%s", err, out)
+	}
+	if out, err := s.ssh(t); err != nil || !strings.Contains(out, "forged-e2e-ok") {
+		t.Fatalf("ssh without the original install: %v\n%s", err, out)
+	}
 }
 
 func stepLockSystemAuth(t *testing.T, s *scenario) {
@@ -300,6 +330,11 @@ func stepDoctorFix(t *testing.T, s *scenario) {
 	if err := os.WriteFile(s.paths.SSHUserConfig(), []byte("Host example\n    User nobody\n"), 0o600); err != nil {
 		t.Fatal(err)
 	}
+	// Releases before the install folder pointed git at the npm forged-sign.
+	legacySign := filepath.Join(h.bin, "forged-sign.exe")
+	if out, err := h.run(t, h.home, "git", "config", "--global", "gpg.ssh.program", legacySign); err != nil {
+		t.Fatalf("set legacy gpg.ssh.program: %v\n%s", err, out)
+	}
 	waitPipes(t, s, false)
 
 	p := h.forged(t, "doctor", "--fix")
@@ -309,6 +344,9 @@ func stepDoctorFix(t *testing.T, s *scenario) {
 	user := readFile(t, s.paths.SSHUserConfig())
 	if !strings.Contains(user, "forged.conf") || !strings.Contains(user, "Host example") {
 		t.Errorf("doctor --fix did not restore the Include while keeping user config:\n%s", user)
+	}
+	if program, _ := h.run(t, h.home, "git", "config", "--global", "gpg.ssh.program"); !strings.EqualFold(filepath.Clean(strings.TrimSpace(program)), installedSign()) {
+		t.Errorf("doctor --fix left gpg.ssh.program at %q, want %s", strings.TrimSpace(program), installedSign())
 	}
 	if out, err := s.sshEventually(t, 20*time.Second); err != nil {
 		t.Fatalf("ssh after doctor --fix: %v\n%s", err, out)
