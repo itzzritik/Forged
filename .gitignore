@@ -12,3 +12,7 @@ node_modules/
 .superpowers
 .agents/plan
 TUI-*.md
+# `go build ./cmd/...` run from cli/ drops binaries here.
+/cli/forged
+/cli/forged-sign
+/cli/forged-auth
