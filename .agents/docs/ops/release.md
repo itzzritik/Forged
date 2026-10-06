@@ -29,7 +29,7 @@ One manual GitHub Actions workflow publishes CLI releases.
 - The npm packages have no install scripts: npm 12+ blocks them and warns on every install. After an upgrade the daemon restarts itself onto the new build (see daemon docs); the next `forged` launch's build-id check is the fallback.
 - CLI builds embed a daemon build id. Local `just build-cli` refreshes an installed daemon after rebuilding; releases use the commit id for the daemon freshness check.
 - GoReleaser artifact metadata can be either a top-level array or an object with `artifacts`; npm packaging must accept both.
-- Publish runs queue instead of canceling: a canceled run can leave a partial npm/GitHub release. The release job waits on a `Checks` job (Go vet/test for cli and server, web lint/typecheck/build), the repo's only automated gate since there is no push CI.
+- Publish runs queue instead of canceling: a canceled run can leave a partial npm/GitHub release. The release job waits on a `Checks` job (CLI vet/test only: this workflow releases the CLI, so it never gates on server or web). Checks keeps its own Go cache key; sharing the release job's would let it save first and leave the release's cross-builds cold.
 - GoReleaser time depends on the Go build cache, keyed on `go.sum`: the first release after a dependency change, or after 7 idle days (GitHub cache eviction), compiles cold (~2 min longer).
 
 ## Decisions

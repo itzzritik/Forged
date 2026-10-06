@@ -91,34 +91,22 @@ jobs:
               with:
                   fetch-depth: 1
 
+            # A cache key apart from the release job's: this faster job would
+            # otherwise save first and leave the release's cross-builds cold.
             - uses: actions/setup-go@v7
               with:
                   go-version-file: cli/go.mod
                   check-latest: true
                   cache-dependency-path: |
                       cli/go.sum
-                      server/go.sum
+                      cli/go.mod
 
-            - name: Go vet and test
+            - name: CLI vet and test
+              working-directory: cli
               run: |
-                  for module in cli server; do
-                      (cd "$module" && go vet ./... && go test ./...)
-                  done
-                  (cd cli && go vet -tags e2e ./...)
-
-            - uses: oven-sh/setup-bun@v2
-              with:
-                  bun-version: 1.4.2
-
-            - name: Web lint, typecheck, build
-              working-directory: web
-              env:
-                  NEXT_TELEMETRY_DISABLED: 1
-              run: |
-                  bun install --frozen-lockfile
-                  bun run check
-                  bunx tsc --noEmit
-                  bun run build
+                  go vet ./...
+                  go vet -tags e2e ./...
+                  go test ./...
 
     release:
         needs: [version, swift-helpers, checks]
