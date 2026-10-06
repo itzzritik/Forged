@@ -2,6 +2,7 @@ package readiness
 
 import (
 	"errors"
+	"path/filepath"
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -56,6 +57,7 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 		return state.result, err
 	}
 	e.ensureGitSigningStage(state)
+	e.ensureCommandPathStage(state)
 	if err := e.ensureSocketStage(state); err != nil {
 		return state.result, err
 	}
@@ -151,6 +153,23 @@ func (e *Engine) ensureGitSigningStage(state *repairState) {
 		return
 	}
 	e.markFixed(&state.result.Summary, "git-signing")
+}
+
+// Only node_modules installs (npm, pnpm, bun) vanish on a Node switch.
+func (e *Engine) ensureCommandPathStage(state *repairState) {
+	runtime, err := e.serviceRuntimeSpec()
+	if err != nil || !strings.Contains(filepath.ToSlash(runtime.Binary), "/node_modules/") ||
+		!e.pathExists(daemon.InstalledBinary("forged")) {
+		return
+	}
+	changed, err := daemon.EnsureOnPath()
+	if err != nil {
+		e.markFailed(&state.result.Summary, "path")
+		return
+	}
+	if changed {
+		e.markFixed(&state.result.Summary, "path")
+	}
 }
 
 func (e *Engine) ensureVaultAndCredentialsStage(state *repairState, opts RunOptions) error {
