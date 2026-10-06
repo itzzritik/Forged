@@ -40,14 +40,12 @@ jobs:
         outputs:
             version: ${{ steps.compute.outputs.version }}
             tag: ${{ steps.compute.outputs.tag }}
+            swift-key: ${{ steps.swift-key.outputs.key }}
+            swift-cached: ${{ steps.swift-cache.outputs.cache-hit }}
         steps:
             - uses: actions/checkout@v7
               with:
                   fetch-depth: 1
-
-            - uses: actions/setup-node@v7
-              with:
-                  node-version: 24
 
             - id: compute
               env:
@@ -57,8 +55,21 @@ jobs:
                   echo "tag=$TAG" >> "$GITHUB_OUTPUT"
                   echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
+            # The macOS job runs only when this Swift source has no cached build,
+            # so the release doesn't wait on (or get stuck behind) a macOS runner.
+            - id: swift-key
+              run: echo "key=swift-helpers-${{ hashFiles('cli/cmd/forged-auth/main.swift', 'cli/cmd/forged-auth/Info.plist') }}" >> "$GITHUB_OUTPUT"
+
+            - id: swift-cache
+              uses: actions/cache/restore@v6
+              with:
+                  path: build/forged-auth-release
+                  key: ${{ steps.swift-key.outputs.key }}
+                  lookup-only: true
+
     swift-helpers:
-        if: github.actor != 'github-actions[bot]'
+        needs: version
+        if: needs.version.outputs.swift-cached != 'true'
         name: Build Swift helpers
         runs-on: macos-latest
         steps:
@@ -70,7 +81,7 @@ jobs:
               uses: actions/cache@v6
               with:
                   path: build/forged-auth-release
-                  key: swift-helpers-${{ hashFiles('cli/cmd/forged-auth/main.swift', 'cli/cmd/forged-auth/Info.plist') }}
+                  key: ${{ needs.version.outputs.swift-key }}
 
             - if: steps.cache.outputs.cache-hit != 'true'
               run: ./scripts/deploy/build-auth-swift.sh
@@ -84,7 +95,8 @@ jobs:
 
     release:
         needs: [version, swift-helpers]
-        if: github.actor != 'github-actions[bot]'
+        # swift-helpers is skipped when its build is already cached.
+        if: ${{ !cancelled() && needs.version.result == 'success' && (needs.swift-helpers.result == 'success' || needs.swift-helpers.result == 'skipped') }}
         name: Publish ${{ needs.version.outputs.tag }} to npm + GitHub Releases
         runs-on: ubuntu-latest
         steps:
@@ -92,30 +104,30 @@ jobs:
               with:
                   fetch-depth: 0
 
+            - if: needs.swift-helpers.result == 'success'
+              uses: actions/download-artifact@v8
+              with:
+                  name: swift-helpers
+                  path: build/forged-auth-release
+
+            - if: needs.swift-helpers.result == 'skipped'
+              uses: actions/cache/restore@v6
+              with:
+                  path: build/forged-auth-release
+                  key: ${{ needs.version.outputs.swift-key }}
+                  fail-on-cache-miss: true
+
+            - run: find build/forged-auth-release -type f -name 'forged-auth' -exec chmod +x {} +
+
             - uses: actions/setup-go@v7
               with:
                   go-version-file: cli/go.mod
                   check-latest: true
                   cache-dependency-path: cli/go.sum
 
-            # Before anything is versioned, tagged or published.
-            - name: CLI vet and test
-              working-directory: cli
-              run: |
-                  go vet ./...
-                  go vet -tags e2e ./...
-                  go test ./...
-
             - uses: actions/setup-node@v7
               with:
                   node-version: 24
-
-            - uses: actions/download-artifact@v8
-              with:
-                  name: swift-helpers
-                  path: build/forged-auth-release
-
-            - run: find build/forged-auth-release -type f -name 'forged-auth' -exec chmod +x {} +
 
             - name: Setup Git & SSH signing
               run: |
@@ -155,7 +167,24 @@ jobs:
               with:
                   distribution: goreleaser
                   version: '~> v2'
-                  args: release --clean --skip=announce,publish,homebrew,nfpm,scoop
+                  install-only: true
+
+            # CLI checks run alongside the build but still gate everything published or
+            # pushed below. The log lives outside the repo so GoReleaser sees a clean tree.
+            - name: Build release and check CLI
+              run: |
+                  (cd cli && go vet ./... && go vet -tags e2e ./... && go test ./...) > "$RUNNER_TEMP/cli-checks.log" 2>&1 &
+                  checks=$!
+                  goreleaser release --clean --skip=announce,publish,homebrew,nfpm,scoop
+                  status=0
+                  wait "$checks" || status=$?
+                  echo "::group::CLI vet and test"
+                  cat "$RUNNER_TEMP/cli-checks.log"
+                  echo "::endgroup::"
+                  if [ "$status" -ne 0 ]; then
+                      echo "::error::CLI vet/test failed"
+                      exit "$status"
+                  fi
 
             - run: ./scripts/deploy/build-npm-packages.sh "${{ needs.version.outputs.version }}"
 

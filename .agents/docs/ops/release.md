@@ -24,12 +24,12 @@ One manual GitHub Actions workflow publishes CLI releases.
 - Live channels today are GitHub Releases and npm.
 - Homebrew, Scoop, nfpm, and MSI config exists but is currently skipped.
 - macOS binaries are not notarized. Windows binaries are not Authenticode-signed. Linux archives are unsigned.
-- The macOS Swift helper must be built on macOS and passed into the release flow as an artifact.
+- The macOS Swift helper must be built on macOS. Its build is cached by source hash; the macOS job runs only on a cache miss, otherwise the release restores the cached build. If the Linux cache lookup ever stops matching the macOS-saved cache, the macOS job just runs every time.
 - The npm wrapper is a launcher for native platform packages, not a JS implementation.
 - The npm packages have no install scripts: npm 12+ blocks them and warns on every install. After an upgrade the daemon restarts itself onto the new build (see daemon docs); the next `forged` launch's build-id check is the fallback.
 - CLI builds embed a daemon build id. Local `just build-cli` refreshes an installed daemon after rebuilding; releases use the commit id for the daemon freshness check.
 - GoReleaser artifact metadata can be either a top-level array or an object with `artifacts`; npm packaging must accept both.
-- Publish runs queue instead of canceling: a canceled run can leave a partial npm/GitHub release. The release job runs CLI vet/test before versioning anything, reusing its own Go cache (CLI only: this workflow releases the CLI, so it never gates on server or web).
+- Publish runs queue instead of canceling: a canceled run can leave a partial npm/GitHub release. The release job runs CLI vet/test in parallel with GoReleaser, reusing its Go cache; a failure stops the job before npm publish or the push (CLI only: this workflow releases the CLI, so it never gates on server or web).
 - GoReleaser time depends on the Go build cache, keyed on `go.sum`: the first release after a dependency change, or after 7 idle days (GitHub cache eviction), compiles cold (~2 min longer).
 
 ## Decisions
