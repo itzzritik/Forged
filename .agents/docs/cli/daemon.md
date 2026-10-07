@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-10-06
+last_verified: 2026-10-07
 stable: partial
 ---
 
@@ -48,7 +48,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Installed-service freshening waits for the matching-build IPC daemon to publish its managed-service PID ownership before it reports success; a persistent foreground takeover fails without another restart.
 - Forged runs from a per-user install folder, never from the CLI's own install (npm keeps that under the active Node version, so a Node switch, reinstall or uninstall would break everything pointing at it): Windows `%LOCALAPPDATA%\Programs\Forged`, macOS `~/Library/Application Support/Forged`, Linux `${XDG_DATA_HOME:-~/.local/share}/forged`. `bin/` holds `forged`, `forged-sign` and `forged-auth`; the service, the Forged `gpg.ssh.program`, SSH route hooks (the daemon's own path) and the auth helper all point there. Service installs refresh it from a binary named `forged`, and record that source. A service or Forged `gpg.ssh.program` outside the folder counts as stale, so freshen and readiness repair migrate older setups on the next launch.
 - When the CLI runs from a `node_modules` install, readiness repair appends `bin/` to PATH (Unix: a `# Forged CLI` block in existing shell rc files plus the current shell's; Windows: user `Path` registry value). Appended, never prepended, so the package manager's `forged` wins while it exists and this copy only answers after a Node switch or uninstall.
-- On Linux and macOS the daemon runs `bin/forged` and watches the recorded source binary; once a replacement is unchanged across two 15-second polls it reinstalls from it, then stops so launchd `KeepAlive` and systemd `Restart=always` relaunch the new build. A missing source never stops it, so an uninstall cannot cause a restart loop. Windows upgrades go through the next `forged` launch.
+- On Linux and macOS the daemon runs `bin/forged` and watches the recorded source binary; once a replacement is unchanged across two 15-second polls it reinstalls from it and, only if the running executable's bytes changed, stops so launchd `KeepAlive` and systemd `Restart=always` relaunch the new build. A missing source never stops it, so an uninstall cannot cause a restart loop. Windows upgrades go through the next `forged` launch.
 - Service callers that need a usable daemon wait for installed, valid, running service state, both sockets, a responsive status endpoint, (when known) the expected build, and service/PID ownership.
 - Daemon status exposes a build id. Readiness treats a running daemon with a different or missing build id as degraded and repairs it by reinstalling/restarting the managed service.
 - Linux user-service commands derive `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` when shells omit them, which is common in headless SSH or remote-editor sessions. Service installation also returns `daemon-reload` and enable failures to repair callers.
@@ -58,7 +58,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Managed macOS and Windows service installation creates the daemon log directory before replacing service configuration, so a directory error cannot install a known-unbootable service.
 - macOS service start and removal boot out current and legacy launchd labels before deleting legacy plists, so an old KeepAlive job cannot respawn; a fresh bootstrap is not force-killed and relaunched.
 - macOS launchd stderr uses a separate private, unrotated `forged-stderr.log`, so fatal output does not remain attached to a rotated daemon log; `forged logs stderr` follows it.
-- Persistent Forged state lives under `~/.config/forged` on every OS. Auth/device trust lives under `~/.config/forged/auth`. Linux keeps runtime sockets under `/run/user/<uid>/forged`; macOS and Windows use `~/.config/forged/runtime` for runtime metadata, with Windows sockets using named pipes.
+- Persistent Forged state lives under `~/.config/forged` on every OS. Auth/device trust lives under `~/.config/forged/auth`. Linux keeps runtime sockets under `/run/user/<uid>/forged`; macOS and Windows use `~/.config/forged/runtime` for runtime metadata, with Windows sockets using named pipes. When that socket path would exceed the 104-byte `sun_path` limit, Unix falls back to `/tmp/forged-<uid>`.
 - On Unix, the runtime directory must be a real current-user-owned directory and is set to `0700` before daemon-lock or socket work; same-user runtime-file control remains outside that boundary.
 - Windows pipe names are opaque, domain-separated hashes of the current process token SID; startup fails before binding if that identity cannot be resolved.
 - Windows deliberately starts no SSH route service. Startup migrates a uniquely marked Forged routing section in the private managed SSH config to agent-only form and removes local route artifacts; it accepts the exact legacy one-line or current five-directive routing prefix, while duplicate route markers or a changed prefix block migration instead of being overwritten. Normal SSH-agent and commit-signing operations remain available.

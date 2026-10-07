@@ -71,7 +71,7 @@ func renderRouteHooks(paths config.Paths, selfPath string) string {
 		"--attempt", shellQuote("%C"),
 	}, " ")
 	return strings.Join([]string{
-		fmt.Sprintf("Match exec %s", sshConfigQuote(prepare)),
+		fmt.Sprintf("Match final exec %s", sshConfigQuote(prepare)),
 		fmt.Sprintf("    LocalCommand %s", success),
 		renderRouteIdentitySlotHooks(paths, selfPath),
 	}, "\n")
@@ -89,7 +89,7 @@ func renderRouteIdentitySlotHooks(paths config.Paths, selfPath string) string {
 			"--slot", strconv.Itoa(slot),
 		}, " ")
 		lines = append(lines,
-			fmt.Sprintf("Match exec %s", sshConfigQuote(check)),
+			fmt.Sprintf("Match final exec %s", sshConfigQuote(check)),
 			fmt.Sprintf("    IdentityFile %q", path),
 		)
 	}

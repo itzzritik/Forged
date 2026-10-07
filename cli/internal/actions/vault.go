@@ -39,8 +39,8 @@ func UnlockSensitive(paths config.Paths, password []byte) (UnlockResult, error) 
 	return unlockSensitive(context.Background(), paths, password, false)
 }
 
-func UnlockSensitiveLaunch(ctx context.Context, paths config.Paths, password []byte) (UnlockResult, error) {
-	return unlockSensitive(ctx, paths, password, false)
+func UnlockSensitiveLaunch(ctx context.Context, paths config.Paths, password []byte, force bool) (UnlockResult, error) {
+	return unlockSensitive(ctx, paths, password, force)
 }
 
 func unlockSensitive(ctx context.Context, paths config.Paths, password []byte, force bool) (UnlockResult, error) {

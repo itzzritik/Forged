@@ -161,9 +161,9 @@ func (d *Daemon) Run(password []byte) error {
 	// follows the binary it was installed from, since upgrades replace that.
 	if executableErr == nil && runtime.GOOS != "windows" {
 		if source := recordedSource(executable); source == "" {
-			go d.watchInstalledBinary(executable, executableInfo, false)
+			go d.watchInstalledBinary(executable, executableInfo, false, executable)
 		} else if info, err := os.Stat(source); err == nil {
-			go d.watchInstalledBinary(source, info, true)
+			go d.watchInstalledBinary(source, info, true, executable)
 		}
 	}
 	d.waitForSignal()
@@ -512,7 +512,7 @@ func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials
 	}
 	if credentialErr != nil {
 		d.clearSyncInitRunLocked(run)
-		if accountauth.IsCredentialLoadFailure(credentialErr) {
+		if syncCredentialDiagnostic(credentialErr) != "" {
 			d.blockSyncForCredentialErrorLocked(credentialErr)
 			d.logger.Warn("sync paused because saved account credentials cannot be read", "error", credentialErr)
 		}
@@ -652,7 +652,7 @@ func (d *Daemon) finishInitialLink(run *syncInitRun, candidate *syncCandidate, c
 	}
 	if authErr != nil {
 		d.clearSyncInitRunLocked(run)
-		if accountauth.IsCredentialLoadFailure(authErr) {
+		if syncCredentialDiagnostic(authErr) != "" {
 			d.blockSyncForCredentialErrorLocked(authErr)
 			d.logger.Warn("sync paused because saved account credentials cannot be read", "error", authErr)
 			d.sessionMu.Unlock()
@@ -700,7 +700,7 @@ func (d *Daemon) finishDirectSyncInit(run *syncInitRun, candidate *syncCandidate
 	}
 	if identityErr != nil {
 		d.clearSyncInitRunLocked(run)
-		if accountauth.IsCredentialLoadFailure(identityErr) {
+		if syncCredentialDiagnostic(identityErr) != "" {
 			d.blockSyncForCredentialErrorLocked(identityErr)
 			d.logger.Warn("sync paused because saved account credentials cannot be read", "error", identityErr)
 			d.sessionMu.Unlock()
@@ -1447,7 +1447,7 @@ func (d *Daemon) clearSyncStateRecoveryLocked() {
 }
 
 func (d *Daemon) setSyncCredentialErrorLocked(err error) bool {
-	diagnostic := accountauth.CredentialLoadDiagnostic(err)
+	diagnostic := syncCredentialDiagnostic(err)
 	if diagnostic == "" {
 		return false
 	}
@@ -1851,7 +1851,7 @@ func (d *Daemon) syncTokenSource(generation uint64, serverURL, userID string) fu
 		}
 		creds, err := accountauth.EnsureFresh(ctx, d.paths)
 		if err != nil {
-			if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
+			if diagnostic := syncCredentialDiagnostic(err); diagnostic != "" {
 				d.pauseActiveSyncForCredentialError(generation, err)
 				return "", errors.New(diagnostic)
 			}
@@ -1864,8 +1864,17 @@ func (d *Daemon) syncTokenSource(generation uint64, serverURL, userID string) fu
 	}
 }
 
+// An expired login cannot recover by retrying, so it pauses sync like unreadable credentials.
+func syncCredentialDiagnostic(err error) string {
+	if errors.Is(err, accountauth.ErrLoginRequired) {
+		return accountauth.LoginExpiredDiagnostic()
+	}
+	return accountauth.CredentialLoadDiagnostic(err)
+}
+
 func (d *Daemon) pauseActiveSyncForCredentialError(generation uint64, err error) {
-	if !accountauth.IsCredentialLoadFailure(err) {
+	diagnostic := syncCredentialDiagnostic(err)
+	if diagnostic == "" {
 		return
 	}
 
@@ -1885,7 +1894,7 @@ func (d *Daemon) pauseActiveSyncForCredentialError(generation uint64, err error)
 		applyGate.revoke()
 	}
 	if d.logger != nil {
-		d.logger.Warn("sync paused because saved account credentials cannot be read", "error", err)
+		d.logger.Warn("sync paused until the account is repaired", "reason", diagnostic)
 	}
 }
 

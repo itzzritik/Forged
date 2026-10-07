@@ -21,6 +21,7 @@ const (
 	routeStateFilename     = ".route-state.json"
 	routeStateMaxBytes     = 1 << 20
 	routeStateMaxAttempts  = 256
+	unverifiedRouteTTL     = 10 * time.Minute
 )
 
 type routeStateFile struct {

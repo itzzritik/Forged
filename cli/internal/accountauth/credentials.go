@@ -31,6 +31,7 @@ const (
 	credentialStoreUnavailableDiagnostic = "Saved account credentials are unavailable. Unlock or restore the credential store, then refresh."
 	credentialStoreBrokenDiagnostic      = "Saved account credentials are unreadable. Log in again to restore sync."
 	credentialVerificationDiagnostic     = "Saved account credentials could not be verified. Log in again to restore sync."
+	credentialLoginExpiredDiagnostic     = "Your Forged login expired. Log in again to restore sync."
 )
 
 // IsCredentialLoadFailure reports whether a saved-account read failed because
@@ -58,11 +59,16 @@ func CredentialVerificationDiagnostic() string {
 	return credentialVerificationDiagnostic
 }
 
+// LoginExpiredDiagnostic returns safe guidance when the saved login can no longer be refreshed.
+func LoginExpiredDiagnostic() string {
+	return credentialLoginExpiredDiagnostic
+}
+
 // IsCredentialDiagnostic reports whether diagnostic is fixed safe guidance
 // for a saved-account credential failure.
 func IsCredentialDiagnostic(diagnostic string) bool {
 	switch strings.TrimSpace(diagnostic) {
-	case credentialStoreUnavailableDiagnostic, credentialStoreBrokenDiagnostic, credentialVerificationDiagnostic:
+	case credentialStoreUnavailableDiagnostic, credentialStoreBrokenDiagnostic, credentialVerificationDiagnostic, credentialLoginExpiredDiagnostic:
 		return true
 	default:
 		return false

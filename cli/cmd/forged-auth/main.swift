@@ -38,20 +38,19 @@ final class HelperRuntime {
     private let stateLock = NSLock()
     private var activeRequests: [String: ActiveRequest] = [:]
     private var inputBuffer = Data()
+    private var lastLockEvent = Date.distantPast
 
     // start wires up stdin and lock observers. The caller runs the NSApplication
     // event loop (below) rather than dispatchMain(): AppKit UI must run on the
     // real pthread main thread, which dispatchMain() parks away from GCD.
     func start() {
+        // A screensaver alone is not a lock; when it requires a password, screenIsLocked fires.
         let center = DistributedNotificationCenter.default()
         center.addObserver(forName: NSNotification.Name("com.apple.screenIsLocked"), object: nil, queue: nil) { [weak self] _ in
-            self?.emit(HelperResponse(id: nil, type: "event", status: "session_locked", provider: "local-authentication", message: nil))
-        }
-        center.addObserver(forName: NSNotification.Name("com.apple.screensaver.didstart"), object: nil, queue: nil) { [weak self] _ in
-            self?.emit(HelperResponse(id: nil, type: "event", status: "session_locked", provider: "local-authentication", message: nil))
+            self?.emitSessionLocked()
         }
         NSWorkspace.shared.notificationCenter.addObserver(forName: NSWorkspace.willSleepNotification, object: nil, queue: nil) { [weak self] _ in
-            self?.emit(HelperResponse(id: nil, type: "event", status: "session_locked", provider: "local-authentication", message: nil))
+            self?.emitSessionLocked()
         }
 
         let stdinHandle = FileHandle.standardInput
@@ -63,6 +62,20 @@ final class HelperRuntime {
                 exit(0)
             }
             self?.ingest(data)
+        }
+    }
+
+    // Lid close fires both screenIsLocked and willSleep; one lock is enough.
+    private func emitSessionLocked() {
+        stateLock.lock()
+        let now = Date()
+        let duplicate = now.timeIntervalSince(lastLockEvent) < 1
+        if !duplicate {
+            lastLockEvent = now
+        }
+        stateLock.unlock()
+        if !duplicate {
+            emit(HelperResponse(id: nil, type: "event", status: "session_locked", provider: "local-authentication", message: nil))
         }
     }
 

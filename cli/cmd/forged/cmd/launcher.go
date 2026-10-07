@@ -52,7 +52,6 @@ func runInteractiveIntent(intent tui.Intent) error {
 		},
 		SaveCredentials: func(creds actions.AccountCredentials) error { return actions.SaveCredentials(paths, creds) },
 		TriggerSync:     func() error { return actions.TriggerSync(paths) },
-		LockSensitive:   func() error { return actions.LockSensitive(paths) },
 		LoadStatus: func() (tui.RuntimeStatus, error) {
 			return actions.LoadRuntimeStatus(paths)
 		},
@@ -65,8 +64,8 @@ func runInteractiveIntent(intent tui.Intent) error {
 		HasLocalUnlockTrust: func() bool {
 			return sensitiveauth.HasLocalEnrollment(paths)
 		},
-		UnlockSensitiveLaunch: func(ctx context.Context, password []byte) (actions.UnlockResult, error) {
-			return actions.UnlockSensitiveLaunch(ctx, paths, password)
+		UnlockSensitiveLaunch: func(ctx context.Context, password []byte, force bool) (actions.UnlockResult, error) {
+			return actions.UnlockSensitiveLaunch(ctx, paths, password, force)
 		},
 		ChangePassword: func(currentPassword []byte, newPassword []byte) (actions.ChangePasswordResult, error) {
 			return actions.ChangePassword(paths, currentPassword, newPassword)

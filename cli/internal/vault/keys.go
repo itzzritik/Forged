@@ -356,6 +356,18 @@ func (ks *KeyStore) PrivateKeyBytes(name string) ([]byte, error) {
 	return ks.decryptPrivateKeyLocked(&ks.vault.data.Keys[idx])
 }
 
+func (ks *KeyStore) PrivateKeyBytesByID(id string) ([]byte, error) {
+	ks.vault.mu.RLock()
+	defer ks.vault.mu.RUnlock()
+
+	for i := range ks.vault.data.Keys {
+		if ks.vault.data.Keys[i].ID == id {
+			return ks.decryptPrivateKeyLocked(&ks.vault.data.Keys[i])
+		}
+	}
+	return nil, fmt.Errorf("Key %q not found", id)
+}
+
 func (ks *KeyStore) RecordUsage(name string) {
 	ks.vault.mu.Lock()
 	defer ks.vault.mu.Unlock()

@@ -9,6 +9,7 @@ import (
 	"net"
 	"os"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/activity"
@@ -211,7 +212,10 @@ func (s *Server) acceptLoop(listener net.Listener) {
 		peerPID := 0
 		if platform.ControlPeerCredentialsAvailable() {
 			if err := platform.VerifyCurrentUserPeer(conn); err != nil {
-				s.logger.Warn("rejecting IPC peer", "error", err)
+				// Readiness probes connect and close before admission.
+				if !errors.Is(err, syscall.ENOTCONN) {
+					s.logger.Warn("rejecting IPC peer", "error", err)
+				}
 				_ = conn.Close()
 				continue
 			}
@@ -795,7 +799,7 @@ func (s *Server) handleExportAll(ctx context.Context, raw json.RawMessage) Respo
 	keys := keyStore.List()
 	exported := make([]exportedKey, 0, len(keys))
 	for _, k := range keys {
-		privateKey, err := keyStore.PrivateKeyBytes(k.Name)
+		privateKey, err := keyStore.PrivateKeyBytesByID(k.ID)
 		if err != nil {
 			return ErrorResponse(fmt.Errorf("Decrypting key %s: %w", k.Name, err))
 		}

@@ -4,7 +4,7 @@ applies_to:
   - cli/internal/tui/**
 depends_on:
   - cli/ipc.md
-last_verified: 2026-10-05
+last_verified: 2026-10-07
 stable: yes
 ---
 
@@ -67,7 +67,7 @@ The TUI runs inside the `forged` CLI process. It owns UI state and talks to the 
 - Manual Sync is single-flight; a current trigger failure remains visible with a retry action in both Manage and the direct Sync page, while stale replies cannot clear a newer request's state.
 - An active non-credential runtime sync error takes precedence over credential repair and normal sync actions: Manage and direct Sync surface it, direct Sync opens Doctor, and a latent credential warning returns when it clears.
 - A saved-account credential-store failure is distinct from logged out: Doctor, Manage, direct Sync, browser approval, and the header retain fixed repair guidance from either readiness or a recognized daemon runtime diagnostic, while no-vault startup offers account repair instead of a new vault. A successful deliberate startup or maintenance unlock queues one readiness refresh after the next successful runtime-status poll only when that guidance was visible; ordinary clean polls do not clear it.
-- Idle locking keeps one coalesced deadline timer; keyboard activity moves the deadline instead of spawning another timer, and non-quit input pauses while the daemon lock request is in flight.
+- Idle locking keeps one coalesced deadline timer; keyboard activity moves the deadline instead of spawning another timer. It locks the TUI view only, Esc on the unlock wall exits rather than revealing the previous route, and resuming forces a fresh prompt even while the daemon session is active.
 - Accepted TUI action failures append throttled route/action/version context to a size-capped TUI log, available through `forged logs tui`; expected cancellations and auth prompts are skipped, and diagnostics redact credentials, URLs, quoted values, emails, and file paths.
 - TUI log writers coordinate through the persistent `.lock` sidecar; do not unlink it while a CLI or TUI process may still be writing.
 - Doctor's copied report contains only version/platform/build metadata and check statuses; it omits row details, logs, account identity, paths, and key data.

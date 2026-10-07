@@ -32,6 +32,9 @@ type Broker struct {
 	nativeMu             sync.RWMutex
 	native               CapabilityState
 	helperTerminated     bool
+	helperStarted        bool
+	helperRetryAt        time.Time
+	helperStartMu        sync.Mutex
 	systemMu             sync.Mutex
 	systemRun            *systemAuthCall
 	cooldown             systemAuthCooldown
@@ -58,6 +61,7 @@ type systemAuthCall struct {
 
 type passwordUnlockCall struct {
 	cancel context.CancelFunc
+	done   chan struct{}
 }
 
 type deliveryAuthorization struct {
@@ -116,6 +120,8 @@ type systemAuthCooldown struct {
 
 const externalPromptCooldown = 10 * time.Second
 
+const externalPasswordWait = 90 * time.Second
+
 const externalPasswordReason = "Enter your Forged master password to keep SSH working."
 
 type SessionController interface {
@@ -140,16 +146,8 @@ func NewBroker(paths config.Paths, helperPath string, logger *slog.Logger, sessi
 	}
 
 	if helperPath != "" {
-		helper := NewHelperClient(helperPath, logger)
-		b.helper = helper
-		b.setNativeCapability(CapabilityAvailable)
-		if err := helper.Start(context.Background(), func() { b.Invalidate("system_lock") }, b.helperExited); err != nil {
-			b.helper = nil
-			if b.logger != nil {
-				b.logger.Debug("sensitive auth helper unavailable", "error", err, "path", helperPath)
-			}
-			b.setNativeCapability(CapabilityUnavailableByEnv)
-		}
+		b.helper = NewHelperClient(helperPath, logger)
+		b.startHelper()
 	}
 
 	return b
@@ -183,6 +181,52 @@ func (b *Broker) Close() {
 	b.Invalidate("shutdown")
 }
 
+const helperRestartBackoff = 10 * time.Second
+
+func (b *Broker) startHelper() {
+	err := b.helper.Start(context.Background(), func() { b.Invalidate("system_lock") }, b.helperExited)
+	b.nativeMu.Lock()
+	defer b.nativeMu.Unlock()
+	if err != nil {
+		b.helperTerminated = true
+		b.helperRetryAt = time.Now().Add(helperRestartBackoff)
+		b.native = CapabilityUnavailableByEnv
+		if b.logger != nil {
+			b.logger.Debug("sensitive auth helper unavailable", "error", err)
+		}
+		return
+	}
+	b.helperStarted = true
+	b.helperTerminated = false
+	b.native = CapabilityAvailable
+}
+
+// ensureHelper restarts a crashed or late-starting helper, which also restores lock events.
+// A Linux helper that never started means no desktop session, so it is not retried.
+func (b *Broker) ensureHelper() bool {
+	b.helperStartMu.Lock()
+	defer b.helperStartMu.Unlock()
+	b.nativeMu.RLock()
+	terminated, started, retryAt := b.helperTerminated, b.helperStarted, b.helperRetryAt
+	b.nativeMu.RUnlock()
+	if !terminated {
+		return true
+	}
+	if !started && runtime.GOOS == "linux" || time.Now().Before(retryAt) {
+		return false
+	}
+	b.lifecycleMu.Lock()
+	stopping := b.stopping
+	b.lifecycleMu.Unlock()
+	if stopping {
+		return false
+	}
+	b.startHelper()
+	b.nativeMu.RLock()
+	defer b.nativeMu.RUnlock()
+	return !b.helperTerminated
+}
+
 func (b *Broker) helperExited() {
 	b.lifecycleMu.Lock()
 	stopping := b.stopping
@@ -193,6 +237,7 @@ func (b *Broker) helperExited() {
 	b.Invalidate("system_auth_helper_lost")
 	b.nativeMu.Lock()
 	b.helperTerminated = true
+	b.helperRetryAt = time.Now()
 	b.native = CapabilityBroken
 	b.nativeMu.Unlock()
 }
@@ -249,15 +294,22 @@ func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watch
 		return b.authorizeWithoutSystemAuth(ctx, action, CapabilityUnavailableByPlatform, generation, watchDelivery)
 	}
 
+	if b.helper != nil && !b.ensureHelper() {
+		return b.authorizeWithoutSystemAuth(ctx, action, b.nativeCapability(), generation, watchDelivery)
+	}
 	if b.helper != nil {
 		// External use can't fall back to the TUI's master-password page. Once the
 		// device-unlock window has lapsed (or was never enrolled), a Touch ID prompt
-		// can't restart it. ssh won't wait for a human, so we fire the master-password
-		// popup in the background to unlock the shared session and fail this request;
-		// the next connection then succeeds. Linux has no native popup yet.
+		// can't restart it, so the request waits on the shared master-password popup.
+		// OpenSSH waits for agent replies; the server's LoginGraceTime is the real bound.
+		// Linux has no native popup yet.
 		if action == ActionExternal && !LocalEnrollmentUsable(b.paths) {
 			if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-				b.promptPasswordUnlock(generation)
+				if b.awaitPasswordUnlock(ctx, generation) {
+					if result, active, err := b.allowActiveSession(action, time.Now(), generation); err == nil && active {
+						return result, nil, nil
+					}
+				}
 				return AuthorizeResult{}, nil, externalUseLockedError()
 			}
 			return AuthorizeResult{}, nil, externalUseNoDeviceUnlockError()
@@ -363,7 +415,7 @@ func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, 
 	if b.authGeneration != generation {
 		return nil, ErrAuthenticationCanceled
 	}
-	if b.pendingAuthorization != nil {
+	if b.pendingAuthorization != nil && b.session != nil && !b.session.HasActiveSession() {
 		return nil, ErrAuthorizationInProgress
 	}
 	hydrated := false
@@ -536,31 +588,54 @@ func (b *Broker) allow(action Action, now time.Time) AuthorizeResult {
 	return result
 }
 
-// promptPasswordUnlock opens the master-password popup in the background and
-// returns immediately — the triggering SSH request is expected to fail, since
-// ssh won't wait for a human. Entering the password unlocks the shared session
-// so the next connection succeeds. Single-flight + cooldown so a retry storm
-// shows one popup and does not re-nag after a dismissal.
-func (b *Broker) promptPasswordUnlock(generation uint64) {
+// awaitPasswordUnlock waits for the shared master-password popup, bounded by
+// ctx and externalPasswordWait, and reports whether it finished.
+func (b *Broker) awaitPasswordUnlock(ctx context.Context, generation uint64) bool {
+	call := b.promptPasswordUnlock(generation)
+	if call == nil {
+		return false
+	}
+	timer := time.NewTimer(externalPasswordWait)
+	defer timer.Stop()
+	select {
+	case <-call.done:
+		return true
+	case <-ctx.Done():
+		return false
+	case <-timer.C:
+		return false
+	}
+}
+
+// promptPasswordUnlock opens the master-password popup in the background, or
+// joins the one already open. Entering the password unlocks the shared session.
+// Single-flight + cooldown so a retry storm shows one popup and does not re-nag
+// after a dismissal; nil means no popup will run.
+func (b *Broker) promptPasswordUnlock(generation uint64) *passwordUnlockCall {
 	b.sessionMu.Lock()
 	defer b.sessionMu.Unlock()
 	if b.authGeneration != generation {
-		return
+		return nil
 	}
 
 	b.pwMu.Lock()
-	if b.pwRun != nil || time.Now().Before(b.pwCooldown) {
+	if b.pwRun != nil {
+		call := b.pwRun
 		b.pwMu.Unlock()
-		return
+		return call
+	}
+	if time.Now().Before(b.pwCooldown) {
+		b.pwMu.Unlock()
+		return nil
 	}
 	b.lifecycleMu.Lock()
 	if b.stopping {
 		b.lifecycleMu.Unlock()
 		b.pwMu.Unlock()
-		return
+		return nil
 	}
 	ctx, cancel := context.WithCancel(b.stopCtx)
-	call := &passwordUnlockCall{cancel: cancel}
+	call := &passwordUnlockCall{cancel: cancel, done: make(chan struct{})}
 	b.pwRun = call
 	b.background.Add(1)
 	b.lifecycleMu.Unlock()
@@ -578,7 +653,9 @@ func (b *Broker) promptPasswordUnlock(generation uint64) {
 			}
 		}
 		b.pwMu.Unlock()
+		close(call.done)
 	}()
+	return call
 }
 
 func (b *Broker) runPasswordUnlock(ctx context.Context, generation uint64) bool {
@@ -771,11 +848,12 @@ func (b *Broker) beginGrantWithEnrollment(ctx context.Context, action Action, no
 	if b.authGeneration != generation {
 		return nil, ErrAuthenticationCanceled
 	}
-	if b.pendingAuthorization != nil {
-		return nil, ErrAuthorizationInProgress
-	}
+	// An active session serves concurrent callers; only a hydration in flight blocks.
 	if b.session == nil || b.session.HasActiveSession() {
 		return b.newDeliveryAuthorizationLocked(ctx, generation, false, false, b.grantLocked(action, now), watchDelivery), nil
+	}
+	if b.pendingAuthorization != nil {
+		return nil, ErrAuthorizationInProgress
 	}
 	if err := b.session.HydrateFromEnrollment(); err != nil {
 		return nil, err
@@ -864,7 +942,7 @@ func externalUseFailedError() error {
 }
 
 func externalUseLockedError() error {
-	return fmt.Errorf("Forged is locked; enter your master password in the Forged prompt, then retry")
+	return fmt.Errorf("Forged is locked; unlock Forged and try again")
 }
 
 func externalUseNoDeviceUnlockError() error {

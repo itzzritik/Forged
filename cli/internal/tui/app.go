@@ -36,6 +36,7 @@ type Result struct {
 const (
 	tuiIdleLockTimeout            = 4 * time.Minute
 	runtimeStatusFailureThreshold = 2
+	minFullHeaderBodyRows         = 10
 )
 
 type Dependencies struct {
@@ -45,12 +46,11 @@ type Dependencies struct {
 	StartLogin                func(context.Context, string, func(actions.LoginProgress)) (actions.LoginSession, error)
 	SaveCredentials           func(actions.AccountCredentials) error
 	TriggerSync               func() error
-	LockSensitive             func() error
 	LoadStatus                func() (RuntimeStatus, error)
 	LoadSecurityState         func() (SecurityState, error)
 	SetMasterPasswordInterval func(string) error
 	HasLocalUnlockTrust       func() bool
-	UnlockSensitiveLaunch     func(context.Context, []byte) (actions.UnlockResult, error)
+	UnlockSensitiveLaunch     func(context.Context, []byte, bool) (actions.UnlockResult, error)
 	ChangePassword            func([]byte, []byte) (actions.ChangePasswordResult, error)
 	LoadSigningStatus         func() (actions.CommitSigningStatus, error)
 	EnableSSHAgent            func() error
@@ -80,7 +80,6 @@ func (d Dependencies) validate() error {
 		{name: "log-in", missing: d.StartLogin == nil},
 		{name: "save-credentials", missing: d.SaveCredentials == nil},
 		{name: "trigger-sync", missing: d.TriggerSync == nil},
-		{name: "lock-sensitive", missing: d.LockSensitive == nil},
 		{name: "load-status", missing: d.LoadStatus == nil},
 		{name: "load-security-state", missing: d.LoadSecurityState == nil},
 		{name: "set-master-password-interval", missing: d.SetMasterPasswordInterval == nil},
@@ -249,11 +248,6 @@ type runtimeStatusMsg struct {
 
 type idleLockMsg struct{}
 
-type idleLockFinishedMsg struct {
-	id  int
-	err error
-}
-
 type snapshotRefreshMsg struct {
 	id       int
 	snapshot readiness.Snapshot
@@ -399,10 +393,9 @@ type model struct {
 	securityLoadErr                       string
 	doctorOffset                          int
 	doctorPageRows                        int
-	idleLockID                            int
 	idleLockDeadline                      time.Time
 	idleLockTimerArmed                    bool
-	idleLockInFlight                      bool
+	viewLocked                            bool
 
 	keyListID            int
 	keyDetailID          int
@@ -767,7 +760,9 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.id != m.maintenanceID {
 			return m, nil
 		}
-		return m, m.handleMaintenanceFinished(msg.result, msg.err, msg.unlocked, msg.unlockErr)
+		cmd := m.handleMaintenanceFinished(msg.result, msg.err, msg.unlocked, msg.unlockErr)
+		// Maintenance cancels the status poll; every outcome must restart it or lock detection stops.
+		return m, tea.Batch(cmd, m.pollRuntimeStatus(0))
 	case snapshotRefreshMsg:
 		return m.handleSnapshotRefreshMsg(msg)
 	case securityStateMsg:
@@ -806,9 +801,11 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				msg.status.Unlocked = m.runtimeStatus.Unlocked
 				msg.status.SensitiveKnown = m.runtimeStatus.SensitiveKnown
 			}
+			if msg.status.Error != m.runtimeStatus.Error {
+				m.reportErrorText("sync.status", msg.status.Error)
+			}
 			m.runtimeStatus = msg.status
 			m.runtimeLoaded = true
-			m.reportErrorText("sync.status", msg.status.Error)
 			refreshCredentialAttention = m.refreshCredentialAttentionAfterUnlock && !m.maintenanceBusy && m.snapshot.VaultExists
 			if refreshCredentialAttention {
 				m.refreshCredentialAttentionAfterUnlock = false
@@ -866,34 +863,14 @@ func (m *model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if time.Until(m.idleLockDeadline) > 0 {
 			return m, m.armIdleLockCmd()
 		}
-		if m.idleLockInFlight {
-			return m, nil
-		}
-		m.idleLockInFlight = true
-		m.idleLockID++
-		m.cancelPrivateKeyCopy()
-		return m, tea.Batch(m.clearPrivateClipboardForLock(), m.lockSensitiveCmd(m.idleLockID))
-	case idleLockFinishedMsg:
-		if msg.id != m.idleLockID {
-			return m, nil
-		}
-		m.idleLockInFlight = false
-		if msg.err != nil {
-			errorText := m.reportError("vault.idle-lock", msg.err)
-			if m.screen == screenDashboard {
-				m.notice = notice{message: errorText, tone: dashboardscreen.ToneDanger}
-			}
-			return m, m.resetIdleLockCmd()
-		}
+		// Idle locks this view only; the shared session keeps SSH and signing working.
 		m.idleLockDeadline = time.Time{}
-		m.runtimeStatusID++
-		wasUnlocked := m.runtimeStatus.SensitiveKnown && m.runtimeStatus.Unlocked
-		m.runtimeStatus.Unlocked = false
-		m.runtimeStatus.SensitiveKnown = true
-		if cmd := m.handleSensitiveSessionLoss(wasUnlocked); cmd != nil {
-			return m, cmd
-		}
-		return m, nil
+		m.viewLocked = true
+		m.cancelPrivateKeyCopy()
+		m.cancelKeyImportPreview()
+		m.keyImport.importing = false
+		m.keyImport.status = ""
+		return m, tea.Batch(m.clearPrivateClipboardForLock(), m.showUnlockWall())
 	case signingStatusMsg:
 		return m.handleSigningStatusMsg(msg)
 	case keyListMsg:
@@ -1024,11 +1001,16 @@ func (m *model) render() string {
 	if m.isCenteredStartupUnlockScreen() {
 		bodyWidth = contentWidth
 	}
-	header := m.renderHeader(contentWidth)
+	headerData := m.headerData()
+	header := shell.RenderHeader(contentWidth, headerData)
 	footer := shell.RenderFooter(contentWidth, m.footerActions()...)
 	tightFooter := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isAgentSigningRoute()
 	tightBody := (m.isKeyRoute() && m.session.Current().ID == RouteKeysBrowser) || m.isTabbedDashboardRoot()
 	bodyHeight := shell.BodyHeight(m.width, m.height, header, footer, tightFooter, tightBody)
+	if m.height > 0 && bodyHeight < minFullHeaderBodyRows {
+		header = shell.RenderCompactHeader(contentWidth, headerData)
+		bodyHeight = shell.BodyHeight(m.width, m.height, header, footer, tightFooter, tightBody)
+	}
 	body := m.renderBody(bodyWidth, bodyHeight)
 	if !m.isWelcomeState() && !m.isCenteredStartupUnlockScreen() {
 		body = shell.IndentBlock(body, shell.ContentLeftInset)
@@ -1047,15 +1029,14 @@ func (m *model) isTabbedDashboardRoot() bool {
 		len(m.dashboardTabs()) > 0
 }
 
-func (m *model) renderHeader(width int) string {
-	data := shell.HeaderData{
+func (m *model) headerData() shell.HeaderData {
+	return shell.HeaderData{
 		PageTitle:   m.headerPageTitle(),
 		Breadcrumbs: m.headerBreadcrumbs(),
 		PageNote:    m.headerPageNote(),
 		Version:     m.deps.AppVersion,
 		StatusItems: m.headerStatusItems(),
 	}
-	return shell.RenderHeader(width, data)
 }
 
 func (m *model) isLockedAuthScreen() bool {
@@ -1619,7 +1600,11 @@ func (m *model) footerActions() []shell.FooterAction {
 		if m.canRetryStartupSystemAuth() {
 			actions = append(actions, shell.FooterAction{Key: "Ctrl+A", Label: "System Auth"})
 		}
-		actions = append(actions, shell.FooterAction{Key: "Esc", Label: m.session.EscLabel(EscAuto)})
+		escLabel := m.session.EscLabel(EscAuto)
+		if m.passwordFlow == passwordStartupUnlock {
+			escLabel = "Exit"
+		}
+		actions = append(actions, shell.FooterAction{Key: "Esc", Label: escLabel})
 		return actions
 	default:
 		if !m.bootAssessed {
@@ -1856,9 +1841,6 @@ func (m *model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 		m.stopLifetime()
 		return m, tea.Quit
 	}
-	if m.idleLockInFlight {
-		return m, nil
-	}
 	if m.clipboardBusy && m.screen != screenLogin && !(m.privateCopyPending && msg.String() == "esc") {
 		return m, nil
 	}
@@ -1876,7 +1858,7 @@ func (m *model) updateKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 // updatePaste sends a bracketed paste to the input that typed text would reach, behind the
 // same guards as updateKeys. Bubble Tea v1 delivered pastes as key messages; v2 does not.
 func (m *model) updatePaste(msg tea.PasteMsg) tea.Cmd {
-	if m.idleLockInFlight || (m.clipboardBusy && m.screen != screenLogin) {
+	if m.clipboardBusy && m.screen != screenLogin {
 		return nil
 	}
 	switch m.screen {
@@ -2199,7 +2181,8 @@ func (m *model) updatePasswordKeys(msg tea.KeyPressMsg) (tea.Model, tea.Cmd) {
 			m.screen = screenDashboard
 			return m, nil
 		}
-		if m.session.Back() {
+		// The unlock wall has nothing behind it to go back to while locked.
+		if m.passwordFlow != passwordStartupUnlock && m.session.Back() {
 			restartRuntimePoll := m.passwordFlow == passwordDoctorRepair
 			m.discardPasswordInput()
 			m.passwordAuth = ""
@@ -2634,9 +2617,6 @@ func (m *model) shouldTrackIdleLock() bool {
 }
 
 func (m *model) resetIdleLockCmd() tea.Cmd {
-	if m.idleLockInFlight {
-		return nil
-	}
 	if !m.shouldTrackIdleLock() {
 		m.idleLockDeadline = time.Time{}
 		return nil
@@ -2646,7 +2626,7 @@ func (m *model) resetIdleLockCmd() tea.Cmd {
 }
 
 func (m *model) armIdleLockCmd() tea.Cmd {
-	if m.idleLockTimerArmed || m.idleLockInFlight || m.idleLockDeadline.IsZero() {
+	if m.idleLockTimerArmed || m.idleLockDeadline.IsZero() {
 		return nil
 	}
 	delay := time.Until(m.idleLockDeadline)
@@ -2836,7 +2816,7 @@ func (m *model) startMaintenance(trigger maintenanceTrigger, password []byte, cr
 				result.Snapshot.VaultExists &&
 				result.Next != readiness.NextActionNeedsPassword &&
 				(trigger == maintenanceTriggerSetup || trigger == maintenanceTriggerUnlock) {
-				unlockResult, err := unlock(lifetimeCtx, passwordCopy)
+				unlockResult, err := unlock(lifetimeCtx, passwordCopy, false)
 				switch {
 				case err != nil:
 					unlockErr = err
@@ -2989,6 +2969,8 @@ func (m *model) unlockSensitiveLaunchCmd(password []byte) tea.Cmd {
 	m.invalidateStartupUnlock()
 	id := m.startupUnlockID
 	unlock := m.deps.UnlockSensitiveLaunch
+	// A view locked while the shared session stays active must still re-authenticate.
+	force := m.viewLocked
 	ctx, cancel := context.WithCancel(m.lifetimeCtx)
 	m.startupUnlockCancel = cancel
 	passwordCopy := append([]byte(nil), password...)
@@ -2996,7 +2978,7 @@ func (m *model) unlockSensitiveLaunchCmd(password []byte) tea.Cmd {
 	return func() tea.Msg {
 		defer cancel()
 		defer clear(passwordCopy)
-		result, err := unlock(ctx, passwordCopy)
+		result, err := unlock(ctx, passwordCopy, force)
 		return startupUnlockFinishedMsg{id: id, result: result, err: err}
 	}
 }
@@ -3044,18 +3026,21 @@ func (m *model) handleSensitiveSessionLoss(wasUnlocked bool) tea.Cmd {
 	if m.runtimeStatus.Unlocked || !m.runtimeStatus.SensitiveKnown {
 		return clipboardCmd
 	}
-	if !m.deps.HasLocalUnlockTrust() {
-		m.showPasswordScreen(passwordStartupUnlock, "", "", true)
-		m.passwordContext = "Enter your master password to continue using Forged."
-		return tea.Batch(clipboardCmd, m.passwordInput.Init())
-	}
+	return tea.Batch(clipboardCmd, m.showUnlockWall())
+}
+
+func (m *model) showUnlockWall() tea.Cmd {
 	m.showPasswordScreen(passwordStartupUnlock, "", "", true)
+	if !m.deps.HasLocalUnlockTrust() {
+		m.passwordContext = "Enter your master password to continue using Forged."
+		return m.passwordInput.Init()
+	}
 	m.passwordContext = "Please authenticate to continue using Forged."
 	m.passwordHideInput = true
 	m.passwordBusy = false
 	m.passwordBusyMessage = ""
 	m.passwordInput.ClearStatus()
-	return clipboardCmd
+	return nil
 }
 
 func (m *model) submitStartupUnlock(password []byte) tea.Cmd {
@@ -3067,6 +3052,9 @@ func (m *model) submitStartupUnlock(password []byte) tea.Cmd {
 }
 
 func (m *model) finishVaultBoot(preserveCurrentRoute bool) tea.Cmd {
+	if m.viewLocked {
+		return nil
+	}
 	m.notice = notice{}
 	m.discardPasswordInput()
 	m.screen = screenDashboard
@@ -3146,6 +3134,7 @@ func (m *model) handleStartupUnlockFinishedMsg(msg startupUnlockFinishedMsg) tea
 		return m.passwordInput.Init()
 	}
 
+	m.viewLocked = false
 	m.runtimeStatus.Unlocked = true
 	m.runtimeStatus.SensitiveKnown = true
 	if m.hasCredentialDiagnostic() {
@@ -3574,13 +3563,6 @@ func (m *model) loadSecurityStateCmd() tea.Cmd {
 	return func() tea.Msg {
 		state, err := loadSecurityState()
 		return securityStateMsg{id: id, state: state, err: err}
-	}
-}
-
-func (m *model) lockSensitiveCmd(id int) tea.Cmd {
-	lockSensitive := m.deps.LockSensitive
-	return func() tea.Msg {
-		return idleLockFinishedMsg{id: id, err: lockSensitive()}
 	}
 }
 

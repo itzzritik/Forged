@@ -49,6 +49,26 @@ func RenderHeader(width int, data HeaderData) string {
 	return strings.Join(lines, "\n")
 }
 
+// RenderCompactHeader replaces the banner box with one line so short terminals keep a usable body.
+func RenderCompactHeader(width int, data HeaderData) string {
+	version := strings.TrimSpace(data.Version)
+	if version == "" {
+		version = "dev"
+	}
+	innerWidth := max(0, width-ContentLeftInset-ContentRightInset)
+	left := theme.Kicker.Render("FORGED") + " " + theme.HeaderVersionValue.Render("v"+version)
+	status := ""
+	if len(data.StatusItems) > 0 {
+		status = ansi.Truncate(renderStatusItem(data.StatusItems[0]), max(0, innerWidth-lipgloss.Width(left)-2), theme.Glyphs.Ellipsis)
+	}
+	brand := strings.Repeat(" ", ContentLeftInset) + ansi.Truncate(JoinRow(innerWidth, left, status), innerWidth, theme.Glyphs.Ellipsis)
+	lines := []string{brand}
+	if titleRow := renderTitleRow(width, data.PageTitle, data.Breadcrumbs, data.PageNote); titleRow != "" {
+		lines = append(lines, titleRow)
+	}
+	return strings.Join(append(lines, theme.Divider(width)), "\n")
+}
+
 func renderHeaderBox(width int, data HeaderData) string {
 	innerWidth := max(16, width-4)
 	sidebar := renderSidebar(data.Version, data.StatusItems)

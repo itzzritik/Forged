@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"unicode"
+	"unicode/utf8"
 
 	"charm.land/bubbles/v2/textinput"
 	tea "charm.land/bubbletea/v2"
@@ -12,6 +13,9 @@ import (
 )
 
 type PasswordKind string
+
+// Unlock fields keep truncating at this length so existing vaults still open.
+const maxPasswordLength = 128
 
 const (
 	PasswordKindUnlock PasswordKind = "unlock"
@@ -57,7 +61,10 @@ func newPasswordInput(kind PasswordKind) *PasswordInput {
 		input.EchoMode = textinput.EchoPassword
 		input.EchoCharacter = []rune(theme.Glyphs.Mask)[0]
 		input.Prompt = ""
-		input.CharLimit = 128
+		input.CharLimit = maxPasswordLength
+		if kind == PasswordKindCreate || kind == PasswordKindChange && index > 0 {
+			input.CharLimit = maxPasswordLength + 1
+		}
 		StyleTextInput(&input)
 		input.SetValue("")
 		input.SetWidth(32)
@@ -209,8 +216,8 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 	}
 
 	if p.kind == PasswordKindCreate {
-		if len(primary) < 8 {
-			return nil, fmt.Errorf("Use at least 8 characters")
+		if err := validateNewPassword(primary); err != nil {
+			return nil, err
 		}
 		if primary != p.fields[1].Value() {
 			return nil, fmt.Errorf("Passwords do not match")
@@ -218,8 +225,8 @@ func (p *PasswordInput) Submit() ([]byte, error) {
 	}
 
 	if p.kind == PasswordKindChange {
-		if len(p.fields[1].Value()) < 8 {
-			return nil, fmt.Errorf("Use at least 8 characters")
+		if err := validateNewPassword(p.fields[1].Value()); err != nil {
+			return nil, err
 		}
 		if p.fields[1].Value() != p.fields[2].Value() {
 			return nil, fmt.Errorf("Passwords do not match")
@@ -243,8 +250,8 @@ func (p *PasswordInput) SubmitChangePassword() ([]byte, []byte, error) {
 	}
 
 	next := p.fields[1].Value()
-	if len(next) < 8 {
-		return nil, nil, fmt.Errorf("Use at least 8 characters")
+	if err := validateNewPassword(next); err != nil {
+		return nil, nil, err
 	}
 	if next != p.fields[2].Value() {
 		return nil, nil, fmt.Errorf("Passwords do not match")
@@ -332,4 +339,17 @@ func sentenceCase(value string) string {
 	}
 	runes[0] = unicode.ToUpper(runes[0])
 	return string(runes)
+}
+
+// A pasted trailing newline arrives as a space; reject it rather than store it.
+func validateNewPassword(value string) error {
+	switch length := utf8.RuneCountInString(value); {
+	case length < 8:
+		return fmt.Errorf("Use at least 8 characters")
+	case length > maxPasswordLength:
+		return fmt.Errorf("Use at most %d characters", maxPasswordLength)
+	case strings.TrimSpace(value) != value:
+		return fmt.Errorf("Remove spaces from the start and end")
+	}
+	return nil
 }

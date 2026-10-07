@@ -1,6 +1,7 @@
 package sync
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
@@ -70,6 +71,7 @@ func MergeThreeWay(base, local, remote vault.VaultData, localDeviceID, remoteDev
 
 	merged.Keys = enforceGitSigningInvariant(merged.Keys, localDeviceID, remoteDeviceID)
 	sortKeys(merged.Keys)
+	dedupeKeyNames(merged.Keys)
 	return merged
 }
 
@@ -118,6 +120,7 @@ func BootstrapMerge(local, remote vault.VaultData, localDeviceID, remoteDeviceID
 
 	merged.Keys = enforceGitSigningInvariant(merged.Keys, localDeviceID, remoteDeviceID)
 	sortKeys(merged.Keys)
+	dedupeKeyNames(merged.Keys)
 	return merged
 }
 
@@ -567,4 +570,30 @@ func routeExists(routes map[string]vault.SSHRoute, target string) bool {
 	}
 	_, ok := routes[target]
 	return ok
+}
+
+// keys arrive sorted, so every device renames the same duplicates and converges.
+func dedupeKeyNames(keys []vault.Key) {
+	used := make(map[string]struct{}, len(keys))
+	for _, key := range keys {
+		used[key.Name] = struct{}{}
+	}
+	seen := make(map[string]struct{}, len(keys))
+	for i := range keys {
+		name := keys[i].Name
+		if _, duplicate := seen[name]; !duplicate {
+			seen[name] = struct{}{}
+			continue
+		}
+		for n := 2; ; n++ {
+			candidate := fmt.Sprintf("%s (%d)", name, n)
+			if _, taken := used[candidate]; !taken {
+				keys[i].Name = candidate
+				used[candidate] = struct{}{}
+				seen[candidate] = struct{}{}
+				break
+			}
+		}
+	}
+	sortKeys(keys)
 }

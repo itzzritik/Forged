@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"net"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/platform"
@@ -121,7 +122,10 @@ func (s *Server) acceptLoop(listener net.Listener) {
 		retryDelay = 0
 		if platform.ControlPeerCredentialsAvailable() {
 			if err := platform.VerifyCurrentUserPeer(conn); err != nil {
-				s.logger.Warn("rejecting SSH agent peer", "error", err)
+				// Readiness probes connect and close before admission.
+				if !errors.Is(err, syscall.ENOTCONN) {
+					s.logger.Warn("rejecting SSH agent peer", "error", err)
+				}
 				_ = conn.Close()
 				continue
 			}

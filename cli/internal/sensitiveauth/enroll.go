@@ -455,19 +455,9 @@ func renewLocalEnrollmentUsageLocked(paths config.Paths) {
 // LocalEnrollmentUsable reports whether a non-expired device-unlock enrollment
 // exists for this install, without touching the secure store or biometrics. The
 // broker uses it to skip a doomed Touch ID prompt and fall through to the
-// master-password popup once the sliding window has lapsed.
+// master-password popup once the sliding window has lapsed. It skips the enrollment lock
+// (files are replaced atomically) because the TUI calls it while rendering.
 func LocalEnrollmentUsable(paths config.Paths) bool {
-	usable := false
-	if err := withLocalEnrollmentLock(paths, func() error {
-		usable = localEnrollmentUsableLocked(paths)
-		return nil
-	}); err != nil {
-		return false
-	}
-	return usable
-}
-
-func localEnrollmentUsableLocked(paths config.Paths) bool {
 	enrollment, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
 	if err != nil || enrollment == nil {
 		return false

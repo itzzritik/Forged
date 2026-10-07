@@ -138,12 +138,20 @@ func (s *sessionAgent) List() ([]*agent.Key, error) {
 		return nil, fmt.Errorf("Vault is locked")
 	}
 
-	keys := s.base.keyStore.List()
-	out := make([]*agent.Key, 0, len(keys))
-	for _, key := range keys {
-		if _, ok := allowed[key.Fingerprint]; !ok {
+	byFingerprint := map[string]vault.Key{}
+	for _, key := range s.base.keyStore.List() {
+		if _, ok := allowed[key.Fingerprint]; ok {
+			byFingerprint[key.Fingerprint] = key
+		}
+	}
+	// OpenSSH offers agent keys in list order, so the route's ranking must survive here.
+	out := make([]*agent.Key, 0, len(byFingerprint))
+	for _, fingerprint := range fingerprints {
+		key, ok := byFingerprint[fingerprint]
+		if !ok {
 			continue
 		}
+		delete(byFingerprint, fingerprint)
 		pub, err := parsePublicKey(key.PublicKey)
 		if err != nil {
 			continue

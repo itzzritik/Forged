@@ -5,10 +5,8 @@ import (
 	"os"
 	"time"
 
-	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/platform"
-	"github.com/itzzritik/forged/cli/internal/sshrouting"
 	"github.com/spf13/cobra"
 )
 
@@ -35,9 +33,6 @@ var sshRoutePrepareCmd = &cobra.Command{
 		}
 		if os.Getenv("FORGED_SSH_ROUTE_SKIP") == "1" {
 			os.Exit(1)
-		}
-		if err := sshrouting.RemoveRouteReady(config.DefaultPaths().SSHRouteRuntimeDir(), sshRouteAttempt); err != nil {
-			debugSSHRoute("prepare ready marker: %v", err)
 		}
 		cwd, err := os.Getwd()
 		if err != nil {

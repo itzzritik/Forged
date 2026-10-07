@@ -59,6 +59,7 @@ type Service struct {
 	attemptOwners              map[string]uint64
 	attemptSeq                 uint64
 	clientAttempt              map[int]string
+	unverifiedRoutes           map[string]time.Time
 	unscoped                   map[platform.ProcessInstance]int
 	unscopedChanged            chan struct{}
 	runtimeUntrusted           bool
@@ -71,15 +72,16 @@ type Service struct {
 
 func NewService(paths config.Paths, keyStore *vault.KeyStore) *Service {
 	s := &Service{
-		paths:           paths,
-		keyStore:        keyStore,
-		now:             func() time.Time { return time.Now().UTC() },
-		attempts:        map[string]Attempt{},
-		attemptOwners:   map[string]uint64{},
-		clientAttempt:   map[int]string{},
-		unscoped:        map[platform.ProcessInstance]int{},
-		unscopedChanged: make(chan struct{}),
-		prober:          NewProviderProber(paths.AgentSocket()),
+		paths:            paths,
+		keyStore:         keyStore,
+		now:              func() time.Time { return time.Now().UTC() },
+		attempts:         map[string]Attempt{},
+		attemptOwners:    map[string]uint64{},
+		clientAttempt:    map[int]string{},
+		unverifiedRoutes: map[string]time.Time{},
+		unscoped:         map[platform.ProcessInstance]int{},
+		unscopedChanged:  make(chan struct{}),
+		prober:           NewProviderProber(paths.AgentSocket()),
 	}
 	s.restoreRouteState()
 	return s
@@ -277,14 +279,12 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 	})
 	refByFingerprint := KeyRefsByFingerprint(refs)
 
+	// The proven key leads and fallbacks follow, so a rotated key or a second
+	// account still authenticates; ssh never offers the rest once one is accepted.
 	selected := append([]string(nil), plan.Fingerprints...)
-	if plan.HadExact {
-		if exact := exactProvenFingerprints(plan); len(exact) > 0 {
-			selected = exact
-		}
-	}
+	probe := !plan.HadExact || s.routeUnverified(target.Canonical, now)
 	probeProved := false
-	if target.Kind == TargetGit && !plan.HadExact && keyStore != nil {
+	if target.Kind == TargetGit && probe && keyStore != nil {
 		probed, proved, err := s.probeGitProvider(ctx, target, operation, plan, refByFingerprint, keyStore)
 		if err != nil {
 			return err
@@ -294,7 +294,7 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 			probeProved = proved
 		}
 	}
-	if target.Kind == TargetSSH && keyStore != nil {
+	if target.Kind == TargetSSH && probe && keyStore != nil {
 		probed, proved, err := s.probeSSHServer(ctx, target, operation, plan, keyStore)
 		if err != nil {
 			return err
@@ -398,6 +398,7 @@ func (s *Service) Success(attempt string, clientPID, helperPID int) error {
 	}
 	current.SuccessRecorded = true
 	s.attempts[routeAttemptKey(current.Token, current.ClientPID)] = current
+	delete(s.unverifiedRoutes, current.Target.Canonical)
 	s.mu.Unlock()
 
 	if current.LastKey == "" || !s.keyStoreCurrent(keyStore) {
@@ -661,7 +662,23 @@ func (s *Service) ExpireBefore(cutoff time.Time) {
 	s.mu.Unlock()
 }
 
+// routeUnverified reports a proven route whose last attempt ended without success.
+func (s *Service) routeUnverified(canonical string, now time.Time) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for target, failedAt := range s.unverifiedRoutes {
+		if now.Sub(failedAt) > unverifiedRouteTTL {
+			delete(s.unverifiedRoutes, target)
+		}
+	}
+	_, ok := s.unverifiedRoutes[canonical]
+	return ok
+}
+
 func (s *Service) deleteAttemptLocked(attempt Attempt) {
+	if attempt.HadExact && !attempt.SuccessRecorded && attempt.Target.Canonical != "" {
+		s.unverifiedRoutes[attempt.Target.Canonical] = s.now()
+	}
 	attemptKey := routeAttemptKey(attempt.Token, attempt.ClientPID)
 	delete(s.attempts, attemptKey)
 	delete(s.attemptOwners, attemptKey)
@@ -1225,16 +1242,6 @@ func refsForFingerprints(fingerprints []string, refs map[string]KeyRef) []KeyRef
 		}
 		seen[fingerprint] = struct{}{}
 		out = append(out, ref)
-	}
-	return out
-}
-
-func exactProvenFingerprints(plan CandidatePlan) []string {
-	var out []string
-	for _, candidate := range plan.Candidates {
-		if candidate.Proven && candidate.Reason == "exact" {
-			out = append(out, candidate.Fingerprint)
-		}
 	}
 	return out
 }
