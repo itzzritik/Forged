@@ -1,8 +1,8 @@
 package ui
 
 type MenuItem struct {
-	Key, Label  string
-	Danger, Sep bool
+	Key, Icon, Label string
+	Danger, Sep      bool
 }
 
 func Menu(w int, title string, items []MenuItem, cursor, maxH int) string {
@@ -22,6 +22,10 @@ func Menu(w int, title string, items []MenuItem, cursor, maxH int) string {
 	n := max(1, min(len(items), maxH-4))
 	start := max(0, min(cursor-n+1, len(items)-n))
 	inner := w - 2
+	iw := 0
+	for _, it := range items {
+		iw = max(iw, IconWidth(it.Icon))
+	}
 	body := []string{""}
 	for i := start; i < start+n && i < len(items); i++ {
 		it := items[i]
@@ -29,18 +33,20 @@ func Menu(w int, title string, items []MenuItem, cursor, maxH int) string {
 			body = append(body, "  "+Paint(Repeat(G.H, inner-4), P().Rule))
 			continue
 		}
-		c := P().Text
+		c, ic := P().Text, P().Muted
 		if it.Danger {
-			c = P().Danger
+			c, ic = P().Danger, P().Danger
 		}
-		left := ""
-		if it.Key != "" {
-			left = Bold(Pad(it.Key, 3), P().Muted)
-		}
-		text := Trunc(it.Label, inner-6-Width(left))
-		line := Pad("  "+left+Paint(text, c), inner-1)
+		kw := Width(it.Key)
+		text := Trunc(it.Label, inner-4-iw-kw)
+		gap := Repeat(" ", inner-3-iw-Width(text)-kw)
+		key := Bold(it.Key, P().Muted)
+		line := "  " + Pad(Icon(it.Icon, ic), iw) + Paint(text, c) + gap + key
 		if i == cursor {
-			line = SelLine(inner, " "+left+Bold(text, c)+Repeat(" ", inner-3-Width(left)-Width(text)))
+			if !it.Danger {
+				ic = P().Accent
+			}
+			line = SelLine(inner, " "+Pad(Icon(it.Icon, ic), iw)+Bold(text, c)+gap+key+" ")
 		}
 		body = append(body, line)
 	}

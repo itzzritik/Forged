@@ -118,8 +118,8 @@ func (m *Model) View(st *core.State, w, h int) string {
 		mark = rect{(w - ww) / 2, p.markY, ww, len(wm)}
 		layers = append(layers, ui.Layer{Content: ui.Join(wm), X: mark.x, Y: mark.y})
 	case 1:
-		mark = rect{(w - 8) / 2, p.markY, 8, 1}
-		layers = append(layers, ui.Layer{Content: ui.Paint(ui.G.Brand, ui.P().Accent) + " " + ui.Bold("forged", ui.P().Text), X: mark.x, Y: mark.y})
+		mark = rect{(w - 6) / 2, p.markY, 6, 1}
+		layers = append(layers, ui.Layer{Content: ui.Bold("forged", ui.P().Accent), X: mark.x, Y: mark.y})
 	}
 	if m.fire != nil {
 		layers = append([]ui.Layer{{Content: ui.Join(flame.Render(m.fire)), Y: p.fireTop}}, layers...)

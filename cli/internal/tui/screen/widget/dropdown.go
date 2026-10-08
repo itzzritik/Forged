@@ -48,7 +48,7 @@ func (d *Dropdown) place(st *core.State) (x, y, w, h int) {
 	if len(d.Items) > 0 {
 		h += d.visible(st)
 	}
-	x = max(0, f.R-w+1)
+	x = max(0, f.R-w)
 	y = d.Anchor + 1
 	if y+h > bh {
 		y = max(0, d.Anchor-h)
@@ -108,11 +108,10 @@ func (d *Dropdown) View(_ *core.State, w, h int) string {
 		if i == d.Cur {
 			mark = ui.Paint(ui.G.Check, p.Good)
 		}
+		gap := ui.Repeat(" ", max(0, inner-6-ui.Width(mark)-ui.Width(label)))
 		if i == d.cursor {
-			gap := ui.Repeat(" ", max(0, inner-3-ui.Width(mark)-2-ui.Width(label)))
-			return ui.SelLine(inner, " "+ui.Bold(label, p.Text)+gap+mark)
+			return ui.SelLine(inner, "  "+ui.Bold(label, p.Text)+gap+mark)
 		}
-		gap := ui.Repeat(" ", max(0, inner-3-ui.Width(mark)-3-ui.Width(label)))
 		return "   " + ui.Paint(label, p.Text) + gap + mark
 	}
 	k := 0

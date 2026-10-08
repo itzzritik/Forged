@@ -102,6 +102,8 @@ func (m *importModal) close() tea.Cmd {
 
 func (m *importModal) Spinning() bool { return m.busy != "" }
 
+func (m *importModal) Capturing() bool { return m.step == stepPath || m.step == stepPaste }
+
 func (m *importModal) Actions(*core.State) []core.Action {
 	if m.importing {
 		return nil
@@ -503,10 +505,12 @@ func (m *importModal) bodySource(inner, limit, frame int) []string {
 	}
 	rows := max(1, min(n, limit-2-stN))
 	lines := []string{ui.Paint(ui.Trunc("Choose where to import from", inner), p.Muted), ""}
+	icons := []string{ui.G.Icon.Home, ui.G.Icon.File, ui.G.Icon.Paste, ui.G.Icon.Import, ui.G.Icon.Import, ui.G.Icon.Import}
 	for i := windowStart(m.cur, rows, n); i < n && i < windowStart(m.cur, rows, n)+rows; i++ {
-		label := ui.Paint(ui.Trunc(importSources[i].label, inner), p.Text)
+		text := ui.Trunc(importSources[i].label, inner-ui.IconWidth(icons[i]))
+		label := ui.Icon(icons[i], p.Muted) + ui.Paint(text, p.Text)
 		if i == m.cur {
-			label = ui.Bold(ui.Trunc(importSources[i].label, inner), p.Text)
+			label = ui.Icon(icons[i], p.Accent) + ui.Bold(text, p.Text)
 		}
 		lines = append(lines, rowLine(inner, label, i == m.cur))
 	}

@@ -336,7 +336,7 @@ func stepDoctorFix(t *testing.T, s *scenario) {
 	waitPipes(t, s, false)
 
 	p := h.forged(t, "doctor", "--fix")
-	mustSee(t, p, 40*time.Second, "All good")
+	mustSee(t, p, 40*time.Second, "Healthy")
 	quitTUI(t, p)
 	waitPipes(t, s, true)
 	user := readFile(t, s.paths.SSHUserConfig())

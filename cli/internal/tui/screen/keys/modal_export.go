@@ -64,6 +64,8 @@ func ExportModal() widget.Modal { return &exportModal{sec: ui.NewSecret(128)} }
 
 func (m *exportModal) Spinning() bool { return m.busy != "" }
 
+func (m *exportModal) Capturing() bool { return m.step == exportAuth || m.step == exportPath }
+
 func (m *exportModal) Actions(*core.State) []core.Action {
 	if m.writing {
 		return nil

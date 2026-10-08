@@ -47,14 +47,29 @@ func SelLine(w int, content string) string {
 	return Fg(P().Accent).Background(P().Sel).Render(G.Bar) + fill(P().Sel, content, w-1)
 }
 
-func Row(w int, label, value string, selected bool, valueColor color.Color) string {
-	vw := Width(value)
-	l := Trunc(label, w-vw-5)
-	gap := Repeat(" ", w-3-Width(l)-vw)
-	if selected {
-		return SelLine(w, Bold(" "+l, P().Text)+gap+Paint(value, valueColor))
+func Icon(icon string, c color.Color) string {
+	if icon == "" {
+		return ""
 	}
-	return "  " + Paint(l, P().Text) + gap + Paint(value, valueColor)
+	return Paint(icon, c) + "  "
+}
+
+func IconWidth(icon string) int {
+	if icon == "" {
+		return 0
+	}
+	return Width(icon) + 2
+}
+
+func Row(w int, icon, label, value string, selected bool) string {
+	lead := 2 + IconWidth(icon)
+	vw := Width(value)
+	l := Trunc(label, w-vw-lead-3)
+	gap := Repeat(" ", w-lead-Width(l)-vw)
+	if selected {
+		return SelLine(w, " "+Icon(icon, P().Accent)+Bold(l, P().Text)+gap+value)
+	}
+	return "  " + Icon(icon, P().Muted) + Paint(l, P().Text) + gap + value
 }
 
 type ButtonKind int

@@ -18,11 +18,12 @@ The TUI runs in the `forged` CLI process and is keyboard-only.
 - Every async result that can race carries an id from `core.NextID()`, minted before the Cmd closure; owners drop stale results (newest wins). Boot id is checked before newest-wins.
 - Overlays close themselves with `core.Close(self)`; the root removes that exact overlay, so a late result never closes another one.
 - The root broadcasts non-key messages to all screens and overlays. Screens, not modals, handle results that must outlive the modal and emit `core.KeysChangedMsg`.
-- While an overlay is open, keys and paste go only to the top overlay; otherwise to the gate or active screen behind the same guards as typed text.
+- While an overlay is open, keys and paste go only to the top overlay, except `m`: when that overlay is not a `core.Capturer` that is capturing, the root opens its actions menu and replays the chosen key only if that overlay is still on top. Every overlay that takes typed text must implement `core.Capturer`. Otherwise keys go to the gate or active screen behind the same guards as typed text.
 - On lock or recovery, `LockedMsg` is broadcast to every screen and overlay before any overlay is removed, so secrets are wiped first.
 - No screen keeps a private copy of the body-size rule; use `core.BodySize` / `core.BodyOrigin` (breakpoints may read `st.Width`/`st.Height`).
 - Below 40×12 only ctrl+c and q work, so no blind destructive keys.
 - The sweep gradient is only for thin elements, never fills or text blocks.
+- Icons come only from `ui.G.Icon`, which is empty in ASCII mode; place them with `ui.Icon`/`ui.IconWidth` so rows still align without them.
 - Flame frames tick only while a gate screen shows at 40×16 or larger; the dashboard never animates. `FORGED_ASCII=1` or `NO_COLOR` draws no fire.
 - Gate messages use only the card's error row; toasts and queued notices never draw on the gate. Notices arriving there wait in one queue (newest 5, dropped only on quit) and show when the dashboard returns, after a replay of any toast the gate covered. Long warnings and errors always open an info modal; other live notices wait behind a playing queue.
 - Dim and modal fills are applied per cell on the composited canvas, so ANSI inside content survives; inner style resets must not break a selection band or banner fill.

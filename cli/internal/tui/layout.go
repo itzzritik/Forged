@@ -64,16 +64,25 @@ func (a *app) dashboard(w, h int) string {
 	for len(lines) < h-1 {
 		lines = append(lines, "")
 	}
-	acts := a.top().Actions(st)
+	return ui.Join(append(lines[:h-1], a.footer(w)))
+}
+
+func (a *app) footer(w int) string {
+	acts := a.top().Actions(a.st)
 	left := make([]ui.Hint, 0, 4)
 	for _, x := range acts[:min(4, len(acts))] {
 		left = append(left, ui.Hint{Key: x.Key, Label: x.Label})
 	}
+	_, open := a.top().(*menu)
+	dash := len(a.overlays) == 0
 	var right []ui.Hint
-	if len(a.overlays) == 0 {
-		right = []ui.Hint{{Key: "m", Label: "More"}, {Key: "q", Label: "Quit"}}
+	if !open && !a.capturing() && (dash || len(acts) > len(left) || ui.HintsWidth(left, true) > w-4) {
+		right = append(right, ui.Hint{Key: "m", Label: "More"})
 	}
-	return ui.Join(append(lines[:h-1], ui.Footer(w, left, right)))
+	if dash && !a.capturing() {
+		right = append(right, ui.Hint{Key: "q", Label: "Quit"})
+	}
+	return ui.Footer(w, left, right)
 }
 
 func (a *app) overlayLayers(w, h int) []ui.Layer {
@@ -111,6 +120,12 @@ type menu struct {
 	items  []ui.MenuItem
 	keys   []string
 	cursor int
+	owner  core.Screen
+}
+
+type menuRunMsg struct {
+	owner core.Screen
+	key   string
 }
 
 func (m *menu) add(x core.Action) {
@@ -118,13 +133,13 @@ func (m *menu) add(x core.Action) {
 	if ui.Width(shown) > 2 {
 		shown = " "
 	}
-	m.items = append(m.items, ui.MenuItem{Key: shown, Label: x.Label, Danger: x.Danger})
+	m.items = append(m.items, ui.MenuItem{Key: shown, Icon: x.Icon, Label: x.Label, Danger: x.Danger})
 	m.keys = append(m.keys, x.Key)
 }
 
-func newMenu(acts []core.Action) *menu {
-	m := &menu{}
-	seen := map[string]bool{"l": true, "q": true}
+func newMenu(owner core.Screen, acts []core.Action, global bool) *menu {
+	m := &menu{owner: owner}
+	seen := map[string]bool{"l": global, "q": global}
 	for _, x := range acts {
 		if seen[x.Key] || core.Press(x.Key).Code == 0 {
 			continue
@@ -132,12 +147,15 @@ func newMenu(acts []core.Action) *menu {
 		seen[x.Key] = true
 		m.add(x)
 	}
+	if !global {
+		return m
+	}
 	if len(m.items) > 0 {
 		m.items = append(m.items, ui.MenuItem{Sep: true})
 		m.keys = append(m.keys, "")
 	}
-	m.add(core.Action{Key: "l", Label: "Lock"})
-	m.add(core.Action{Key: "q", Label: "Quit"})
+	m.add(core.Action{Key: "l", Label: "Lock", Icon: ui.G.Icon.Lock})
+	m.add(core.Action{Key: "q", Label: "Quit", Icon: ui.G.Icon.Quit})
 	return m
 }
 
@@ -146,7 +164,7 @@ func (m *menu) Actions(*core.State) []core.Action {
 }
 
 func (m *menu) run(key string) tea.Cmd {
-	return tea.Sequence(core.Close(m), core.Send(core.Press(key)))
+	return tea.Sequence(core.Close(m), core.Send(menuRunMsg{owner: m.owner, key: key}))
 }
 
 func (m *menu) Update(msg tea.Msg, _ *core.State) (core.Screen, tea.Cmd) {

@@ -78,7 +78,7 @@ func (s *State) Chip() ui.Chip {
 	case s.Snapshot.LoggedIn && s.SyncPending():
 		return chip(ui.ToneBusy, "Syncing")
 	}
-	return ui.Chip{Glyph: ui.G.Dot, Label: "All good", Tone: ui.ToneGood}
+	return ui.Chip{Glyph: ui.G.Check, Label: "Healthy", Tone: ui.ToneGood}
 }
 
 func (s *State) Problems() int { return s.ProblemCount }
@@ -105,12 +105,12 @@ func (s *State) CanFix() bool {
 	return !n.IPCSocketReady || !n.AgentSocketReady || !n.AgentDisabled && !n.SSHHealthy()
 }
 
-func (s *State) KeyIsSigning(publicKey string) bool {
+func (s *State) KeySigns(fingerprint string) bool {
 	if !s.SigningLoaded || s.Signing.Mode != actions.CommitSigningForged {
 		return false
 	}
-	publicKey = strings.TrimSpace(publicKey)
-	return publicKey != "" && publicKey == strings.TrimSpace(s.Signing.PublicKey)
+	fingerprint = strings.TrimSpace(fingerprint)
+	return fingerprint != "" && fingerprint == strings.TrimSpace(s.Signing.Fingerprint)
 }
 
 func (s *State) Tabs() []Tab {

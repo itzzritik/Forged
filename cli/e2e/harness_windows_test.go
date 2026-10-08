@@ -332,7 +332,7 @@ func createVault(t *testing.T, p *ptyProcess) {
 	time.Sleep(300 * time.Millisecond)
 	_ = p.Type(e2ePassword)
 	_ = p.Send("\r")
-	mustSee(t, p, 30*time.Second, "Overview", "All good")
+	mustSee(t, p, 30*time.Second, "Overview", "Healthy")
 	quitTUI(t, p)
 }
 

@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -71,7 +72,7 @@ func (m *Model) cur(st *core.State) rowKind {
 func (m *Model) Actions(st *core.State) []core.Action {
 	out := []core.Action{{Key: "enter", Label: "Open"}, {Key: ui.G.UpDown, Label: "Select"}}
 	if st.SyncIssue() != "" {
-		out = append(out, core.Action{Key: "h", Label: "Open Health"})
+		out = append(out, core.Action{Key: "h", Label: "Open Health", Icon: ui.G.Icon.Health})
 	}
 	return out
 }
@@ -196,22 +197,22 @@ func (m *Model) setInterval(st *core.State, v string) tea.Cmd {
 	}
 }
 
-func (m *Model) syncValue(st *core.State, f widget.Frame) (string, bool) {
-	if st.Status.Syncing {
-		return ui.SpinnerGlyph(st.SpinFrame) + ui.Paint(" Syncing", ui.P().Accent), true
+func syncStatus(st *core.State, w int) string {
+	p := ui.P()
+	switch {
+	case st.SyncIssue() != "":
+		return ui.Paint(ui.Trunc("Sync needs attention", w), p.Danger)
+	case st.Status.Syncing:
+		return ui.SpinnerGlyph(st.SpinFrame) + ui.Paint(ui.Trunc(" Syncing", w-1), p.Accent)
 	}
 	t := st.Status.LastSuccessfulPullAt
 	if p := st.Status.LastSuccessfulPushAt; p.After(t) {
 		t = p
 	}
 	if t.IsZero() {
-		return "Not yet synced", false
+		return ui.Paint(ui.Trunc("Not synced yet", w), p.Muted)
 	}
-	ago := core.Ago(t.UTC().Format(time.RFC3339), time.Now())
-	if f.W >= 40 {
-		return "Synced " + ago, false
-	}
-	return strings.ToUpper(ago[:1]) + ago[1:], false
+	return ui.Paint(ui.Trunc("Synced "+core.Ago(t.UTC().Format(time.RFC3339), time.Now()), w), p.Muted)
 }
 
 func (m *Model) intervalValue(st *core.State) (string, bool) {
@@ -243,7 +244,7 @@ func (m *Model) build(st *core.State, w int) layout {
 	}
 	section := func(s string) { add(f.Pad(ui.Paint(s, p.Muted))) }
 	sel := m.cur(st)
-	row := func(k rowKind, label, value string, c func() (string, bool), muted bool) {
+	row := func(k rowKind, icon, label, value string, c func() (string, bool), muted bool) {
 		color := p.Text
 		if muted {
 			color = p.Muted
@@ -256,7 +257,7 @@ func (m *Model) build(st *core.State, w int) layout {
 		}
 		value = ui.Trunc(value, max(6, f.W/2))
 		v.y[k] = len(v.lines)
-		add(f.Pad(ui.Row(f.W, label, value, sel == k, color)))
+		add(f.Pad(ui.Row(f.W, icon, label, ui.Paint(value, color), sel == k)))
 	}
 
 	text, tone, key := m.banner(st)
@@ -270,7 +271,7 @@ func (m *Model) build(st *core.State, w int) layout {
 		}
 	}
 	if slices.Contains(rows(st), rowRepair) {
-		row(rowRepair, "Repair account", ui.G.Next, nil, true)
+		row(rowRepair, ui.G.Icon.Health, "Repair account", ui.G.Next, nil, true)
 	}
 	if text != "" && f.Gap > 0 {
 		add("")
@@ -282,28 +283,32 @@ func (m *Model) build(st *core.State, w int) layout {
 		if name == "" {
 			name = core.FallbackName(email)
 		}
+		tile := avatar(initials(name))
 		if name == "" {
 			name = "Signed in"
 		}
-		add(f.Pad(ui.Bold(ui.Trunc(name, f.W), p.Text)))
-		add(f.Pad(ui.Paint(ui.Trunc(email, f.W), p.Muted)))
+		tw := f.W - ui.Width(tile[0])
+		for i, t := range []string{ui.Bold(ui.Trunc(name, tw), p.Text), ui.Paint(ui.Trunc(email, tw), p.Muted), syncStatus(st, tw)} {
+			add(f.Pad(tile[i] + t))
+		}
 		gap()
 		section("Sync")
-		row(rowSync, "Sync now", "", func() (string, bool) { return m.syncValue(st, f) }, true)
+		row(rowSync, ui.G.Icon.Sync, "Sync now", "", nil, true)
 	} else {
 		add(f.Pad(ui.Bold("Sync is off", p.Text)))
 		gap()
-		row(rowLogin, "Log in", ui.G.Next, nil, true)
+		row(rowLogin, ui.G.Icon.Login, "Log in", ui.G.Next, nil, true)
 		if st.Width >= 60 {
-			add(f.Pad("  " + ui.Paint(ui.Trunc("Sync encrypted keys across your machines", f.W-2), p.Muted)))
+			lead := 2 + ui.IconWidth(ui.G.Icon.Login)
+			add(f.Pad(ui.Repeat(" ", lead) + ui.Paint(ui.Trunc("Sync encrypted keys across your machines", f.W-lead), p.Muted)))
 		}
 	}
 	gap()
 	section("Security")
-	row(rowInterval, "Ask for master password every", "", func() (string, bool) { return m.intervalValue(st) }, false)
-	row(rowPassword, "Change master password", ui.G.Next, nil, true)
+	row(rowInterval, ui.G.Icon.Clock, "Ask for master password every", "", func() (string, bool) { return m.intervalValue(st) }, false)
+	row(rowPassword, ui.G.Icon.Secret, "Change master password", ui.G.Next, nil, true)
 	if st.Snapshot.LoggedIn {
-		row(rowLogout, "Log out", ui.G.Next, nil, true)
+		row(rowLogout, ui.G.Icon.Logout, "Log out", ui.G.Next, nil, true)
 	}
 	return v
 }
@@ -348,4 +353,34 @@ func (m *Model) openMenu(st *core.State) tea.Cmd {
 		Choose: func(i int) tea.Msg { return intervalChoiceMsg{value: intervals[i]} },
 	}
 	return d.Open(st)
+}
+
+func initials(name string) string {
+	var out []rune
+	words := strings.Fields(name)
+	for i, w := range words {
+		if i > 0 && i < len(words)-1 {
+			continue
+		}
+		for _, r := range w {
+			if unicode.IsLetter(r) || unicode.IsDigit(r) {
+				if ui.Width(string(append(out, r))) <= 2 {
+					out = append(out, unicode.ToUpper(r))
+				}
+				break
+			}
+		}
+	}
+	return string(out)
+}
+
+func avatar(ini string) [3]string {
+	if ini == "" {
+		return [3]string{}
+	}
+	p := ui.P()
+	fill := ui.Fg(p.OnAccent).Background(p.Accent).Bold(true)
+	pad := 6 - ui.Width(ini)
+	blank := fill.Render(ui.Repeat(" ", 6)) + "  "
+	return [3]string{blank, fill.Render(ui.Repeat(" ", pad/2)+ini+ui.Repeat(" ", pad-pad/2)) + "  ", blank}
 }

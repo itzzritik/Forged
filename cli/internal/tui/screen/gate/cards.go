@@ -133,7 +133,6 @@ func (m *Model) rows(st *core.State, cw int, compact bool) []string {
 		l.add(title("Restore your vault"))
 		if !compact {
 			l.add(muted(ui.Trunc(ui.Sanitize("Logged in as "+st.AccountEmail), W)))
-			l.gap()
 		}
 		m.password(l, W)
 		l.add(m.footer(l, W, []ui.Hint{{Key: "esc", Label: "Back"}}, "Restore"))
@@ -141,15 +140,14 @@ func (m *Model) rows(st *core.State, cw int, compact bool) []string {
 	case Unlock:
 		l.soft()
 		l.add(title("Unlock Forged"))
-		if !compact {
-			l.add(muted(ui.Trunc(ui.Sanitize(st.AccountEmail), W)))
+		if email := ui.Sanitize(st.AccountEmail); email != "" && !compact {
+			l.add(muted(ui.Trunc(email, W)))
 		}
 		if m.prompt != "" {
 			for _, s := range ui.Wrap(ui.Sanitize(m.prompt), W) {
 				l.add(muted(s))
 			}
 		}
-		l.soft()
 		var hints []ui.Hint
 		switch {
 		case m.waiting:
@@ -173,9 +171,9 @@ func (m *Model) rows(st *core.State, cw int, compact bool) []string {
 }
 
 func (m *Model) password(l *lines, W int) {
+	l.gap()
 	if m.waiting {
-		l.gap()
-		l.add(l.spin + " " + ui.Paint(ui.Trunc("Waiting for "+authLabel(), W-2), ui.P().Text))
+		l.add(label(authLabel()), l.spin+" "+ui.Paint(ui.Trunc("Waiting for confirmation", W-2), ui.P().Text))
 	} else {
 		l.add(label("Master password"), m.a.View(W, true))
 	}
@@ -201,17 +199,18 @@ func (m *Model) create(l *lines, W int) {
 }
 
 func (m *Model) welcome(l *lines, W int) {
-	type opt struct{ title, sub string }
-	opts := []opt{{"Log in to Forged", "Sync encrypted keys across your machines"}, {"Create a local vault", "Keys stay on this machine only"}}
+	type opt struct{ icon, title, sub string }
+	opts := []opt{{ui.G.Icon.Login, "Log in to Forged", "Sync encrypted keys across machines"}, {ui.G.Icon.New, "Create a local vault", "Keys stay on this machine only"}}
 	l.soft()
 	l.add(title("Welcome to Forged"))
 	l.soft()
 	for i, o := range opts {
-		t, s := ui.Trunc(o.title, W-3), ui.Trunc(o.sub, W-3)
+		iw := ui.IconWidth(o.icon)
+		t, s := ui.Trunc(o.title, W-3-iw), ui.Repeat(" ", iw)+muted(ui.Trunc(o.sub, W-3-iw))
 		if i == m.cursor {
-			l.add(ui.SelLine(W, " "+ui.Bold(t, ui.P().Text)), ui.SelLine(W, " "+muted(s)))
+			l.add(ui.SelLine(W, " "+ui.Icon(o.icon, ui.P().Accent)+ui.Bold(t, ui.P().Text)), ui.SelLine(W, " "+s))
 		} else {
-			l.add("  "+ui.Paint(t, ui.P().Text), "  "+muted(s))
+			l.add("  "+ui.Icon(o.icon, ui.P().Muted)+ui.Paint(t, ui.P().Text), "  "+s)
 		}
 		if i == 0 && !l.compact {
 			l.gap()

@@ -24,6 +24,8 @@ func (a *app) openRepair(errText string) tea.Cmd {
 	return nil
 }
 
+func (m *repairModal) Capturing() bool { return true }
+
 func (m *repairModal) Actions(*core.State) []core.Action {
 	return []core.Action{{Key: "enter", Label: "Fix issues"}, {Key: "esc", Label: "Cancel"}}
 }

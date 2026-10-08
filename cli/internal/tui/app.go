@@ -87,7 +87,7 @@ func newApp(intent Intent, deps Deps, paths config.Paths) *app {
 }
 
 func (a *app) Init() tea.Cmd {
-	// sshgit polls routes until it first learns it is hidden.
+	// sshgit loads routes on its first update unless it already knows it is hidden.
 	return tea.Batch(tea.RequestBackgroundColor, a.broadcast(core.SwitchTabMsg{Tab: a.active}), a.startBoot())
 }
 
@@ -129,6 +129,11 @@ func (a *app) update(msg tea.Msg) tea.Cmd {
 		return a.notify(msg.Text, msg.Tone)
 	case core.SwitchTabMsg:
 		return a.switchTab(msg)
+	case menuRunMsg:
+		if a.top() != msg.owner {
+			return nil
+		}
+		return a.update(core.Press(msg.key))
 	default:
 		cmd, own := a.handle(msg)
 		if own {
@@ -219,9 +224,13 @@ func (a *app) input(msg tea.Msg) tea.Cmd {
 		}
 		return nil
 	case len(a.overlays) > 0:
+		if _, open := a.top().(*menu); k == "m" && !open && !a.capturing() {
+			a.openMenu()
+			return nil
+		}
 		return a.updateTop(msg)
 	}
-	if c, ok := a.screens[a.active].(core.Capturer); !isKey || ok && c.Capturing() {
+	if !isKey || a.capturing() {
 		return a.updateScreen(msg)
 	}
 	switch k {
@@ -252,6 +261,11 @@ func (a *app) quit() tea.Cmd {
 		return a.warn("Warning", "Quit is unavailable until the password change finishes")
 	}
 	return tea.Quit
+}
+
+func (a *app) capturing() bool {
+	c, ok := a.top().(core.Capturer)
+	return ok && c.Capturing()
 }
 
 func (a *app) top() core.Screen {
@@ -312,7 +326,10 @@ func (a *app) switchTab(msg core.SwitchTabMsg) tea.Cmd {
 }
 
 func (a *app) openMenu() {
-	m := newMenu(a.screens[a.active].Actions(a.st))
+	m := newMenu(a.top(), a.top().Actions(a.st), len(a.overlays) == 0)
+	if len(m.items) == 0 {
+		return
+	}
 	w, h := m.Size(a.st, a.st.Width-4, a.st.Height-2)
 	bw, bh := core.BodySize(a.st)
 	x := (bw - w) / 2

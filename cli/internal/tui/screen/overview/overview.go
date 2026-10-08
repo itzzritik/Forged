@@ -63,11 +63,11 @@ func switchTab(tab core.Tab, key string) tea.Cmd {
 }
 
 func (m *model) Actions(st *core.State) []core.Action {
-	out := []core.Action{{Key: "enter", Label: "Open"}, {Key: "c", Label: "Copy public"}, {Key: "n", Label: "New key"}, {Key: "i", Label: "Import"}}
+	out := []core.Action{{Key: "enter", Label: "Open", Icon: ui.G.Icon.Details}, {Key: "c", Label: "Copy public", Icon: ui.G.Icon.Copy}, {Key: "n", Label: "New key", Icon: ui.G.Icon.New}, {Key: "i", Label: "Import", Icon: ui.G.Icon.Import}}
 	if st.Snapshot.LoggedIn {
-		out = append(out, core.Action{Key: "s", Label: "Sync now"})
+		out = append(out, core.Action{Key: "s", Label: "Sync now", Icon: ui.G.Icon.Sync})
 	}
-	return append(out, core.Action{Key: "l", Label: "Lock"})
+	return append(out, core.Action{Key: "l", Label: "Lock", Icon: ui.G.Icon.Lock})
 }
 
 func (m *model) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
@@ -320,19 +320,28 @@ func cardRow(cards []card, w, ch int, last *int) []string {
 	return out
 }
 
-func titleOf(i int) string { return [...]string{"SSH agent", "Commit signing", "Sync"}[i] }
+func iconOf(i int) string { return [...]string{ui.G.Icon.SSH, ui.G.Icon.Sign, ui.G.Icon.Sync}[i] }
+
+func titleOf(i int) string {
+	t := [...]string{"SSH agent", "Commit signing", "Sync"}[i]
+	if iconOf(i) == "" {
+		return t
+	}
+	return iconOf(i) + " " + t
+}
 
 func statusPanel(cards []card, w int) []string {
 	labels := [...]string{"SSH agent", "Signing", "Synced"}
 	inner := w - 2
 	body := make([]string, len(cards))
 	for i, c := range cards {
-		v := ui.Trunc(c.panel, max(0, w-18))
+		v := c.panel
 		if i == 2 {
-			v = ui.Trunc(c.short, max(0, w-18))
+			v = c.short
 		}
-		left := dotLine(c.dot, ui.Paint(labels[i], ui.P().Text))
-		body[i] = ui.Pad(left, inner-2-ui.Width(v)) + ui.Paint(v, ui.P().Muted)
+		left := "  " + ui.Icon(iconOf(i), ui.P().Muted) + ui.Paint(labels[i], ui.P().Text)
+		v = ui.Trunc(v, max(0, inner-6-ui.Width(left)))
+		body[i] = ui.Pad(left, inner-3-ui.Width(v)) + ui.Paint(ui.G.Dot, c.dot) + " " + ui.Paint(v, ui.P().Muted)
 	}
 	return strings.Split(ui.Panel(w, 5, "Status", "", false, body), "\n")
 }
@@ -361,13 +370,16 @@ func quickPanel(st *core.State, w, h int) string {
 	if h >= 8 {
 		body = append(body, "")
 	}
-	items := [][2]string{{"n", "New key"}, {"i", "Import keys"}}
+	items := []core.Action{{Key: "n", Label: "New key", Icon: ui.G.Icon.New}, {Key: "i", Label: "Import keys", Icon: ui.G.Icon.Import}}
 	if st.Snapshot.LoggedIn {
-		items = append(items, [2]string{"s", "Sync now"})
+		items = append(items, core.Action{Key: "s", Label: "Sync now", Icon: ui.G.Icon.Sync})
 	}
-	items = append(items, [2]string{"l", "Lock"})
+	items = append(items, core.Action{Key: "l", Label: "Lock", Icon: ui.G.Icon.Lock})
 	for _, it := range items {
-		body = append(body, "  "+ui.Keycap(it[0])+"  "+ui.Paint(ui.Trunc(it[1], w-11), ui.P().Text))
+		kc := ui.Keycap(it.Key)
+		left := "  " + ui.Icon(it.Icon, ui.P().Muted)
+		left += ui.Paint(ui.Trunc(it.Label, w-5-ui.Width(left)-ui.Width(kc)), ui.P().Text)
+		body = append(body, ui.Pad(left, w-3-ui.Width(kc))+kc)
 	}
 	return ui.Panel(w, h, "Quick actions", "", false, body)
 }
@@ -410,7 +422,7 @@ func (m *model) recentPanel(st *core.State, w, h int, now time.Time) []string {
 		body = append(body, "  "+ui.Paint("No keys yet", ui.P().Muted))
 	default:
 		d := m.delegate
-		d.width, d.now = inner, now
+		d.width, d.now, d.signs = inner, now, st.KeySigns
 		d.typeAt = 0
 		if w >= 46 {
 			d.typeAt = 3 + min(24, (w-8)*42/100)
@@ -433,6 +445,7 @@ type delegate struct {
 	width, typeAt int
 	showAgo       bool
 	now           time.Time
+	signs         func(fingerprint string) bool
 }
 
 func (d *delegate) Height() int                         { return 1 }
@@ -455,12 +468,16 @@ func (d *delegate) Render(w io.Writer, m list.Model, index int, it list.Item) {
 	if d.typeAt > 0 {
 		nameW = d.typeAt - 5
 	}
-	name = ui.Trunc(name, nameW)
+	mark := ""
+	if ui.G.Icon.Sign != "" && d.signs != nil && d.signs(k.Fingerprint) {
+		mark = " " + ui.Paint(ui.G.Icon.Sign, ui.P().Muted)
+	}
+	name = ui.Trunc(name, nameW-ui.Width(mark))
 	nameStyled := ui.Paint(name, ui.P().Text)
 	if sel {
 		nameStyled = ui.Bold(name, ui.P().Text)
 	}
-	c := "  " + nameStyled
+	c := "  " + nameStyled + mark
 	if d.typeAt > 0 {
 		c = ui.Pad(c, d.typeAt-1) + ui.Paint(ui.Trunc(ui.Sanitize(k.Type), 8), ui.P().Muted)
 	}

@@ -33,6 +33,8 @@ func newPasswordModal(owner *Model) *passwordModal {
 
 func (m *passwordModal) Spinning() bool { return m.busy }
 
+func (m *passwordModal) Capturing() bool { return true }
+
 func (m *passwordModal) wipe() {
 	for i := range m.fields {
 		m.fields[i].Wipe()

@@ -12,12 +12,11 @@ func FrameFor(st *core.State, w int) Frame {
 	if st.Width >= 60 {
 		x0 = 2
 	}
-	R := min(w-1, x0+78)
 	gap := 0
 	if st.Height >= 20 {
 		gap = 1
 	}
-	return Frame{x0, R, R - x0, gap}
+	return Frame{x0, w, w - x0, gap}
 }
 
 func (f Frame) Pad(s string) string { return ui.Repeat(" ", f.X0) + s }

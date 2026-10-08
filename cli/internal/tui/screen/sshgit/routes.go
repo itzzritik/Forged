@@ -2,13 +2,14 @@ package sshgit
 
 import (
 	"fmt"
+	"image/color"
+	"slices"
 	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/tui/core"
-	"github.com/itzzritik/forged/cli/internal/tui/screen/widget"
 	"github.com/itzzritik/forged/cli/internal/tui/ui"
 )
 
@@ -93,71 +94,176 @@ func routeRows(routes []actions.SSHRouteDebug, now time.Time) []routeRow {
 	return out
 }
 
-func (m *Model) routesBlock(st *core.State, f widget.Frame, selIdx, room int) []string {
-	p := ui.P()
-	now := time.Now()
-	title := ui.Paint("Learned routes", p.Muted)
-	cells := []cell{{0, title}}
-	if m.loaded && f.W >= 40 {
-		cells = append(cells, at(f.W, ui.Paint(core.Plural(len(m.debug.Routes), "route"), p.Faint)))
+type routesModal struct {
+	m      *Model
+	sel    int
+	target string
+	top    int
+}
+
+func (r *routesModal) Spinning() bool { return !r.m.loaded && r.m.loadErr == "" }
+
+func (r *routesModal) Size(st *core.State, maxW, maxH int) (int, int) {
+	w, h := core.BodySize(st)
+	return min(w, maxW), min(h, maxH)
+}
+
+func (r *routesModal) cur() int {
+	routes := r.m.debug.Routes
+	if i := slices.IndexFunc(routes, func(x actions.SSHRouteDebug) bool { return x.Target == r.target }); i >= 0 && r.target != "" {
+		return i
 	}
-	out := []string{f.Pad(build(0, cells...))}
-	room--
-	if m.debug.RuntimeGuardRequired && room > 0 {
-		out = append(out, f.Pad(build(0, cell{2, ui.Paint(ui.G.Warn+" SSH route guard needs a reset", p.Warn)})))
-		room--
+	return max(0, min(r.sel, len(routes)-1))
+}
+
+func (r *routesModal) route() (actions.SSHRouteDebug, bool) {
+	if len(r.m.debug.Routes) == 0 {
+		return actions.SSHRouteDebug{}, false
+	}
+	return r.m.debug.Routes[r.cur()], true
+}
+
+func (r *routesModal) Actions(st *core.State) []core.Action {
+	var out []core.Action
+	if _, ok := r.route(); ok && !st.Recovery() {
+		out = append(out, core.Action{Key: "x", Label: "Forget route", Icon: ui.G.Icon.Delete, Danger: true})
+	}
+	if r.m.canForgetAll(st) {
+		out = append(out, core.Action{Key: "a", Label: "Forget all", Icon: ui.G.Icon.Delete, Danger: true})
+	}
+	return append(out, core.Action{Key: "esc", Label: "Close"})
+}
+
+func (r *routesModal) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
+	k, ok := msg.(tea.KeyPressMsg)
+	if !ok {
+		if _, resized := msg.(tea.WindowSizeMsg); resized {
+			r.scroll(st)
+		}
+		return r, nil
+	}
+	m := r.m
+	switch strings.ToLower(k.String()) {
+	case "esc":
+		if m.routes == r {
+			m.routes = nil
+		}
+		return r, core.Close(r)
+	case "up", "k":
+		r.move(-1)
+		r.scroll(st)
+	case "down", "j":
+		r.move(1)
+		r.scroll(st)
+	case "x":
+		if rt, ok := r.route(); ok && !st.Recovery() {
+			return r, m.openConfirm(st, &confirmModal{target: rt.Target, label: routeLabel(rt)})
+		}
+	case "a":
+		if m.canForgetAll(st) {
+			return r, m.openConfirm(st, &confirmModal{all: true, guard: m.debug.RuntimeGuardRequired, count: len(m.debug.Routes)})
+		}
+	}
+	return r, nil
+}
+
+func (r *routesModal) move(d int) {
+	routes := r.m.debug.Routes
+	r.sel = max(0, min(r.cur()+d, len(routes)-1))
+	r.target = ""
+	if r.sel < len(routes) {
+		r.target = routes[r.sel].Target
+	}
+}
+
+func (r *routesModal) View(st *core.State, w, h int) string {
+	right := ""
+	if r.m.loaded {
+		right = core.Plural(len(r.m.debug.Routes), "route")
+	}
+	return ui.Panel(w, h, "Learned routes", right, true, r.body(st, w-2, h-2))
+}
+
+func window(top, sel, room, total int) int {
+	if room <= 0 {
+		return 0
+	}
+	top = max(min(top, sel), sel-room+1)
+	return max(0, min(top, total-room))
+}
+
+func (r *routesModal) scroll(st *core.State) {
+	w, h := core.BodySize(st)
+	room := h - 2 - len(r.notes(st, w-2, h-2)) - 1
+	r.top = window(r.top, r.cur(), room, len(r.m.debug.Routes))
+}
+
+func (r *routesModal) notes(st *core.State, w, h int) []string {
+	p := ui.P()
+	m := r.m
+	line := func(s string, c color.Color) string { return build(0, cell{2, ui.Paint(ui.Trunc(s, w-3), c)}) }
+	var out []string
+	if h >= 10 {
+		out = append(out, "")
+	}
+	if m.debug.RuntimeGuardRequired {
+		out = append(out, line(ui.G.Warn+" SSH route guard needs a reset", p.Warn))
 	}
 	switch {
-	case !m.loaded && m.loadErr != "":
-		return append(out, f.Pad(build(0, cell{2, ui.Paint(ui.Trunc(m.loadErr, f.W-2), p.Danger)})))
-	case !m.loaded:
-		return append(out, f.Pad(build(0, cell{2, ui.SpinnerGlyph(st.SpinFrame) + ui.Paint(" Reading routes", p.Muted)})))
+	case !m.loaded && m.loadErr == "":
+		out = append(out, build(0, cell{2, ui.SpinnerGlyph(st.SpinFrame) + ui.Paint(" Reading routes", p.Muted)}))
+	case m.loadErr != "":
+		out = append(out, line(m.loadErr, p.Danger))
 	case len(m.debug.Routes) == 0:
-		return append(out, f.Pad(build(0, cell{2, ui.Paint(ui.Trunc("Nothing learned yet. Routes appear after your first connection.", f.W-2), p.Muted)})))
+		out = append(out, line("Nothing learned yet. Routes appear after your first connection.", p.Muted))
 	}
-	rows := routeRows(m.debug.Routes, now)
+	return out
+}
+
+func (r *routesModal) body(st *core.State, w, h int) []string {
+	p := ui.P()
+	m := r.m
+	e := w - 1
+	out := r.notes(st, w, h)
+	if !m.loaded || len(m.debug.Routes) == 0 {
+		return out
+	}
+	rows := routeRows(m.debug.Routes, time.Now())
 	lastW, svcW := ui.Width("Last used"), ui.Width("Service")
-	for _, r := range rows {
-		lastW, svcW = max(lastW, ui.Width(r.last)), max(svcW, ui.Width(r.service))
+	for _, rr := range rows {
+		lastW, svcW = max(lastW, ui.Width(rr.last)), max(svcW, ui.Width(rr.service))
 	}
 	svcX, keyX := 0, 0
-	if f.W >= 64 {
-		svcX = f.W - lastW - 2 - svcW
+	if e >= 64 {
+		svcX = e - lastW - 2 - svcW
 	}
-	if f.W >= 46 {
-		keyX = f.W - lastW - 16
+	if e >= 46 {
+		keyX = e - lastW - 16
 		if svcX > 0 {
 			keyX = svcX - 16
 		}
 	}
 	end := keyX
 	if end == 0 {
-		end = f.W - lastW
+		end = e - lastW
 	}
 	tgtW := max(1, end-4)
-	if m.loadErr != "" && room > 0 {
-		out = append(out, f.Pad(build(0, cell{2, ui.Paint(ui.Trunc(m.loadErr, f.W-2), p.Danger)})))
-		room--
-	}
-	if room > 0 {
-		out = append(out, f.Pad(build(0, cell{2, ui.Paint("Target", p.Faint)}, cell{keyX, ui.Paint(onlyIf(keyX > 0, "Key"), p.Faint)},
-			cell{svcX, ui.Paint(onlyIf(svcX > 0, "Service"), p.Faint)}, at(f.W, ui.Paint("Last used", p.Faint)))))
-		room--
-	}
-	sel := selIdx - firstRoute
-	top := max(0, min(m.top, len(rows)-max(room, 0)))
+	out = append(out, build(0, cell{2, ui.Paint("Target", p.Faint)}, cell{keyX, ui.Paint(onlyIf(keyX > 0, "Key"), p.Faint)},
+		cell{svcX, ui.Paint(onlyIf(svcX > 0, "Service"), p.Faint)}, at(e, ui.Paint("Last used", p.Faint))))
+	room := h - len(out)
+	sel := r.cur()
+	top := window(r.top, sel, room, len(rows))
 	for i := top; i < len(rows) && i-top < room; i++ {
-		r := rows[i]
-		on := i == sel
-		tgt := ui.Trunc(r.target, tgtW)
-		cs := []cell{{2, ui.Paint(tgt, p.Text)}, {keyX, ui.Paint(onlyIf(keyX > 0, ui.Trunc(r.key, 14)), p.Muted)},
-			{svcX, ui.Paint(onlyIf(svcX > 0, r.service), p.Muted)}, at(f.W, ui.Paint(r.last, p.Muted))}
-		if on {
-			cs[0] = cell{1, ui.Bold(tgt, p.Text)}
-			out = append(out, f.Pad(ui.SelLine(f.W, build(1, cs...))))
+		rr := rows[i]
+		tgt := ui.Trunc(rr.target, tgtW)
+		cs := []cell{{2, ui.Paint(tgt, p.Text)}, {keyX, ui.Paint(onlyIf(keyX > 0, ui.Trunc(rr.key, 14)), p.Muted)},
+			{svcX, ui.Paint(onlyIf(svcX > 0, rr.service), p.Muted)}, at(e, ui.Paint(rr.last, p.Muted))}
+		if i == sel {
+			cs[0] = cell{2, ui.Bold(tgt, p.Text)}
+			out = append(out, ui.SelLine(w, build(1, cs...)))
 			continue
 		}
-		out = append(out, f.Pad(build(0, cs...)))
+		out = append(out, build(0, cs...))
 	}
 	return out
 }

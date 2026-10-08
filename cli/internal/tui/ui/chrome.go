@@ -111,15 +111,8 @@ func Header(w int, tabs []string, active int, chip Chip) string {
 		chipW = Width(chip.Label) + 2
 	}
 	chipX := w - 2 - chipW
-	top := "  " + Paint(G.Brand, P().Accent)
-	var x int
-	if w >= 80 {
-		top += " " + Bold("forged", P().Text) + "    "
-		x = 14
-	} else {
-		top += " "
-		x = 4
-	}
+	brand := "  " + Bold("forged", P().Accent)
+	compactX := 10
 	under := make([]string, w)
 	for i := range under {
 		under[i] = Paint(G.H, P().Rule)
@@ -141,8 +134,10 @@ func Header(w int, tabs []string, active int, chip Chip) string {
 		}
 	}
 	var line strings.Builder
-	line.WriteString(top)
+	line.WriteString(brand)
+	x := max(Width(brand)+2, min((w-full)/2, chipX-2-full))
 	if x+full <= chipX-2 {
+		line.WriteString(Repeat(" ", x-Width(brand)))
 		for i, t := range tabs {
 			if i == active {
 				line.WriteString(Bold(t, P().Text))
@@ -157,9 +152,10 @@ func Header(w int, tabs []string, active int, chip Chip) string {
 		}
 		x -= gap
 	} else {
+		x = compactX
 		t := tabs[active]
 		pos := strconv.Itoa(active+1) + "/" + strconv.Itoa(len(tabs))
-		line.WriteString(Paint(G.Prev, P().Muted) + " " + Bold(t, P().Text) + " " + Paint(G.Next, P().Muted) + "  " + Paint(pos, P().Faint))
+		line.WriteString(Repeat(" ", x-Width(brand)) + Paint(G.Prev, P().Muted) + " " + Bold(t, P().Text) + " " + Paint(G.Next, P().Muted) + "  " + Paint(pos, P().Faint))
 		mark(x+1, Width(t)+2)
 		x += 6 + Width(t) + Width(pos)
 	}

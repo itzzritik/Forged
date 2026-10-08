@@ -23,9 +23,9 @@ type nameModal struct {
 }
 
 type nameDoneMsg struct {
-	id   core.ID
-	name string
-	err  error
+	id        core.ID
+	old, name string
+	err       error
 }
 
 func NewKeyModal() widget.Modal { return newNameModal("") }
@@ -145,11 +145,13 @@ func (m *nameModal) submit(st *core.State) tea.Cmd {
 		if err != nil {
 			return nameDoneMsg{id: id, err: fmt.Errorf("renaming key: %w", err)}
 		}
-		return nameDoneMsg{id: id, name: res.NewName}
+		return nameDoneMsg{id: id, old: old, name: res.NewName}
 	}
 }
 
 func (m *nameModal) Spinning() bool { return m.busy }
+
+func (m *nameModal) Capturing() bool { return true }
 
 func (m *nameModal) body(inner, limit, frame int) []string {
 	p := ui.P()

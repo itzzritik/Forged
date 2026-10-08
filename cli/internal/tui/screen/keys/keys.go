@@ -96,23 +96,20 @@ func (m *Model) sync(st *core.State) {
 
 func narrow(st *core.State) bool { return st.Width < 80 }
 
-func (m *Model) Actions(st *core.State) []core.Action {
+func (m *Model) Actions(*core.State) []core.Action {
 	out := []core.Action{
-		{Key: "c", Label: "Copy public"},
-		{Key: "p", Label: "Copy private"},
-		{Key: "n", Label: "New key"},
-		{Key: "/", Label: "Search"},
-		{Key: "f", Label: "Copy fingerprint"},
-		{Key: "g", Label: "Use for Git signing"},
-		{Key: "r", Label: "Rename"},
-		{Key: "d", Label: "Delete", Danger: true},
-		{Key: "i", Label: "Import keys"},
-		{Key: "e", Label: "Export vault"},
+		{Key: "c", Label: "Copy public", Icon: ui.G.Icon.Copy},
+		{Key: "p", Label: "Copy private", Icon: ui.G.Icon.Secret},
+		{Key: "n", Label: "New key", Icon: ui.G.Icon.New},
+		{Key: "/", Label: "Search", Icon: ui.G.Icon.Search},
+		{Key: "f", Label: "Copy fingerprint", Icon: ui.G.Icon.Print},
+		{Key: "g", Label: "Use for Git signing", Icon: ui.G.Icon.Sign},
+		{Key: "r", Label: "Rename", Icon: ui.G.Icon.Rename},
+		{Key: "d", Label: "Delete", Icon: ui.G.Icon.Delete, Danger: true},
+		{Key: "i", Label: "Import keys", Icon: ui.G.Icon.Import},
+		{Key: "e", Label: "Export vault", Icon: ui.G.Icon.Export},
 	}
-	if narrow(st) {
-		out = append([]core.Action{{Key: "enter", Label: "Details"}}, out...)
-	}
-	return out
+	return append([]core.Action{{Key: "enter", Label: "Details", Icon: ui.G.Icon.Details}}, out...)
 }
 
 func (m *Model) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
@@ -227,16 +224,14 @@ func (m *Model) key(msg tea.KeyPressMsg, st *core.State) tea.Cmd {
 	if !ok {
 		return nil
 	}
+	if k == "enter" {
+		return widget.OpenModal(st, &detailsModal{m: m, name: sel.Name})
+	}
+	return m.act(k, sel, st)
+}
+
+func (m *Model) act(k string, sel actions.KeySummary, st *core.State) tea.Cmd {
 	switch k {
-	case "enter":
-		if m.errs[sel.Name] != "" {
-			return m.retry(st, sel.Name)
-		}
-		if narrow(st) {
-			_, body := core.BodySize(st)
-			w := min(64, st.Width-4-4)
-			return core.Send(core.OpenOverlayMsg{Screen: &detailsModal{m: m, name: sel.Name}, W: w, H: modalHeight(st, sel, w, body), Center: true, Dim: true})
-		}
 	case "c":
 		return core.CopyPublic(st, sel.Name, func(since core.ID, err error) tea.Msg {
 			return copyDoneMsg{label: "Public key", action: "copy public key", since: since, err: err}
@@ -272,7 +267,7 @@ func (m *Model) View(st *core.State, w, h int) string {
 		rw := w - lw - 2
 		var right []string
 		if k, ok := m.selected(); ok {
-			right = strings.Split(inspector(st, k, m.errs[k.Name], true, rw, h, false, now), "\n")
+			right = strings.Split(inspector(st, k, m.errs[k.Name], false, rw, h, false, now), "\n")
 		} else {
 			right = strings.Split(ui.Panel(rw, h, "Key", "", false, []string{"", "  " + ui.Paint("No key selected", ui.P().Muted)}), "\n")
 		}
@@ -339,9 +334,10 @@ func (m *Model) listPane(st *core.State, w, h int) string {
 	case len(items) == 0 && n > 0:
 		body = append(body, emptyState(st, iw, n, m.input.Value() != "")...)
 	default:
-		showType := w >= 24
+		showType := st.Width >= 100
 		for i := m.top; i < len(items) && i < m.top+n; i++ {
-			body = append(body, row(iw, w, actions.KeySummary(items[i].(item)), i == idx, showType))
+			k := actions.KeySummary(items[i].(item))
+			body = append(body, row(iw, k, i == idx, showType, st.KeySigns(k.Fingerprint)))
 		}
 	}
 	right := ""
@@ -355,7 +351,7 @@ func (m *Model) listPane(st *core.State, w, h int) string {
 	return ui.Join(panel)
 }
 
-func row(iw, w int, k actions.KeySummary, sel, showType bool) string {
+func row(iw int, k actions.KeySummary, sel, showType, signs bool) string {
 	p := ui.P()
 	kind, kw := "", 0
 	if showType {
@@ -366,12 +362,16 @@ func row(iw, w int, k actions.KeySummary, sel, showType bool) string {
 	if showType {
 		nameW = iw - 3 - kw - 2
 	}
-	name := ui.Trunc(ui.Sanitize(k.Name), nameW)
+	mark := ""
+	if signs && ui.G.Icon.Sign != "" {
+		mark = " " + ui.Paint(ui.G.Icon.Sign, p.Muted)
+	}
+	name := ui.Trunc(ui.Sanitize(k.Name), nameW-ui.Width(mark))
 	styled := ui.Paint(name, p.Text)
 	if sel {
 		styled = ui.Bold(name, p.Text)
 	}
-	content := " " + styled
+	content := " " + styled + mark
 	if showType {
 		content = ui.Pad(content, iw-2-kw) + ui.Paint(kind, p.Muted) + " "
 	}

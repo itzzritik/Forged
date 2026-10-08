@@ -3,6 +3,8 @@ package keys
 import (
 	"fmt"
 	"math"
+	"slices"
+	"strings"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
@@ -61,7 +63,7 @@ func inspectorBody(st *core.State, k actions.KeySummary, errText string, retry b
 	var metas []metaRow
 	if loaded {
 		signing := "Off"
-		if st.KeyIsSigning(d.PublicKey) || d.GitSigning {
+		if st.KeySigns(d.Fingerprint) || d.GitSigning {
 			signing = "On"
 		}
 		used := d.LastUsedAt
@@ -169,34 +171,62 @@ func firstOf(a, b string) string {
 }
 
 type detailsModal struct {
-	m    *Model
-	name string
+	m       *Model
+	name    string
+	renamed core.ID
 }
 
-func (d *detailsModal) Actions(*core.State) []core.Action {
-	return []core.Action{{Key: "esc", Label: "Close"}}
+func (d *detailsModal) key(st *core.State) (actions.KeySummary, bool) {
+	i := slices.IndexFunc(st.Keys, func(k actions.KeySummary) bool { return k.Name == d.name })
+	if i < 0 {
+		return actions.KeySummary{}, false
+	}
+	return st.Keys[i], true
+}
+
+func (d *detailsModal) Actions(st *core.State) []core.Action {
+	var out []core.Action
+	for _, a := range d.m.Actions(st) {
+		if slices.Contains([]string{"c", "p", "f", "g", "r", "d"}, a.Key) {
+			out = append(out, a)
+		}
+	}
+	return append(out, core.Action{Key: "esc", Label: "Close"})
 }
 
 func (d *detailsModal) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
-	if msg, ok := msg.(tea.KeyPressMsg); ok {
-		switch msg.String() {
-		case "enter":
-			if d.m.errs[d.name] != "" {
-				return d, d.m.retry(st, d.name)
-			}
-			fallthrough
-		case "esc":
+	switch msg := msg.(type) {
+	case nameDoneMsg:
+		if msg.err == nil && msg.old == d.name {
+			d.name, d.renamed = msg.name, core.NextID()
+		}
+	case deleteDoneMsg:
+		if msg.deleted && msg.k.Name == d.name {
 			return d, core.Close(d)
+		}
+	case core.KeysMsg:
+		// A list requested before the rename still has the old name.
+		if _, ok := d.key(st); !ok && msg.Err == nil && msg.ID > d.renamed && st.KeysLoaded {
+			return d, core.Close(d)
+		}
+	case tea.KeyPressMsg:
+		k := strings.ToLower(msg.String())
+		switch {
+		case k == "enter" && d.m.errs[d.name] != "":
+			return d, d.m.retry(st, d.name)
+		case k == "enter", k == "esc":
+			return d, core.Close(d)
+		}
+		if sel, ok := d.key(st); ok {
+			return d, d.m.act(k, sel, st)
 		}
 	}
 	return d, nil
 }
 
 func (d *detailsModal) View(st *core.State, w, h int) string {
-	for _, k := range st.Keys {
-		if k.Name == d.name {
-			return inspector(st, k, d.m.errs[k.Name], true, w, h, true, time.Now())
-		}
+	if k, ok := d.key(st); ok {
+		return inspector(st, k, d.m.errs[k.Name], true, w, h, true, time.Now())
 	}
 	return ui.Panel(w, h, ui.Sanitize(d.name), "", true, nil)
 }
@@ -216,10 +246,8 @@ func (d *detailsModal) Size(st *core.State, maxW, maxH int) (int, int) {
 	w := max(1, min(64, maxW-4))
 	_, bh := core.BodySize(st)
 	limit := max(3, bh)
-	for _, k := range st.Keys {
-		if k.Name == d.name {
-			return w, modalHeight(st, k, w, limit)
-		}
+	if k, ok := d.key(st); ok {
+		return w, modalHeight(st, k, w, limit)
 	}
 	return w, min(limit, 11)
 }

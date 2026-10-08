@@ -65,11 +65,11 @@ func (m *Model) Actions(st *core.State) []core.Action {
 	}
 	var out []core.Action
 	if st.CanFix() {
-		out = append(out, core.Action{Key: "f", Label: "Fix issues"})
+		out = append(out, core.Action{Key: "f", Label: "Fix issues", Icon: ui.G.Icon.Health})
 	}
-	out = append(out, core.Action{Key: "c", Label: "Copy report"})
+	out = append(out, core.Action{Key: "c", Label: "Copy report", Icon: ui.G.Icon.Copy})
 	if !st.Recovery() {
-		out = append(out, core.Action{Key: "r", Label: "Refresh"})
+		out = append(out, core.Action{Key: "r", Label: "Refresh", Icon: ui.G.Icon.Refresh})
 	}
 	return append(out, core.Action{Key: ui.G.UpDown, Label: "Select"})
 }

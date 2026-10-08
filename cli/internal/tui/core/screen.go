@@ -7,8 +7,8 @@ import (
 )
 
 type Action struct {
-	Key, Label string
-	Danger     bool
+	Key, Label, Icon string
+	Danger           bool
 }
 
 type Screen interface {

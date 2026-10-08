@@ -68,6 +68,8 @@ func PrivateModal(name string) widget.Modal {
 	return &privateModal{name: name, sec: ui.NewSecret(128)}
 }
 
+func (p *privateModal) Capturing() bool { return true }
+
 func (p *privateModal) Actions(*core.State) []core.Action {
 	if p.pending {
 		return []core.Action{{Key: "esc", Label: "Cancel"}}
