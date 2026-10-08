@@ -264,15 +264,15 @@ func (a *ForgedAgent) signWithFlagsForClient(ctx context.Context, key ssh.Public
 }
 
 func (a *ForgedAgent) Add(key agent.AddedKey) error {
-	return fmt.Errorf("Use the Forged Key tab to import or generate keys")
+	return fmt.Errorf("Use the Forged Keys tab to import or generate keys")
 }
 
 func (a *ForgedAgent) Remove(key ssh.PublicKey) error {
-	return fmt.Errorf("Use the Forged Key tab to remove keys")
+	return fmt.Errorf("Use the Forged Keys tab to remove keys")
 }
 
 func (a *ForgedAgent) RemoveAll() error {
-	return fmt.Errorf("Use the Forged Key tab to remove keys")
+	return fmt.Errorf("Use the Forged Keys tab to remove keys")
 }
 
 func (a *ForgedAgent) Lock([]byte) error {

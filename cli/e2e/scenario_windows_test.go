@@ -90,10 +90,8 @@ func stepFirstRun(t *testing.T, s *scenario) {
 
 func stepGenerateKey(t *testing.T, s *scenario) {
 	p := h.forged(t)
-	mustSee(t, p, 20*time.Second, "DASHBOARD", "Generate")
-	_ = p.Send("\x1b[B")
-	time.Sleep(300 * time.Millisecond)
-	_ = p.Send("\r")
+	mustSee(t, p, 20*time.Second, "Overview", "New key")
+	_ = p.Send("n")
 	mustSee(t, p, 10*time.Second, "Create a new SSH key")
 	_ = p.Type(s.keyName)
 	_ = p.Send("\r")
@@ -338,7 +336,7 @@ func stepDoctorFix(t *testing.T, s *scenario) {
 	waitPipes(t, s, false)
 
 	p := h.forged(t, "doctor", "--fix")
-	mustSee(t, p, 40*time.Second, "System healthy")
+	mustSee(t, p, 40*time.Second, "All good")
 	quitTUI(t, p)
 	waitPipes(t, s, true)
 	user := readFile(t, s.paths.SSHUserConfig())

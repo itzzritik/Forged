@@ -86,7 +86,7 @@ func LoadSSHRoutingDebug(paths config.Paths) (SSHRoutingDebug, error) {
 		return snapshot, nil
 	}
 	if isUnknownIPCCommand(err, ipc.CmdSSHRoutesList) {
-		return SSHRoutingDebug{}, fmt.Errorf("SSH routing diagnostics need a fresh Forged daemon; run Doctor > Fix Issues")
+		return SSHRoutingDebug{}, fmt.Errorf("SSH routing diagnostics need a fresh Forged daemon; open Health and press f to fix issues")
 	}
 	return SSHRoutingDebug{}, err
 }

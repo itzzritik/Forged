@@ -1,0 +1,455 @@
+package sshgit
+
+import (
+	"fmt"
+	"path/filepath"
+	"strings"
+
+	tea "charm.land/bubbletea/v2"
+	"github.com/itzzritik/forged/cli/internal/actions"
+	"github.com/itzzritik/forged/cli/internal/platform"
+	"github.com/itzzritik/forged/cli/internal/tui/core"
+	"github.com/itzzritik/forged/cli/internal/tui/screen/widget"
+	"github.com/itzzritik/forged/cli/internal/tui/ui"
+)
+
+const (
+	rowToggle  = 0
+	rowSigning = 1
+	firstRoute = 2
+)
+
+type toggleDoneMsg struct {
+	id  core.ID
+	err error
+}
+
+type Model struct {
+	sel       int
+	selTarget string
+	top       int
+	started   bool
+	hidden    bool
+	rec       bool
+	confirm   bool
+	debug     actions.SSHRoutingDebug
+	loaded    bool
+	loadErr   string
+	reqID     core.ID
+	toggleID  core.ID
+	signID    core.ID
+	signBusy  bool
+}
+
+func New() core.Screen { return &Model{} }
+
+func (m *Model) Spinning() bool {
+	if m.rec {
+		return false
+	}
+	return m.signBusy || m.toggleID != 0 || (routing() && m.started && !m.hidden && !m.loaded && m.loadErr == "")
+}
+
+func routing() bool { return platform.SSHRoutingSupported() }
+
+type cell struct {
+	x int
+	s string
+}
+
+func at(rx int, s string) cell { return cell{rx - ui.Width(s), s} }
+
+func build(origin int, cells ...cell) string {
+	var b strings.Builder
+	cur := origin
+	for _, c := range cells {
+		if c.s == "" {
+			continue
+		}
+		if c.x > cur {
+			b.WriteString(ui.Repeat(" ", c.x-cur))
+			cur = c.x
+		}
+		b.WriteString(c.s)
+		cur += ui.Width(c.s)
+	}
+	return b.String()
+}
+
+func (m *Model) rows(st *core.State) int {
+	if st.Recovery() {
+		return 1
+	}
+	if routing() {
+		return firstRoute + len(m.debug.Routes)
+	}
+	return firstRoute
+}
+
+func (m *Model) route() (actions.SSHRouteDebug, bool) {
+	i := m.sel - firstRoute
+	if i < 0 || i >= len(m.debug.Routes) {
+		return actions.SSHRouteDebug{}, false
+	}
+	return m.debug.Routes[i], true
+}
+
+func (m *Model) clamp(st *core.State) {
+	m.sel = m.selIdx(st)
+}
+
+func (m *Model) selIdx(st *core.State) int { return max(0, min(m.sel, m.rows(st)-1)) }
+
+func (m *Model) canForgetAll(st *core.State) bool {
+	return routing() && !st.Recovery() && (len(m.debug.Routes) > 0 || m.debug.RuntimeGuardRequired)
+}
+
+func (m *Model) Actions(st *core.State) []core.Action {
+	if st.Recovery() {
+		if st.Snapshot.AgentDisabled {
+			return nil
+		}
+		return []core.Action{{Key: "enter", Label: "Turn off"}}
+	}
+	var out []core.Action
+	if m.selIdx(st) < firstRoute {
+		out = append(out, core.Action{Key: "enter", Label: "Change"})
+	}
+	if _, ok := m.route(); ok {
+		out = append(out, core.Action{Key: "x", Label: "Forget route", Danger: true})
+	}
+	if m.canForgetAll(st) {
+		out = append(out, core.Action{Key: "a", Label: "Forget all", Danger: true})
+	}
+	return out
+}
+
+func (m *Model) reload(st *core.State) tea.Cmd {
+	if st.Recovery() || !routing() {
+		return nil
+	}
+	m.reqID = core.NextID()
+	return loadCmd(st, m.reqID)
+}
+
+func (m *Model) polling() bool { return !m.hidden && !m.confirm }
+
+func (m *Model) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
+	var cmds []tea.Cmd
+	switch msg := msg.(type) {
+	case core.SwitchTabMsg:
+		was := m.hidden
+		m.hidden = msg.Tab != core.TabSSH
+		if was && !m.hidden {
+			cmds = append(cmds, m.reload(st))
+		}
+	case core.RoutesMsg:
+		if msg.ID != m.reqID {
+			break
+		}
+		if msg.Err != nil {
+			m.loadErr = st.Reporter.Report("ssh", "load routes", msg.Err)
+		} else {
+			m.loadErr, m.loaded, m.debug = "", true, msg.Debug
+			m.follow()
+		}
+		if m.polling() {
+			cmds = append(cmds, pollCmd(m.reqID))
+		}
+	case pollMsg:
+		if msg.id == m.reqID && m.polling() && !st.Recovery() {
+			cmds = append(cmds, loadCmd(st, m.reqID))
+		}
+	case toggleDoneMsg:
+		if msg.id != m.toggleID {
+			break
+		}
+		m.toggleID = 0
+		st.Busy.SSHToggle = false
+		if msg.err != nil {
+			cmds = append(cmds, core.Toast(st.Reporter.Report("ssh", "change SSH integration", msg.err), ui.ToneBad))
+		} else {
+			cmds = append(cmds, core.Send(core.RefreshMsg{}))
+		}
+	case signChoiceMsg:
+		cmds = append(cmds, m.changeSigning(st, msg))
+	case core.SigningMsg:
+		if msg.ID != m.signID || !m.signBusy {
+			break
+		}
+		m.signBusy = false
+		switch {
+		case msg.Err != nil:
+			cmds = append(cmds, core.Toast(st.Reporter.Report("ssh", "change commit signing", msg.Err), ui.ToneBad))
+		case msg.Status.Mode == actions.CommitSigningForged:
+			cmds = append(cmds, core.Toast("Signing with "+ui.Sanitize(msg.Status.KeyName), ui.ToneGood))
+		default:
+			cmds = append(cmds, core.Toast("Signing turned off", ui.ToneGood))
+		}
+	case forgetDoneMsg:
+		if msg.err == nil && m.confirm {
+			m.confirm = false
+			cmds = append(cmds, m.reload(st))
+		}
+	case confirmClosedMsg, core.LockedMsg:
+		if m.confirm {
+			m.confirm = false
+			cmds = append(cmds, m.reload(st))
+		}
+	case tea.KeyPressMsg:
+		cmds = append(cmds, m.key(msg, st))
+	}
+	if rec := st.Recovery(); m.started && m.rec && !rec && !m.hidden {
+		cmds = append(cmds, m.reload(st))
+	}
+	m.rec = st.Recovery()
+	if !m.started {
+		m.started = true
+		if !m.hidden {
+			cmds = append(cmds, m.reload(st))
+		}
+	}
+	m.clamp(st)
+	m.scroll(st)
+	return m, tea.Batch(cmds...)
+}
+
+func (m *Model) follow() {
+	if m.sel < firstRoute || m.selTarget == "" {
+		return
+	}
+	for i, r := range m.debug.Routes {
+		if r.Target == m.selTarget {
+			m.sel = firstRoute + i
+			return
+		}
+	}
+}
+
+func (m *Model) move(st *core.State, d int) {
+	m.sel = max(0, min(m.sel+d, m.rows(st)-1))
+	m.selTarget = ""
+	if r, ok := m.route(); ok {
+		m.selTarget = r.Target
+	}
+}
+
+func (m *Model) key(msg tea.KeyPressMsg, st *core.State) tea.Cmd {
+	switch strings.ToLower(msg.String()) {
+	case "up", "k":
+		m.move(st, -1)
+	case "down", "j":
+		m.move(st, 1)
+	case "enter":
+		return m.activate(st)
+	case "x":
+		if r, ok := m.route(); ok && !st.Recovery() {
+			return m.openConfirm(st, &confirmModal{target: r.Target, label: routeLabel(r)})
+		}
+	case "a":
+		if m.canForgetAll(st) {
+			return m.openConfirm(st, &confirmModal{all: true, guard: m.debug.RuntimeGuardRequired, count: len(m.debug.Routes)})
+		}
+	}
+	return nil
+}
+
+func (m *Model) openConfirm(st *core.State, c *confirmModal) tea.Cmd {
+	m.confirm = true
+	return widget.OpenModal(st, c)
+}
+
+func (m *Model) activate(st *core.State) tea.Cmd {
+	switch {
+	case m.sel == rowToggle:
+		return m.toggle(st)
+	case m.sel == rowSigning && !st.Recovery():
+		return m.openDropdown(st)
+	}
+	return nil
+}
+
+func (m *Model) toggle(st *core.State) tea.Cmd {
+	if st.Busy.Maintenance || st.Busy.SSHToggle || (st.Recovery() && st.Snapshot.AgentDisabled) {
+		return nil
+	}
+	enable, disable := st.Deps.EnableSSHAgent, st.Deps.DisableSSHAgent
+	off := st.Recovery() || st.Snapshot.ManagedSSHIntegration
+	m.toggleID = core.NextID()
+	st.Busy.SSHToggle = true
+	id := m.toggleID
+	return func() tea.Msg {
+		var err error
+		if off {
+			err = disable()
+		} else {
+			err = enable()
+		}
+		if err != nil {
+			err = fmt.Errorf("changing SSH integration: %w", err)
+		}
+		return toggleDoneMsg{id: id, err: err}
+	}
+}
+
+func (m *Model) changeSigning(st *core.State, c signChoiceMsg) tea.Cmd {
+	if m.signBusy {
+		return nil
+	}
+	m.signID, m.signBusy = core.NextID(), true
+	id := m.signID
+	enable, disable := st.Deps.EnableCommitSigning, st.Deps.DisableCommitSigning
+	return func() tea.Msg {
+		var status actions.CommitSigningStatus
+		var err error
+		if c.off {
+			status, err = disable()
+		} else {
+			status, err = enable(c.name)
+		}
+		if err != nil {
+			err = fmt.Errorf("changing commit signing: %w", err)
+		}
+		return core.SigningMsg{ID: id, Status: status, Err: err}
+	}
+}
+
+func (m *Model) signingValue(st *core.State) string {
+	if !st.SigningLoaded {
+		return "Checking"
+	}
+	switch st.Signing.Mode {
+	case actions.CommitSigningForged:
+		return ui.Sanitize(st.Signing.KeyName)
+	case actions.CommitSigningExternal:
+		if p := strings.TrimSpace(st.Signing.Program); p != "" {
+			return "External (" + ui.Sanitize(filepath.Base(p)) + ")"
+		}
+		return "External"
+	}
+	return "Off"
+}
+
+func (m *Model) toggleValue(st *core.State) string {
+	p := ui.P()
+	switch {
+	case m.toggleID != 0:
+		return ui.SpinnerGlyph(st.SpinFrame) + ui.Paint(" Updating", p.Accent)
+	case st.Recovery() && st.Snapshot.AgentDisabled:
+		return ui.Paint(ui.G.Ring+" Off", p.Muted)
+	case st.Recovery():
+		return ui.Paint(ui.G.Next, p.Muted)
+	case st.Snapshot.RequiresManualSSHConfigurationChange():
+		return ui.Paint(ui.G.Warn+" External", p.Warn)
+	case st.Snapshot.ManagedSSHIntegration:
+		return ui.Paint(ui.G.Dot, p.Good) + " " + ui.Paint("On", p.Text)
+	}
+	return ui.Paint(ui.G.Ring+" Off", p.Muted)
+}
+
+func row(f widget.Frame, on bool, label, value string) string {
+	p := ui.P()
+	lbl := ui.Trunc(label, max(1, f.W-ui.Width(value)-5))
+	if on {
+		return f.Pad(ui.SelLine(f.W, build(1, cell{1, ui.Bold(lbl, p.Text)}, at(f.W, value))))
+	}
+	return f.Pad(build(0, cell{2, ui.Paint(lbl, p.Text)}, at(f.W, value)))
+}
+
+func (m *Model) signingRowValue(st *core.State, f widget.Frame) string {
+	p := ui.P()
+	if m.signBusy {
+		return ui.SpinnerGlyph(st.SpinFrame) + ui.Paint(" Updating signing", p.Accent)
+	}
+	v := ui.Trunc(m.signingValue(st), max(6, f.W/2))
+	return ui.Paint(v+" "+ui.G.Caret, p.Text)
+}
+
+func (m *Model) signingY(st *core.State) int {
+	f := widget.FrameFor(st, st.Width-4)
+	y := 2
+	if st.Snapshot.RequiresManualSSHConfigurationChange() {
+		y++
+	}
+	return y + f.Gap + 1
+}
+
+func (m *Model) View(st *core.State, w, h int) string {
+	sel := m.selIdx(st)
+	p := ui.P()
+	f := widget.FrameFor(st, w)
+	section := func(s string) string { return f.Pad(ui.Paint(s, p.Muted)) }
+	lines := []string{section("SSH agent"), row(f, sel == rowToggle, m.toggleLabel(st), m.toggleValue(st))}
+	if st.Recovery() {
+		lines = append(lines, "")
+		if st.Snapshot.AgentDisabled {
+			lines = append(lines, f.Pad(ui.Paint(ui.Trunc("Forged will not manage SSH until its service is verified again.", f.W-2), p.Muted)))
+		} else {
+			lines = append(lines, f.Pad(ui.Paint(ui.Trunc("Forged cannot verify its background service.", f.W-2), p.Muted)))
+		}
+		return fit(lines, w, h)
+	}
+	if st.Snapshot.RequiresManualSSHConfigurationChange() {
+		lines = append(lines, f.Pad(ui.Banner(f.W, 1, ui.ToneWarn, "Forged stays active through your own SSH config. Update it by hand to turn it off.", "", "")))
+	}
+	for range f.Gap {
+		lines = append(lines, "")
+	}
+	lines = append(lines, section("Git commit signing"), row(f, sel == rowSigning, "Sign commits with", m.signingRowValue(st, f)))
+	if routing() {
+		for range f.Gap {
+			lines = append(lines, "")
+		}
+		lines = append(lines, m.routesBlock(st, f, sel, h-len(lines))...)
+	}
+	return fit(lines, w, h)
+}
+
+func (m *Model) toggleLabel(st *core.State) string {
+	switch {
+	case st.Recovery() && st.Snapshot.AgentDisabled:
+		return "SSH integration is off"
+	case st.Recovery():
+		return "Turn off SSH integration"
+	}
+	return "Use Forged for SSH"
+}
+
+func fit(lines []string, w, h int) string {
+	for len(lines) < h {
+		lines = append(lines, "")
+	}
+	lines = lines[:max(0, h)]
+	for i, l := range lines {
+		lines[i] = ui.Pad(ui.Trunc(l, w), w)
+	}
+	return ui.Join(lines)
+}
+
+func (m *Model) routeRoom(st *core.State) int {
+	_, h := core.BodySize(st)
+	f := widget.FrameFor(st, st.Width-4)
+	n := 2 + f.Gap + 2 + f.Gap + 1
+	if st.Snapshot.RequiresManualSSHConfigurationChange() {
+		n++
+	}
+	if m.debug.RuntimeGuardRequired {
+		n++
+	}
+	if m.loaded && m.loadErr != "" {
+		n++
+	}
+	return h - n - 1
+}
+
+func (m *Model) scroll(st *core.State) {
+	room, total := m.routeRoom(st), len(m.debug.Routes)
+	if st.Recovery() || room <= 0 || total == 0 {
+		m.top = 0
+		return
+	}
+	m.top = max(0, min(m.top, total-room))
+	if sel := m.sel - firstRoute; sel >= 0 {
+		m.top = max(min(m.top, sel), sel-room+1)
+	}
+}

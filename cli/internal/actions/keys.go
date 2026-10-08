@@ -22,6 +22,7 @@ type KeySummary struct {
 	Type        string `json:"type"`
 	Fingerprint string `json:"fingerprint"`
 	Comment     string `json:"comment,omitempty"`
+	LastUsedAt  string `json:"last_used_at,omitempty"`
 }
 
 type KeyDetail struct {
@@ -117,6 +118,9 @@ func ListLocalKeys(paths config.Paths) ([]KeySummary, error) {
 			Type:        keytypes.Normalize(key.Type),
 			Fingerprint: key.Fingerprint,
 			Comment:     key.Comment,
+		}
+		if key.LastUsedAt != nil {
+			out[i].LastUsedAt = key.LastUsedAt.Format(time.RFC3339)
 		}
 	}
 	return out, nil

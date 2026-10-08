@@ -74,7 +74,7 @@ func TestNPMInstallFlow(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(p.Kill)
-	mustSee(t, p, 40*time.Second, "DASHBOARD", "System healthy")
+	mustSee(t, p, 40*time.Second, "Overview", "All good")
 	quitTUI(t, p)
 	if got, err := daemon.RunningBuildID(paths); err != nil || got != nextBuild {
 		t.Fatalf("after npm upgrade and relaunch the daemon runs build %q (err=%v), want %q", got, err, nextBuild)

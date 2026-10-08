@@ -322,7 +322,7 @@ func (hh *harness) setAuth(t *testing.T, name, value string) {
 // createVault walks the first-run TUI to a healthy local vault.
 func createVault(t *testing.T, p *ptyProcess) {
 	t.Helper()
-	mustSee(t, p, 20*time.Second, "Create local vault")
+	mustSee(t, p, 20*time.Second, "Create a local vault")
 	_ = p.Send("\x1b[B")
 	time.Sleep(300 * time.Millisecond)
 	_ = p.Send("\r")
@@ -332,7 +332,7 @@ func createVault(t *testing.T, p *ptyProcess) {
 	time.Sleep(300 * time.Millisecond)
 	_ = p.Type(e2ePassword)
 	_ = p.Send("\r")
-	mustSee(t, p, 30*time.Second, "DASHBOARD", "System healthy")
+	mustSee(t, p, 30*time.Second, "Overview", "All good")
 	quitTUI(t, p)
 }
 

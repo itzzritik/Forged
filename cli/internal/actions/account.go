@@ -55,7 +55,7 @@ func CredentialsPath(paths config.Paths) string {
 func LoadCredentials(paths config.Paths) (AccountCredentials, error) {
 	creds, err := accountauth.Load(paths)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, accountauth.ErrLoginRequired) {
-		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Manage > Log In")
+		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Account > Log in")
 	}
 	if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
 		return AccountCredentials{}, errors.New(diagnostic)
@@ -69,7 +69,7 @@ func LoadCredentials(paths config.Paths) (AccountCredentials, error) {
 func LoadFreshCredentials(ctx context.Context, paths config.Paths) (AccountCredentials, error) {
 	creds, err := accountauth.EnsureFresh(ctx, paths)
 	if errors.Is(err, os.ErrNotExist) || errors.Is(err, accountauth.ErrLoginRequired) {
-		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Manage > Log In")
+		return AccountCredentials{}, fmt.Errorf("Not logged in. Open Forged and use Account > Log in")
 	}
 	if diagnostic := accountauth.CredentialLoadDiagnostic(err); diagnostic != "" {
 		return AccountCredentials{}, errors.New(diagnostic)

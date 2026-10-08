@@ -537,10 +537,14 @@ func (s *Server) handleList(ctx context.Context) Response {
 		Type        string `json:"type"`
 		Fingerprint string `json:"fingerprint"`
 		Comment     string `json:"comment,omitempty"`
+		LastUsedAt  string `json:"last_used_at,omitempty"`
 	}
 	out := make([]keyInfo, len(keys))
 	for i, k := range keys {
 		out[i] = keyInfo{Name: k.Name, Type: k.Type, Fingerprint: k.Fingerprint, Comment: k.Comment}
+		if k.LastUsedAt != nil {
+			out[i].LastUsedAt = k.LastUsedAt.Format(time.RFC3339)
+		}
 	}
 	return OkResponse(map[string]any{"keys": out})
 }

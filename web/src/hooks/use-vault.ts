@@ -160,7 +160,7 @@ export const useVault = (): UseVaultReturn => {
 
 				if (!(nextKdfParams && nextProtectedKey)) {
 					setStatus("error");
-					setError("Vault metadata missing on server. Open Forged on a linked machine and use Manage > Sync Now to repair it.");
+					setError("Vault metadata missing on server. Open Forged on a linked machine and use Account > Sync now to repair it.");
 					return;
 				}
 				setKdfParams(nextKdfParams);

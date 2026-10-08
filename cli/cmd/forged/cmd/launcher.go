@@ -14,6 +14,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
+	"github.com/itzzritik/forged/cli/internal/picker"
 	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
@@ -41,7 +42,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 	engine := readiness.New(paths)
 	clipboard := &clipboardManager{}
 
-	_, err := tui.Run(intent, tui.Dependencies{
+	return tui.Run(intent, tui.Deps{
 		Repair:      engine.Run,
 		CreateVault: func(password []byte) error { return createLocalVault(paths, password) },
 		RestoreVault: func(password []byte) error {
@@ -88,6 +89,29 @@ func runInteractiveIntent(intent tui.Intent) error {
 		ClearAllSSHRoutes: func() error {
 			return actions.ClearAllSSHRoutes(paths)
 		},
+		LoadCredentials:  func() (actions.AccountCredentials, error) { return actions.LoadCredentials(paths) },
+		ClearCredentials: func() error { return actions.ClearCredentials(paths) },
+		ListKeys:         func() ([]actions.KeySummary, error) { return actions.ListKeys(paths) },
+		ListLocalKeys:    func() ([]actions.KeySummary, error) { return actions.ListLocalKeys(paths) },
+		ViewKey:          func(name string) (actions.KeyDetail, error) { return actions.ViewKey(paths, name) },
+		ViewFullKey:      func(name string, pw []byte) (actions.KeyDetail, error) { return actions.ViewFullKey(paths, name, pw) },
+		GenerateKey:      func(name string) (actions.GenerateResult, error) { return actions.GenerateKey(paths, name, "") },
+		RenameKey:        func(from, to string) (actions.RenameResult, error) { return actions.RenameKey(paths, from, to) },
+		DeleteKey:        func(name, fp string) (string, error) { return actions.DeleteKey(paths, name, fp) },
+		PreviewImport: func(source, file string) (actions.ImportPreviewResult, error) {
+			return actions.PreviewImportSource(paths, source, file)
+		},
+		PreviewImportText: func(text string) (actions.ImportPreviewResult, error) { return actions.PreviewImportText(paths, text) },
+		ImportPreviews: func(source string, discovered int, previews []actions.ImportPreview) (actions.ImportResult, error) {
+			return actions.ImportSelectedPreviews(paths, source, discovered, previews)
+		},
+		DefaultExportPath: actions.DefaultExportPath,
+		AuthorizeExport:   func(pw []byte) (string, error) { return actions.AuthorizeExport(paths, pw) },
+		ExportVault: func(path, token string) (actions.ExportResult, error) {
+			return actions.ExportVaultWithToken(paths, path, token)
+		},
+		ChooseFile:        picker.ChooseFile,
+		ChooseSavePath:    picker.ChooseSavePath,
 		CopyText:          clipboard.CopyText,
 		CopySensitiveText: clipboard.CopySensitiveText,
 		CloseClipboard:    clipboard.Close,
@@ -98,7 +122,6 @@ func runInteractiveIntent(intent tui.Intent) error {
 		DefaultServer: ipc.DefaultAPIServer,
 		AppVersion:    version,
 	})
-	return err
 }
 
 func createLocalVault(paths config.Paths, password []byte) error {
@@ -162,7 +185,7 @@ func (m *clipboardManager) CopyText(value string) error {
 	return err
 }
 
-func (m *clipboardManager) CopySensitiveText(value string) (tui.SensitiveClipboardLease, error) {
+func (m *clipboardManager) CopySensitiveText(value string) (tui.ClipboardLease, error) {
 	data := []byte(value)
 	defer clear(data)
 	m.mu.Lock()

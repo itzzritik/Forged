@@ -47,10 +47,11 @@ git push origin main
 
 Keys are managed in the `forged` interactive shell:
 
-- **Key** tab: generate Ed25519 keys, import (SSH directory, key file, 1Password, Bitwarden, Forged export), view, rename, delete, export
-- **Agent** tab: SSH integration and Git commit signing
-- **Manage** tab: log in / sync, lock, master password settings
-- **Doctor** tab: health checks and repair
+- **Overview** tab: SSH agent, signing and sync at a glance, recent keys and quick actions
+- **Keys** tab: generate Ed25519 keys, import (SSH directory, key file, 1Password, Bitwarden, Forged export), view, rename, delete, export
+- **SSH & Git** tab: SSH integration and Git commit signing
+- **Account** tab: log in / sync, lock, master password settings
+- **Health** tab: health checks and repair
 
 ## How it works
 
@@ -74,7 +75,7 @@ On Linux and macOS, when the same host accepts multiple keys, Forged narrows eac
 
 Forged does not rewrite your existing host blocks or repo-local Git config.
 
-Use `forged doctor` to see which SSH agent currently owns `IdentityAgent`. If you want to switch to another tool or uninstall Forged, turn off SSH integration in the Agent tab first. That removes only Forged-managed SSH config and leaves the rest of your `~/.ssh` setup alone.
+Use `forged doctor` to see which SSH agent currently owns `IdentityAgent`. If you want to switch to another tool or uninstall Forged, turn off SSH integration in the SSH & Git tab first. That removes only Forged-managed SSH config and leaves the rest of your `~/.ssh` setup alone.
 
 ## Security
 

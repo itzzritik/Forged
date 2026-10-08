@@ -14,14 +14,14 @@ var doctorFix bool
 var doctorCmd = &cobra.Command{
 	Use:   "doctor",
 	Short: "Diagnose and repair this device",
-	Long: "Open Forged on the Doctor tab. With --fix, run a headless repair pass first " +
+	Long: "Open Forged on the Health tab. With --fix, run a headless repair pass first " +
 		"so a broken install can be recovered before the TUI tries to start.",
 	Args: cobra.NoArgs,
 	RunE: runDoctorCommand,
 }
 
 func init() {
-	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Run repairs before opening the Doctor tab")
+	doctorCmd.Flags().BoolVar(&doctorFix, "fix", false, "Run repairs before opening the Health tab")
 }
 
 func runDoctorCommand(cmd *cobra.Command, args []string) error {

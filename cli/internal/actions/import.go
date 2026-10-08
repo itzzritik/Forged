@@ -65,6 +65,8 @@ func ImportSourceLabel(source string) string {
 		return "SSH directory"
 	case "file":
 		return "Key file"
+	case "paste":
+		return "Pasted key"
 	default:
 		return "Import"
 	}
@@ -77,19 +79,30 @@ func PreviewImportSource(paths config.Paths, source string, file string) (Import
 		return ImportPreviewResult{}, err
 	}
 
-	result := ImportPreviewResult{
-		Source:     source,
-		Discovered: len(keys),
+	return previewImportedKeys(paths, source, keys)
+}
+
+func PreviewImportText(paths config.Paths, text string) (ImportPreviewResult, error) {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return ImportPreviewResult{}, fmt.Errorf("Paste a private key")
 	}
+	if len(text) > maxImportFileBytes {
+		return ImportPreviewResult{}, fmt.Errorf("Pasted text is larger than 16 MiB")
+	}
+	keys := []importers.ImportedKey{{Name: "pasted-key", PrivateKey: text + "\n"}}
+	return previewImportedKeys(paths, "paste", keys)
+}
+
+func previewImportedKeys(paths config.Paths, source string, keys []importers.ImportedKey) (ImportPreviewResult, error) {
+	result := ImportPreviewResult{Source: source, Discovered: len(keys)}
 	if len(keys) == 0 {
 		return result, nil
 	}
-
 	existingFingerprints, err := loadExistingVaultFingerprints(paths)
 	if err != nil {
 		return ImportPreviewResult{}, err
 	}
-
 	previews, duplicates, err := buildImportPreview(keys, existingFingerprints)
 	if err != nil {
 		return ImportPreviewResult{}, err

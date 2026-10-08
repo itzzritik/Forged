@@ -302,7 +302,7 @@ func (e *Engine) blockServiceOwnership(state *repairState, err error) bool {
 	}
 	state.result.Snapshot.Service.Repairable = false
 	state.result.Snapshot.Service.OwnershipBlocked = true
-	state.result.Snapshot.Service.Detail = "Stop the running Forged daemon or service, then refresh Doctor."
+	state.result.Snapshot.Service.Detail = "Stop the running Forged daemon or service, then refresh Health."
 	e.markFailed(&state.result.Summary, "service")
 	return true
 }
