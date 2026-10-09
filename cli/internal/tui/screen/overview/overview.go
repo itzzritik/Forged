@@ -51,9 +51,7 @@ func hostname() string {
 	return h
 }
 
-func bodyRows(st *core.State) int { _, h := core.BodySize(st); return h }
-
-func bannerShown(st *core.State, h int) bool { return st.Problems() > 0 && h >= 6 }
+func fixable(st *core.State) bool { return st.Problems() > 0 && st.CanFix() }
 
 func switchTab(tab core.Tab, key string) tea.Cmd {
 	if key == "" {
@@ -63,7 +61,12 @@ func switchTab(tab core.Tab, key string) tea.Cmd {
 }
 
 func (m *model) Actions(st *core.State) []core.Action {
-	out := []core.Action{{Key: "enter", Label: "Open", Icon: ui.G.Icon.Details}, {Key: "c", Label: "Copy public", Icon: ui.G.Icon.Copy}, {Key: "n", Label: "New key", Icon: ui.G.Icon.New}, {Key: "i", Label: "Import", Icon: ui.G.Icon.Import}}
+	var out []core.Action
+	if fixable(st) {
+		out = append(out, core.Action{Key: "f", Label: "Fix issues", Icon: ui.G.Icon.Health})
+	}
+	out = append(out, core.Action{Key: "enter", Label: "Open", Icon: ui.G.Icon.Details}, core.Action{Key: "c", Label: "Copy public", Icon: ui.G.Icon.Copy},
+		core.Action{Key: "n", Label: "New key", Icon: ui.G.Icon.New}, core.Action{Key: "i", Label: "Import", Icon: ui.G.Icon.Import})
 	if st.Snapshot.LoggedIn {
 		out = append(out, core.Action{Key: "s", Label: "Sync now", Icon: ui.G.Icon.Sync})
 	}
@@ -106,7 +109,7 @@ func (m *model) key(k string, st *core.State) tea.Cmd {
 			return core.Send(core.RequestSyncMsg{})
 		}
 	case "f":
-		if bannerShown(st, bodyRows(st)) {
+		if fixable(st) {
 			return switchTab(core.TabHealth, "f")
 		}
 	}
@@ -231,14 +234,6 @@ func (m *model) View(st *core.State, w, h int) string {
 	m.syncItems(st)
 	now := time.Now()
 	var lines []string
-	if bannerShown(st, h) {
-		n := st.Problems()
-		text := fmt.Sprintf("%d problems need attention", n)
-		if n == 1 {
-			text = "1 problem needs attention"
-		}
-		lines = append(lines, ui.Banner(w, 1, ui.ToneWarn, text, "f", "Fix"))
-	}
 	cards := []card{agentCard(st), signingCard(st), syncCard(st, now)}
 	rw := 0
 	switch cols, rows := st.Width, st.Height; {
