@@ -42,7 +42,8 @@ func runInteractiveIntent(intent tui.Intent) error {
 	paths := config.DefaultPaths()
 	engine := readiness.New(paths)
 	remote := platform.OverSSH()
-	clipboard := &clipboardManager{terminal: remote || runtime.GOOS == "linux" && !platform.HasDisplay()}
+	terminal := remote || runtime.GOOS == "linux" && !platform.HasDisplay()
+	clipboard := &clipboardManager{terminal: terminal, unavailable: terminal && os.Getenv("TERM_PROGRAM") == "vscode"}
 
 	return tui.Run(intent, tui.Deps{
 		Repair:      engine.Run,
@@ -127,6 +128,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 		DefaultServer:     ipc.DefaultAPIServer,
 		AppVersion:        version,
 		TerminalClipboard: clipboard.terminal,
+		CanCopy:           !clipboard.unavailable,
 		CanOpenLinks:      os.Getenv("BROWSER") != "" || !remote && (runtime.GOOS != "linux" || platform.HasDisplay()),
 		CanPickFiles:      picker.Available(),
 		Remote:            remote,
@@ -158,11 +160,12 @@ type clipboardBackend struct {
 }
 
 type clipboardManager struct {
-	mu       sync.Mutex
-	closed   bool
-	terminal bool
-	nextID   uint64
-	active   *activeClipboardLease
+	mu          sync.Mutex
+	closed      bool
+	terminal    bool
+	unavailable bool
+	nextID      uint64
+	active      *activeClipboardLease
 }
 
 type activeClipboardLease struct {
@@ -181,6 +184,9 @@ func (l commandClipboardLease) ClearIfUnchanged() (bool, error) {
 }
 
 func (m *clipboardManager) CopyText(value string) error {
+	if m.unavailable {
+		return fmt.Errorf("Copying isn't available in this terminal. Select the text instead")
+	}
 	if m.terminal {
 		return tui.ErrTerminalClipboard
 	}

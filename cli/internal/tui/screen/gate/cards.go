@@ -38,7 +38,10 @@ func (m *Model) footer(l *lines, W int, items []ui.Hint, label string) string {
 	if m.busy != "" {
 		return l.spin + " " + ui.Paint(ui.Trunc(ui.Sanitize(m.busy), W-2), ui.P().Text)
 	}
-	btn := ui.Button(label, ui.Primary)
+	btn := ""
+	if label != "" {
+		btn = ui.Button(label, ui.Primary)
+	}
 	bw := ui.Width(btn)
 	room := W - bw - 2
 	var last []ui.Hint
@@ -258,9 +261,14 @@ func (m *Model) login(st *core.State, l *lines, W int) {
 	}
 	l.add(m.errRows(W)...)
 	l.gap()
-	hints, button := []ui.Hint{{Key: "c", Label: "Copy link"}, {Key: "esc", Label: "Cancel"}}, "Open link"
-	if !open {
-		hints, button = hints[1:], "Copy link"
+	hints, button := []ui.Hint{{Key: "esc", Label: "Cancel"}}, "Open link"
+	switch {
+	case !open && st.Deps.CanCopy:
+		button = "Copy link"
+	case !open:
+		button = ""
+	case st.Deps.CanCopy:
+		hints = append([]ui.Hint{{Key: "c", Label: "Copy link"}}, hints...)
 	}
 	if m.committing {
 		hints = nil

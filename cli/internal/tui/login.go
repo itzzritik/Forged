@@ -344,6 +344,9 @@ func (a *app) loginKey(k string) tea.Cmd {
 		}
 		a.welcome()
 	case "c":
+		if !a.st.Deps.CanCopy {
+			return nil
+		}
 		return a.copyLoginURL()
 	case "enter":
 		if a.life.loginFailed {
@@ -353,6 +356,9 @@ func (a *app) loginKey(k string) tea.Cmd {
 			return nil
 		}
 		if !a.st.Deps.CanOpenLinks {
+			if !a.st.Deps.CanCopy {
+				return nil
+			}
 			return a.copyLoginURL()
 		}
 		if err := a.openLoginURL(); err != nil {

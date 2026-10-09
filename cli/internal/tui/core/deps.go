@@ -61,6 +61,7 @@ type Deps struct {
 	AppVersion                string
 	TerminalClipboard         bool
 	CanOpenLinks              bool
+	CanCopy                   bool
 	CanPickFiles              bool
 	Remote                    bool
 }

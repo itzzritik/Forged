@@ -9,6 +9,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/tui/core"
 	"github.com/itzzritik/forged/cli/internal/tui/flame"
 	"github.com/itzzritik/forged/cli/internal/tui/screen/account"
@@ -21,12 +22,21 @@ import (
 )
 
 const (
-	frameEvery = 50 * time.Millisecond
-	probeWait  = 300 * time.Millisecond
-	veilMax    = 1500 * time.Millisecond
-	spinEvery  = time.Second / 12
-	toastFor   = 3 * time.Second
+	probeWait = 300 * time.Millisecond
+	veilMax   = 1500 * time.Millisecond
+	spinEvery = time.Second / 12
+	toastFor  = 3 * time.Second
 )
+
+var frameEvery = frameRate()
+
+// Fewer fire frames over SSH: each one repaints a third of the screen.
+func frameRate() time.Duration {
+	if platform.OverSSH() {
+		return 100 * time.Millisecond
+	}
+	return 50 * time.Millisecond
+}
 
 var (
 	allTabs   = []core.Tab{core.TabOverview, core.TabKeys, core.TabSSH, core.TabAccount, core.TabHealth}

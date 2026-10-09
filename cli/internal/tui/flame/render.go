@@ -8,7 +8,6 @@ import (
 
 	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/colorprofile"
-	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/tui/ui"
 )
 
@@ -97,7 +96,7 @@ func Render(f *Fire) []string {
 }
 
 func Animate() bool {
-	if os.Getenv("FORGED_ANIMATIONS") == "0" || ui.ASCII() || os.Getenv("NO_COLOR") != "" || platform.OverSSH() {
+	if os.Getenv("FORGED_ANIMATIONS") == "0" || ui.ASCII() || os.Getenv("NO_COLOR") != "" {
 		return false
 	}
 	return colorprofile.Detect(os.Stdout, os.Environ()) >= colorprofile.ANSI256
