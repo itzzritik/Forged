@@ -8,7 +8,7 @@ import (
 )
 
 func terminalSupportsUnicode() bool {
-	if strings.EqualFold(strings.TrimSpace(os.Getenv("TERM")), "dumb") {
+	if term := strings.ToLower(strings.TrimSpace(os.Getenv("TERM"))); term == "dumb" || term == "linux" {
 		return false
 	}
 

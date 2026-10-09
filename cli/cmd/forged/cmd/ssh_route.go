@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"time"
@@ -40,7 +41,7 @@ var sshRoutePrepareCmd = &cobra.Command{
 			return nil
 		}
 
-		_, err = ctlClient().CallWithTimeout(ipc.CmdSSHRoutePrepare, ipc.SSHRoutePrepareArgs{
+		resp, err := ctlClient().CallWithTimeout(ipc.CmdSSHRoutePrepare, ipc.SSHRoutePrepareArgs{
 			Attempt:      sshRouteAttempt,
 			ClientPID:    os.Getppid(),
 			CWD:          cwd,
@@ -51,6 +52,10 @@ var sshRoutePrepareCmd = &cobra.Command{
 		}, ipc.SSHRoutePrepareCallTimeout)
 		if err != nil {
 			debugSSHRoute("prepare: %v", err)
+		}
+		var result ipc.SSHRoutePrepareResult
+		if json.Unmarshal(resp.Data, &result) == nil && result.Locked {
+			fmt.Fprintln(os.Stderr, "forged: locked. Run `forged` to unlock.")
 		}
 		return nil
 	},

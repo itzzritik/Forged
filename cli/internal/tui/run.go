@@ -17,6 +17,8 @@ type (
 	SecurityState  = actions.SecurityState
 )
 
+var ErrTerminalClipboard = core.ErrTerminalClipboard
+
 type Intent struct{ Doctor bool }
 
 func DashboardIntent() Intent { return Intent{} }

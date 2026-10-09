@@ -26,10 +26,11 @@ type Check struct {
 
 func Checks(st *core.State, paths config.Paths) []Check {
 	c := checker{st: st, snap: st.Snapshot, paths: paths, recovery: st.Recovery()}
-	out := []Check{
-		c.vault(), c.config(), c.service(), c.daemon(), c.ipcSocket(), c.agentSocket(),
-		c.sshAgent(), c.sshConfig(), c.identityAgent(),
+	out := []Check{c.vault(), c.config(), c.service()}
+	if c.snap.Linger.Applies {
+		out = append(out, c.serviceLifetime())
 	}
+	out = append(out, c.daemon(), c.ipcSocket(), c.agentSocket(), c.sshAgent(), c.sshConfig(), c.identityAgent())
 	if c.snap.GitSSH.Applicable {
 		out = append(out, c.gitSSH())
 	}
@@ -175,6 +176,13 @@ func (c checker) service() Check {
 		return Check{"Service", "Invalid", detail, ui.ToneBad}
 	}
 	return Check{"Service", "Not installed", "Run Fix issues", ui.ToneBad}
+}
+
+func (c checker) serviceLifetime() Check {
+	if c.snap.Linger.On {
+		return Check{"Service lifetime", "Runs after logout", "systemd keeps Forged running after you log out", ui.ToneGood}
+	}
+	return Check{"Service lifetime", "Stops at logout", "Run: sudo loginctl enable-linger " + clean(c.snap.Linger.User), ui.ToneWarn}
 }
 
 func (c checker) daemon() Check {

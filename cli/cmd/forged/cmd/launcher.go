@@ -40,7 +40,8 @@ func runBareForged(cmd *cobra.Command) error {
 func runInteractiveIntent(intent tui.Intent) error {
 	paths := config.DefaultPaths()
 	engine := readiness.New(paths)
-	clipboard := &clipboardManager{}
+	remote := platform.OverSSH()
+	clipboard := &clipboardManager{terminal: remote || runtime.GOOS == "linux" && !platform.HasDisplay()}
 
 	return tui.Run(intent, tui.Deps{
 		Repair:      engine.Run,
@@ -66,8 +67,11 @@ func runInteractiveIntent(intent tui.Intent) error {
 			return sensitiveauth.HasLocalEnrollment(paths)
 		},
 		UnlockSensitiveLaunch: func(ctx context.Context, password []byte, force bool) (actions.UnlockResult, error) {
-			return actions.UnlockSensitiveLaunch(ctx, paths, password, force)
+			return actions.UnlockSensitiveLaunch(ctx, paths, password, force, remote)
 		},
+		EnableHeadlessUnlock:  func() (bool, error) { return actions.EnableHeadlessUnlock(paths) },
+		DisableHeadlessUnlock: func() error { return actions.DisableHeadlessUnlock(paths) },
+		SkipHeadlessOffer:     func() error { return config.SetHeadlessOffered(paths) },
 		ChangePassword: func(currentPassword []byte, newPassword []byte) (actions.ChangePasswordResult, error) {
 			return actions.ChangePassword(paths, currentPassword, newPassword)
 		},
@@ -119,8 +123,11 @@ func runInteractiveIntent(intent tui.Intent) error {
 		LogError: func(event actions.DiagnosticErrorEvent) {
 			_ = actions.AppendDiagnosticError(paths, event)
 		},
-		DefaultServer: ipc.DefaultAPIServer,
-		AppVersion:    version,
+		DefaultServer:     ipc.DefaultAPIServer,
+		AppVersion:        version,
+		TerminalClipboard: clipboard.terminal,
+		CanPickFiles:      picker.Available(),
+		Remote:            remote,
 	})
 }
 
@@ -149,10 +156,11 @@ type clipboardBackend struct {
 }
 
 type clipboardManager struct {
-	mu     sync.Mutex
-	closed bool
-	nextID uint64
-	active *activeClipboardLease
+	mu       sync.Mutex
+	closed   bool
+	terminal bool
+	nextID   uint64
+	active   *activeClipboardLease
 }
 
 type activeClipboardLease struct {
@@ -171,6 +179,9 @@ func (l commandClipboardLease) ClearIfUnchanged() (bool, error) {
 }
 
 func (m *clipboardManager) CopyText(value string) error {
+	if m.terminal {
+		return tui.ErrTerminalClipboard
+	}
 	data := []byte(value)
 	defer clear(data)
 	m.mu.Lock()
@@ -186,6 +197,9 @@ func (m *clipboardManager) CopyText(value string) error {
 }
 
 func (m *clipboardManager) CopySensitiveText(value string) (tui.ClipboardLease, error) {
+	if m.terminal {
+		return nil, fmt.Errorf("Private key copy needs a local session")
+	}
 	data := []byte(value)
 	defer clear(data)
 	m.mu.Lock()
@@ -290,7 +304,7 @@ func copyToClipboard(value []byte, sensitive bool, requireRead bool) (clipboardB
 	if lastErr != nil {
 		return clipboardBackend{}, fmt.Errorf("Copy failed: %w", lastErr)
 	}
-	return clipboardBackend{}, fmt.Errorf("No clipboard helper is available")
+	return clipboardBackend{}, fmt.Errorf("No clipboard tool found. Install wl-clipboard or xclip")
 }
 
 func clipboardBackends(sensitive bool) ([]clipboardBackend, error) {

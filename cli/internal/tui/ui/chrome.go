@@ -115,8 +115,12 @@ func Header(w int, tabs []string, active int, chip Chip) string {
 	compactX := 10
 	under := make([]string, w)
 	for i := range under {
-		under[i] = Paint(G.H, P().Rule)
+		under[i] = " "
+		if i >= 2 && i < w-2 {
+			under[i] = Paint(G.H, P().Rule)
+		}
 	}
+
 	gap := 2
 	if w >= 90 {
 		gap = 4

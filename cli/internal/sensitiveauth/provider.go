@@ -8,4 +8,5 @@ var (
 	ErrAuthenticationCanceled  = errors.New("Authentication canceled")
 	ErrAuthenticationFailed    = errors.New("Authentication failed")
 	ErrAuthorizationInProgress = errors.New("authentication already in progress")
+	ErrLocked                  = errors.New("Forged is locked. Run `forged` to unlock it.")
 )

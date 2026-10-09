@@ -585,3 +585,7 @@ func binaryExecutable(path string) bool {
 	}
 	return true
 }
+
+func InspectLinger() LingerState { return LingerState{} }
+
+func EnsureLinger() LingerState { return LingerState{} }

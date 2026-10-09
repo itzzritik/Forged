@@ -36,16 +36,16 @@ func LockSensitive(paths config.Paths) error {
 }
 
 func UnlockSensitive(paths config.Paths, password []byte) (UnlockResult, error) {
-	return unlockSensitive(context.Background(), paths, password, false)
+	return unlockSensitive(context.Background(), paths, password, false, false)
 }
 
-func UnlockSensitiveLaunch(ctx context.Context, paths config.Paths, password []byte, force bool) (UnlockResult, error) {
-	return unlockSensitive(ctx, paths, password, force)
+func UnlockSensitiveLaunch(ctx context.Context, paths config.Paths, password []byte, force, remote bool) (UnlockResult, error) {
+	return unlockSensitive(ctx, paths, password, force, remote)
 }
 
-func unlockSensitive(ctx context.Context, paths config.Paths, password []byte, force bool) (UnlockResult, error) {
+func unlockSensitive(ctx context.Context, paths config.Paths, password []byte, force, remote bool) (UnlockResult, error) {
 	if len(password) == 0 {
-		_, err := authorizeSensitiveResultWithContext(ctx, paths, sensitiveauth.ActionView, nil, force)
+		_, err := authorizeSensitiveResultWithContext(ctx, paths, sensitiveauth.ActionView, nil, force, remote)
 		switch {
 		case err == nil:
 			return UnlockResult{}, nil
@@ -56,7 +56,7 @@ func unlockSensitive(ctx context.Context, paths config.Paths, password []byte, f
 		}
 	}
 
-	if _, err := authorizeSensitiveResultWithContext(ctx, paths, sensitiveauth.ActionView, password, force); err != nil {
+	if _, err := authorizeSensitiveResultWithContext(ctx, paths, sensitiveauth.ActionView, password, force, false); err != nil {
 		return UnlockResult{}, err
 	}
 	if err := ctx.Err(); err != nil {

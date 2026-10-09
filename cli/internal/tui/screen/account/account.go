@@ -21,6 +21,7 @@ const (
 	rowLogin
 	rowSync
 	rowInterval
+	rowHeadless
 	rowPassword
 	rowLogout
 )
@@ -33,13 +34,14 @@ type intervalDoneMsg struct {
 }
 
 type Model struct {
-	sel       rowKind
-	saving    bool
-	savingID  core.ID
-	savingVal string
-	pwID      core.ID
-	logoutID  core.ID
-	spinning  bool
+	sel        rowKind
+	saving     bool
+	savingID   core.ID
+	savingVal  string
+	pwID       core.ID
+	logoutID   core.ID
+	headlessID core.ID
+	spinning   bool
 }
 
 func New() core.Screen { return &Model{sel: rowRepair} }
@@ -56,9 +58,17 @@ func rows(st *core.State) []rowKind {
 		out = append(out, rowRepair)
 	}
 	if st.Snapshot.LoggedIn {
-		return append(out, rowSync, rowInterval, rowPassword, rowLogout)
+		out = append(out, rowSync, rowInterval)
+	} else {
+		out = append(out, rowLogin, rowInterval)
 	}
-	return append(out, rowLogin, rowInterval, rowPassword)
+	if st.SecurityLoaded && st.Security.HeadlessSupported {
+		out = append(out, rowHeadless)
+	}
+	if st.Snapshot.LoggedIn {
+		return append(out, rowPassword, rowLogout)
+	}
+	return append(out, rowPassword)
 }
 
 func (m *Model) cur(st *core.State) rowKind {
@@ -111,11 +121,13 @@ func (m *Model) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd) {
 			break
 		}
 		cmd = m.finishLogout(st, msg.err)
+	case headlessDoneMsg:
+		cmd = m.headlessDone(st, msg)
 	case tea.KeyPressMsg:
 		cmd = m.key(msg, st)
 	}
 	m.sel = m.cur(st)
-	m.spinning = m.saving || st.Status.Syncing || st.Busy.Logout
+	m.spinning = m.saving || m.headlessID != 0 || st.Status.Syncing || st.Busy.Logout
 	return m, cmd
 }
 
@@ -157,6 +169,14 @@ func (m *Model) activate(st *core.State) tea.Cmd {
 		case st.SecurityLoaded && !m.saving:
 			return m.openMenu(st)
 		}
+	case rowHeadless:
+		switch {
+		case m.headlessID != 0:
+		case st.Security.HeadlessUnlock:
+			return m.setHeadless(st, false, core.NextID())
+		default:
+			return widget.OpenModal(st, &headlessModal{owner: m})
+		}
 	case rowPassword:
 		return widget.OpenModal(st, newPasswordModal(m))
 	case rowLogout:
@@ -180,6 +200,60 @@ func (m *Model) finishLogout(st *core.State, err error) tea.Cmd {
 		done = core.Toast(warning, ui.ToneWarn)
 	}
 	return tea.Batch(core.Send(core.RefreshMsg{}), done)
+}
+
+func (m *Model) setHeadless(st *core.State, enable bool, id core.ID) tea.Cmd {
+	m.headlessID = id
+	on, off := st.Deps.EnableHeadlessUnlock, st.Deps.DisableHeadlessUnlock
+	return func() tea.Msg {
+		if !enable {
+			if err := off(); err != nil {
+				return headlessDoneMsg{id: id, err: fmt.Errorf("turning off automatic unlock: %w", err)}
+			}
+			return headlessDoneMsg{id: id}
+		}
+		enrolled, err := on()
+		if err != nil {
+			err = fmt.Errorf("turning on automatic unlock: %w", err)
+		}
+		return headlessDoneMsg{id: id, enable: true, later: !enrolled, err: err}
+	}
+}
+
+func (m *Model) headlessDone(st *core.State, msg headlessDoneMsg) tea.Cmd {
+	if msg.skip {
+		if msg.err != nil {
+			return core.Toast(st.Reporter.Report("account", "skip automatic unlock", msg.err), ui.ToneBad)
+		}
+		return nil
+	}
+	if msg.id != m.headlessID {
+		return nil
+	}
+	m.headlessID = 0
+	reload := core.LoadSecurityCmd(st)
+	switch {
+	case msg.err != nil:
+		return tea.Batch(reload, core.Toast(st.Reporter.Report("account", "set automatic unlock", msg.err), ui.ToneBad))
+	case !msg.enable:
+		st.Security.HeadlessUnlock = false
+		return tea.Batch(reload, core.Toast("Automatic unlock is off", ui.ToneGood))
+	}
+	st.Security.HeadlessUnlock, st.Security.HeadlessOffered = true, true
+	if msg.later {
+		return tea.Batch(reload, core.Toast("Takes effect at your next unlock", ui.ToneWarn))
+	}
+	return tea.Batch(reload, core.Toast("Automatic unlock is on", ui.ToneGood))
+}
+
+func (m *Model) headlessValue(st *core.State) (string, bool) {
+	switch {
+	case m.headlessID != 0:
+		return ui.SpinnerGlyph(st.SpinFrame) + ui.Paint(" Saving", ui.P().Accent), true
+	case st.Security.HeadlessUnlock:
+		return "On", false
+	}
+	return "Off", false
 }
 
 func (m *Model) setInterval(st *core.State, v string) tea.Cmd {
@@ -306,6 +380,9 @@ func (m *Model) build(st *core.State, w int) layout {
 	gap()
 	section("Security")
 	row(rowInterval, ui.G.Icon.Clock, "Ask for master password every", "", func() (string, bool) { return m.intervalValue(st) }, false)
+	if slices.Contains(rows(st), rowHeadless) {
+		row(rowHeadless, ui.G.Icon.Lock, "Unlock automatically on this server", "", func() (string, bool) { return m.headlessValue(st) }, false)
+	}
 	row(rowPassword, ui.G.Icon.Secret, "Change master password", ui.G.Next, nil, true)
 	if st.Snapshot.LoggedIn {
 		row(rowLogout, ui.G.Icon.Logout, "Log out", ui.G.Next, nil, true)

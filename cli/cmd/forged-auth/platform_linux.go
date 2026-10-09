@@ -9,6 +9,7 @@ import (
 	"io"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"time"
@@ -63,8 +64,6 @@ func status(context.Context) string {
 	return "ok"
 }
 
-// Linux has no native master-password prompt yet; the broker denies with an
-// "open Forged" message instead.
 func collectPassword(context.Context, string) (string, string) {
 	return "unavailable_by_platform", ""
 }
@@ -96,6 +95,9 @@ func startLockLoop(ctx context.Context, onLock func()) {
 			},
 		},
 	} {
+		if monitor.args[0] == "--session" && !hasSessionBus() {
+			continue
+		}
 		watchers.Add(1)
 		go func(args []string, match func(string) bool) {
 			defer watchers.Done()
@@ -111,50 +113,58 @@ func watchLinuxMonitor(ctx context.Context, onLock func(), args []string, match 
 		return
 	}
 
+	delay := time.Second
 	for {
-		cmd := exec.CommandContext(
-			ctx,
-			gdbusPath,
-			append([]string{"monitor"}, args...)...,
-		)
-		stdout, err := cmd.StdoutPipe()
-		if err != nil {
-			if !retryLockMonitor(ctx) {
-				return
-			}
-			continue
+		started := time.Now()
+		runLinuxMonitor(ctx, gdbusPath, args, onLock, match)
+		if time.Since(started) >= maxMonitorBackoff {
+			delay = time.Second
 		}
-		stderr, err := cmd.StderrPipe()
-		if err != nil {
-			if !retryLockMonitor(ctx) {
-				return
-			}
-			continue
-		}
-		if err := cmd.Start(); err != nil {
-			if !retryLockMonitor(ctx) {
-				return
-			}
-			continue
-		}
-
-		scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
-		for scanner.Scan() {
-			line := strings.ToLower(scanner.Text())
-			if match(line) {
-				onLock()
-			}
-		}
-
-		_ = cmd.Wait()
-		if !retryLockMonitor(ctx) {
+		if !retryLockMonitor(ctx, delay) {
 			return
 		}
+		delay = min(2*delay, maxMonitorBackoff)
 	}
 }
 
-func retryLockMonitor(ctx context.Context) bool {
-	timer := time.NewTimer(time.Second)
+const maxMonitorBackoff = time.Minute
+
+func runLinuxMonitor(ctx context.Context, gdbusPath string, args []string, onLock func(), match func(string) bool) {
+	cmd := exec.CommandContext(ctx, gdbusPath, append([]string{"monitor"}, args...)...)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return
+	}
+	stderr, err := cmd.StderrPipe()
+	if err != nil {
+		return
+	}
+	if err := cmd.Start(); err != nil {
+		return
+	}
+	scanner := bufio.NewScanner(io.MultiReader(stdout, stderr))
+	for scanner.Scan() {
+		if match(strings.ToLower(scanner.Text())) {
+			onLock()
+		}
+	}
+	_ = cmd.Wait()
+}
+
+func hasSessionBus() bool {
+	if os.Getenv("DBUS_SESSION_BUS_ADDRESS") != "" {
+		return true
+	}
+	dir := os.Getenv("XDG_RUNTIME_DIR")
+	if dir == "" {
+		return false
+	}
+	_, err := os.Stat(filepath.Join(dir, "bus"))
+	return err == nil
+}
+
+func retryLockMonitor(ctx context.Context, delay time.Duration) bool {
+	timer := time.NewTimer(delay)
 	defer timer.Stop()
 	select {
 	case <-timer.C:

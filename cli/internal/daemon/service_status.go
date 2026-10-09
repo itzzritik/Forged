@@ -14,6 +14,11 @@ type ServiceStatus struct {
 	BinaryMissing    bool
 }
 
+type LingerState struct {
+	Applies, On bool
+	User        string
+}
+
 func DefaultServiceStatus() ServiceStatus {
 	return ServiceStatus{Repairable: true}
 }

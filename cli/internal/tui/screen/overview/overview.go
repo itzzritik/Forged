@@ -386,7 +386,10 @@ func quickPanel(st *core.State, w, h int) string {
 
 func devicePanel(st *core.State, host string, w, h int) string {
 	unlock := "Password"
-	if st.SecurityLoaded && st.Security.SystemAuthCapability == "available" {
+	switch {
+	case st.SecurityLoaded && st.Security.HeadlessUnlock:
+		unlock = "Automatic"
+	case st.SecurityLoaded && st.Security.SystemAuthCapability == "available":
 		unlock = map[string]string{"darwin": "Touch ID", "windows": "Windows Hello"}[runtime.GOOS]
 		if unlock == "" {
 			unlock = "System auth"

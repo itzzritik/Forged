@@ -1946,26 +1946,27 @@ func (d *Daemon) HydrateFromPassword(password []byte) error {
 	return d.hydrateWithPassword(password)
 }
 
-func (d *Daemon) RefreshLocalEnrollment() {
+func (d *Daemon) RefreshLocalEnrollment() error {
 	d.sessionMu.Lock()
 	if d.vault == nil || d.keyStore == nil {
 		d.sessionMu.Unlock()
-		return
+		return sensitiveauth.ErrLocked
 	}
 	symmetricKey := d.vault.Key()
 	d.sessionMu.Unlock()
 	defer zeroSecret(symmetricKey)
 
 	result, err := sensitiveauth.RefreshLocalEnrollment(d.paths, symmetricKey)
+	if err == nil && !result.Refreshed {
+		err = fmt.Errorf("%s (%s)", result.Reason, result.Capability)
+	}
 	if err != nil {
 		if d.logger != nil {
 			d.logger.Warn("local unlock enrollment not refreshed", "error", err)
 		}
-		return
+		return fmt.Errorf("Refreshing local unlock enrollment: %w", err)
 	}
-	if !result.Refreshed && d.logger != nil && result.Reason != "" {
-		d.logger.Warn("local unlock enrollment not refreshed", "capability", result.Capability, "reason", result.Reason)
-	}
+	return nil
 }
 
 func (d *Daemon) ClearActiveSession(reason string) {

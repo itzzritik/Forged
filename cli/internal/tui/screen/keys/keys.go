@@ -239,6 +239,9 @@ func (m *Model) act(k string, sel actions.KeySummary, st *core.State) tea.Cmd {
 	case "f":
 		return copyFingerprint(st, sel.Fingerprint)
 	case "p":
+		if st.Deps.TerminalClipboard {
+			return core.Toast("Private key copy needs a local session. Use Export instead", ui.ToneWarn)
+		}
 		return widget.OpenModal(st, PrivateModal(sel.Name))
 	case "r":
 		return widget.OpenModal(st, RenameModal(sel.Name))

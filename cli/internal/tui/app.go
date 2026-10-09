@@ -22,6 +22,8 @@ import (
 
 const (
 	frameEvery = 50 * time.Millisecond
+	probeWait  = 300 * time.Millisecond
+	veilMax    = 1500 * time.Millisecond
 	spinEvery  = time.Second / 12
 	toastFor   = 3 * time.Second
 )
@@ -32,6 +34,10 @@ var (
 )
 
 type frameMsg struct{ gen int }
+
+type probeMsg struct{ unlocked bool }
+
+type veilMsg struct{ force bool }
 
 type spinMsg struct{ gen int }
 
@@ -45,6 +51,8 @@ type app struct {
 	cancel   context.CancelFunc
 	gate     *gate.Model
 	inGate   bool
+	veil     bool
+	veilHold bool
 	animate  bool
 	tabs     []core.Tab
 	screens  map[core.Tab]core.Screen
@@ -70,7 +78,7 @@ func newApp(intent Intent, deps Deps, paths config.Paths) *app {
 	ctx, cancel := context.WithCancel(context.Background())
 	a := &app{
 		st: st, intent: intent, paths: paths, ctx: ctx, cancel: cancel,
-		gate: gate.New(), inGate: true, animate: flame.Animate(),
+		gate: gate.New(), inGate: true, veil: true, animate: flame.Animate(),
 		tabs: st.Tabs(), active: core.TabOverview,
 		screens: map[core.Tab]core.Screen{
 			core.TabOverview: overview.New(),
@@ -88,11 +96,22 @@ func newApp(intent Intent, deps Deps, paths config.Paths) *app {
 
 func (a *app) Init() tea.Cmd {
 	// sshgit loads routes on its first update unless it already knows it is hidden.
-	return tea.Batch(tea.RequestBackgroundColor, a.broadcast(core.SwitchTabMsg{Tab: a.active}), a.startBoot())
+	return tea.Batch(tea.RequestBackgroundColor, a.broadcast(core.SwitchTabMsg{Tab: a.active}), a.startBoot(), a.probeUnlocked(), tick(probeWait, veilMsg{}))
+}
+
+func (a *app) probeUnlocked() tea.Cmd {
+	load := a.st.Deps.LoadStatus
+	return func() tea.Msg {
+		s, err := load()
+		return probeMsg{unlocked: err == nil && s.Unlocked}
+	}
 }
 
 func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	cmd := a.update(msg)
+	if !a.inGate || !a.gate.Quiet() {
+		a.veil = false
+	}
 	return a, tea.Batch(cmd, a.timers())
 }
 
@@ -105,6 +124,18 @@ func (a *app) update(msg tea.Msg) tea.Cmd {
 		return nil
 	case tea.WindowSizeMsg:
 		a.st.Width, a.st.Height = msg.Width, msg.Height
+	case probeMsg:
+		if !msg.unlocked {
+			a.veil = false
+			return nil
+		}
+		a.veilHold = true
+		return tick(veilMax, veilMsg{force: true})
+	case veilMsg:
+		if msg.force || !a.veilHold {
+			a.veil = false
+		}
+		return nil
 	case frameMsg:
 		return a.frame(msg)
 	case spinMsg:
@@ -344,7 +375,7 @@ func tick(d time.Duration, msg tea.Msg) tea.Cmd {
 }
 
 func (a *app) wantFrames() bool {
-	return a.inGate && a.animate && a.st.Width >= 40 && a.st.Height >= 16
+	return a.inGate && !a.veil && a.animate && a.st.Width >= 40 && a.st.Height >= 16
 }
 
 func spinning(s core.Screen) bool {

@@ -349,11 +349,12 @@ func (a *app) loginKey(k string) tea.Cmd {
 		a.setLoginStatus("Copying approval link")
 		id, since, url, copyText := a.life.loginID, core.NextID(), a.life.loginURL, a.st.Deps.CopyText
 		return func() tea.Msg {
-			err := copyText(url)
-			if err != nil {
-				err = fmt.Errorf("copying approval link: %w", err)
-			}
-			return loginCopiedMsg{id: id, since: since, err: err}
+			return core.Copy(copyText, url, func(err error) tea.Msg {
+				if err != nil {
+					err = fmt.Errorf("copying approval link: %w", err)
+				}
+				return loginCopiedMsg{id: id, since: since, err: err}
+			})
 		}
 	case "enter":
 		if a.life.loginFailed {

@@ -33,7 +33,7 @@ type life struct {
 	signingID, signingLoad, securityID, keysID core.ID
 	signingLoading, signingPending             bool
 	statusFailures                             int
-	refreshAfterUnlock                         bool
+	refreshAfterUnlock, offerHeadless          bool
 	unlockCancel, loginCancel                  context.CancelFunc
 	loginProgress                              <-chan actions.LoginProgress
 	loginCommitting, loginCopying              bool
@@ -54,9 +54,10 @@ type maintenanceDoneMsg struct {
 }
 
 type unlockDoneMsg struct {
-	id     core.ID
-	result actions.UnlockResult
-	err    error
+	id       core.ID
+	result   actions.UnlockResult
+	err      error
+	password bool
 }
 
 func ready(s readiness.Snapshot) bool {
@@ -331,6 +332,7 @@ func (a *app) maintenanceNext(msg maintenanceDoneMsg, email string) tea.Cmd {
 	if (msg.trigger == trigSetup || msg.trigger == trigUnlock) && st.Snapshot.VaultExists {
 		if msg.unlocked {
 			a.life.unlockPending, a.life.opened = false, true
+			a.life.offerHeadless = msg.passwordUsed
 			return a.finishBoot()
 		}
 		if msg.unlockErr != nil {
@@ -347,7 +349,10 @@ func (a *app) maintenanceNext(msg maintenanceDoneMsg, email string) tea.Cmd {
 func (a *app) startStartupUnlock() tea.Cmd {
 	a.showGate(gate.Unlock)
 	a.life.repairWall = false
-	a.gate.SetUnlock(true, "")
+	a.gate.SetUnlock(!a.st.Deps.Remote, "")
+	if a.st.Deps.Remote {
+		a.gate.SetBusy("Unlocking Forged")
+	}
 	return a.unlock(nil)
 }
 
@@ -368,7 +373,7 @@ func (a *app) unlock(pw []byte) tea.Cmd {
 		if err != nil {
 			err = fmt.Errorf("unlocking Forged: %w", err)
 		}
-		return unlockDoneMsg{id: id, result: res, err: err}
+		return unlockDoneMsg{id: id, result: res, err: err, password: len(pwCopy) > 0}
 	}
 }
 
@@ -414,6 +419,7 @@ func (a *app) unlockDone(msg unlockDoneMsg) tea.Cmd {
 		a.life.refreshAfterUnlock = true
 	}
 	a.life.unlockPending, a.life.opened = false, true
+	a.life.offerHeadless = msg.password
 	return a.finishBoot()
 }
 

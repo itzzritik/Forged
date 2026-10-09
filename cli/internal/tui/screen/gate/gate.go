@@ -107,6 +107,19 @@ func (m *Model) Tick() {
 	}
 }
 
+func (m *Model) Quiet() bool {
+	if m.err != "" || m.prompt != "" {
+		return false
+	}
+	switch m.kind {
+	case Launch, Busy:
+		return true
+	case Unlock:
+		return m.waiting || m.busy != ""
+	}
+	return false
+}
+
 func (m *Model) Spinning() bool {
 	return m.busy != "" || m.waiting || m.kind == Login || (m.kind == Launch || m.kind == Busy) && m.err == ""
 }
@@ -114,7 +127,7 @@ func (m *Model) Spinning() bool {
 func (m *Model) Refresh(st *core.State) {
 	if m.kind == Unlock && !m.trustKnown {
 		m.trustKnown = true
-		m.hasTrust = st != nil && st.Deps.HasLocalUnlockTrust != nil && st.Deps.HasLocalUnlockTrust()
+		m.hasTrust = st != nil && !st.Deps.Remote && st.Deps.HasLocalUnlockTrust != nil && st.Deps.HasLocalUnlockTrust()
 	}
 }
 

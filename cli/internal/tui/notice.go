@@ -6,6 +6,7 @@ import (
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/itzzritik/forged/cli/internal/tui/core"
+	"github.com/itzzritik/forged/cli/internal/tui/screen/account"
 	"github.com/itzzritik/forged/cli/internal/tui/screen/widget"
 	"github.com/itzzritik/forged/cli/internal/tui/ui"
 )
@@ -36,11 +37,23 @@ func (n notice) heading() string {
 
 type infoModal struct{ title, text string }
 
-// openInfo goes under any open modal so it never interrupts one the user is still using.
-func (a *app) openInfo(n notice) {
-	m := &infoModal{title: n.heading(), text: n.text}
+func (a *app) openInfo(n notice) { a.openUnder(&infoModal{title: n.heading(), text: n.text}) }
+
+// openUnder goes under any open modal so it never interrupts one the user is still using.
+func (a *app) openUnder(m widget.Modal) {
 	w, h := m.Size(a.st, a.st.Width-4, a.st.Height-2)
 	a.overlays = append([]core.OpenOverlayMsg{{Screen: m, W: w, H: h, Center: true, Dim: true}}, a.overlays...)
+}
+
+func (a *app) offerHeadlessUnlock() {
+	acc, ok := a.screens[core.TabAccount].(*account.Model)
+	if !ok || !a.life.offerHeadless || a.inGate || a.st.Locked {
+		return
+	}
+	a.life.offerHeadless = false
+	if m := acc.HeadlessOffer(a.st); m != nil {
+		a.openUnder(m)
+	}
 }
 
 func (a *app) notify(text string, tone ui.Tone) tea.Cmd {

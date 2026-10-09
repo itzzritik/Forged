@@ -224,10 +224,10 @@ func authorizeSensitiveResult(paths config.Paths, action sensitiveauth.Action, p
 }
 
 func authorizeSensitiveResultWithOptions(paths config.Paths, action sensitiveauth.Action, password []byte, force bool) (sensitiveauth.AuthorizeResult, error) {
-	return authorizeSensitiveResultWithContext(context.Background(), paths, action, password, force)
+	return authorizeSensitiveResultWithContext(context.Background(), paths, action, password, force, false)
 }
 
-func authorizeSensitiveResultWithContext(ctx context.Context, paths config.Paths, action sensitiveauth.Action, password []byte, force bool) (sensitiveauth.AuthorizeResult, error) {
+func authorizeSensitiveResultWithContext(ctx context.Context, paths config.Paths, action sensitiveauth.Action, password []byte, force, remote bool) (sensitiveauth.AuthorizeResult, error) {
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
 
@@ -245,6 +245,7 @@ func authorizeSensitiveResultWithContext(ctx context.Context, paths config.Paths
 		resp, err := client.CallContext(ctx, ipc.CmdSensitiveAuth, map[string]any{
 			"action": string(action),
 			"force":  force,
+			"remote": remote,
 		})
 		if err != nil {
 			return sensitiveauth.AuthorizeResult{}, err

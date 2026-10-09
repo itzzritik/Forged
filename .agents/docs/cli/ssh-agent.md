@@ -7,7 +7,7 @@ applies_to:
   - cli/internal/platform/pipe_windows.go
 depends_on:
   - cli/daemon.md
-last_verified: 2026-10-07
+last_verified: 2026-10-09
 stable: yes
 ---
 
@@ -40,7 +40,7 @@ Forged implements the OpenSSH agent protocol from the vault keystore. Listing an
 - `forged-sign` owns agent-backed `ssh-keygen -Y sign` and delegates other SSH-signature operations, including Git verification, to the system `ssh-keygen`; enabling commit signing configures the matching `gpg.ssh.allowedSignersFile` before it enables auto-signing.
 - Raw SSH agent protocol is still limited in how much error detail it can surface back to callers.
 - SSH route preparation has one 45-second server work budget covering cold-session auth, retry, and either probe type. Provider and direct-SSH probes keep their 20-second total and 4-second per-key child caps; the hook waits 50 seconds and the server connection 55 seconds so work can return a final response before either transport closes.
-- Provider probes retain at most 64 KiB each of stdout and stderr while draining excess. Any overflow is inconclusive, never a successful or denied provider result.
+- Provider probes retain at most 64 KiB each of stdout and stderr while draining excess. A retained prefix with a valid Git advertisement is success (large repos overflow on refs alone); any other overflow is inconclusive, never denied.
 - A parsed Git `ERR` pkt-line is never provider-proof success; broad packet-prefix heuristics cannot persist a route proof from an error response.
 - SSH-agent signing accepts only an exact zero, RSA-SHA256, or RSA-SHA512 flag value. Reserved, combined, and unsupported-algorithm requests fail instead of silently default-signing.
 - SSH integration migration removes only exact historical Forged marker blocks and managed include paths. An edited or ambiguous marker fails before the user config changes; inactive legacy files remain in place instead of being deleted recursively.

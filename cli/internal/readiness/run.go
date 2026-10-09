@@ -56,6 +56,9 @@ func (e *Engine) repair(current Snapshot, opts RunOptions) (RunResult, error) {
 	if err := e.ensureServiceStage(state, opts); err != nil {
 		return state.result, err
 	}
+	if opts.Mode == ModeInteractiveDoctor && state.result.Snapshot.Linger.Applies && !state.result.Snapshot.Linger.On {
+		state.result.Snapshot.Linger = daemon.EnsureLinger()
+	}
 	e.ensureGitSigningStage(state)
 	e.ensureCommandPathStage(state)
 	if err := e.ensureSocketStage(state); err != nil {

@@ -24,6 +24,7 @@ type AgentConfig struct {
 type SecurityConfig struct {
 	MasterPasswordInterval string `toml:"master_password_interval"`
 	HeadlessUnlock         bool   `toml:"headless_unlock"`
+	HeadlessOffered        bool   `toml:"headless_offered"`
 }
 
 const (
@@ -67,6 +68,7 @@ func saveConfigLocked(path string, cfg Config) error {
 	body.WriteString("\n[security]\n")
 	body.WriteString(fmt.Sprintf("master_password_interval = %q\n", cfg.Security.MasterPasswordInterval))
 	body.WriteString(fmt.Sprintf("headless_unlock = %t\n", cfg.Security.HeadlessUnlock))
+	body.WriteString(fmt.Sprintf("headless_offered = %t\n", cfg.Security.HeadlessOffered))
 
 	return writePrivateFileAtomic(path, []byte(body.String()))
 }
@@ -125,6 +127,13 @@ func HeadlessUnlockEnabled(paths Paths) bool {
 func SetHeadlessUnlock(paths Paths, enabled bool) error {
 	return updateConfig(paths, func(cfg *Config) {
 		cfg.Security.HeadlessUnlock = enabled
+		cfg.Security.HeadlessOffered = cfg.Security.HeadlessOffered || enabled
+	})
+}
+
+func SetHeadlessOffered(paths Paths) error {
+	return updateConfig(paths, func(cfg *Config) {
+		cfg.Security.HeadlessOffered = true
 	})
 }
 

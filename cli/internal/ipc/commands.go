@@ -20,6 +20,7 @@ const (
 	CmdSensitiveAuth     = "sensitive-auth"
 	CmdSensitivePassword = "sensitive-password"
 	CmdSensitiveLock     = "sensitive-lock"
+	CmdSensitiveEnroll   = "sensitive-enroll"
 	CmdActivity          = "activity"
 	CmdSyncTrigger       = "sync-trigger"
 	CmdSyncLink          = "sync-link"
@@ -70,6 +71,10 @@ type SSHRoutePrepareArgs struct {
 	OriginalHost string `json:"original_host"`
 	User         string `json:"user"`
 	Port         string `json:"port"`
+}
+
+type SSHRoutePrepareResult struct {
+	Locked bool `json:"locked,omitempty"`
 }
 
 type SSHRouteSuccessArgs struct {

@@ -1,11 +1,22 @@
 package core
 
 import (
+	"errors"
 	"fmt"
 	"time"
 
 	tea "charm.land/bubbletea/v2"
 )
+
+var ErrTerminalClipboard = errors.New("no local clipboard")
+
+// Copy falls back to the terminal's own clipboard (OSC 52) when this session has no local one.
+func Copy(copyText func(string) error, text string, done func(error) tea.Msg) tea.Msg {
+	if err := copyText(text); !errors.Is(err, ErrTerminalClipboard) {
+		return done(err)
+	}
+	return tea.BatchMsg{tea.SetClipboard(text), Send(done(nil))}
+}
 
 func ClipTick(id ID) tea.Cmd {
 	return tea.Tick(time.Second, func(time.Time) tea.Msg { return ClipTickMsg{ID: id} })
@@ -32,9 +43,11 @@ func CopyPublic(st *State, name string, done func(since ID, err error) tea.Msg) 
 			}
 			public = d.PublicKey
 		}
-		if err := copyText(public); err != nil {
-			return done(since, fmt.Errorf("copying public key: %w", err))
-		}
-		return done(since, nil)
+		return Copy(copyText, public, func(err error) tea.Msg {
+			if err != nil {
+				err = fmt.Errorf("copying public key: %w", err)
+			}
+			return done(since, err)
+		})
 	}
 }

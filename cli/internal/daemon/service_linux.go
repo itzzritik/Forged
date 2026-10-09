@@ -3,15 +3,19 @@
 package daemon
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
+	"os/user"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"text/template"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 const serviceName = "forged"
@@ -83,8 +87,35 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	if out, err := systemctlUser("enable", serviceName).CombinedOutput(); err != nil {
 		return fmt.Errorf("Enabling service: %s: %w", string(out), err)
 	}
+	EnsureLinger()
 
 	return nil
+}
+
+func InspectLinger() LingerState {
+	if platform.HasDisplay() && !platform.OverSSH() {
+		return LingerState{}
+	}
+	if _, err := os.Stat("/run/systemd/system"); err != nil {
+		return LingerState{}
+	}
+	u, err := user.Current()
+	if err != nil {
+		return LingerState{}
+	}
+	_, err = os.Stat(filepath.Join("/var/lib/systemd/linger", u.Username))
+	return LingerState{Applies: true, On: err == nil, User: u.Username}
+}
+
+func EnsureLinger() LingerState {
+	state := InspectLinger()
+	if !state.Applies || state.On {
+		return state
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	_ = exec.CommandContext(ctx, "loginctl", "--no-ask-password", "enable-linger").Run()
+	return InspectLinger()
 }
 
 func StartService() error {

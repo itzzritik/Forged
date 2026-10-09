@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-10-07
+last_verified: 2026-10-09
 stable: partial
 ---
 
@@ -52,6 +52,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - Service callers that need a usable daemon wait for installed, valid, running service state, both sockets, a responsive status endpoint, (when known) the expected build, and service/PID ownership.
 - Daemon status exposes a build id. Readiness treats a running daemon with a different or missing build id as degraded and repairs it by reinstalling/restarting the managed service.
 - Linux user-service commands derive `XDG_RUNTIME_DIR` and `DBUS_SESSION_BUS_ADDRESS` when shells omit them, which is common in headless SSH or remote-editor sessions. Service installation also returns `daemon-reload` and enable failures to repair callers.
+- Without systemd linger the user manager, and the daemon with it, stops at the last logout. Linger only matters without a graphical session (servers, SSH): there, Linux service installation runs `loginctl --no-ask-password enable-linger` (5 s, failure ignored) when `/var/lib/systemd/linger/<user>` is missing, readiness reports it, and Fix issues retries it. With a local display (not an SSH session, even with X forwarding) it is left alone, since polkit usually allows it silently on a desktop and would keep every user service alive after logout. It never prompts, because a polkit prompt would land in the TUI's terminal.
 - Linux service `ExecStart` operands escape literal percent signs for systemd. Inspection reads the effective `[Service]` command across the managed unit and direct `.d` fragments, honors resets, decodes literal `%%` escapes, accepts basic single- and double-quoted operands, and requires exactly an executable followed by `daemon`; unsupported systemd syntax fails closed.
 - Service-definition inspection fails closed when a current or legacy Linux/macOS/Windows command is unreadable, empty, malformed, or does not invoke `daemon`. Linux and macOS still retain platform PID evidence after that config failure so a safely owned live daemon can be repaired; Windows reports a PID only for a valid running task.
 - Linux writes a replacement unit beside the active unit and renames it only after rendering and closing succeeds, so a write failure or interruption leaves either the prior or the new complete service definition, never a truncated one.

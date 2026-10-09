@@ -66,7 +66,7 @@ func (m *exportModal) Spinning() bool { return m.busy != "" }
 
 func (m *exportModal) Capturing() bool { return m.step == exportAuth || m.step == exportPath }
 
-func (m *exportModal) Actions(*core.State) []core.Action {
+func (m *exportModal) Actions(st *core.State) []core.Action {
 	if m.writing {
 		return nil
 	}
@@ -75,6 +75,9 @@ func (m *exportModal) Actions(*core.State) []core.Action {
 	}
 	switch m.step {
 	case exportPath:
+		if !st.Deps.CanPickFiles {
+			return []core.Action{{Key: "enter", Label: "Save"}, {Key: "esc", Label: "Cancel"}}
+		}
 		return []core.Action{{Key: "enter", Label: "Save"}, {Key: "tab", Label: "Choose file"}, {Key: "esc", Label: "Cancel"}}
 	case exportDone:
 		return []core.Action{{Key: "enter", Label: "Done"}}
@@ -204,6 +207,9 @@ func (m *exportModal) key(msg tea.KeyPressMsg, st *core.State) tea.Cmd {
 		case "esc":
 			return m.close()
 		case "tab":
+			if !st.Deps.CanPickFiles {
+				return nil
+			}
 			m.begin("Choosing export file")
 			return chooseSave(st, m.id, filepath.Base(m.def))
 		case "shift+tab", "up", "down":

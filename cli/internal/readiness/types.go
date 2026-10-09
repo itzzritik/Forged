@@ -69,6 +69,7 @@ type Snapshot struct {
 	IdentityAgentOwner    config.SSHAgentOwner
 	GitSSH                config.GitSSHStatus
 	GitSigningStale       bool
+	Linger                daemon.LingerState
 }
 
 func (s Snapshot) SSHHealthy() bool {

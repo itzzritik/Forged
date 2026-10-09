@@ -17,7 +17,20 @@ var (
 	ErrCanceled    = errors.New("File picker canceled")
 )
 
+func Available() bool {
+	switch {
+	case platform.OverSSH():
+		return false
+	case runtime.GOOS == "linux":
+		return platform.HasDisplay()
+	}
+	return runtime.GOOS == "darwin" || runtime.GOOS == "windows"
+}
+
 func ChooseFile() (string, error) {
+	if !Available() {
+		return "", ErrUnavailable
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		return runPickerCommand(
@@ -37,6 +50,9 @@ func ChooseFile() (string, error) {
 }
 
 func ChooseSavePath(defaultName string) (string, error) {
+	if !Available() {
+		return "", ErrUnavailable
+	}
 	switch runtime.GOOS {
 	case "darwin":
 		return runPickerCommand(

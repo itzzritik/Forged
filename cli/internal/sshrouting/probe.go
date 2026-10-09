@@ -134,14 +134,15 @@ func (p ProviderProber) Probe(ctx context.Context, target Target, operation Oper
 	cmd.Env = append(os.Environ(), "FORGED_SSH_ROUTE_SKIP=1")
 
 	err = cmd.Run()
-	if stdout.overflow || stderr.overflow {
-		return ProbeResult{Status: ProbeInconclusive, Fingerprint: ref.Fingerprint, Message: "probe output exceeded limit"}
-	}
 	output := stdout.String()
-	message := strings.TrimSpace(stderr.String())
+	// Large repos advertise more refs than the cap; the retained prefix still proves access.
 	if hasGitAdvertisement(output, probeOperation) {
 		return ProbeResult{Status: ProbeSuccess, Fingerprint: ref.Fingerprint}
 	}
+	if stdout.overflow || stderr.overflow {
+		return ProbeResult{Status: ProbeInconclusive, Fingerprint: ref.Fingerprint, Message: "probe output exceeded limit"}
+	}
+	message := strings.TrimSpace(stderr.String())
 	if perKeyCtx.Err() != nil || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 		return ProbeResult{Status: ProbeInconclusive, Fingerprint: ref.Fingerprint, Message: "probe timed out"}
 	}

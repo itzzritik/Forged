@@ -32,7 +32,7 @@ func pick() Glyphs {
 			Warn: "!", Box: "[ ]", BoxOn: "[x]", Heavy: "=", H: "-", V: "|", TL: "+", TR: "+", BL: "+", BR: "+",
 			Down: "v", UpDown: "^v", Ellipsis: "~", Mask: "*", Spark: ".", Spinner: []string{"|", "/", "-", "\\"}}
 	}
-	return Glyphs{Dot: "●", Ring: "○", Bar: "▎", Caret: "▾", Next: "›", Prev: "‹", Check: "✓", Cross: "✕",
+	return Glyphs{Dot: "●", Ring: "○", Bar: "▎", Caret: "▾", Next: "›", Prev: "‹", Check: "✓", Cross: "×",
 		Warn: "!", Box: "□", BoxOn: "■", Heavy: "━", H: "─", V: "│", TL: "╭", TR: "╮", BL: "╰", BR: "╯",
 		Down: "↓", UpDown: "↑↓", Ellipsis: "…", Mask: "•", Spark: "·",
 		Spinner: []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"},

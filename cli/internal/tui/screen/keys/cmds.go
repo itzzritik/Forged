@@ -47,11 +47,13 @@ func prefetch(st *core.State, inflight map[string]bool) tea.Cmd {
 func copyFingerprint(st *core.State, fingerprint string) tea.Cmd {
 	copyText, since := st.Deps.CopyText, core.NextID()
 	return func() tea.Msg {
-		done := copyDoneMsg{label: "Fingerprint", action: "copy fingerprint", since: since}
-		if err := copyText(fingerprint); err != nil {
-			done.err = fmt.Errorf("copying fingerprint: %w", err)
-		}
-		return done
+		return core.Copy(copyText, fingerprint, func(err error) tea.Msg {
+			done := copyDoneMsg{label: "Fingerprint", action: "copy fingerprint", since: since}
+			if err != nil {
+				done.err = fmt.Errorf("copying fingerprint: %w", err)
+			}
+			return done
+		})
 	}
 }
 

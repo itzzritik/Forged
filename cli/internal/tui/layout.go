@@ -17,6 +17,9 @@ func (a *app) View() tea.View {
 
 func (a *app) render() string {
 	w, h := a.st.Width, a.st.Height
+	if a.veil {
+		return ""
+	}
 	if a.floor() {
 		return ui.Floor(w, h)
 	}
@@ -47,7 +50,8 @@ func (a *app) dashboard(w, h int) string {
 	if chip.Tone == ui.ToneBusy {
 		chip.Glyph = ui.SpinnerGlyph(st.SpinFrame)
 	}
-	lines := strings.Split(ui.Header(w, titles, max(0, slices.Index(a.tabs, a.active)), chip), "\n")
+	lines := make([]string, core.HeaderY(st))
+	lines = append(lines, strings.Split(ui.Header(w, titles, max(0, slices.Index(a.tabs, a.active)), chip), "\n")...)
 	bw, bh := core.BodySize(st)
 	_, oy := core.BodyOrigin(st)
 	for len(lines) < oy {

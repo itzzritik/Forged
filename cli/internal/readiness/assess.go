@@ -75,6 +75,7 @@ func (e *Engine) Assess() (Snapshot, error) {
 		ManagedConfigReady: e.pathExists(e.Paths.SSHManagedConfig()),
 		AgentDisabled:      config.IsAgentDisabled(e.Paths),
 		CurrentBuildID:     buildinfo.CurrentID(),
+		Linger:             daemon.InspectLinger(),
 	}
 	if snapshot.ConfigExists {
 		if _, err := config.Load(e.Paths.ConfigFile()); err != nil {

@@ -25,6 +25,9 @@ type Deps struct {
 	SetMasterPasswordInterval func(string) error
 	HasLocalUnlockTrust       func() bool
 	UnlockSensitiveLaunch     func(context.Context, []byte, bool) (actions.UnlockResult, error)
+	EnableHeadlessUnlock      func() (bool, error)
+	DisableHeadlessUnlock     func() error
+	SkipHeadlessOffer         func() error
 	ChangePassword            func([]byte, []byte) (actions.ChangePasswordResult, error)
 	LoadSigningStatus         func() (actions.CommitSigningStatus, error)
 	EnableSSHAgent            func() error
@@ -56,6 +59,9 @@ type Deps struct {
 	LogError                  func(actions.DiagnosticErrorEvent)
 	DefaultServer             string
 	AppVersion                string
+	TerminalClipboard         bool
+	CanPickFiles              bool
+	Remote                    bool
 }
 
 func (d Deps) Validate() error {

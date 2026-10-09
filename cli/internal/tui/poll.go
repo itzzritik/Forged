@@ -331,8 +331,10 @@ func (a *app) apply(msg tea.Msg) tea.Cmd {
 		}
 		if msg.Err != nil {
 			st.SecurityErr = st.Reporter.Report("app", "load security settings", msg.Err)
+			a.life.offerHeadless = false
 		} else {
 			st.Security, st.SecurityLoaded, st.SecurityErr = msg.State, true, ""
+			a.offerHeadlessUnlock()
 		}
 	default:
 		return nil

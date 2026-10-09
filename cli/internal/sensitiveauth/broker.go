@@ -103,7 +103,7 @@ func (a *deliveryAuthorization) Finalize(delivered bool) error {
 		a.broker.sessionMu.Unlock()
 	})
 	if refreshEnrollment && a.broker.session != nil {
-		a.broker.session.RefreshLocalEnrollment()
+		_ = a.broker.session.RefreshLocalEnrollment()
 	}
 	return a.err
 }
@@ -128,7 +128,7 @@ type SessionController interface {
 	HasActiveSession() bool
 	HydrateFromEnrollment() error
 	HydrateFromPassword(password []byte) error
-	RefreshLocalEnrollment()
+	RefreshLocalEnrollment() error
 	ClearActiveSession(reason string)
 }
 
@@ -243,7 +243,7 @@ func (b *Broker) helperExited() {
 }
 
 func (b *Broker) Authorize(ctx context.Context, action Action) (AuthorizeResult, error) {
-	result, finalize, err := b.beginAuthorize(ctx, action, false, false)
+	result, finalize, err := b.beginAuthorize(ctx, action, false, false, false)
 	if err != nil {
 		return AuthorizeResult{}, err
 	}
@@ -256,7 +256,7 @@ func (b *Broker) Authorize(ctx context.Context, action Action) (AuthorizeResult,
 }
 
 func (b *Broker) AuthorizeForced(ctx context.Context, action Action) (AuthorizeResult, error) {
-	result, finalize, err := b.beginAuthorize(ctx, action, true, false)
+	result, finalize, err := b.beginAuthorize(ctx, action, true, false, false)
 	if err != nil {
 		return AuthorizeResult{}, err
 	}
@@ -268,11 +268,11 @@ func (b *Broker) AuthorizeForced(ctx context.Context, action Action) (AuthorizeR
 	return result, nil
 }
 
-func (b *Broker) BeginAuthorize(ctx context.Context, action Action, force bool) (AuthorizeResult, func(bool) error, error) {
-	return b.beginAuthorize(ctx, action, force, true)
+func (b *Broker) BeginAuthorize(ctx context.Context, action Action, force, remote bool) (AuthorizeResult, func(bool) error, error) {
+	return b.beginAuthorize(ctx, action, force, true, remote)
 }
 
-func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watchDelivery bool) (AuthorizeResult, func(bool) error, error) {
+func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watchDelivery, remote bool) (AuthorizeResult, func(bool) error, error) {
 	if action == ActionExport || action == ActionPrivateKey {
 		return AuthorizeResult{
 			PasswordRequired: true,
@@ -293,6 +293,9 @@ func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watch
 	if headlessModePreemptsSystemAuth(b.paths) {
 		return b.authorizeWithoutSystemAuth(ctx, action, CapabilityUnavailableByPlatform, generation, watchDelivery)
 	}
+	if remote {
+		return passwordRequired("Enter your master password to unlock Forged."), nil, nil
+	}
 
 	if b.helper != nil && !b.ensureHelper() {
 		return b.authorizeWithoutSystemAuth(ctx, action, b.nativeCapability(), generation, watchDelivery)
@@ -303,16 +306,16 @@ func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watch
 		// can't restart it, so the request waits on the shared master-password popup.
 		// OpenSSH waits for agent replies; the server's LoginGraceTime is the real bound.
 		// Linux has no native popup yet.
+		if action == ActionExternal && externalLockedOut(b.paths) {
+			return AuthorizeResult{}, nil, ErrLocked
+		}
 		if action == ActionExternal && !LocalEnrollmentUsable(b.paths) {
-			if runtime.GOOS == "darwin" || runtime.GOOS == "windows" {
-				if b.awaitPasswordUnlock(ctx, generation) {
-					if result, active, err := b.allowActiveSession(action, time.Now(), generation); err == nil && active {
-						return result, nil, nil
-					}
+			if b.awaitPasswordUnlock(ctx, generation) {
+				if result, active, err := b.allowActiveSession(action, time.Now(), generation); err == nil && active {
+					return result, nil, nil
 				}
-				return AuthorizeResult{}, nil, externalUseLockedError()
 			}
-			return AuthorizeResult{}, nil, externalUseNoDeviceUnlockError()
+			return AuthorizeResult{}, nil, externalUseLockedError()
 		}
 		capability, err := b.authorizeSystem(ctx, action, generation)
 		if !b.authorizationCurrent(generation) {
@@ -464,6 +467,24 @@ func (b *Broker) newDeliveryAuthorizationLocked(ctx context.Context, generation 
 
 func (b *Broker) IsUnlocked() bool {
 	return b.hasActiveSession(time.Now())
+}
+
+func (b *Broker) ExternalLocked() bool {
+	return !b.IsUnlocked() && externalLockedOut(b.paths)
+}
+
+func externalLockedOut(paths config.Paths) bool {
+	return runtime.GOOS == "linux" && !LocalEnrollmentUsable(paths)
+}
+
+func (b *Broker) EnrollHeadless() error {
+	if !HeadlessModeEnabled(b.paths) {
+		return fmt.Errorf("Headless mode is not enabled")
+	}
+	if b.session == nil || !b.IsUnlocked() {
+		return ErrLocked
+	}
+	return b.session.RefreshLocalEnrollment()
 }
 
 func (b *Broker) ReserveExportToken(token string) (func(), bool) {
@@ -885,7 +906,7 @@ func (b *Broker) handleMissingDeviceUnlock(action Action, prompt string, err err
 	}
 	if action == ActionExternal {
 		if errors.Is(err, ErrLocalUnlockTrustUnavailable) {
-			return AuthorizeResult{}, externalUseNoDeviceUnlockError()
+			return AuthorizeResult{}, ErrLocked
 		}
 		return AuthorizeResult{}, externalUseHydrationError()
 	}
@@ -943,10 +964,6 @@ func externalUseFailedError() error {
 
 func externalUseLockedError() error {
 	return fmt.Errorf("Forged is locked; unlock Forged and try again")
-}
-
-func externalUseNoDeviceUnlockError() error {
-	return fmt.Errorf("Device unlock is not enrolled; open Forged and enter your master password once before using SSH auth or commit signing")
 }
 
 func externalUseHydrationError() error {

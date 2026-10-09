@@ -351,7 +351,6 @@ func findBinary() (string, error) {
 func launchctlRun(args []string, ignorable []string) error {
 	cmd := exec.Command("launchctl", args...)
 	var stderr bytes.Buffer
-	cmd.Stdout = os.Stdout
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if err == nil {
@@ -514,3 +513,7 @@ func launchdPrintPID(out string) int {
 	}
 	return 0
 }
+
+func InspectLinger() LingerState { return LingerState{} }
+
+func EnsureLinger() LingerState { return LingerState{} }

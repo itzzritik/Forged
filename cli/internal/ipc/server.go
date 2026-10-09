@@ -362,6 +362,8 @@ func (s *Server) dispatch(ctx context.Context, req Request, peerPID int) Respons
 		return s.handleSensitivePassword(ctx, req.Args)
 	case CmdSensitiveLock:
 		return s.handleSensitiveLock()
+	case CmdSensitiveEnroll:
+		return s.handleSensitiveEnroll()
 	case "status":
 		return s.handleStatus()
 	default:
@@ -398,6 +400,11 @@ func (s *Server) handleSSHRoutePrepare(deliveryCtx context.Context, raw json.Raw
 	if err := s.sshRoutes.PrepareContext(workCtx, req); err != nil {
 		if errors.Is(err, sshrouting.ErrRouteMemoryLocked) {
 			finalize, authErr := s.ensureExternalSession(deliveryCtx)
+			if errors.Is(authErr, sensitiveauth.ErrLocked) {
+				resp := ErrorResponse(authErr)
+				resp.Data, _ = json.Marshal(SSHRoutePrepareResult{Locked: true})
+				return resp
+			}
 			if authErr != nil {
 				return ErrorResponse(authErr)
 			}
@@ -414,7 +421,7 @@ func (s *Server) handleSSHRoutePrepare(deliveryCtx context.Context, raw json.Raw
 		return ErrorResponse(err)
 	}
 
-	return OkResponse(nil)
+	return OkResponse(SSHRoutePrepareResult{Locked: s.authBroker != nil && s.authBroker.ExternalLocked()})
 }
 
 func (s *Server) ensureExternalSession(ctx context.Context) (func(bool) error, error) {
@@ -424,7 +431,7 @@ func (s *Server) ensureExternalSession(ctx context.Context) (func(bool) error, e
 	if !locked || s.authBroker == nil {
 		return nil, nil
 	}
-	result, finalize, err := s.authBroker.BeginAuthorize(ctx, sensitiveauth.ActionExternal, false)
+	result, finalize, err := s.authBroker.BeginAuthorize(ctx, sensitiveauth.ActionExternal, false, false)
 	if err != nil {
 		return nil, err
 	}
@@ -962,6 +969,7 @@ func (s *Server) handleAccountClear() Response {
 type sensitiveAuthArgs struct {
 	Action string `json:"action"`
 	Force  bool   `json:"force"`
+	Remote bool   `json:"remote"`
 }
 
 type sensitivePasswordArgs struct {
@@ -984,7 +992,7 @@ func (s *Server) handleSensitiveAuth(ctx context.Context, raw json.RawMessage) R
 		return ErrorResponse(err)
 	}
 
-	result, finalize, err := s.authBroker.BeginAuthorize(ctx, action, a.Force)
+	result, finalize, err := s.authBroker.BeginAuthorize(ctx, action, a.Force, a.Remote)
 	if err != nil {
 		return ErrorResponse(err)
 	}
@@ -1019,6 +1027,16 @@ func (s *Server) handleSensitivePassword(ctx context.Context, raw json.RawMessag
 	resp := OkResponse(result)
 	resp.finalize = finalize
 	return resp
+}
+
+func (s *Server) handleSensitiveEnroll() Response {
+	if s.authBroker == nil {
+		return ErrorResponse(fmt.Errorf("Sensitive auth broker unavailable"))
+	}
+	if err := s.authBroker.EnrollHeadless(); err != nil {
+		return ErrorResponse(err)
+	}
+	return OkResponse(nil)
 }
 
 func (s *Server) handleSensitiveLock() Response {

@@ -104,7 +104,7 @@ func (m *importModal) Spinning() bool { return m.busy != "" }
 
 func (m *importModal) Capturing() bool { return m.step == stepPath || m.step == stepPaste }
 
-func (m *importModal) Actions(*core.State) []core.Action {
+func (m *importModal) Actions(st *core.State) []core.Action {
 	if m.importing {
 		return nil
 	}
@@ -113,6 +113,9 @@ func (m *importModal) Actions(*core.State) []core.Action {
 	}
 	switch m.step {
 	case stepPath:
+		if !st.Deps.CanPickFiles {
+			return []core.Action{{Key: "enter", Label: "Continue"}, {Key: "esc", Label: "Back"}}
+		}
 		return []core.Action{{Key: "enter", Label: "Continue"}, {Key: "tab", Label: "Choose file"}, {Key: "esc", Label: "Back"}}
 	case stepPaste:
 		return []core.Action{{Key: "esc", Label: "Back"}}
@@ -216,6 +219,9 @@ func (m *importModal) key(msg tea.KeyPressMsg, st *core.State) tea.Cmd {
 		case "esc":
 			m.toSource()
 		case "tab":
+			if !st.Deps.CanPickFiles {
+				return nil
+			}
 			m.begin("Choosing file")
 			return chooseFile(st, m.id)
 		case "shift+tab", "up", "down":

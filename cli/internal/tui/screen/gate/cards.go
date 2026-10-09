@@ -140,9 +140,6 @@ func (m *Model) rows(st *core.State, cw int, compact bool) []string {
 	case Unlock:
 		l.soft()
 		l.add(title("Unlock Forged"))
-		if email := ui.Sanitize(st.AccountEmail); email != "" && !compact {
-			l.add(muted(ui.Trunc(email, W)))
-		}
 		if m.prompt != "" {
 			for _, s := range ui.Wrap(ui.Sanitize(m.prompt), W) {
 				l.add(muted(s))

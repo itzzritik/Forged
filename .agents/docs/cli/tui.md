@@ -24,6 +24,7 @@ The TUI runs in the `forged` CLI process and is keyboard-only.
 - Below 40×12 only ctrl+c and q work, so no blind destructive keys.
 - The sweep gradient is only for thin elements, never fills or text blocks.
 - Icons come only from `ui.G.Icon`, which is empty in ASCII mode; place them with `ui.Icon`/`ui.IconWidth` so rows still align without them.
+- Launch draws nothing until a quick status probe answers: an already unlocked session stays blank and opens straight to the dashboard (the splash shows only if startup passes 1.5 s); locked, no daemon, or no answer within 0.3 s shows the splash at once. Once visible the splash never blanks again.
 - Flame frames tick only while a gate screen shows at 40×16 or larger; the dashboard never animates. `FORGED_ASCII=1` or `NO_COLOR` draws no fire.
 - Gate messages use only the card's error row; toasts and queued notices never draw on the gate. Notices arriving there wait in one queue (newest 5, dropped only on quit) and show when the dashboard returns, after a replay of any toast the gate covered. Long warnings and errors always open an info modal; other live notices wait behind a playing queue.
 - Dim and modal fills are applied per cell on the composited canvas, so ANSI inside content survives; inner style resets must not break a selection band or banner fill.
@@ -31,9 +32,12 @@ The TUI runs in the `forged` CLI process and is keyboard-only.
 - Never import `lipgloss/v2/compat` (probes the terminal at init). Light/dark follows `BackgroundColorMsg`; `FORGED_COLOR_SCHEME`, `FORGED_ASCII=1` and `FORGED_ANIMATIONS=0` override.
 - `ui.Secret` owns a preallocated rune buffer, never grows it, never creates a string, and is wiped on submit, lock and discard. Passwords never go through Huh or `textinput`.
 - Paste-to-import keeps the key in a paste target and never renders it.
+- Over SSH or on Linux without a display, plain copies go through the terminal (OSC 52) and private-key copy is refused: a secret never travels through the terminal, and a remote clipboard cannot be verified or cleared.
 - Private-key clipboard copy: 45-second countdown; clear only if the clipboard still holds the copy; failed clears toast once and retry (5s, 30s after 3 tries); esc invalidates a pending copy; a copy started while locked is cleared immediately; exit clears it. A normal copy drops the lease only if it started after that private copy (`CancelClipMsg.Since`). Input is blocked except esc while a clipboard write runs.
 - Idle lock (4 minutes) is one coalesced timer, moved by activity and re-armed on leaving the gate. It locks the view only; esc on the wall never reveals the previous screen.
 - The lock wall starts System Auth only on enter-with-empty-field or tab, never automatically while the user may be away.
+- Over SSH (`Deps.Remote`) the TUI never starts System Auth on any OS: no trust hint, the startup check shows "Unlocking Forged", and unlock requests carry `remote`.
+- The headless-unlock offer opens only right after a password unlock, after the gate closes and under any queued notice modal, and once per device (`security.headless_offered`).
 - Leaving recovery or finishing a login before the first unlock never reveals the dashboard: recovery exit restarts boot; a login runs post-login maintenance on the gate, then shows Unlock; a sync issue during a gate-started login cancels it and shows Unlock (or Welcome when there is no vault). Maintenance results while view-locked update state only.
 - Maintenance is single-flight; runtime and snapshot checks accept only their newest generation.
 - Quit is blocked while a password change runs, even on the lock wall. Ctrl+C otherwise always quits.

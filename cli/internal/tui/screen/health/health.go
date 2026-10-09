@@ -138,10 +138,12 @@ func (m *Model) copyReport(st *core.State) tea.Cmd {
 	st.Busy.Clipboard, m.copying, m.copyID = true, true, core.NextID()
 	report, copyText, id := Report(st, m.paths), st.Deps.CopyText, m.copyID
 	return func() tea.Msg {
-		if err := copyText(report); err != nil {
-			return copyDoneMsg{id, fmt.Errorf("copying report: %w", err)}
-		}
-		return copyDoneMsg{id: id}
+		return core.Copy(copyText, report, func(err error) tea.Msg {
+			if err != nil {
+				return copyDoneMsg{id, fmt.Errorf("copying report: %w", err)}
+			}
+			return copyDoneMsg{id: id}
+		})
 	}
 }
 

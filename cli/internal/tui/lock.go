@@ -56,7 +56,7 @@ func (a *app) requestLock() tea.Cmd {
 
 func (a *app) lock() tea.Cmd {
 	a.st.Locked = true
-	a.life.idleDeadline, a.life.identityID = time.Time{}, core.NextID()
+	a.life.idleDeadline, a.life.identityID, a.life.offerHeadless = time.Time{}, core.NextID(), false
 	a.cancelLogin()
 	a.invalidateUnlock()
 	cmd := a.closeAll()
