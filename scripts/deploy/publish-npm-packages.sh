@@ -1,10 +1,14 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Platform packages go first (nothing installs them by name); the wrapper only once every pinned one is installable.
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-dist="$root/dist/npm"
-: "${1:?usage: $0 <version>}"
-version="${1#v}"
+mode="${1:?usage: $0 platforms|wrapper <version> [wrapper-dir]}"
+version="${2:?usage: $0 platforms|wrapper <version> [wrapper-dir]}"
+version="${version#v}"
+poll="${POLL_SECONDS:-15}"
+tries="${POLL_TRIES:-60}"
+soak="${SOAK_SECONDS:-180}"
 
 publish_if_needed() {
   local dir="$1" name pkg_version
@@ -22,36 +26,37 @@ publish_if_needed() {
   npm publish --access public --provenance "$dir"
 }
 
-shopt -s nullglob
-platforms=("$dist"/@getforged/cli-*)
-[[ ${#platforms[@]} -gt 0 ]] || { echo "no platform packages in $dist/@getforged" >&2; exit 1; }
+installable() { npm view "$1@$version" version --prefer-online >/dev/null 2>&1; }
 
-pids=()
-for pkg in "${platforms[@]}"; do
-  publish_if_needed "$pkg" & pids+=("$!")
-done
-
-status=0
-for pid in "${pids[@]}"; do wait "$pid" || status=$?; done
-[[ $status -eq 0 ]] || { echo "one or more platform publishes failed" >&2; exit "$status"; }
-
-# npm can accept a publish yet never serve it; the wrapper must not ship until every platform package is installable.
-wait_visible() {
-  local dir="$1" name attempt
-  name="$(node -p "require('$dir/package.json').name")"
-  for attempt in $(seq 1 30); do
-    npm view "${name}@${version}" version --prefer-online >/dev/null 2>&1 && return 0
-    if (( attempt % 10 == 0 )); then
-      echo "${name}@${version} not on the registry yet; publishing again"
-      npm publish --access public --provenance "$dir" || true
-    fi
-    sleep 10
+case "$mode" in
+platforms)
+  shopt -s nullglob
+  platforms=("$root"/dist/npm/@getforged/cli-*)
+  [[ ${#platforms[@]} -gt 0 ]] || { echo "no platform packages in dist/npm/@getforged" >&2; exit 1; }
+  pids=()
+  for pkg in "${platforms[@]}"; do
+    publish_if_needed "$pkg" & pids+=("$!")
   done
-  echo "${name}@${version} never appeared on the registry" >&2
-  return 1
-}
-
-for pkg in "${platforms[@]}"; do wait_visible "$pkg" || status=1; done
-[[ $status -eq 0 ]] || { echo "not publishing the wrapper: a platform package is missing" >&2; exit 1; }
-
-publish_if_needed "$dist/cli"
+  status=0
+  for pid in "${pids[@]}"; do wait "$pid" || status=$?; done
+  [[ $status -eq 0 ]] || { echo "one or more platform publishes failed" >&2; exit "$status"; }
+  ;;
+wrapper)
+  dir="$(cd "${3:?usage: $0 wrapper <version> <wrapper-dir>}" && pwd)"
+  for name in $(node -p "Object.keys(require('$dir/package.json').optionalDependencies).join(' ')"); do
+    for ((i = 1; ; i++)); do
+      installable "$name" && break
+      (( i < tries )) || { echo "${name}@${version} never became installable; not publishing the wrapper" >&2; exit 1; }
+      sleep "$poll"
+    done
+    echo "${name}@${version} is installable"
+  done
+  # Registry caches can still serve an older packument for a few minutes after a version appears.
+  sleep "$soak"
+  publish_if_needed "$dir"
+  ;;
+*)
+  echo "unknown mode: $mode" >&2
+  exit 1
+  ;;
+esac

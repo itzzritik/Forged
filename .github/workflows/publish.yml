@@ -12,6 +12,11 @@ on:
                     - patch
                     - minor
                     - major
+            promote:
+                description: Internal. Publish the @getforged/cli wrapper for this already released version
+                required: false
+                default: ''
+                type: string
     # push:
     #     branches:
     #         - main
@@ -26,6 +31,7 @@ on:
 permissions:
     contents: write
     id-token: write
+    actions: write
 
 # Queue, never cancel: a canceled run can leave a partial npm/GitHub release.
 concurrency:
@@ -34,7 +40,7 @@ concurrency:
 
 jobs:
     version:
-        if: github.actor != 'github-actions[bot]'
+        if: github.actor != 'github-actions[bot]' && inputs.promote == ''
         name: Compute version
         runs-on: ubuntu-latest
         outputs:
@@ -188,7 +194,7 @@ jobs:
 
             - run: ./scripts/deploy/build-npm-packages.sh "${{ needs.version.outputs.version }}"
 
-            - run: ./scripts/deploy/publish-npm-packages.sh "${{ needs.version.outputs.version }}"
+            - run: ./scripts/deploy/publish-npm-packages.sh platforms "${{ needs.version.outputs.version }}"
 
             - run: git push --follow-tags origin HEAD:main
 
@@ -199,3 +205,24 @@ jobs:
             - env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: ./scripts/deploy/prune-orphan-tags.sh
+
+            # The wrapper ships from a follow-up run once npm serves every platform package, so no install can miss its binary.
+            - env:
+                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+              run: gh workflow run publish.yml --ref main -f promote="${{ needs.version.outputs.version }}"
+
+    promote:
+        if: inputs.promote != ''
+        name: Publish @getforged/cli ${{ inputs.promote }}
+        runs-on: ubuntu-latest
+        steps:
+            - uses: actions/checkout@v7
+              with:
+                  ref: v${{ inputs.promote }}
+                  fetch-depth: 1
+
+            - uses: actions/setup-node@v7
+              with:
+                  node-version: 24
+
+            - run: ./scripts/deploy/publish-npm-packages.sh wrapper "${{ inputs.promote }}" npm/cli
