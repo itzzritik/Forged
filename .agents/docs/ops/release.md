@@ -11,7 +11,7 @@ applies_to:
   - server/Dockerfile
 depends_on:
   - ops/platform-packaging.md
-last_verified: 2026-10-06
+last_verified: 2026-10-09
 stable: partial
 ---
 
@@ -26,6 +26,7 @@ One manual GitHub Actions workflow publishes CLI releases.
 - macOS binaries are not notarized. Windows binaries are not Authenticode-signed. Linux archives are unsigned.
 - The macOS Swift helper must be built on macOS. Its build is cached by source hash; the macOS job runs only on a cache miss, otherwise the release restores the cached build. If the Linux cache lookup ever stops matching the macOS-saved cache, the macOS job just runs every time.
 - The npm wrapper is a launcher for native platform packages, not a JS implementation.
+- The wrapper pins every platform package to its own version, and npm silently skips a missing optional dependency. So the publish script waits until each platform package is installable from the registry (republishing if needed) and refuses to publish the wrapper otherwise; npm has accepted a publish and then never served it.
 - The npm packages have no install scripts: npm 12+ blocks them and warns on every install. After an upgrade the daemon restarts itself onto the new build (see daemon docs); the next `forged` launch's build-id check is the fallback.
 - CLI builds embed a daemon build id. Local `just build-cli` refreshes an installed daemon after rebuilding; releases use the commit id for the daemon freshness check.
 - GoReleaser artifact metadata can be either a top-level array or an object with `artifacts`; npm packaging must accept both.
