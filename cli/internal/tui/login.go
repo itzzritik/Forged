@@ -238,9 +238,11 @@ func (a *app) loginMsg(msg tea.Msg) tea.Cmd {
 		}
 		a.life.loginCode, a.life.loginURL = msg.session.VerificationCode, msg.session.URL
 		status := ""
-		if err := a.openLoginURL(); err != nil {
-			st.Reporter.Report("app", "browser.open", err)
-			status = "Open the approval link with Enter or copy it with C."
+		if a.st.Deps.CanOpenLinks {
+			if err := a.openLoginURL(); err != nil {
+				st.Reporter.Report("app", "browser.open", err)
+				status = "Couldn't open the link. Press c to copy it."
+			}
 		}
 		a.setLoginStatus(status)
 		return waitLogin(msg.ctx, msg.id, msg.session)
@@ -283,7 +285,7 @@ func (a *app) loginMsg(msg tea.Msg) tea.Cmd {
 		a.life.loginCopying = false
 		if msg.err != nil {
 			st.Reporter.Report("app", "clipboard.copy", msg.err)
-			a.setLoginStatus("Could not copy the approval link. Press C to try again or Enter to open it.")
+			a.setLoginStatus("Couldn't copy the link. Select it below instead.")
 			return nil
 		}
 		a.setLoginStatus("Approval link copied")
@@ -342,20 +344,7 @@ func (a *app) loginKey(k string) tea.Cmd {
 		}
 		a.welcome()
 	case "c":
-		if a.life.loginCopying || a.life.loginURL == "" || a.life.loginFailed {
-			return nil
-		}
-		a.life.loginCopying = true
-		a.setLoginStatus("Copying approval link")
-		id, since, url, copyText := a.life.loginID, core.NextID(), a.life.loginURL, a.st.Deps.CopyText
-		return func() tea.Msg {
-			return core.Copy(copyText, url, func(err error) tea.Msg {
-				if err != nil {
-					err = fmt.Errorf("copying approval link: %w", err)
-				}
-				return loginCopiedMsg{id: id, since: since, err: err}
-			})
-		}
+		return a.copyLoginURL()
 	case "enter":
 		if a.life.loginFailed {
 			return a.startLogin()
@@ -363,14 +352,34 @@ func (a *app) loginKey(k string) tea.Cmd {
 		if a.life.loginURL == "" {
 			return nil
 		}
+		if !a.st.Deps.CanOpenLinks {
+			return a.copyLoginURL()
+		}
 		if err := a.openLoginURL(); err != nil {
 			a.st.Reporter.Report("app", "browser.open", err)
-			a.setLoginStatus("Could not open the approval link. Press Enter to try again or C to copy it.")
+			a.setLoginStatus("Couldn't open the link. Press c to copy it.")
 			return nil
 		}
 		a.setLoginStatus("")
 	}
 	return nil
+}
+
+func (a *app) copyLoginURL() tea.Cmd {
+	if a.life.loginCopying || a.life.loginURL == "" || a.life.loginFailed {
+		return nil
+	}
+	a.life.loginCopying = true
+	a.setLoginStatus("Copying approval link")
+	id, since, url, copyText := a.life.loginID, core.NextID(), a.life.loginURL, a.st.Deps.CopyText
+	return func() tea.Msg {
+		return core.Copy(copyText, url, func(err error) tea.Msg {
+			if err != nil {
+				err = fmt.Errorf("copying approval link: %w", err)
+			}
+			return loginCopiedMsg{id: id, since: since, err: err}
+		})
+	}
 }
 
 func (a *app) restore(pw []byte) tea.Cmd {

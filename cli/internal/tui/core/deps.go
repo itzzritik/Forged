@@ -60,6 +60,7 @@ type Deps struct {
 	DefaultServer             string
 	AppVersion                string
 	TerminalClipboard         bool
+	CanOpenLinks              bool
 	CanPickFiles              bool
 	Remote                    bool
 }

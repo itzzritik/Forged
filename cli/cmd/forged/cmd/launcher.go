@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"runtime"
+	"strings"
 	"sync"
 	"time"
 
@@ -126,6 +127,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 		DefaultServer:     ipc.DefaultAPIServer,
 		AppVersion:        version,
 		TerminalClipboard: clipboard.terminal,
+		CanOpenLinks:      os.Getenv("BROWSER") != "" || !remote && (runtime.GOOS != "linux" || platform.HasDisplay()),
 		CanPickFiles:      picker.Available(),
 		Remote:            remote,
 	})
@@ -360,13 +362,15 @@ func readClipboard(backend clipboardBackend) ([]byte, error) {
 }
 
 func openLinkInBrowser(url string) error {
-	var argv []string
-	switch runtime.GOOS {
-	case "darwin":
+	argv := strings.Fields(strings.Split(os.Getenv("BROWSER"), string(os.PathListSeparator))[0])
+	switch {
+	case len(argv) > 0:
+		argv = append(argv, url)
+	case runtime.GOOS == "darwin":
 		argv = []string{"open", url}
-	case "linux":
+	case runtime.GOOS == "linux":
 		argv = []string{"xdg-open", url}
-	case "windows":
+	case runtime.GOOS == "windows":
 		argv = []string{"rundll32", "url.dll,FileProtocolHandler", url}
 	default:
 		return fmt.Errorf("Opening links is not supported on %s", runtime.GOOS)

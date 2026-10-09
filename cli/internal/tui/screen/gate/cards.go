@@ -127,7 +127,7 @@ func (m *Model) rows(st *core.State, cw int, compact bool) []string {
 	case Create:
 		m.create(l, W)
 	case Login:
-		m.login(l, W)
+		m.login(st, l, W)
 	case Restore:
 		l.soft()
 		l.add(title("Restore your vault"))
@@ -219,11 +219,16 @@ func (m *Model) welcome(l *lines, W int) {
 	l.soft()
 }
 
-func (m *Model) login(l *lines, W int) {
+func (m *Model) login(st *core.State, l *lines, W int) {
+	open := st.Deps.CanOpenLinks
 	l.soft()
 	l.add(title("Log in to Forged"))
 	if !l.compact {
-		l.add(muted(ui.Trunc("Approve this code in your browser.", W)))
+		sub := "Approve this code in your browser."
+		if !open {
+			sub = "Open the link on any device to approve."
+		}
+		l.add(muted(ui.Trunc(sub, W)))
 		l.gap()
 	}
 	code := ui.Sanitize(m.code)
@@ -246,16 +251,20 @@ func (m *Model) login(l *lines, W int) {
 	}
 	l.add(l.spin + " " + muted(ui.Trunc(ui.Sanitize(status), W-2)))
 	if m.url != "" {
-		for _, s := range strings.Split(ansi.Hardwrap(ui.Sanitize(m.url), W, true), "\n") {
-			l.add(ui.Paint(s, ui.P().Steel))
+		url := ui.Sanitize(m.url)
+		for _, s := range strings.Split(ansi.Hardwrap(url, W, true), "\n") {
+			l.add(ansi.SetHyperlink(url) + ui.Paint(s, ui.P().Steel) + ansi.ResetHyperlink())
 		}
 	}
 	l.add(m.errRows(W)...)
 	l.gap()
-	var hints []ui.Hint
-	if !m.committing {
-		hints = []ui.Hint{{Key: "c", Label: "Copy link"}, {Key: "esc", Label: "Cancel"}}
+	hints, button := []ui.Hint{{Key: "c", Label: "Copy link"}, {Key: "esc", Label: "Cancel"}}, "Open link"
+	if !open {
+		hints, button = hints[1:], "Copy link"
 	}
-	l.add(m.footer(l, W, hints, "Open link"))
+	if m.committing {
+		hints = nil
+	}
+	l.add(m.footer(l, W, hints, button))
 	l.soft()
 }
