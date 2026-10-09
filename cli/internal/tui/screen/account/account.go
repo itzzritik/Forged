@@ -17,8 +17,7 @@ import (
 type rowKind int
 
 const (
-	rowRepair rowKind = iota
-	rowLogin
+	rowLogin rowKind = iota
 	rowSync
 	rowInterval
 	rowHeadless
@@ -44,7 +43,7 @@ type Model struct {
 	spinning   bool
 }
 
-func New() core.Screen { return &Model{sel: rowRepair} }
+func New() core.Screen { return &Model{sel: rowLogin} }
 
 func (m *Model) Spinning() bool { return m.spinning }
 
@@ -52,23 +51,21 @@ func refused(st *core.State) bool {
 	return st.Busy.Maintenance || st.Busy.Sync || st.Busy.Logout || st.Busy.PasswordChange
 }
 
+func signedIn(st *core.State) bool { return st.Snapshot.LoggedIn && st.CredentialError() == "" }
+
 func rows(st *core.State) []rowKind {
-	var out []rowKind
-	if st.CredentialError() != "" {
-		out = append(out, rowRepair)
-	}
-	if st.Snapshot.LoggedIn {
-		out = append(out, rowSync, rowInterval)
-	} else {
-		out = append(out, rowLogin, rowInterval)
+	out := []rowKind{rowLogin, rowInterval}
+	if signedIn(st) {
+		out[0] = rowSync
 	}
 	if st.SecurityLoaded && st.Security.HeadlessSupported {
 		out = append(out, rowHeadless)
 	}
-	if st.Snapshot.LoggedIn {
-		return append(out, rowPassword, rowLogout)
+	out = append(out, rowPassword)
+	if signedIn(st) {
+		out = append(out, rowLogout)
 	}
-	return append(out, rowPassword)
+	return out
 }
 
 func (m *Model) cur(st *core.State) rowKind {
@@ -158,7 +155,7 @@ func (m *Model) key(msg tea.KeyPressMsg, st *core.State) tea.Cmd {
 
 func (m *Model) activate(st *core.State) tea.Cmd {
 	switch m.cur(st) {
-	case rowRepair, rowLogin:
+	case rowLogin:
 		return core.Send(core.RequestLoginMsg{})
 	case rowSync:
 		return core.Send(core.RequestSyncMsg{})
@@ -344,14 +341,11 @@ func (m *Model) build(st *core.State, w int) layout {
 			add(f.Pad(l))
 		}
 	}
-	if slices.Contains(rows(st), rowRepair) {
-		row(rowRepair, ui.G.Icon.Health, "Repair account", ui.G.Next, nil, true)
-	}
 	if text != "" && f.Gap > 0 {
 		add("")
 	}
 
-	if st.Snapshot.LoggedIn {
+	if signedIn(st) {
 		name := ui.Sanitize(strings.TrimSpace(st.AccountName))
 		email := ui.Sanitize(strings.TrimSpace(st.AccountEmail))
 		if name == "" {
@@ -369,10 +363,14 @@ func (m *Model) build(st *core.State, w int) layout {
 		section("Sync")
 		row(rowSync, ui.G.Icon.Sync, "Sync now", "", nil, true)
 	} else {
-		add(f.Pad(ui.Bold("Sync is off", p.Text)))
+		heading := "Sync is off"
+		if st.Snapshot.LoggedIn {
+			heading = "Sync is paused"
+		}
+		add(f.Pad(ui.Bold(heading, p.Text)))
 		gap()
 		row(rowLogin, ui.G.Icon.Login, "Log in", ui.G.Next, nil, true)
-		if st.Width >= 60 {
+		if !st.Snapshot.LoggedIn && st.Width >= 60 {
 			lead := 2 + ui.IconWidth(ui.G.Icon.Login)
 			add(f.Pad(ui.Repeat(" ", lead) + ui.Paint(ui.Trunc("Sync encrypted keys across your machines", f.W-lead), p.Muted)))
 		}
@@ -384,7 +382,7 @@ func (m *Model) build(st *core.State, w int) layout {
 		row(rowHeadless, ui.G.Icon.Lock, "Unlock automatically on this server", "", func() (string, bool) { return m.headlessValue(st) }, false)
 	}
 	row(rowPassword, ui.G.Icon.Secret, "Change master password", ui.G.Next, nil, true)
-	if st.Snapshot.LoggedIn {
+	if signedIn(st) {
 		row(rowLogout, ui.G.Icon.Logout, "Log out", ui.G.Next, nil, true)
 	}
 	return v
