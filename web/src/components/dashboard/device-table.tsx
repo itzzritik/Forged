@@ -1,8 +1,9 @@
 "use client";
 
-import { LaptopIcon, type LucideIcon, MonitorIcon, ServerIcon } from "lucide-react";
+import { CircleArrowUpIcon, LaptopIcon, type LucideIcon, MonitorIcon, ServerIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
-import { Badge } from "@/components/ui/badge";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import { type DataViewColumn, DataViewTable } from "./data-view";
 
 interface Device {
@@ -126,9 +127,20 @@ export const DeviceTable = () => {
 				cell: ({ row }) => {
 					const version = row.original.cli_version;
 					return (
-						<div className="min-w-0">
-							<p className="truncate font-mono text-sm">{version || "Unknown"}</p>
-							{needsUpdate(version, latest) && <p className="truncate text-warning text-xs">Update available</p>}
+						<div className="flex items-center gap-1.5">
+							<span className="font-mono text-sm">{version || "Unknown"}</span>
+							{needsUpdate(version, latest) && (
+								<Tooltip>
+									<TooltipTrigger
+										aria-label={`Update available: ${latest}`}
+										className="flex cursor-default text-warning"
+										render={<button type="button" />}
+									>
+										<CircleArrowUpIcon className="size-3.5" />
+									</TooltipTrigger>
+									<TooltipContent>Update available: {latest}</TooltipContent>
+								</Tooltip>
+							)}
 						</div>
 					);
 				},
@@ -140,20 +152,19 @@ export const DeviceTable = () => {
 			},
 			{
 				accessorKey: "last_seen_at",
-				header: "Status",
+				header: "Last Seen",
 				cell: ({ row }) => {
 					const active = isActive(row.original);
 					return (
-						<div className="flex flex-col items-start gap-1">
-							<Badge
-								className={active ? "border-success/20 bg-success/10 text-success hover:bg-success/10" : undefined}
-								variant={active ? "default" : "outline"}
-							>
-								<span className={active ? "size-1.5 rounded-full bg-success" : "size-1.5 rounded-full bg-muted-foreground"} />
-								{active ? "Active" : "Idle"}
-							</Badge>
-							<span className="text-muted-foreground text-xs">{relativeTime(row.original.last_seen_at)}</span>
-						</div>
+						<span className="flex items-center gap-2 text-sm" title={new Date(row.original.last_seen_at).toLocaleString()}>
+							<span className="relative flex size-2">
+								{active && <span className="absolute inline-flex size-full rounded-full bg-success opacity-60 motion-safe:animate-ping" />}
+								<span className={cn("relative inline-flex size-2 rounded-full", active ? "bg-success" : "bg-muted-foreground/50")} />
+							</span>
+							<span className={active ? "text-foreground" : "text-muted-foreground"}>
+								{active ? "Active now" : relativeTime(row.original.last_seen_at)}
+							</span>
+						</span>
 					);
 				},
 				meta: {
