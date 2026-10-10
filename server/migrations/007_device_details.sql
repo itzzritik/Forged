@@ -1,0 +1,4 @@
+ALTER TABLE devices
+    ADD COLUMN os_version TEXT NOT NULL DEFAULT '',
+    ADD COLUMN arch TEXT NOT NULL DEFAULT '',
+    ADD COLUMN cli_version TEXT NOT NULL DEFAULT '';

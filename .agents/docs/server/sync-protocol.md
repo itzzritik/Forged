@@ -18,7 +18,7 @@ Sync is encrypted-blob push/pull with optimistic locking. The server stores blob
 
 - The server never merges plaintext vault data.
 - Push sends `expected_version`; mismatch returns 409.
-- Push, pull and status upsert the caller's `devices` row from `X-Device-ID` (client UUID), `X-Device-Name` and `X-Device-Platform`; requests without a name (the browser) are not tracked, and a row owned by another user is never updated.
+- Push, pull and status upsert the caller's `devices` row from the `X-Device-*` and `X-Forged-Version` headers, keyed by `X-Device-ID` (client UUID). `X-Device-Name` is query-escaped (macOS names carry curly apostrophes). Requests without a name (the browser) are not tracked, and a row owned by another user is never updated.
 - The client rejects malformed, zero, or negative successful Push/Pull versions before sync state or vault work consumes them. Status requires `has_vault`; its version is positive only when a vault exists and omitted/zero otherwise.
 - Normal conflict handling is push -> pull -> three-way merge -> one retry push. Manual sync has a two-minute IPC budget for that bounded path; each remote call remains limited to 30 seconds.
 - First-link bootstrap merge is separate from normal three-way merge.

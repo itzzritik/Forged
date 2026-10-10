@@ -12,6 +12,9 @@ type Device struct {
 	Name            string    `json:"name"`
 	Platform        string    `json:"platform"`
 	Hostname        string    `json:"hostname,omitempty"`
+	OSVersion       string    `json:"os_version"`
+	Arch            string    `json:"arch"`
+	CLIVersion      string    `json:"cli_version"`
 	DevicePublicKey string    `json:"device_public_key"`
 	RegisteredAt    time.Time `json:"registered_at"`
 	LastSeenAt      time.Time `json:"last_seen_at"`
@@ -40,7 +43,8 @@ func (d *DB) CreateDevice(ctx context.Context, userID, name, platform, hostname,
 
 func (d *DB) ListDevices(ctx context.Context, userID string) ([]Device, error) {
 	rows, err := d.Pool.Query(ctx,
-		`SELECT id, user_id, name, platform, hostname, device_public_key, registered_at, last_seen_at, approved
+		`SELECT id, user_id, name, platform, hostname, os_version, arch, cli_version,
+		   device_public_key, registered_at, last_seen_at, approved
 		 FROM devices WHERE user_id = $1 ORDER BY registered_at`,
 		userID,
 	)
@@ -53,6 +57,7 @@ func (d *DB) ListDevices(ctx context.Context, userID string) ([]Device, error) {
 	for rows.Next() {
 		var dev Device
 		if err := rows.Scan(&dev.ID, &dev.UserID, &dev.Name, &dev.Platform, &dev.Hostname,
+			&dev.OSVersion, &dev.Arch, &dev.CLIVersion,
 			&dev.DevicePublicKey, &dev.RegisteredAt, &dev.LastSeenAt, &dev.Approved); err != nil {
 			return nil, err
 		}
@@ -89,14 +94,15 @@ func (d *DB) DeleteDevice(ctx context.Context, userID, deviceID string) error {
 	return nil
 }
 
-func (d *DB) TouchDevice(ctx context.Context, userID, deviceID, name, platform string) error {
+func (d *DB) TouchDevice(ctx context.Context, dev Device) error {
 	_, err := d.Pool.Exec(ctx,
-		`INSERT INTO devices (id, user_id, name, platform, hostname, device_public_key, approved)
-		 VALUES ($1, $2, $3, $4, $3, '', true)
+		`INSERT INTO devices (id, user_id, name, platform, hostname, os_version, arch, cli_version, device_public_key, approved)
+		 VALUES ($1, $2, $3, $4, $5, $6, $7, $8, '', true)
 		 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, platform = EXCLUDED.platform,
-		   hostname = EXCLUDED.hostname, last_seen_at = now()
+		   hostname = EXCLUDED.hostname, os_version = EXCLUDED.os_version, arch = EXCLUDED.arch,
+		   cli_version = EXCLUDED.cli_version, last_seen_at = now()
 		 WHERE devices.user_id = EXCLUDED.user_id`,
-		deviceID, userID, name, platform,
+		dev.ID, dev.UserID, dev.Name, dev.Platform, dev.Hostname, dev.OSVersion, dev.Arch, dev.CLIVersion,
 	)
 	if err != nil {
 		return fmt.Errorf("touching device: %w", err)

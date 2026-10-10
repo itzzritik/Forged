@@ -1,19 +1,33 @@
 package api
 
 import (
+	"cmp"
 	"encoding/base64"
 	"encoding/json"
 	"net/http"
+	"net/url"
 
+	"github.com/itzzritik/forged/server/internal/db"
 	"github.com/itzzritik/forged/server/internal/middleware"
 )
 
 func (s *Server) touchDevice(r *http.Request, userID string) {
-	id, name := r.Header.Get("X-Device-ID"), r.Header.Get("X-Device-Name")
-	if id == "" || name == "" {
+	h := r.Header
+	name, _ := url.QueryUnescape(h.Get("X-Device-Name"))
+	dev := db.Device{
+		ID:         h.Get("X-Device-ID"),
+		UserID:     userID,
+		Name:       name,
+		Hostname:   cmp.Or(h.Get("X-Device-Hostname"), name),
+		Platform:   h.Get("X-Device-Platform"),
+		OSVersion:  h.Get("X-Device-OS"),
+		Arch:       h.Get("X-Device-Arch"),
+		CLIVersion: h.Get("X-Forged-Version"),
+	}
+	if dev.ID == "" || dev.Name == "" {
 		return
 	}
-	if err := s.DB.TouchDevice(r.Context(), userID, id, name, r.Header.Get("X-Device-Platform")); err != nil && s.Logger != nil {
+	if err := s.DB.TouchDevice(r.Context(), dev); err != nil && s.Logger != nil {
 		s.Logger.Warn("device touch failed", "error", err)
 	}
 }

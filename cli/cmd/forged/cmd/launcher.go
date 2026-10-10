@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/actions"
+	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/picker"
@@ -126,7 +127,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 			_ = actions.AppendDiagnosticError(paths, event)
 		},
 		DefaultServer:     ipc.DefaultAPIServer,
-		AppVersion:        version,
+		AppVersion:        buildinfo.Version,
 		TerminalClipboard: clipboard.terminal,
 		CanCopy:           !clipboard.unavailable,
 		CanOpenLinks:      os.Getenv("BROWSER") != "" || !remote && (runtime.GOOS != "linux" || platform.HasDisplay()),

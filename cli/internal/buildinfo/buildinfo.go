@@ -5,7 +5,10 @@ import (
 	"strings"
 )
 
-var ID string
+var (
+	ID      string
+	Version = "dev"
+)
 
 func CurrentID() string {
 	if id := strings.TrimSpace(ID); id != "" {

@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"github.com/itzzritik/forged/cli/internal/actions"
+	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/spf13/cobra"
 )
@@ -14,8 +15,7 @@ var (
 	versionOutput bool
 	headlessMode  bool
 
-	version = "dev"
-	commit  = "none"
+	commit = "none"
 )
 
 var retiredCommandHints = map[string]string{
@@ -160,6 +160,6 @@ func rewriteCLIError(err error) error {
 }
 
 func printVersion(cmd *cobra.Command) error {
-	fmt.Fprintf(cmd.OutOrStdout(), "forged %s (%s)\n", version, commit)
+	fmt.Fprintf(cmd.OutOrStdout(), "forged %s (%s)\n", buildinfo.Version, commit)
 	return nil
 }

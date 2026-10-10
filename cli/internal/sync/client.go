@@ -9,8 +9,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
-	"runtime"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/vault"
@@ -73,14 +71,6 @@ func validateServerVersion(operation string, version int64) error {
 		return fmt.Errorf("Invalid %s response version %d", operation, version)
 	}
 	return nil
-}
-
-var deviceName, _ = os.Hostname()
-
-func (c *Client) setDeviceHeaders(req *http.Request) {
-	req.Header.Set("X-Device-ID", c.DeviceID)
-	req.Header.Set("X-Device-Name", deviceName)
-	req.Header.Set("X-Device-Platform", runtime.GOOS)
 }
 
 func NewClient(serverURL, token, deviceID string) *Client {
