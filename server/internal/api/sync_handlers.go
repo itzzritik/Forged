@@ -8,8 +8,19 @@ import (
 	"github.com/itzzritik/forged/server/internal/middleware"
 )
 
+func (s *Server) touchDevice(r *http.Request, userID string) {
+	id, name := r.Header.Get("X-Device-ID"), r.Header.Get("X-Device-Name")
+	if id == "" || name == "" {
+		return
+	}
+	if err := s.DB.TouchDevice(r.Context(), userID, id, name, r.Header.Get("X-Device-Platform")); err != nil && s.Logger != nil {
+		s.Logger.Warn("device touch failed", "error", err)
+	}
+}
+
 func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
+	s.touchDevice(r, userID)
 
 	var req struct {
 		Blob                  string          `json:"blob"`
@@ -44,6 +55,7 @@ func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSyncPull(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
+	s.touchDevice(r, userID)
 
 	vault, err := s.DB.GetVault(r.Context(), userID)
 	if err != nil {
@@ -70,6 +82,7 @@ func (s *Server) handleSyncPull(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	userID := middleware.GetUserID(r)
+	s.touchDevice(r, userID)
 
 	vault, err := s.DB.GetVault(r.Context(), userID)
 	if err != nil {

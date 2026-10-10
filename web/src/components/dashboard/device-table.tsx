@@ -6,7 +6,7 @@ import { type DataViewColumn, DataViewTable } from "./data-view";
 
 interface Device {
 	approved: boolean;
-	hostname: string;
+	hostname?: string;
 	id: string;
 	last_seen_at: string;
 	name: string;
@@ -32,7 +32,7 @@ export const DeviceTable = () => {
 	useEffect(() => {
 		fetch("/api/vault/devices")
 			.then((res) => res.json())
-			.then((data) => setDevices(Array.isArray(data) ? data : []))
+			.then((data) => setDevices(data.devices ?? []))
 			.finally(() => setLoading(false));
 	}, []);
 

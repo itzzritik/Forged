@@ -89,8 +89,19 @@ func (d *DB) DeleteDevice(ctx context.Context, userID, deviceID string) error {
 	return nil
 }
 
-func (d *DB) TouchDevice(ctx context.Context, deviceID string) {
-	d.Pool.Exec(ctx, `UPDATE devices SET last_seen_at = now() WHERE id = $1`, deviceID)
+func (d *DB) TouchDevice(ctx context.Context, userID, deviceID, name, platform string) error {
+	_, err := d.Pool.Exec(ctx,
+		`INSERT INTO devices (id, user_id, name, platform, hostname, device_public_key, approved)
+		 VALUES ($1, $2, $3, $4, $3, '', true)
+		 ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, platform = EXCLUDED.platform,
+		   hostname = EXCLUDED.hostname, last_seen_at = now()
+		 WHERE devices.user_id = EXCLUDED.user_id`,
+		deviceID, userID, name, platform,
+	)
+	if err != nil {
+		return fmt.Errorf("touching device: %w", err)
+	}
+	return nil
 }
 
 func (d *DB) AuditLog(ctx context.Context, userID, deviceID, action, ip string) {

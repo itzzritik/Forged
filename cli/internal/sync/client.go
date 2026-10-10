@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"runtime"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/vault"
@@ -71,6 +73,14 @@ func validateServerVersion(operation string, version int64) error {
 		return fmt.Errorf("Invalid %s response version %d", operation, version)
 	}
 	return nil
+}
+
+var deviceName, _ = os.Hostname()
+
+func (c *Client) setDeviceHeaders(req *http.Request) {
+	req.Header.Set("X-Device-ID", c.DeviceID)
+	req.Header.Set("X-Device-Name", deviceName)
+	req.Header.Set("X-Device-Platform", runtime.GOOS)
 }
 
 func NewClient(serverURL, token, deviceID string) *Client {
@@ -149,6 +159,7 @@ func (c *Client) PushContext(ctx context.Context, blob []byte, kdf vault.KDFPara
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
+	c.setDeviceHeaders(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -225,7 +236,7 @@ func (c *Client) PullContext(ctx context.Context) (PullResult, error) {
 		return PullResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
-	req.Header.Set("X-Device-ID", c.DeviceID)
+	c.setDeviceHeaders(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
@@ -289,6 +300,7 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 		return StatusResult{}, err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
+	c.setDeviceHeaders(req)
 
 	resp, err := c.HTTPClient.Do(req)
 	if err != nil {
