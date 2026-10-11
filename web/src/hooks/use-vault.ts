@@ -10,7 +10,9 @@ import {
 	decryptProtectedKey,
 	deriveStretchedKey,
 	encryptBlob,
+	generateKDFParams,
 	type KDFParams,
+	rekeyProtectedKey,
 	type VaultData,
 	vaultDataFromRaw,
 } from "@/lib/vault-crypto";
@@ -38,10 +40,12 @@ export interface UseVaultReturn {
 	lock: () => Promise<void>;
 	protectedKey: string | null;
 	pushVault: (updatedData: VaultData) => Promise<void>;
+	rekey: (current: string, next: string) => Promise<void>;
 	status: VaultStatus;
 	symmetricKeyRef: React.RefObject<CryptoKey | null>;
 	unlock: (password: string) => Promise<void>;
 	vaultData: VaultData | null;
+	verifyPassword: (password: string) => Promise<boolean>;
 	version: number;
 }
 
@@ -229,22 +233,26 @@ export const useVault = (): UseVaultReturn => {
 
 			const pushRaw = async (raw: string, expectedVersion: number) => {
 				const blob = await encryptBlob(key, raw);
-				const b64 = btoa(String.fromCharCode(...blob));
+				let binary = "";
+				// Chunked: spreading a whole vault into fromCharCode overflows the call stack.
+				for (let i = 0; i < blob.length; i += 0x80_00) binary += String.fromCharCode(...blob.subarray(i, i + 0x80_00));
 
-				return fetch("/api/vault/push", {
+				const res = await fetch("/api/vault/push", {
 					method: "POST",
 					headers: {
 						"Content-Type": "application/json",
 						"X-Device-ID": deviceId,
 					},
 					body: JSON.stringify({
-						blob: b64,
+						blob: btoa(binary),
 						kdf_params: kdfParams,
 						protected_symmetric_key: protectedKey,
 						expected_version: expectedVersion,
 						device_id: deviceId,
 					}),
 				});
+				if (res.status === 401) throw new Error("401");
+				return res;
 			};
 
 			const res = await pushRaw(updatedData.raw, version);
@@ -287,6 +295,47 @@ export const useVault = (): UseVaultReturn => {
 		setStatus("locked");
 	}, []);
 
+	const verifyPassword = useCallback(
+		async (password: string) => {
+			if (!(kdfParams && protectedKey)) return false;
+			await deriveStretchedKey(password, kdfParams);
+			try {
+				await decryptProtectedKey(protectedKey);
+				return true;
+			} catch {
+				return false;
+			}
+		},
+		[kdfParams, protectedKey]
+	);
+
+	const rekey = useCallback(
+		async (current: string, next: string) => {
+			if (!(kdfParams && protectedKey)) throw new Error("Your vault is still loading. Try again in a moment.");
+			const nextKdf = generateKDFParams();
+			let nextProtected: string;
+			try {
+				nextProtected = await rekeyProtectedKey(current, kdfParams, protectedKey, next, nextKdf);
+			} catch (cause) {
+				throw new Error("WRONG_PASSWORD", { cause });
+			}
+			const res = await fetch("/api/vault/rekey", {
+				body: JSON.stringify({ kdf_params: nextKdf, protected_symmetric_key: nextProtected }),
+				headers: { "Content-Type": "application/json" },
+				method: "POST",
+			});
+			if (res.status === 401) {
+				router.push("/login");
+				throw new Error("Your session ended. Sign in again.");
+			}
+			if (!res.ok) throw new Error(`Couldn't save the new password (${res.status}). Nothing changed.`);
+			// Later pushes send these, so they must follow the new wrapping or the old password comes back.
+			setKdfParams(nextKdf);
+			setProtectedKey(nextProtected);
+		},
+		[kdfParams, protectedKey, router]
+	);
+
 	return {
 		deviceId: deviceIdRef.current,
 		status,
@@ -299,5 +348,7 @@ export const useVault = (): UseVaultReturn => {
 		unlock,
 		lock,
 		pushVault,
+		rekey,
+		verifyPassword,
 	};
 };

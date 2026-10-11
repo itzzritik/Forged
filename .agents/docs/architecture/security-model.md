@@ -8,7 +8,7 @@ applies_to:
   - web/src/workers/**
   - server/internal/api/vault_handlers.go
   - server/migrations/**
-last_verified: 2026-07-15
+last_verified: 2026-10-11
 stable: partial
 ---
 
@@ -35,7 +35,7 @@ Forged is zero-knowledge. The server stores the encrypted vault blob, KDF params
 - Operational SSH signing accepts RSA, ECDSA, and Ed25519 only. Legacy DSA data remains recoverable in the encrypted vault but cannot sign or route.
 - Local vault files and remote restore metadata are rejected before Argon2id derivation when their KDF costs are invalid or resource-exhausting.
 - SSH auto-routing writes public hint files and short-lived route snippets only. Learned route proofs and route tombstones stay inside the encrypted vault. Provider probes use strict host-key checking and never treat `ssh -T` account auth as repo proof.
-- Export and change-password stay master-password-only.
+- Export and change-password stay master-password-only. On the web dashboard, export and private-key reveal re-verify the password every time.
 - `proto/vault-format.md` still lags the shipped AEAD details. Trust the vault code, not the proto doc, for current crypto constants.
 
 ## Decisions

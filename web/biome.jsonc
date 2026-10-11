@@ -120,12 +120,13 @@
 			}
 		},
 		{
-			"includes": ["src/components/ui/input-group.tsx"],
+			// ARIA grid: focus stays on the container (aria-activedescendant), so rows and cells only carry roles.
+			"includes": ["src/components/shell/kit/data-table.tsx"],
 			"linter": {
 				"rules": {
 					"a11y": {
-						"useSemanticElements": "off",
-						"noNoninteractiveElementInteractions": "off"
+						"useFocusableInteractive": "off",
+						"useSemanticElements": "off"
 					}
 				}
 			}

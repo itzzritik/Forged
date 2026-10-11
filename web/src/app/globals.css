@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 @import "shadcn/tailwind.css";
+@import "../components/shell/shell.css";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -42,83 +43,8 @@
 	--input: #e4e4e7;
 	--ring: #ea580c;
 
-	/* Charts */
-	--chart-1: #ea580c;
-	--chart-2: #71717a;
-	--chart-3: #a1a1aa;
-	--chart-4: #d4d4d8;
-	--chart-5: #e4e4e7;
-
-	/* Sidebar */
-	--sidebar: #fafafa;
-	--sidebar-foreground: #09090b;
-	--sidebar-primary: #ea580c;
-	--sidebar-primary-foreground: #ffffff;
-	--sidebar-accent: #f4f4f5;
-	--sidebar-accent-foreground: #18181b;
-	--sidebar-border: #e4e4e7;
-	--sidebar-ring: #ea580c;
-
 	/* Extended tokens */
-	--surface: #fafafa;
-	--surface-hover: #f4f4f5;
-	--surface-inset: #f0f0f2;
-	--text-subtle: #a1a1aa;
-	--brand-glow: rgba(234, 88, 12, 0.12);
 	--brand-glow-strong: rgba(234, 88, 12, 0.25);
-
-	/* Modal & command surfaces */
-	--modal-shell: var(--card);
-	--modal-shell-border: var(--border);
-	--modal-titlebar-height: 38px;
-	--modal-titlebar: var(--surface-inset);
-	--modal-titlebar-border: var(--border);
-	--modal-traffic-close: var(--destructive);
-	--modal-traffic-close-soft: color-mix(
-		in srgb,
-		var(--destructive) 12%,
-		transparent
-	);
-	--modal-traffic-close-glow: color-mix(
-		in srgb,
-		var(--destructive) 32%,
-		transparent
-	);
-	--modal-traffic-close-icon: rgba(55, 21, 24, 0.92);
-	--modal-traffic-warning: var(--warning);
-	--modal-traffic-warning-soft: color-mix(
-		in srgb,
-		var(--warning) 12%,
-		transparent
-	);
-	--modal-traffic-success: var(--success);
-	--modal-traffic-success-soft: color-mix(
-		in srgb,
-		var(--success) 12%,
-		transparent
-	);
-
-	--command-shell: var(--card);
-	--command-shell-border: var(--border);
-	--command-input: var(--surface-inset);
-	--command-item-hover: var(--surface-hover);
-	--command-item-selected: var(--brand-glow);
-	--command-shortcut: var(--muted-foreground);
-
-	--data-view-shell: var(--card);
-	--data-view-border: var(--border);
-	--data-view-sticky: var(--surface-inset);
-	--key-details-surface: color-mix(
-		in srgb,
-		var(--surface-inset) 82%,
-		var(--card) 18%
-	);
-	--key-details-surface-strong: color-mix(
-		in srgb,
-		var(--surface) 86%,
-		var(--foreground) 14%
-	);
-	--key-details-border: var(--border);
 }
 
 /* ------------------------------------------------------------------ */
@@ -157,83 +83,8 @@
 	--input: #27272a;
 	--ring: #ea580c;
 
-	/* Charts */
-	--chart-1: #ea580c;
-	--chart-2: #a1a1aa;
-	--chart-3: #52525b;
-	--chart-4: #3f3f46;
-	--chart-5: #27272a;
-
-	/* Sidebar */
-	--sidebar: #050505;
-	--sidebar-foreground: #fafafa;
-	--sidebar-primary: #ea580c;
-	--sidebar-primary-foreground: #000000;
-	--sidebar-accent: #18181b;
-	--sidebar-accent-foreground: #fafafa;
-	--sidebar-border: #1a1a1a;
-	--sidebar-ring: #ea580c;
-
 	/* Extended tokens */
-	--surface: #09090b;
-	--surface-hover: #18181b;
-	--surface-inset: #0a0a0a;
-	--text-subtle: #52525b;
-	--brand-glow: rgba(234, 88, 12, 0.08);
 	--brand-glow-strong: rgba(234, 88, 12, 0.3);
-
-	/* Modal & command surfaces */
-	--modal-shell: var(--card);
-	--modal-shell-border: var(--border);
-	--modal-titlebar-height: 38px;
-	--modal-titlebar: var(--surface-inset);
-	--modal-titlebar-border: var(--border);
-	--modal-traffic-close: var(--destructive);
-	--modal-traffic-close-soft: color-mix(
-		in srgb,
-		var(--destructive) 12%,
-		transparent
-	);
-	--modal-traffic-close-glow: color-mix(
-		in srgb,
-		var(--destructive) 36%,
-		transparent
-	);
-	--modal-traffic-close-icon: rgba(52, 18, 21, 0.94);
-	--modal-traffic-warning: var(--warning);
-	--modal-traffic-warning-soft: color-mix(
-		in srgb,
-		var(--warning) 12%,
-		transparent
-	);
-	--modal-traffic-success: var(--success);
-	--modal-traffic-success-soft: color-mix(
-		in srgb,
-		var(--success) 12%,
-		transparent
-	);
-
-	--command-shell: var(--card);
-	--command-shell-border: var(--border);
-	--command-input: var(--surface-inset);
-	--command-item-hover: var(--surface-hover);
-	--command-item-selected: var(--brand-glow);
-	--command-shortcut: var(--muted-foreground);
-
-	--data-view-shell: var(--card);
-	--data-view-border: var(--border);
-	--data-view-sticky: var(--surface-inset);
-	--key-details-surface: color-mix(
-		in srgb,
-		var(--surface-inset) 90%,
-		var(--card) 10%
-	);
-	--key-details-surface-strong: color-mix(
-		in srgb,
-		var(--surface) 82%,
-		var(--foreground) 18%
-	);
-	--key-details-border: var(--border);
 }
 
 /* ------------------------------------------------------------------ */
@@ -271,55 +122,6 @@
 	--color-info: var(--info);
 	--color-warning: var(--warning);
 
-	/* Extended */
-	--color-surface: var(--surface);
-	--color-surface-hover: var(--surface-hover);
-	--color-surface-inset: var(--surface-inset);
-	--color-text-subtle: var(--text-subtle);
-	--color-brand-glow: var(--brand-glow);
-	--color-brand-glow-strong: var(--brand-glow-strong);
-	--color-modal-shell: var(--modal-shell);
-	--color-modal-shell-border: var(--modal-shell-border);
-	--color-modal-titlebar: var(--modal-titlebar);
-	--color-modal-titlebar-border: var(--modal-titlebar-border);
-	--color-modal-traffic-close: var(--modal-traffic-close);
-	--color-modal-traffic-close-soft: var(--modal-traffic-close-soft);
-	--color-modal-traffic-close-glow: var(--modal-traffic-close-glow);
-	--color-modal-traffic-close-icon: var(--modal-traffic-close-icon);
-	--color-modal-traffic-warning: var(--modal-traffic-warning);
-	--color-modal-traffic-warning-soft: var(--modal-traffic-warning-soft);
-	--color-modal-traffic-success: var(--modal-traffic-success);
-	--color-modal-traffic-success-soft: var(--modal-traffic-success-soft);
-	--color-command-shell: var(--command-shell);
-	--color-command-shell-border: var(--command-shell-border);
-	--color-command-input: var(--command-input);
-	--color-command-item-hover: var(--command-item-hover);
-	--color-command-item-selected: var(--command-item-selected);
-	--color-command-shortcut: var(--command-shortcut);
-	--color-data-view-shell: var(--data-view-shell);
-	--color-data-view-border: var(--data-view-border);
-	--color-data-view-sticky: var(--data-view-sticky);
-	--color-key-details-surface: var(--key-details-surface);
-	--color-key-details-surface-strong: var(--key-details-surface-strong);
-	--color-key-details-border: var(--key-details-border);
-
-	/* Charts */
-	--color-chart-1: var(--chart-1);
-	--color-chart-2: var(--chart-2);
-	--color-chart-3: var(--chart-3);
-	--color-chart-4: var(--chart-4);
-	--color-chart-5: var(--chart-5);
-
-	/* Sidebar */
-	--color-sidebar: var(--sidebar);
-	--color-sidebar-foreground: var(--sidebar-foreground);
-	--color-sidebar-primary: var(--sidebar-primary);
-	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-	--color-sidebar-accent: var(--sidebar-accent);
-	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-	--color-sidebar-border: var(--sidebar-border);
-	--color-sidebar-ring: var(--sidebar-ring);
-
 	/* Radius */
 	--radius-sm: calc(var(--radius) * 0.6);
 	--radius-md: calc(var(--radius) * 0.8);
@@ -348,55 +150,6 @@
 
 body {
 	overflow-x: hidden;
-}
-
-@layer components {
-	.modal-window-controls:has(.modal-close-control:hover)
-		.modal-traffic-secondary-warning,
-	.modal-window-controls:has(.modal-close-control:focus-visible)
-		.modal-traffic-secondary-warning {
-		background-color: var(--modal-traffic-warning);
-		border-color: color-mix(
-			in srgb,
-			var(--modal-traffic-warning) 25%,
-			transparent
-		);
-	}
-
-	.modal-window-controls:has(.modal-close-control:hover)
-		.modal-traffic-secondary-success,
-	.modal-window-controls:has(.modal-close-control:focus-visible)
-		.modal-traffic-secondary-success {
-		background-color: var(--modal-traffic-success);
-		border-color: color-mix(
-			in srgb,
-			var(--modal-traffic-success) 25%,
-			transparent
-		);
-	}
-}
-
-/* ------------------------------------------------------------------ */
-/* Patterns & textures                                                */
-/* ------------------------------------------------------------------ */
-
-.dot-grid {
-	background-image: radial-gradient(
-		circle,
-		var(--border) 1px,
-		transparent 1px
-	);
-	background-size: 24px 24px;
-}
-
-.mesh-texture {
-	background-image: repeating-linear-gradient(
-		45deg,
-		var(--brand-glow) 0,
-		var(--brand-glow) 1px,
-		transparent 1px,
-		transparent 10px
-	);
 }
 
 /* ------------------------------------------------------------------ */
@@ -441,38 +194,6 @@ body {
 	}
 }
 
-@keyframes fade-in {
-	from {
-		opacity: 0;
-	}
-	to {
-		opacity: 1;
-	}
-}
-
-@keyframes blink {
-	0%,
-	49% {
-		opacity: 1;
-	}
-	50%,
-	100% {
-		opacity: 0;
-	}
-}
-
-@keyframes glow-pulse {
-	0%,
-	100% {
-		box-shadow: 0 0 15px var(--brand-glow);
-		border-color: var(--brand-glow-strong);
-	}
-	50% {
-		box-shadow: 0 0 30px var(--brand-glow-strong);
-		border-color: var(--primary);
-	}
-}
-
 /* ------------------------------------------------------------------ */
 /* Animation classes                                                  */
 /* ------------------------------------------------------------------ */
@@ -480,15 +201,6 @@ body {
 .animate-slide-up {
 	opacity: 0;
 	animation: slide-up 0.8s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-}
-
-.animate-fade-in {
-	opacity: 0;
-	animation: fade-in 1s ease-out forwards;
-}
-
-.animate-blink {
-	animation: blink 1s step-end infinite;
 }
 
 /* Animation Delays */
@@ -500,19 +212,4 @@ body {
 }
 .delay-300 {
 	animation-delay: 300ms;
-}
-.delay-400 {
-	animation-delay: 400ms;
-}
-.delay-500 {
-	animation-delay: 500ms;
-}
-.delay-600 {
-	animation-delay: 600ms;
-}
-.delay-700 {
-	animation-delay: 700ms;
-}
-.delay-800 {
-	animation-delay: 800ms;
 }

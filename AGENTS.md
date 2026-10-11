@@ -70,7 +70,7 @@ Before editing files under a path below, read the listed docs. Load nothing else
 | `server/internal/db/**`, migrations | `.agents/docs/server/db-schema.md` |
 | `server/**/sync*`, `cli/internal/sync/**` | `.agents/docs/server/sync-protocol.md`, `.agents/docs/cli/ipc.md` |
 | `web/src/app/(login\|auth\|api/auth)/**` | `.agents/docs/web/auth-flow.md` |
-| `web/src/app/dashboard/**` | `.agents/docs/web/dashboard.md` |
+| `web/src/app/dashboard/**`, `web/src/components/shell/**` | `.agents/docs/web/dashboard.md` |
 | `.goreleaser.yml`, `.github/workflows/**` | `.agents/docs/ops/release.md` |
 | Big-picture / new subsystem | `.agents/docs/architecture/overview.md` |
 
