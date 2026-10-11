@@ -861,15 +861,15 @@
 		.account-layout {
 			grid-template-columns: repeat(2, minmax(0, 1fr));
 		}
-		.account-layout > [data-tone="danger"] {
+		.account-wide {
 			grid-column: 1 / -1;
 		}
 	}
 	.setting {
 		display: flex;
-		gap: 16px;
+		gap: 14px;
 		align-items: center;
-		padding: 10px 18px;
+		padding: 12px 18px;
 		border-top: 1px solid var(--rule);
 	}
 	.setting:first-of-type {
@@ -883,6 +883,145 @@
 		display: block;
 		font-size: 12px;
 		color: var(--muted-foreground);
+	}
+	.setting-icon {
+		display: grid;
+		flex-shrink: 0;
+		place-items: center;
+		width: 30px;
+		height: 30px;
+		color: var(--muted-foreground);
+		background: var(--raise);
+		border-radius: 8px;
+	}
+	.setting-icon svg {
+		width: 15px;
+		height: 15px;
+	}
+	.panel[data-tone="danger"] .setting-icon {
+		color: var(--destructive);
+		background: color-mix(in srgb, var(--destructive) 12%, transparent);
+	}
+	.identity {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 18px 28px;
+		align-items: center;
+		justify-content: space-between;
+		padding: 8px 18px 14px;
+	}
+	.identity-who {
+		display: flex;
+		flex: 1 1 260px;
+		gap: 14px;
+		align-items: center;
+		min-width: 0;
+	}
+	.identity-tile {
+		display: grid;
+		flex-shrink: 0;
+		place-items: center;
+		width: 52px;
+		height: 52px;
+		font: 750 19px / 1 var(--font-sans);
+		color: var(--primary-foreground);
+		letter-spacing: -0.02em;
+		background: var(--primary);
+		border-radius: 12px;
+	}
+	/* Plays only in the unlock entrance, beside the wordmark's pass; its end frame is the flat tile. */
+	[data-boot] .identity-tile {
+		background:
+			linear-gradient(
+				90deg,
+				var(--primary) 0 38%,
+				var(--gold) 46%,
+				var(--white-hot) 52%,
+				transparent 58%
+			)
+			0 0 / 300% 100%;
+		animation: tile-pass 1000ms cubic-bezier(0.4, 0, 0.2, 1) 250ms backwards;
+	}
+	.identity-name {
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font: 600 19px / 1.25 var(--font-sans);
+		letter-spacing: -0.01em;
+		white-space: nowrap;
+	}
+	.identity-email {
+		margin-top: 3px;
+		overflow: hidden;
+		text-overflow: ellipsis;
+		font: 12.5px var(--font-mono);
+		color: var(--muted-foreground);
+		white-space: nowrap;
+	}
+	.stats {
+		display: grid;
+		grid-auto-columns: minmax(0, auto);
+		grid-auto-flow: column;
+	}
+	.stat {
+		display: grid;
+		gap: 3px;
+		min-width: 108px;
+		padding: 3px 22px;
+		outline: none;
+		border-left: 1px solid var(--rule);
+	}
+	.stat:focus-visible {
+		border-radius: 4px;
+		box-shadow: 0 0 0 2px var(--ring);
+	}
+	.stat-value {
+		font: 500 20px / 1.2 var(--font-sans);
+		font-variant-numeric: tabular-nums;
+		color: var(--foreground);
+		transition: color 160ms;
+	}
+	a.stat:hover .stat-value {
+		color: var(--primary);
+	}
+	.stat-label {
+		font: 12px var(--font-mono);
+		color: var(--muted-foreground);
+	}
+	.account-spec {
+		grid-template-columns: 124px minmax(0, 1fr);
+		row-gap: 10px;
+		padding-top: 8px;
+	}
+	@media (max-width: 767px) {
+		.stats {
+			grid-auto-columns: minmax(0, 1fr);
+			width: 100%;
+		}
+		.stat {
+			min-width: 0;
+			padding: 3px 12px;
+		}
+		.stat:first-child {
+			padding-left: 0;
+			border-left: 0;
+		}
+	}
+}
+
+@keyframes tile-pass {
+	from {
+		color: transparent;
+		background-position: 100% 0;
+	}
+	22% {
+		color: transparent;
+		box-shadow: none;
+	}
+	40% {
+		box-shadow: 0 0 22px -2px rgb(var(--glow) / 0.55);
+	}
+	48% {
+		color: var(--primary-foreground);
 	}
 }
 
