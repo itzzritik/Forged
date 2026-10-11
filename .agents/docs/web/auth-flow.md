@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - server/api.md
   - architecture/security-model.md
-last_verified: 2026-04-23
+last_verified: 2026-10-11
 stable: partial
 ---
 
@@ -26,6 +26,9 @@ Web login and CLI-assisted login both finish through `/api/auth/callback` and on
   - user summary
 - `forged_logged_in` is only a UI hint.
 - API proxy paths can refresh access on demand and rewrite the cookie with rotated session state.
+- Parallel proxy requests share one refresh per refresh token (30 s, per server process). The API revokes the whole session family when a refresh token is used twice.
+- Any 401 from `proxyToAPI` (no session, rejected refresh, upstream 401) also clears `forged_session` and `forged_logged_in`; otherwise `proxy.ts` sends `/login` straight back to `/dashboard` in a loop.
+- A refresh that fails with 5xx or a network error is transient: it surfaces as a 500, never as a sign-out.
 - Logout now revokes the refresh-backed server session best-effort before clearing cookies.
 - `/login?code=...` must stay reachable even when the user is already logged in.
 - No password-derived material belongs in the browser session cookie.

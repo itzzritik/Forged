@@ -1,13 +1,18 @@
 import { NextResponse } from "next/server";
-import { getAccessTokenForRequest, setSessionCookieOnResponse } from "@/lib/auth";
+import { COOKIE_NAME, getAccessTokenForRequest, setSessionCookieOnResponse } from "@/lib/auth";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
 
+// A dead session must drop its cookies, or /login sends the browser straight back to the dashboard.
+function signedOut(response: NextResponse) {
+	response.cookies.delete(COOKIE_NAME);
+	response.cookies.delete("forged_logged_in");
+	return response;
+}
+
 export async function proxyToAPI(method: string, path: string, body?: string, extraHeaders: Record<string, string> = {}): Promise<NextResponse> {
 	const { token, refreshed } = await getAccessTokenForRequest();
-	if (!token) {
-		return NextResponse.json({ error: "unauthorized" }, { status: 401 });
-	}
+	if (!token) return signedOut(NextResponse.json({ error: "unauthorized" }, { status: 401 }));
 
 	const headers: Record<string, string> = {
 		Authorization: `Bearer ${token}`,
@@ -29,8 +34,7 @@ export async function proxyToAPI(method: string, path: string, body?: string, ex
 			"Cache-Control": "no-store",
 		},
 	});
-	if (refreshed) {
-		await setSessionCookieOnResponse(next, refreshed);
-	}
+	if (resp.status === 401) return signedOut(next);
+	if (refreshed) await setSessionCookieOnResponse(next, refreshed);
 	return next;
 }

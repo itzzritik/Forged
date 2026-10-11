@@ -4,6 +4,18 @@ import type { NextResponse } from "next/server";
 export const COOKIE_NAME = "forged_session";
 const THIRTY_DAYS = 60 * 60 * 24 * 30;
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://localhost:8080";
+const EXPIRY_MARGIN_MS = 30_000;
+const REFRESH_SHARE_MS = 30_000;
+
+interface PendingRefresh {
+	at: number;
+	result: Promise<AuthSession | null>;
+}
+
+// On globalThis so every route bundle in this process shares one map.
+const shared = globalThis as typeof globalThis & { forgedRefreshes?: Map<string, PendingRefresh> };
+shared.forgedRefreshes ??= new Map();
+const refreshes = shared.forgedRefreshes;
 
 export interface SessionUser {
 	email: string;
@@ -182,9 +194,8 @@ export async function refreshSession(session: AuthSession): Promise<AuthSession 
 		body: JSON.stringify({ refresh_token: session.refreshToken }),
 		cache: "no-store",
 	});
-	if (!resp.ok) {
-		return null;
-	}
+	if (resp.status >= 500) throw new Error(`Refreshing the session: the server answered ${resp.status}`);
+	if (!resp.ok) return null;
 
 	const data = await resp.json();
 	if (
@@ -209,15 +220,29 @@ export async function refreshSession(session: AuthSession): Promise<AuthSession 
 	};
 }
 
+// Parallel requests carry the same expired token, and the server revokes the whole session when a refresh token is used twice.
+function sharedRefresh(session: AuthSession): Promise<AuthSession | null> {
+	const now = Date.now();
+	for (const [token, entry] of refreshes) {
+		if (now - entry.at > REFRESH_SHARE_MS) refreshes.delete(token);
+	}
+	const pending = refreshes.get(session.refreshToken);
+	if (pending) return pending.result;
+	const result = refreshSession(session);
+	refreshes.set(session.refreshToken, { at: now, result });
+	result.catch(() => refreshes.delete(session.refreshToken));
+	return result;
+}
+
 export async function getAccessTokenForRequest(): Promise<{ token: string | null; session: AuthSession | null; refreshed: AuthSession | null }> {
 	const session = await getSession();
 	if (!session) {
 		return { token: null, session: null, refreshed: null };
 	}
-	if (!accessExpired(session)) {
+	if (!accessExpired(session, Date.now() + EXPIRY_MARGIN_MS)) {
 		return { token: session.accessToken, session, refreshed: null };
 	}
-	const refreshed = await refreshSession(session);
+	const refreshed = await sharedRefresh(session);
 	if (!refreshed) {
 		return { token: null, session, refreshed: null };
 	}
