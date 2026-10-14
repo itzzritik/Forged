@@ -67,6 +67,7 @@ type Snapshot struct {
 	ManagedSSHIntegration bool
 	ManagedConfigReady    bool
 	IdentityAgentOwner    config.SSHAgentOwner
+	SSHOverriddenHosts    []string
 	GitSSH                config.GitSSHStatus
 	GitSigningStale       bool
 	Linger                daemon.LingerState

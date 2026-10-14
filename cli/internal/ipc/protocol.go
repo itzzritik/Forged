@@ -70,6 +70,11 @@ func WriteMessage(conn net.Conn, v any, limit int) error {
 	return nil
 }
 
+// Large messages share two slots, so many stalled or flooding peers cannot each pin up to the frame limit.
+var largeReads = make(chan struct{}, 2)
+
+const largeReadBytes = 1 << 20
+
 func ReadMessage(conn net.Conn, v any, limit uint32) error {
 	var length uint32
 	if err := binary.Read(conn, binary.BigEndian, &length); err != nil {
@@ -83,6 +88,10 @@ func ReadMessage(conn net.Conn, v any, limit uint32) error {
 		return fmt.Errorf("Message too large (%d bytes; limit %d bytes)", length, limit)
 	}
 
+	if length > largeReadBytes {
+		largeReads <- struct{}{}
+		defer func() { <-largeReads }()
+	}
 	buf := make([]byte, length)
 	defer clear(buf)
 	if _, err := io.ReadFull(conn, buf); err != nil {

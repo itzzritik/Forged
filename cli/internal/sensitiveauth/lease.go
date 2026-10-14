@@ -33,7 +33,7 @@ func (s *leaseState) CanView(now time.Time) bool {
 	defer s.mu.Unlock()
 
 	s.pruneLocked(now)
-	return !s.activeUntil.IsZero() && now.Before(s.activeUntil)
+	return sessionLive(s.activeUntil, now)
 }
 
 func (s *leaseState) GrantView(now time.Time) {
@@ -49,16 +49,21 @@ func (s *leaseState) IsUnlocked(now time.Time) bool {
 	defer s.mu.Unlock()
 
 	s.pruneLocked(now)
-	return !s.activeUntil.IsZero() && now.Before(s.activeUntil)
+	return sessionLive(s.activeUntil, now)
 }
 
 func (s *leaseState) IsExpired(now time.Time) bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	expired := !s.activeUntil.IsZero() && !now.Before(s.activeUntil)
+	expired := !s.activeUntil.IsZero() && !sessionLive(s.activeUntil, now)
 	s.pruneLocked(now)
 	return expired
+}
+
+// The monotonic clock stops during system sleep, so wall time also ends a session whose sleep event was missed.
+func sessionLive(until, now time.Time) bool {
+	return !until.IsZero() && now.Before(until) && now.Round(0).Before(until.Round(0))
 }
 
 func (s *leaseState) IssueExportToken(now time.Time) string {

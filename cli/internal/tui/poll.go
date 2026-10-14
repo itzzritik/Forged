@@ -224,9 +224,27 @@ func (a *app) status(msg core.StatusMsg) (tea.Cmd, bool) {
 		if msg.Err == nil && (synced || wasPending && !st.SyncPending()) {
 			cmds = append(cmds, a.invalidateSigning())
 		}
+		if msg.Err == nil && a.keysStale(synced) {
+			cmds = append(cmds, a.loadKeys(false))
+		}
 	}
 	a.recount()
 	return tea.Batch(cmds...), false
+}
+
+// keysStale reports a key list left behind by a sync, another terminal, or a failed load. Only
+// the non-sync cases are rate-limited, since they repeat until the daemon answers.
+func (a *app) keysStale(synced bool) bool {
+	st := a.st
+	if !st.Status.Unlocked || st.Locked {
+		return false
+	}
+	behind := st.KeysErr != "" || st.KeysLoaded && st.Status.KeyCount >= 0 && st.Status.KeyCount != len(st.Keys)
+	if !synced && (!behind || time.Now().Before(a.life.keysRetryAt)) {
+		return false
+	}
+	a.life.keysRetryAt = time.Now().Add(5 * time.Second)
+	return true
 }
 
 func (a *app) snapshot(msg core.SnapshotMsg) (tea.Cmd, bool) {
@@ -247,7 +265,7 @@ func (a *app) snapshot(msg core.SnapshotMsg) (tea.Cmd, bool) {
 		st.Health = core.HealthBad
 		cmd = a.notify("Health check failed: "+st.Reporter.Report("app", "snapshot.refresh", msg.Err), ui.ToneBad)
 	} else {
-		wasRecovery := st.Recovery()
+		wasRecovery, hadVault := st.Recovery(), st.Snapshot.VaultExists
 		st.Snapshot, st.Health = msg.Result.Snapshot, core.HealthOK
 		if ready(st.Snapshot) {
 			st.RepairErr = ""
@@ -257,6 +275,10 @@ func (a *app) snapshot(msg core.SnapshotMsg) (tea.Cmd, bool) {
 			cmd = a.enterRecovery()
 		case !rec && wasRecovery:
 			cmd = a.exitRecovery()
+		}
+		// A snapshot without the vault ends the status poll; nothing else restarts it on the dashboard.
+		if !hadVault && st.Snapshot.VaultExists && !st.Recovery() {
+			cmd = tea.Batch(cmd, a.pollStatus(0))
 		}
 	}
 	a.recount()

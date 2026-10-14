@@ -113,7 +113,7 @@ func withLocalEnrollmentLock(paths config.Paths, fn func() error) error {
 		return fmt.Errorf("opening local enrollment lock: %w", err)
 	}
 	defer lock.Close()
-	if err := platform.LockFileWait(lock); err != nil {
+	if err := platform.LockFileWithin(lock, 5*time.Second); err != nil {
 		return fmt.Errorf("locking local enrollment: %w", err)
 	}
 	defer platform.UnlockFile(lock)

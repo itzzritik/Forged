@@ -58,6 +58,18 @@ func (ks *KeyStore) ResolveName(input string) (string, error) {
 	ks.vault.mu.RLock()
 	defer ks.vault.mu.RUnlock()
 
+	// Stored names come back verbatim from the key list, so a unique byte-exact name resolves even
+	// when it normalizes to empty or to another key's name ("a  b" and "a b").
+	exact := 0
+	for _, key := range ks.vault.data.Keys {
+		if key.Name == input {
+			exact++
+		}
+	}
+	if exact == 1 {
+		return input, nil
+	}
+
 	normalized := normalizeKeyName(input)
 	if normalized == "" {
 		return "", &KeyNameResolveError{Query: input}
@@ -72,6 +84,12 @@ func (ks *KeyStore) ResolveName(input string) (string, error) {
 			More:        more,
 			Ambiguous:   false,
 		}
+	}
+
+	// Only an exact name may act on a key, so a stale name never lands on a different one.
+	if matches[0].kind != nameMatchExact {
+		suggestions, more := cappedSuggestions(matches)
+		return "", &KeyNameResolveError{Query: input, Suggestions: suggestions, More: more}
 	}
 
 	bestKind := matches[0].kind

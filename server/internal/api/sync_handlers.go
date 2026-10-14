@@ -4,6 +4,7 @@ import (
 	"cmp"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/url"
 
@@ -55,8 +56,12 @@ func (s *Server) handleSyncPush(w http.ResponseWriter, r *http.Request) {
 	}
 
 	newVersion, err := s.DB.PushVault(r.Context(), userID, blob, req.ExpectedVersion, req.DeviceID, req.KDFParams, req.ProtectedSymmetricKey)
-	if err != nil {
+	if errors.Is(err, db.ErrVersionConflict) {
 		writeError(w, http.StatusConflict, err.Error())
+		return
+	}
+	if err != nil {
+		s.internalError(w, "sync push", err)
 		return
 	}
 
@@ -72,8 +77,12 @@ func (s *Server) handleSyncPull(w http.ResponseWriter, r *http.Request) {
 	s.touchDevice(r, userID)
 
 	vault, err := s.DB.GetVault(r.Context(), userID)
-	if err != nil {
+	if errors.Is(err, db.ErrVaultNotFound) {
 		writeError(w, http.StatusNotFound, "no vault found")
+		return
+	}
+	if err != nil {
+		s.internalError(w, "sync pull", err)
 		return
 	}
 
@@ -99,10 +108,15 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	s.touchDevice(r, userID)
 
 	vault, err := s.DB.GetVault(r.Context(), userID)
-	if err != nil {
+	// A database error is not "no vault": clients would mark the remote missing during an outage.
+	if errors.Is(err, db.ErrVaultNotFound) {
 		writeJSON(w, http.StatusOK, map[string]any{
 			"has_vault": false,
 		})
+		return
+	}
+	if err != nil {
+		s.internalError(w, "sync status", err)
 		return
 	}
 
@@ -119,4 +133,11 @@ func (s *Server) handleSyncStatus(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, resp)
+}
+
+func (s *Server) internalError(w http.ResponseWriter, op string, err error) {
+	if s.Logger != nil {
+		s.Logger.Error(op+" failed", "error", err)
+	}
+	writeError(w, http.StatusInternalServerError, "internal error")
 }

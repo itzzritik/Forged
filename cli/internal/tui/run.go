@@ -3,8 +3,12 @@ package tui
 import (
 	"errors"
 	"fmt"
+	"log/slog"
 	"os"
+	"os/signal"
 	"strings"
+	"sync"
+	"syscall"
 
 	tea "charm.land/bubbletea/v2"
 	"github.com/charmbracelet/colorprofile"
@@ -41,8 +45,25 @@ func Run(intent Intent, deps Deps) error {
 	if err := deps.Validate(); err != nil {
 		return err
 	}
+	// A password change stops the daemon; it must finish and restart it even if the TUI exits first.
+	var passwordChange sync.Mutex
+	change := deps.ChangePassword
+	deps.ChangePassword = func(current, next []byte) (actions.ChangePasswordResult, error) {
+		passwordChange.Lock()
+		defer passwordChange.Unlock()
+		return change(current, next)
+	}
+	// Library warnings would print over the screen; send them to the TUI log instead.
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(tuiLogWriter(deps.LogError), nil)))
+	defer slog.SetDefault(previous)
+	// The first check runs ssh -V; warm it up off the UI thread.
+	go platform.SSHRoutingSupported()
 	a := newApp(intent, deps, config.DefaultPaths())
-	_, err := tea.NewProgram(a, programOptions()...).Run()
+	p := tea.NewProgram(a, programOptions()...)
+	quitOnHangup(p)
+	_, err := p.Run()
+	passwordChange.Lock()
 	a.shutdown()
 	if err != nil {
 		err = fmt.Errorf("running TUI: %w", err)
@@ -54,4 +75,21 @@ func Run(intent Intent, deps Deps) error {
 		err = errors.Join(err, cerr)
 	}
 	return err
+}
+
+// Closing the terminal sends SIGHUP; quit normally so a copied private key is still cleared.
+func quitOnHangup(p *tea.Program) {
+	hangup := make(chan os.Signal, 1)
+	signal.Notify(hangup, syscall.SIGHUP)
+	go func() {
+		<-hangup
+		p.Quit()
+	}()
+}
+
+type tuiLogWriter func(actions.DiagnosticErrorEvent)
+
+func (w tuiLogWriter) Write(p []byte) (int, error) {
+	w(actions.DiagnosticErrorEvent{Route: "app", Action: "log", Message: strings.TrimSpace(string(p))})
+	return len(p), nil
 }

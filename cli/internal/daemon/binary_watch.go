@@ -2,9 +2,12 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"crypto/sha256"
 	"io"
 	"os"
+	"os/exec"
+	"path/filepath"
 	"time"
 )
 
@@ -39,8 +42,14 @@ func (d *Daemon) watchInstalledBinary(path string, started os.FileInfo, reinstal
 			pending = current
 			continue
 		}
+		// A build that cannot run would crash-loop the service and take the agent down with it.
+		if err := runsVersion(path); err != nil {
+			d.logger.Warn("upgraded binary does not run; keeping the current daemon", "path", path, "error", err)
+			started, pending = current, nil
+			continue
+		}
 		if reinstall {
-			if err := InstallBinaries(path); err != nil {
+			if err := installBinariesInto(filepath.Dir(filepath.Dir(executable)), path); err != nil {
 				d.logger.Warn("installing upgraded binary failed", "path", path, "error", err)
 				started, pending = current, nil
 				continue
@@ -59,6 +68,12 @@ func (d *Daemon) watchInstalledBinary(path string, started os.FileInfo, reinstal
 		d.Stop()
 		return
 	}
+}
+
+func runsVersion(path string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	return exec.CommandContext(ctx, path, "version").Run()
 }
 
 func sameBinary(a, b os.FileInfo) bool {

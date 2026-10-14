@@ -8,6 +8,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/platform"
+	"github.com/itzzritik/forged/cli/internal/tui/ui"
 	"github.com/spf13/cobra"
 )
 
@@ -20,6 +21,7 @@ var (
 	sshRouteUser         string
 	sshRoutePort         string
 	sshRouteSlot         int
+	sshRouteSocket       string
 )
 
 var sshRoutePrepareCmd = &cobra.Command{
@@ -29,7 +31,7 @@ var sshRoutePrepareCmd = &cobra.Command{
 	SilenceErrors: true,
 	Args:          cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !platform.SSHRoutingSupported() {
+		if !platform.SSHRoutingPlatform() {
 			return fmt.Errorf("SSH routing is unavailable on this platform")
 		}
 		if os.Getenv("FORGED_SSH_ROUTE_SKIP") == "1" {
@@ -41,7 +43,7 @@ var sshRoutePrepareCmd = &cobra.Command{
 			return nil
 		}
 
-		resp, err := ctlClient().CallWithTimeout(ipc.CmdSSHRoutePrepare, ipc.SSHRoutePrepareArgs{
+		resp, err := routeClient().CallWithTimeout(ipc.CmdSSHRoutePrepare, ipc.SSHRoutePrepareArgs{
 			Attempt:      sshRouteAttempt,
 			ClientPID:    os.Getppid(),
 			CWD:          cwd,
@@ -50,12 +52,12 @@ var sshRoutePrepareCmd = &cobra.Command{
 			User:         sshRouteUser,
 			Port:         sshRoutePort,
 		}, ipc.SSHRoutePrepareCallTimeout)
-		if err != nil {
-			debugSSHRoute("prepare: %v", err)
-		}
 		var result ipc.SSHRoutePrepareResult
 		if json.Unmarshal(resp.Data, &result) == nil && result.Locked {
 			fmt.Fprintln(os.Stderr, "forged: locked. Run `forged` to unlock.")
+		} else if err != nil {
+			// Without a prepared route ssh offers no Forged key; say why instead of a bare "Permission denied".
+			fmt.Fprintf(os.Stderr, "forged: SSH keys unavailable: %s\n", ui.Sanitize(err.Error()))
 		}
 		return nil
 	},
@@ -68,10 +70,10 @@ var sshRouteSuccessCmd = &cobra.Command{
 	SilenceErrors: true,
 	Args:          cobra.NoArgs,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		if !platform.SSHRoutingSupported() {
+		if !platform.SSHRoutingPlatform() {
 			return fmt.Errorf("SSH routing is unavailable on this platform")
 		}
-		_, err := ctlClient().CallWithTimeout(ipc.CmdSSHRouteSuccess, ipc.SSHRouteSuccessArgs{
+		_, err := routeClient().CallWithTimeout(ipc.CmdSSHRouteSuccess, ipc.SSHRouteSuccessArgs{
 			Attempt:   sshRouteAttempt,
 			ClientPID: os.Getppid(),
 		}, sshRouteSuccessCallTimeout)
@@ -89,10 +91,10 @@ var sshRouteSlotCmd = &cobra.Command{
 	SilenceErrors: true,
 	Args:          cobra.NoArgs,
 	Run: func(cmd *cobra.Command, args []string) {
-		if !platform.SSHRoutingSupported() {
+		if !platform.SSHRoutingPlatform() {
 			os.Exit(1)
 		}
-		_, err := ctlClient().CallWithTimeout(ipc.CmdSSHRouteSlot, ipc.SSHRouteSlotArgs{
+		_, err := routeClient().CallWithTimeout(ipc.CmdSSHRouteSlot, ipc.SSHRouteSlotArgs{
 			Attempt:   sshRouteAttempt,
 			ClientPID: os.Getppid(),
 			Slot:      sshRouteSlot,
@@ -107,6 +109,7 @@ var sshRouteSlotCmd = &cobra.Command{
 func init() {
 	for _, routeCmd := range []*cobra.Command{sshRoutePrepareCmd, sshRouteSuccessCmd, sshRouteSlotCmd} {
 		routeCmd.Flags().StringVar(&sshRouteAttempt, "attempt", "", "routing attempt token")
+		routeCmd.Flags().StringVar(&sshRouteSocket, "socket", "", "daemon control socket")
 	}
 	for _, routeCmd := range []*cobra.Command{sshRoutePrepareCmd, sshRouteSuccessCmd} {
 		routeCmd.Flags().StringVar(&sshRouteHost, "host", "", "effective host")
@@ -115,6 +118,15 @@ func init() {
 		routeCmd.Flags().StringVar(&sshRoutePort, "port", "22", "target port")
 	}
 	sshRouteSlotCmd.Flags().IntVar(&sshRouteSlot, "slot", 0, "routing identity slot")
+}
+
+// The daemon passes its socket in the managed config: ssh reads that config from the real home,
+// but a caller may run it with another $HOME (tests, CI), where the default path finds no daemon.
+func routeClient() *ipc.Client {
+	if sshRouteSocket != "" {
+		return ipc.NewClient(sshRouteSocket)
+	}
+	return ctlClient()
 }
 
 func debugSSHRoute(format string, args ...any) {

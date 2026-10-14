@@ -50,6 +50,9 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 	if !InInstallDir(runtime.Binary) {
 		runtime.Binary = InstalledBinary("forged")
 	}
+	if !systemdUserManager() {
+		return nil
+	}
 
 	unitDir := filepath.Dir(unitPath())
 	if err := os.MkdirAll(unitDir, 0755); err != nil {
@@ -74,10 +77,14 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		f.Close()
 		return fmt.Errorf("Writing unit file: %w", err)
 	}
+	if err := f.Sync(); err != nil {
+		f.Close()
+		return fmt.Errorf("Syncing unit file: %w", err)
+	}
 	if err := f.Close(); err != nil {
 		return fmt.Errorf("Closing unit file: %w", err)
 	}
-	if err := os.Rename(f.Name(), unitPath()); err != nil {
+	if err := platform.ReplaceFile(f.Name(), unitPath()); err != nil {
 		return fmt.Errorf("Installing unit file: %w", err)
 	}
 
@@ -119,6 +126,9 @@ func EnsureLinger() LingerState {
 }
 
 func StartService() error {
+	if !systemdUserManager() {
+		return startSpawnedDaemon()
+	}
 	cmd := systemctlUser("start", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("Starting service: %s: %w", string(out), err)
@@ -127,6 +137,9 @@ func StartService() error {
 }
 
 func StopService() error {
+	if !systemdUserManager() {
+		return stopSpawnedDaemon()
+	}
 	cmd := systemctlUser("stop", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("Stopping service: %s: %w", string(out), err)
@@ -135,6 +148,12 @@ func StopService() error {
 }
 
 func RestartService() error {
+	if !systemdUserManager() {
+		if err := stopSpawnedDaemon(); err != nil {
+			return err
+		}
+		return startSpawnedDaemon()
+	}
 	cmd := systemctlUser("restart", serviceName)
 	if out, err := cmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("Restarting service: %s: %w", string(out), err)
@@ -143,6 +162,11 @@ func RestartService() error {
 }
 
 func UninstallService() error {
+	if !systemdUserManager() {
+		_ = stopSpawnedDaemon()
+		_ = os.RemoveAll(filepath.Join(InstallDir(), "bin"))
+		return nil
+	}
 	systemctlUser("stop", serviceName).Run()
 	systemctlUser("disable", serviceName).Run()
 	path := unitPath()
@@ -155,6 +179,9 @@ func UninstallService() error {
 }
 
 func ServiceInstalled() (bool, error) {
+	if !systemdUserManager() {
+		return binaryExecutable(InstalledBinary("forged")), nil
+	}
 	_, err := os.Stat(unitPath())
 	if err == nil {
 		return true, nil
@@ -166,6 +193,9 @@ func ServiceInstalled() (bool, error) {
 }
 
 func InspectService(paths config.Paths) (ServiceStatus, error) {
+	if !systemdUserManager() {
+		return inspectSpawnedService(), nil
+	}
 	status := DefaultServiceStatus()
 	installed, err := ServiceInstalled()
 	if err != nil {
@@ -192,7 +222,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 		}
 	}
 
-	cmd := systemctlUser("show", serviceName, "--property=LoadState,ActiveState,SubState,MainPID", "--value")
+	cmd := systemctlUser("show", serviceName, "--property=LoadState,ActiveState,SubState,MainPID")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		detail := strings.TrimSpace(string(out))
@@ -203,34 +233,37 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 		return status, nil
 	}
 
-	lines := strings.Split(strings.TrimSpace(string(out)), "\n")
-	if len(lines) > 0 {
-		status.Loaded = strings.TrimSpace(lines[0]) == "loaded"
-	}
-	if len(lines) > 1 {
-		active := strings.TrimSpace(lines[1])
+	props := systemctlProperties(out)
+	status.Loaded = props["LoadState"] == "loaded"
+	if active, ok := props["ActiveState"]; ok {
 		status.Running = active == "active"
 		setServiceDetail(&status, active)
 	}
-	if len(lines) > 2 {
-		sub := strings.TrimSpace(lines[2])
-		if sub != "" {
-			if status.ConfigValid {
-				status.Detail = sub
-			} else {
-				setServiceDetail(&status, sub)
-			}
+	if sub := props["SubState"]; sub != "" {
+		if status.ConfigValid {
+			status.Detail = sub
+		} else {
+			setServiceDetail(&status, sub)
 		}
 	}
-	if len(lines) > 3 {
-		if pid, err := strconv.Atoi(strings.TrimSpace(lines[3])); err == nil && pid >= 0 {
-			status.PID = pid
-			status.PIDKnown = true
-		}
+	if pid, err := strconv.Atoi(props["MainPID"]); err == nil && pid >= 0 {
+		status.PID = pid
+		status.PIDKnown = true
 	}
 	setServiceDetail(&status, "installed")
 
 	return status, nil
+}
+
+// systemctl prints properties in D-Bus order, not request order, so they are matched by name.
+func systemctlProperties(out []byte) map[string]string {
+	props := map[string]string{}
+	for _, line := range strings.Split(string(out), "\n") {
+		if key, value, ok := strings.Cut(line, "="); ok {
+			props[strings.TrimSpace(key)] = strings.TrimSpace(value)
+		}
+	}
+	return props
 }
 
 func findBinary() (string, error) {
@@ -371,7 +404,7 @@ func formatSystemdExecStart(runtime RuntimeSpec) string {
 }
 
 func systemctlUser(args ...string) *exec.Cmd {
-	cmd := exec.Command("systemctl", append([]string{"--user"}, args...)...)
+	cmd := serviceCommand("systemctl", append([]string{"--user"}, args...)...)
 	cmd.Env = systemdUserEnv()
 	return cmd
 }

@@ -2,6 +2,7 @@ interface RawVaultMetadata {
 	created_at?: string;
 	device_id?: string;
 	device_name?: string;
+	[key: string]: unknown;
 }
 
 interface RawTombstone {
@@ -38,8 +39,6 @@ interface RawVaultDocument {
 	[key: string]: unknown;
 }
 
-const TOMBSTONE_TTL_MS = 90 * 24 * 60 * 60 * 1000;
-
 export function mergeThreeWayRaw(baseRaw: string, localRaw: string, remoteRaw: string, localDeviceId: string, remoteDeviceId: string): string {
 	const merged = mergeThreeWayDocument(parseDocument(baseRaw), parseDocument(localRaw), parseDocument(remoteRaw), localDeviceId, remoteDeviceId);
 	return JSON.stringify(merged);
@@ -52,7 +51,10 @@ function mergeThreeWayDocument(
 	localDeviceId: string,
 	remoteDeviceId: string
 ): RawVaultDocument {
+	// Unknown fields and the SSH section (which the dashboard never edits) keep the server's copy first.
 	const merged: RawVaultDocument = {
+		...local,
+		...remote,
 		key_generation: maxNumber(base.key_generation ?? 1, local.key_generation ?? 1, remote.key_generation ?? 1),
 		metadata: mergeMetadata(base.metadata, local.metadata, remote.metadata),
 		tombstones: mergeTombstones(base.tombstones, local.tombstones, remote.tombstones),
@@ -79,6 +81,10 @@ function mergeThreeWayDocument(
 			merged.keys?.push(mergeKey(baseKey, localKey, remoteKey, localDeviceId, remoteDeviceId));
 			continue;
 		}
+		// A key the last sync had that one side no longer has was deleted there, even without a tombstone.
+		if (baseKey) {
+			continue;
+		}
 		if (localKey) {
 			merged.keys?.push(cloneKey(localKey));
 			continue;
@@ -96,6 +102,8 @@ function mergeThreeWayDocument(
 
 function mergeMetadata(base?: RawVaultMetadata, local?: RawVaultMetadata, remote?: RawVaultMetadata): RawVaultMetadata {
 	return {
+		...local,
+		...remote,
 		created_at: earliestTime(base?.created_at, local?.created_at, remote?.created_at),
 		device_id: firstNonEmpty(local?.device_id, remote?.device_id, base?.device_id),
 		device_name: firstNonEmpty(local?.device_name, remote?.device_name, base?.device_name),
@@ -115,14 +123,14 @@ function mergeVersionVectors(...vectors: Array<Record<string, number> | undefine
 	return merged;
 }
 
+// Tombstones never expire: a device offline past any cutoff would bring deleted keys back.
 function mergeTombstones(...tombstoneSets: Array<RawTombstone[] | undefined>): RawTombstone[] {
-	const cutoff = Date.now() - TOMBSTONE_TTL_MS;
 	const seen = new Map<string, RawTombstone>();
 
 	for (const tombstones of tombstoneSets) {
 		for (const tombstone of tombstones ?? []) {
 			const deletedAt = Date.parse(tombstone.deleted_at);
-			if (Number.isNaN(deletedAt) || deletedAt < cutoff) {
+			if (Number.isNaN(deletedAt)) {
 				continue;
 			}
 			const existing = seen.get(tombstone.key_id);
@@ -137,7 +145,14 @@ function mergeTombstones(...tombstoneSets: Array<RawTombstone[] | undefined>): R
 
 function mergeKey(base: RawVaultKey | undefined, local: RawVaultKey, remote: RawVaultKey, localDeviceId: string, remoteDeviceId: string): RawVaultKey {
 	const winner = preferLocal(local, remote, localDeviceId, remoteDeviceId) ? local : remote;
-	const merged = cloneKey(winner);
+	// The other copy's fields fill in, so fields only a newer client knows survive this merge.
+	const merged = cloneKey({ ...(winner === local ? remote : local), ...winner });
+	if (base) {
+		// A field only one side changed keeps that change; the newer record decides only real conflicts.
+		merged.name = mergeField(base.name, local.name, remote.name, winner.name);
+		merged.comment = mergeField(base.comment, local.comment, remote.comment, winner.comment);
+		merged.git_signing = mergeField(Boolean(base.git_signing), Boolean(local.git_signing), Boolean(remote.git_signing), Boolean(winner.git_signing));
+	}
 
 	merged.created_at = earliestTime(base?.created_at, local.created_at, remote.created_at);
 	merged.device_origin = firstNonEmpty(merged.device_origin, local.device_origin, remote.device_origin, localDeviceId);
@@ -145,6 +160,16 @@ function mergeKey(base: RawVaultKey | undefined, local: RawVaultKey, remote: Raw
 	merged.version = maxNumber(base?.version ?? 0, local.version ?? 0, remote.version ?? 0);
 
 	return merged;
+}
+
+function mergeField<T>(base: T, local: T, remote: T, winner: T): T {
+	if (local === base) {
+		return remote;
+	}
+	if (remote === base) {
+		return local;
+	}
+	return winner;
 }
 
 function preferLocal(local: RawVaultKey, remote: RawVaultKey, localDeviceId: string, remoteDeviceId: string): boolean {

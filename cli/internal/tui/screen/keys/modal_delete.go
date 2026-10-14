@@ -62,6 +62,10 @@ func (d *deleteModal) Update(msg tea.Msg, st *core.State) (core.Screen, tea.Cmd)
 			d.errMsg = st.Reporter.Report("keys", "delete key", msg.err)
 			d.resolve = true
 		case !msg.deleted:
+			// Another key took the reviewed key's name (sync, another terminal); never retarget the delete.
+			if d.k.Fingerprint != "" && msg.k.Fingerprint != d.k.Fingerprint {
+				return d, tea.Sequence(core.Close(d), core.Toast("That key changed. Review it before deleting", ui.ToneWarn))
+			}
 			d.k, d.resolve, d.errMsg = msg.k, false, ""
 		default:
 			return d, tea.Sequence(core.Close(d), core.Toast("Key deleted", ui.ToneGood))

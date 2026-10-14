@@ -67,6 +67,7 @@ func (ks *KeyStore) RecordSSHRouteProof(target, fingerprint, provenBy, operation
 		SuccessCount:  successCount,
 		LastSuccessAt: &successAt,
 		Attempts:      cloneRouteAttempts(previous.Attempts),
+		Extra:         previous.Extra,
 	}
 	ks.removeSSHRouteTombstone(target, updated.UTC())
 	ks.bumpVersionVector()
@@ -74,40 +75,6 @@ func (ks *KeyStore) RecordSSHRouteProof(target, fingerprint, provenBy, operation
 	if err := ks.vault.saveLocked(); err != nil {
 		ks.vault.data.SSH.Routes = originalRoutes
 		ks.vault.data.SSH.Tombstones = originalTombstones
-		ks.vault.data.VersionVector = originalVersionVector
-		return fmt.Errorf("Saving vault: %w", err)
-	}
-
-	return nil
-}
-
-func (ks *KeyStore) RecordSSHRouteAttempt(target, fingerprint, operation string, updated time.Time) error {
-	if target == "" {
-		return fmt.Errorf("Empty SSH route target")
-	}
-	if fingerprint == "" {
-		return fmt.Errorf("Empty SSH route key")
-	}
-
-	ks.vault.mu.Lock()
-	defer ks.vault.mu.Unlock()
-
-	originalRoutes := cloneSSHRoutes(ks.vault.data.SSH.Routes)
-	originalVersionVector := cloneVersionVector(ks.vault.data.VersionVector)
-
-	ensureSSHData(&ks.vault.data)
-	route := cloneSSHRoute(ks.vault.data.SSH.Routes[target])
-	if route.Attempts == nil {
-		route.Attempts = map[string]time.Time{}
-	}
-	route.Attempts[fingerprint] = updated.UTC()
-	route.Operation = operation
-	route.Updated = updated.UTC()
-	ks.vault.data.SSH.Routes[target] = route
-	ks.bumpVersionVector()
-
-	if err := ks.vault.saveLocked(); err != nil {
-		ks.vault.data.SSH.Routes = originalRoutes
 		ks.vault.data.VersionVector = originalVersionVector
 		return fmt.Errorf("Saving vault: %w", err)
 	}

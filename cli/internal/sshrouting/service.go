@@ -45,6 +45,9 @@ type Attempt struct {
 	ExpiresAt       time.Time
 	SuccessRecorded bool
 	Leases          int
+	SlotsReleased   bool
+	// ReachedAuth is set once ssh asks the agent for keys, which it does only after connecting.
+	ReachedAuth bool
 }
 
 type Service struct {
@@ -60,11 +63,14 @@ type Service struct {
 	attemptSeq                 uint64
 	clientAttempt              map[int]string
 	unverifiedRoutes           map[string]time.Time
+	rejectedKeys               map[string]map[string]time.Time
 	unscoped                   map[platform.ProcessInstance]int
 	unscopedChanged            chan struct{}
 	runtimeUntrusted           bool
 	runtimeWriteFailed         bool
 	recoveryBarrier            platform.ProcessInstance
+	startupProcesses           map[platform.ProcessInstance]struct{}
+	lastExitScan               time.Time
 	startupIdentityUnavailable bool
 	prober                     ProviderProber
 	onMutation                 func(reason string)
@@ -79,6 +85,7 @@ func NewService(paths config.Paths, keyStore *vault.KeyStore) *Service {
 		attemptOwners:    map[string]uint64{},
 		clientAttempt:    map[int]string{},
 		unverifiedRoutes: map[string]time.Time{},
+		rejectedKeys:     map[string]map[string]time.Time{},
 		unscoped:         map[platform.ProcessInstance]int{},
 		unscopedChanged:  make(chan struct{}),
 		prober:           NewProviderProber(paths.AgentSocket()),
@@ -121,6 +128,7 @@ func (s *Service) PrepareStartupRuntime(daemon platform.ProcessInstance) (bool, 
 	}
 	s.startupIdentityUnavailable = false
 	s.recoveryBarrier = daemon
+	s.startupProcesses, _ = platform.ProcessInstances()
 	if !s.runtimeUntrusted && len(s.attempts) == 0 {
 		return false, nil
 	}
@@ -171,6 +179,9 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 	if err != nil {
 		return err
 	}
+	if sshConfigDump(processCommand(ctx, req.ClientPID)) {
+		return nil
+	}
 
 	now := s.now()
 	currentRefs := s.routeRefs()
@@ -178,7 +189,8 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 	var attempt Attempt
 	var replacedToken string
 	s.mu.Lock()
-	s.reconcileRouteAttemptsLocked(now, currentRefs)
+	// Fresher than other calls: a just-exited attempt's refused keys must shape this plan.
+	s.reconcileRouteAttemptsWithinLocked(now, currentRefs, 200*time.Millisecond)
 	if s.recoveryClientDeniedLocked(process) {
 		s.mu.Unlock()
 		return fmt.Errorf("SSH route client predates daemon restart")
@@ -259,6 +271,7 @@ func (s *Service) PrepareContext(ctx context.Context, req PrepareRequest) error 
 	}
 
 	keyStore, routes, keys := s.routingSnapshot()
+	routes = s.withRejectedKeys(routes, target.Canonical)
 	if keyStore == nil && len(keys) == 0 {
 		return ErrRouteMemoryLocked
 	}
@@ -392,6 +405,11 @@ func (s *Service) Success(attempt string, clientPID, helperPID int) error {
 		s.mu.Unlock()
 		return fmt.Errorf("Attempt %q has expired", attempt)
 	}
+	return s.finishSuccessLocked(current, keyStore)
+}
+
+// finishSuccessLocked marks the attempt successful and learns its key for direct SSH. It unlocks s.mu.
+func (s *Service) finishSuccessLocked(current Attempt, keyStore *vault.KeyStore) error {
 	if current.SuccessRecorded {
 		s.mu.Unlock()
 		return nil
@@ -399,6 +417,7 @@ func (s *Service) Success(attempt string, clientPID, helperPID int) error {
 	current.SuccessRecorded = true
 	s.attempts[routeAttemptKey(current.Token, current.ClientPID)] = current
 	delete(s.unverifiedRoutes, current.Target.Canonical)
+	delete(s.rejectedKeys, current.Target.Canonical)
 	s.mu.Unlock()
 
 	if current.LastKey == "" || !s.keyStoreCurrent(keyStore) {
@@ -456,12 +475,8 @@ func (s *Service) Slot(attempt string, clientPID, helperPID, slot int) error {
 	if !ok || current.Process != process || !current.ExpiresAt.After(now) || len(current.Candidates) == 0 {
 		return fmt.Errorf("SSH route identity slot is not authorized")
 	}
-	candidates := s.candidatesForTokenLocked(attempt)
-	if slot > len(candidates) {
-		return fmt.Errorf("SSH route identity slot is not authorized")
-	}
-	fingerprint := candidates[slot-1]
-	if !containsFingerprint(current.Candidates, fingerprint) {
+	fingerprint := routeIdentitySlotFingerprint(s.paths.SSHRouteRuntimeDir(), attempt, slot)
+	if fingerprint == "" || !containsFingerprint(s.candidatesForTokenLocked(attempt), fingerprint) || !containsFingerprint(current.Candidates, fingerprint) {
 		return fmt.Errorf("SSH route identity slot is not authorized")
 	}
 	if !routeIdentitySlotMatches(s.paths.SSHRouteRuntimeDir(), attempt, slot, fingerprint) {
@@ -475,14 +490,23 @@ func (s *Service) RecordSignature(process platform.ProcessInstance, fingerprint 
 	if !routed || !containsFingerprint(allowed, fingerprint) {
 		return
 	}
+	keyStore, _, _ := s.routingSnapshot()
 
 	s.mu.Lock()
 	attempt, ok := s.attemptByPIDLocked(process.PID)
-	if ok && attempt.Process == process && attempt.ExpiresAt.After(s.now()) && containsFingerprint(s.allowedCandidatesForAttemptLocked(attempt), fingerprint) {
-		attempt.LastKey = fingerprint
-		s.attempts[routeAttemptKey(attempt.Token, attempt.ClientPID)] = attempt
+	if !ok || attempt.Process != process || !containsFingerprint(s.agentCandidatesLocked(attempt), fingerprint) {
+		s.mu.Unlock()
+		return
 	}
-	s.mu.Unlock()
+	attempt.LastKey = fingerprint
+	s.attempts[routeAttemptKey(attempt.Token, attempt.ClientPID)] = attempt
+	// OpenSSH signs only after the server accepts the key, so the first signature while the
+	// connection is being set up is the route's success; later ones come from a forwarded agent.
+	if attempt.SuccessRecorded || attempt.SlotsReleased || !attempt.ExpiresAt.After(s.now()) {
+		s.mu.Unlock()
+		return
+	}
+	_ = s.finishSuccessLocked(attempt, keyStore)
 }
 
 func (s *Service) AllowedFingerprints(process platform.ProcessInstance) ([]string, bool) {
@@ -531,7 +555,11 @@ func (s *Service) AllowedFingerprints(process platform.ProcessInstance) ([]strin
 		s.mu.Unlock()
 		return nil, true
 	}
-	fingerprints := s.allowedCandidatesForAttemptLocked(attempt)
+	if !attempt.ReachedAuth {
+		attempt.ReachedAuth = true
+		s.attempts[routeAttemptKey(attempt.Token, attempt.ClientPID)] = attempt
+	}
+	fingerprints := s.agentCandidatesLocked(attempt)
 	s.mu.Unlock()
 	return fingerprints, true
 }
@@ -628,7 +656,7 @@ func (s *Service) BeginSignature(process platform.ProcessInstance, fingerprint s
 
 		s.mu.RLock()
 		attempt, ok := s.attemptByPIDLocked(process.PID)
-		if ok && attempt.Process == process && attempt.ExpiresAt.After(s.now()) && containsFingerprint(s.allowedCandidatesForAttemptLocked(attempt), fingerprint) {
+		if ok && attempt.Process == process && containsFingerprint(s.agentCandidatesLocked(attempt), fingerprint) {
 			return s.mu.RUnlock, true
 		}
 		s.mu.RUnlock()
@@ -678,6 +706,18 @@ func (s *Service) routeUnverified(canonical string, now time.Time) bool {
 func (s *Service) deleteAttemptLocked(attempt Attempt) {
 	if attempt.HadExact && !attempt.SuccessRecorded && attempt.Target.Canonical != "" {
 		s.unverifiedRoutes[attempt.Target.Canonical] = s.now()
+	}
+	// Offered keys that never signed were refused, so the next attempt tries other keys first. An ssh
+	// that never reached authentication (ssh -G, a network failure) offered nothing.
+	if !attempt.SuccessRecorded && attempt.LastKey == "" && attempt.ReachedAuth && attempt.Target.Canonical != "" {
+		refused := s.rejectedKeys[attempt.Target.Canonical]
+		if refused == nil {
+			refused = map[string]time.Time{}
+			s.rejectedKeys[attempt.Target.Canonical] = refused
+		}
+		for _, fingerprint := range attempt.Candidates {
+			refused[fingerprint] = s.now()
+		}
 	}
 	attemptKey := routeAttemptKey(attempt.Token, attempt.ClientPID)
 	delete(s.attempts, attemptKey)
@@ -745,6 +785,9 @@ func (s *Service) candidatesForTokenWithAttemptLocked(token, attemptKey string, 
 		if key == attemptKey {
 			attempt = replacement
 		}
+		if attempt.SlotsReleased {
+			continue
+		}
 		attempts = append(attempts, routeAttemptCandidate{key: key, attempt: attempt})
 	}
 	return candidatesForRouteAttempts(attempts)
@@ -757,6 +800,9 @@ func (s *Service) allCandidatesRepresentedLocked(token, attemptKey string, repla
 		}
 		if key == attemptKey {
 			attempt = replacement
+		}
+		if attempt.SlotsReleased {
+			continue
 		}
 		for _, fingerprint := range attempt.Candidates {
 			if !containsFingerprint(available, fingerprint) {
@@ -782,23 +828,43 @@ func candidatesForAttempt(candidates, available []string) []string {
 }
 
 func (s *Service) reconcileRouteAttemptsLocked(now time.Time, refs map[string]KeyRef) {
+	s.reconcileRouteAttemptsWithinLocked(now, refs, time.Second)
+}
+
+// The exit scan reads every client process, so under fan-out it ran for every hook call and timed
+// them out. Callers verify their own process directly; another process's exit can wait up to maxAge.
+func (s *Service) reconcileRouteAttemptsWithinLocked(now time.Time, refs map[string]KeyRef, maxAge time.Duration) {
+	scan := now.Sub(s.lastExitScan) >= maxAge
+	if scan {
+		s.lastExitScan = now
+	}
 	affected := map[string]struct{}{}
 	changed := false
 	for key, attempt := range s.attempts {
-		current, err := platform.SameProcessInstance(attempt.Process)
-		if err == nil && !current && attempt.Leases == 0 {
-			s.deleteAttemptLocked(attempt)
+		if scan {
+			current, err := platform.SameProcessInstance(attempt.Process)
+			if err == nil && !current && attempt.Leases == 0 {
+				s.deleteAttemptLocked(attempt)
+				affected[attempt.Token] = struct{}{}
+				changed = true
+				continue
+			}
+		}
+		// A deleted key has no public hint, so leaving it in would fail every slot write for this host.
+		if kept := candidatesWithRefs(attempt.Candidates, refs); len(kept) != len(attempt.Candidates) {
+			attempt.Candidates = kept
+			s.attempts[key] = attempt
 			affected[attempt.Token] = struct{}{}
 			changed = true
+		}
+		if attempt.ExpiresAt.After(now) || attempt.SlotsReleased || len(attempt.Candidates) == 0 {
 			continue
 		}
-		if attempt.ExpiresAt.After(now) || len(attempt.Candidates) == 0 {
-			continue
-		}
-		attempt.Candidates = nil
+		// The connection-time window is over: leave the shared slots, but keep this live process's
+		// own route keys for the agent, which a forwarded session (ssh -A) signs through later.
+		attempt.SlotsReleased = true
 		attempt.HadExact = false
 		attempt.ProbeProved = false
-		attempt.LastKey = ""
 		s.attempts[key] = attempt
 		affected[attempt.Token] = struct{}{}
 		changed = true
@@ -814,6 +880,62 @@ func (s *Service) reconcileRouteAttemptsLocked(now time.Time, refs map[string]Ke
 		}
 	}
 	s.recoverRouteRuntimeLocked(refs)
+}
+
+func candidatesWithRefs(candidates []string, refs map[string]KeyRef) []string {
+	if refs == nil {
+		return candidates
+	}
+	kept := candidates[:0:0]
+	for _, fingerprint := range candidates {
+		if _, ok := refs[fingerprint]; ok {
+			kept = append(kept, fingerprint)
+		}
+	}
+	return kept
+}
+
+// agentCandidatesLocked is what the agent may list and sign for this process.
+func (s *Service) agentCandidatesLocked(attempt Attempt) []string {
+	if attempt.SlotsReleased {
+		return attempt.Candidates
+	}
+	return s.allowedCandidatesForAttemptLocked(attempt)
+}
+
+// withRejectedKeys marks keys this target recently refused, so the plan offers untried keys first.
+func (s *Service) withRejectedKeys(routes map[string]vault.SSHRoute, canonical string) map[string]vault.SSHRoute {
+	now := s.now()
+	s.mu.Lock()
+	refused := map[string]time.Time{}
+	for fingerprint, at := range s.rejectedKeys[canonical] {
+		if now.Sub(at) > rejectedKeyTTL {
+			delete(s.rejectedKeys[canonical], fingerprint)
+			continue
+		}
+		refused[fingerprint] = at
+	}
+	if len(s.rejectedKeys[canonical]) == 0 {
+		delete(s.rejectedKeys, canonical)
+	}
+	s.mu.Unlock()
+	if len(refused) == 0 {
+		return routes
+	}
+	if routes == nil {
+		routes = map[string]vault.SSHRoute{}
+	}
+	route := routes[canonical]
+	attempts := make(map[string]time.Time, len(route.Attempts)+len(refused))
+	for fingerprint, at := range route.Attempts {
+		attempts[fingerprint] = at
+	}
+	for fingerprint, at := range refused {
+		attempts[fingerprint] = at
+	}
+	route.Attempts = attempts
+	routes[canonical] = route
+	return routes
 }
 
 func (s *Service) demoteAttemptLocked(attemptKey string, refs map[string]KeyRef) {
@@ -843,6 +965,12 @@ func (s *Service) routeScopeGuardLocked() bool {
 func (s *Service) recoveryClientDeniedLocked(process platform.ProcessInstance) bool {
 	if !s.recoveryBarrier.Valid() {
 		return false
+	}
+	// A set of the processes alive at startup needs no clock: macOS start times are wall time, so
+	// after the clock is set back every new ssh would look older than the daemon.
+	if s.startupProcesses != nil {
+		_, predatesDaemon := s.startupProcesses[process]
+		return predatesDaemon
 	}
 	predatesDaemon, err := platform.ProcessStartedNoLaterThan(process, s.recoveryBarrier)
 	return err != nil || predatesDaemon
@@ -1050,6 +1178,19 @@ func routeAttemptKey(token string, clientPID int) string {
 	return fmt.Sprintf("%s:%d", token, clientPID)
 }
 
+// The working directory's remote only describes this connection when ssh is going to that host;
+// `ssh prod 'git pull'` run inside a repo must not route prod as the repo's provider.
+func sameSSHHost(target Target, input PrepareInput) bool {
+	for _, a := range []string{target.Host, target.OriginalHost} {
+		for _, b := range []string{input.Host, input.OriginalHost} {
+			if a, b := normalizeSSHHost(a), normalizeSSHHost(b); a != "" && a == b {
+				return true
+			}
+		}
+	}
+	return false
+}
+
 func (s *Service) resolveTarget(ctx context.Context, req PrepareRequest, process ProcessContext) (Target, error) {
 	if req.Target.Canonical != "" {
 		return req.Target, nil
@@ -1067,7 +1208,7 @@ func (s *Service) resolveTarget(ctx context.Context, req PrepareRequest, process
 				return target, nil
 			}
 		}
-		if resolved, err := ResolveGitTargetForOperationContext(ctx, req.CWD, req.Branch, process.Operation); err == nil {
+		if resolved, err := ResolveGitTargetForOperationContext(ctx, req.CWD, req.Branch, process.Operation); err == nil && sameSSHHost(resolved, input) {
 			return resolved, nil
 		}
 		if err := ctx.Err(); err != nil {

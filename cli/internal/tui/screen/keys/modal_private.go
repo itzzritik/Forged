@@ -39,6 +39,12 @@ func (p *privateCopy) accept() (core.ClipboardLease, bool) {
 	return p.lease, true
 }
 
+func (p *privateCopy) isCanceled() bool {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	return p.canceled
+}
+
 func (p *privateCopy) cancel() core.ClipboardLease {
 	p.mu.Lock()
 	defer p.mu.Unlock()
@@ -154,6 +160,11 @@ func (p *privateModal) run(st *core.State, tok *privateCopy, pw []byte) tea.Cmd 
 		d, err := view(name, pw)
 		if err != nil {
 			return privateDoneMsg{tok: tok, err: fmt.Errorf("decrypting private key: %w", err)}
+		}
+		// Esc during the decrypt must not put the key on the clipboard even briefly: clipboard
+		// history apps keep whatever lands there.
+		if tok.isCanceled() {
+			return nil
 		}
 		lease, err := copySecret(d.PrivateKey)
 		if err != nil {

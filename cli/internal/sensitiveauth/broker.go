@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
@@ -122,6 +123,8 @@ const externalPromptCooldown = 10 * time.Second
 
 const externalPasswordWait = 90 * time.Second
 
+const externalSystemAuthWait = time.Minute
+
 const externalPasswordReason = "Enter your Forged master password to keep SSH working."
 
 type SessionController interface {
@@ -197,7 +200,12 @@ func (b *Broker) startHelper() {
 		return
 	}
 	b.helperStarted = true
-	b.helperTerminated = false
+	// A helper that died before this lock was already reported by helperExited.
+	b.helperTerminated = !b.helper.running()
+	if b.helperTerminated {
+		b.native = CapabilityBroken
+		return
+	}
 	b.native = CapabilityAvailable
 }
 
@@ -225,6 +233,26 @@ func (b *Broker) ensureHelper() bool {
 	b.nativeMu.RLock()
 	defer b.nativeMu.RUnlock()
 	return !b.helperTerminated
+}
+
+// reviveHelper restarts a lost helper for a session unlocked without System Auth, so it still ends on system lock or sleep.
+func (b *Broker) reviveHelper() {
+	if b.helper == nil {
+		return
+	}
+	b.nativeMu.RLock()
+	down := b.helperTerminated
+	b.nativeMu.RUnlock()
+	b.lifecycleMu.Lock()
+	defer b.lifecycleMu.Unlock()
+	if !down || b.stopping {
+		return
+	}
+	b.background.Add(1)
+	go func() {
+		defer b.background.Done()
+		b.ensureHelper()
+	}()
 }
 
 func (b *Broker) helperExited() {
@@ -288,6 +316,7 @@ func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watch
 		return result, nil, err
 	}
 	if !force && activeSession {
+		b.reviveHelper()
 		return result, nil, nil
 	}
 	if headlessModePreemptsSystemAuth(b.paths) {
@@ -310,12 +339,11 @@ func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watch
 			return AuthorizeResult{}, nil, ErrLocked
 		}
 		if action == ActionExternal && !LocalEnrollmentUsable(b.paths) {
-			if b.awaitPasswordUnlock(ctx, generation) {
-				if result, active, err := b.allowActiveSession(action, time.Now(), generation); err == nil && active {
-					return result, nil, nil
-				}
-			}
-			return AuthorizeResult{}, nil, externalUseLockedError()
+			return b.externalPasswordFallback(ctx, action, generation)
+		}
+		// Without device unlock a System Auth approval cannot open the vault, so it would only be a wasted prompt.
+		if !activeSession && !LocalEnrollmentUsable(b.paths) {
+			return passwordRequired("Enter your master password to unlock Forged."), nil, nil
 		}
 		capability, err := b.authorizeSystem(ctx, action, generation)
 		if !b.authorizationCurrent(generation) {
@@ -337,6 +365,9 @@ func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watch
 				return AuthorizeResult{}, nil, err
 			}
 			if err != nil {
+				if b.dropBrokenEnrollment(err) && action == ActionExternal {
+					return b.externalPasswordFallback(ctx, action, generation)
+				}
 				result, err := b.handleMissingDeviceUnlock(action, "System Auth succeeded, but this device needs your master password to finish unlocking Forged.", err)
 				return result, nil, err
 			}
@@ -345,6 +376,10 @@ func (b *Broker) beginAuthorize(ctx context.Context, action Action, force, watch
 			return AuthorizeResult{}, nil, err
 		case errors.Is(err, ErrNativeUnavailable):
 			b.setNativeCapability(capability)
+			// Hello disabled, RDP, or policy: SSH still has the master-password popup.
+			if action == ActionExternal && !isHeadlessAuthMode(b.paths, capability) {
+				return b.externalPasswordFallback(ctx, action, generation)
+			}
 			return b.authorizeWithoutSystemAuth(ctx, action, capability, generation, watchDelivery)
 		case errors.Is(err, ErrNativeBroken):
 			b.setNativeCapability(CapabilityBroken)
@@ -394,6 +429,7 @@ func (b *Broker) BeginAuthorizeWithPassword(ctx context.Context, action Action, 
 }
 
 func (b *Broker) beginAuthorizeWithPassword(ctx context.Context, action Action, password []byte, generation uint64, watchDelivery bool) (*deliveryAuthorization, error) {
+	b.reviveHelper()
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
@@ -706,7 +742,8 @@ func (b *Broker) runPasswordUnlock(ctx context.Context, generation uint64) bool 
 		!errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		b.logger.Warn("master-password unlock failed", "error", err)
 	}
-	return true
+	// The cooldown is for a dismissed popup; after a typo the next ssh should ask again right away.
+	return false
 }
 
 func (b *Broker) authorizeSystem(ctx context.Context, action Action, generation uint64) (CapabilityState, error) {
@@ -723,6 +760,10 @@ func (b *Broker) authorizeSystem(ctx context.Context, action Action, generation 
 		if err := b.externalCooldownErr(time.Now()); err != nil {
 			return b.nativeCapability(), err
 		}
+		// Agent connections never cancel, so an unanswered prompt would hang every SSH and git call.
+		var cancel context.CancelFunc
+		ctx, cancel = context.WithTimeout(ctx, externalSystemAuthWait)
+		defer cancel()
 	}
 
 	for {
@@ -888,6 +929,36 @@ func (b *Broker) beginGrantWithEnrollment(ctx context.Context, action Action, no
 		return nil, ErrAuthenticationCanceled
 	}
 	return b.newDeliveryAuthorizationLocked(ctx, generation, true, false, b.grantLocked(action, now), watchDelivery), nil
+}
+
+// externalPasswordFallback waits on the shared master-password popup when System Auth cannot
+// unlock this device. Linux has no native popup, so it reports locked instead.
+func (b *Broker) externalPasswordFallback(ctx context.Context, action Action, generation uint64) (AuthorizeResult, func(bool) error, error) {
+	if runtime.GOOS == "linux" {
+		return AuthorizeResult{}, nil, ErrLocked
+	}
+	if b.awaitPasswordUnlock(ctx, generation) {
+		if result, active, err := b.allowActiveSession(action, time.Now(), generation); err == nil && active {
+			return result, nil, nil
+		}
+	}
+	return AuthorizeResult{}, nil, externalUseLockedError()
+}
+
+// dropBrokenEnrollment retires device unlock that System Auth approved but that could not open
+// the vault (keychain item gone, DPAPI reset, stale wrap), so later requests stop prompting for
+// it. A busy vault is transient and keeps it. The next master-password unlock enrolls again.
+func (b *Broker) dropBrokenEnrollment(err error) bool {
+	if errors.Is(err, vault.ErrVaultLocked) || errors.Is(err, vault.ErrUnsupportedVaultVersion) || errors.Is(err, platform.ErrLockBusy) {
+		return false
+	}
+	if b.logger != nil {
+		b.logger.Warn("device unlock could not open the vault; retiring it", "error", err)
+	}
+	if invErr := InvalidateLocalEnrollment(b.paths); invErr != nil && b.logger != nil {
+		b.logger.Warn("retiring device unlock failed", "error", invErr)
+	}
+	return true
 }
 
 func (b *Broker) authorizationInterrupted(action Action) (AuthorizeResult, error) {

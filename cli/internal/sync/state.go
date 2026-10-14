@@ -255,9 +255,14 @@ func validateStateBase(plaintext []byte) error {
 	if err := json.Unmarshal(plaintext, &object); err != nil || len(object) == 0 {
 		return corruptStateError("merge base is invalid")
 	}
-	for _, name := range []string{"keys", "metadata", "version_vector", "tombstones", "key_generation"} {
-		raw, ok := object[name]
-		if !ok || strings.TrimSpace(string(raw)) == "null" {
+	for _, name := range []string{"metadata", "key_generation"} {
+		if raw, ok := object[name]; !ok || strings.TrimSpace(string(raw)) == "null" {
+			return corruptStateError("merge base is invalid")
+		}
+	}
+	// Go encodes empty slices and maps as null, so null here means empty, not corrupt.
+	for _, name := range []string{"keys", "version_vector", "tombstones"} {
+		if _, ok := object[name]; !ok {
 			return corruptStateError("merge base is invalid")
 		}
 	}

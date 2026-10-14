@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"math/rand/v2"
 	"os"
 	"path/filepath"
 	"sync"
@@ -439,7 +440,7 @@ func (b *Bus) enqueueRefresh(reason string, timeout time.Duration) {
 			ctx, cancel = context.WithTimeout(ctx, timeout)
 			defer cancel()
 		}
-		err := b.executeRefresh(ctx, reason)
+		err := b.refresh(ctx, reason, backgroundPullTimeout)
 		b.finishPull(err, errors.Is(ctx.Err(), context.Canceled))
 	}()
 }
@@ -489,6 +490,14 @@ func (b *Bus) executePull(ctx context.Context, reason string) error {
 }
 
 func (b *Bus) executeRefresh(ctx context.Context, reason string) error {
+	return b.refresh(ctx, reason, 0)
+}
+
+// backgroundPullTimeout is a background refresh's budget for the vault download itself: its few
+// seconds cover a status call, not a pull over a slow link.
+const backgroundPullTimeout = 30 * time.Second
+
+func (b *Bus) refresh(ctx context.Context, reason string, pullTimeout time.Duration) error {
 	ctx, cancel := b.withStopContext(ctx)
 	defer cancel()
 	checker, ok := b.engine.(remoteStatusRuntime)
@@ -502,6 +511,13 @@ func (b *Bus) executeRefresh(ctx context.Context, reason string) error {
 	}
 	if !shouldPull {
 		return nil
+	}
+	if pullTimeout > 0 {
+		pullCtx, cancelPull := context.WithTimeout(context.WithoutCancel(ctx), pullTimeout)
+		defer cancelPull()
+		pullCtx, cancelStop := b.withStopContext(pullCtx)
+		defer cancelStop()
+		return b.executePull(pullCtx, reason)
 	}
 	return b.executePull(ctx, reason)
 }
@@ -570,10 +586,13 @@ func (b *Bus) remoteNeedsPull(ctx context.Context, checker remoteStatusRuntime, 
 		return false, nil
 	}
 
-	b.state.LastRemoteCheckAt = time.Now().UTC()
 	b.state.LastError = ""
 	b.state.NextRetryAt = time.Time{}
 	shouldPull := status.HasVault && status.Version != b.state.LastKnownServerVersion
+	// Only an up-to-date remote makes local data fresh; a needed pull marks it when it succeeds.
+	if !shouldPull {
+		b.state.LastRemoteCheckAt = time.Now().UTC()
+	}
 	b.persistLocked()
 	return shouldPull, nil
 }
@@ -802,7 +821,8 @@ func (b *Bus) nextRetryDelayLocked() time.Duration {
 	if b.retryIndex < len(b.cfg.RetryBackoff)-1 {
 		b.retryIndex++
 	}
-	return delay
+	// Up to 20% jitter, so devices that failed together (a server outage) do not retry in lockstep.
+	return delay + time.Duration(rand.Int64N(int64(delay)/5+1))
 }
 
 func (b *Bus) scheduleRetryLocked(delay time.Duration) {

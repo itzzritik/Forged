@@ -2,6 +2,7 @@ package actions
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -31,11 +32,16 @@ type exportedKey struct {
 }
 
 func DefaultExportPath() string {
+	name := fmt.Sprintf("forged-export-%s.json", time.Now().Format("2006-01-02"))
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return fmt.Sprintf("forged-export-%s.json", time.Now().Format("2006-01-02"))
+		return name
 	}
-	return filepath.Join(home, "Desktop", fmt.Sprintf("forged-export-%s.json", time.Now().Format("2006-01-02")))
+	// Servers and minimal Linux installs have no Desktop folder.
+	if info, err := os.Stat(filepath.Join(home, "Desktop")); err == nil && info.IsDir() {
+		return filepath.Join(home, "Desktop", name)
+	}
+	return filepath.Join(home, name)
 }
 
 func AuthorizeExport(paths config.Paths, password []byte) (string, error) {
@@ -49,12 +55,19 @@ func AuthorizeExport(paths config.Paths, password []byte) (string, error) {
 	return strings.TrimSpace(authResult.ExportToken), nil
 }
 
-func ExportVaultWithToken(paths config.Paths, outPath string, token string) (ExportResult, error) {
+// ErrExportExists means the typed path already holds a file and the user has not agreed to replace it.
+var ErrExportExists = errors.New("export file already exists")
+
+func ExportVaultWithToken(paths config.Paths, outPath string, token string, overwrite bool) (ExportResult, error) {
 	outPath = strings.TrimSpace(outPath)
 	if outPath == "" {
 		return ExportResult{}, fmt.Errorf("Enter an export path")
 	}
 	outPath = expandUserPath(outPath)
+	// Checked before the one-use export token is spent, so confirming can retry with it.
+	if _, err := os.Lstat(outPath); err == nil && !overwrite {
+		return ExportResult{}, ErrExportExists
+	}
 	if strings.TrimSpace(token) == "" {
 		return ExportResult{}, &SensitiveAuthRequiredError{Prompt: sensitiveauth.ActionExport.PasswordPrompt()}
 	}
@@ -62,7 +75,7 @@ func ExportVaultWithToken(paths config.Paths, outPath string, token string) (Exp
 	client := ipc.NewClient(paths.CtlSocket())
 	resp, err := client.Call(ipc.CmdExportAll, map[string]string{"token": strings.TrimSpace(token)})
 	if err != nil {
-		if strings.Contains(err.Error(), "sensitive export requires fresh authentication") {
+		if strings.Contains(strings.ToLower(err.Error()), "sensitive export requires fresh authentication") {
 			return ExportResult{}, &SensitiveAuthRequiredError{Prompt: sensitiveauth.ActionExport.PasswordPrompt()}
 		}
 		return ExportResult{}, err

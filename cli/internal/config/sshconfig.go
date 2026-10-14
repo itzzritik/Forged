@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/platform"
 )
@@ -17,8 +18,10 @@ const (
 	sshRoutesComment      = "# Forged SSH Routing"
 )
 
+// Older releases also wrote this before the routing directives, or alone, for a LocalCommand hook.
+const legacySSHRoutingDirective = "    PermitLocalCommand yes"
+
 var managedSSHRoutingDirectives = [...]string{
-	"    PermitLocalCommand yes",
 	"    ControlMaster no",
 	"    ControlPath none",
 	"    IdentitiesOnly yes",
@@ -63,6 +66,17 @@ func IsManagedSSHIntegrationEnabled(paths Paths) bool {
 	}
 	_, ok := legacyForgedBlockEnd(lines, legacyMarker, paths)
 	return ok
+}
+
+// HasMigratableLegacyBlock reports an unmodified legacy Forged block, which repair swaps for the
+// managed Include so the setup gets per-host key routing; an edited block stays as it is.
+func HasMigratableLegacyBlock(paths Paths) bool {
+	content, err := readConfigFile(paths.SSHUserConfig())
+	if err != nil || !strings.Contains(content, legacySSHConfigMarker) {
+		return false
+	}
+	cleaned, err := removeLegacyForgedBlock(content, paths)
+	return err == nil && cleaned != trimTrailingBlankLines(content)
 }
 
 func IsSSHAgentEnabled(paths Paths) bool {
@@ -120,11 +134,11 @@ func EnableSSHAgent(paths Paths) error {
 	}
 	return withSSHConfigLock(paths, func() error {
 		configPath := paths.SSHUserConfig()
-		content, err := readConfigFile(configPath)
+		original, err := readConfigFile(configPath)
 		if err != nil {
 			return fmt.Errorf("Reading SSH config: %w", err)
 		}
-		content, err = removeLegacyForgedBlock(content, paths)
+		content, err := removeLegacyForgedBlock(original, paths)
 		if err != nil {
 			return fmt.Errorf("Migrating legacy SSH config: %w", err)
 		}
@@ -144,7 +158,7 @@ func EnableSSHAgent(paths Paths) error {
 			sshIncludeComment,
 			includeLine(paths.SSHManagedConfig()),
 		}, "\n")
-		if err := writeSSHFileAtomic(configPath, []byte(insertForgedInclude(content, block))); err != nil {
+		if err := writeUserSSHConfig(configPath, original, insertForgedInclude(content, block)); err != nil {
 			return fmt.Errorf("Writing SSH config: %w", err)
 		}
 		return SetAgentDisabled(paths, false)
@@ -176,7 +190,7 @@ func DisableSSHAgent(paths Paths) error {
 			sshIncludeComment,
 			"# " + includeLine(paths.SSHManagedConfig()),
 		}, "\n")
-		if err := writeSSHFileAtomic(configPath, []byte(insertForgedInclude(cleaned, block))); err != nil {
+		if err := writeUserSSHConfig(configPath, content, insertForgedInclude(cleaned, block)); err != nil {
 			return fmt.Errorf("Writing SSH config: %w", err)
 		}
 		return SetAgentDisabled(paths, true)
@@ -243,6 +257,11 @@ func forgedIncludeLines(paths Paths) map[string]struct{} {
 
 func removeLegacyForgedBlock(content string, paths Paths) (string, error) {
 	lines := strings.Split(content, "\n")
+	// A CRLF file (common on Windows) must still match the exact legacy block.
+	bare := make([]string, len(lines))
+	for i, line := range lines {
+		bare[i] = strings.TrimSuffix(line, "\r")
+	}
 	result := make([]string, 0, len(lines))
 	found := false
 
@@ -256,7 +275,7 @@ func removeLegacyForgedBlock(content string, paths Paths) (string, error) {
 		if found {
 			return "", legacyForgedBlockError(i, paths)
 		}
-		end, ok := legacyForgedBlockEnd(lines, i, paths)
+		end, ok := legacyForgedBlockEnd(bare, i, paths)
 		if !ok {
 			return "", legacyForgedBlockError(i, paths)
 		}
@@ -576,7 +595,7 @@ func removeManagedSSHRoutingTail(content string) (string, error) {
 	if routingStart < 0 {
 		return "", fmt.Errorf("managed SSH routing tail is missing its generated routing directives")
 	}
-	if strings.TrimSuffix(lines[routingStart], "\r") != managedSSHRoutingDirectives[0] {
+	if strings.TrimSuffix(lines[routingStart], "\r") != legacySSHRoutingDirective {
 		for i := len(managedSSHRoutingDirectives) - 1; i >= 0; i-- {
 			if routingStart < 0 || strings.TrimSuffix(lines[routingStart], "\r") != managedSSHRoutingDirectives[i] {
 				return "", fmt.Errorf("managed SSH routing tail has modified generated routing directives")
@@ -584,6 +603,9 @@ func removeManagedSSHRoutingTail(content string) (string, error) {
 			if i > 0 {
 				routingStart = previousNonBlankSSHConfigLine(lines, routingStart)
 			}
+		}
+		if previous := previousNonBlankSSHConfigLine(lines, routingStart); previous >= 0 && strings.TrimSuffix(lines[previous], "\r") == legacySSHRoutingDirective {
+			routingStart = previous
 		}
 	}
 
@@ -686,11 +708,24 @@ func withSSHConfigLock(paths Paths, fn func() error) error {
 		return fmt.Errorf("Opening SSH config lock: %w", err)
 	}
 	defer lock.Close()
-	if err := platform.LockFileWait(lock); err != nil {
+	if err := platform.LockFileWithin(lock, 5*time.Second); err != nil {
 		return fmt.Errorf("Locking SSH config: %w", err)
 	}
 	defer platform.UnlockFile(lock)
 	return fn()
+}
+
+// writeUserSSHConfig keeps the previous ~/.ssh/config beside it, so a bad edit is recoverable.
+func writeUserSSHConfig(path, before, after string) error {
+	if before == after {
+		return nil
+	}
+	if before != "" {
+		if err := writePrivateFileAtomic(path+".forged-backup", []byte(before)); err != nil {
+			return fmt.Errorf("backing up SSH config: %w", err)
+		}
+	}
+	return writeSSHFileAtomic(path, []byte(after))
 }
 
 func writeSSHFileAtomic(path string, data []byte) error {

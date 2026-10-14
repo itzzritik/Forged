@@ -65,6 +65,7 @@ type importModal struct {
 	formW                  int
 	previews               []actions.ImportPreview
 	discovered, duplicates int
+	unreadable             int
 	res                    actions.ImportResult
 	vp                     viewport.Model
 	id                     core.ID
@@ -364,11 +365,18 @@ func (m *importModal) onPicked(msg importPickedMsg, st *core.State) tea.Cmd {
 func (m *importModal) onPreview(msg importPreviewMsg, st *core.State) tea.Cmd {
 	m.busy = ""
 	m.discard()
-	m.discovered, m.duplicates = msg.res.Discovered, msg.res.Duplicates
+	m.discovered, m.duplicates, m.unreadable = msg.res.Discovered, msg.res.Duplicates, len(msg.res.Unreadable)
 	switch {
 	case msg.err != nil:
 		m.retry()
 		m.errMsg = st.Reporter.Report("keys", "preview import", msg.err)
+	case len(msg.res.Previews) == 0 && len(msg.res.Unreadable) > 0:
+		m.retry()
+		f := msg.res.Unreadable[0]
+		m.errMsg = f.Reason
+		if len(msg.res.Unreadable) > 1 {
+			m.errMsg = core.Plural(len(msg.res.Unreadable), "key") + " could not be read. " + f.Name + ": " + f.Reason
+		}
 	case len(msg.res.Previews) == 0:
 		m.retry()
 		switch m.src {
@@ -601,10 +609,16 @@ func (m *importModal) bodyReview(inner, limit, frame int) []string {
 	}
 	title := ui.Paint(ui.Trunc(found+where, inner), p.Text)
 	var note []string
-	if m.duplicates > 0 {
-		s := strconv.Itoa(m.duplicates) + " keys are already in your vault and will be skipped."
-		if m.duplicates == 1 {
-			s = "1 key is already in your vault and will be skipped."
+	if m.duplicates > 0 || m.unreadable > 0 {
+		var s string
+		if m.duplicates > 0 {
+			s = strconv.Itoa(m.duplicates) + " keys are already in your vault and will be skipped."
+			if m.duplicates == 1 {
+				s = "1 key is already in your vault and will be skipped."
+			}
+		}
+		if m.unreadable > 0 {
+			s = strings.TrimSpace(s + " " + core.Plural(m.unreadable, "key") + " could not be read and will be skipped.")
 		}
 		note = ui.Wrap(s, inner)
 		for i, l := range note {

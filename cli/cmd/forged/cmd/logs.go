@@ -74,6 +74,11 @@ func followLog(ctx context.Context, dst io.Writer, path string) error {
 	defer ticker.Stop()
 
 	for {
+		seenAt, err := file.Seek(0, io.SeekCurrent)
+		if err != nil {
+			return fmt.Errorf("reading log position: %w", err)
+		}
+		seen := logTailBytes(file, seenAt)
 		select {
 		case <-ctx.Done():
 			if errors.Is(ctx.Err(), context.Canceled) {
@@ -83,6 +88,12 @@ func followLog(ctx context.Context, dst io.Writer, path string) error {
 		case <-ticker.C:
 		}
 
+		// copytruncate can refill past the read position between ticks; only the bytes already read show it.
+		if !bytes.Equal(logTailBytes(file, seenAt), seen) {
+			if _, err := file.Seek(0, io.SeekStart); err != nil {
+				return fmt.Errorf("resetting rewritten log: %w", err)
+			}
+		}
 		if _, err := io.Copy(dst, file); err != nil {
 			return fmt.Errorf("following log: %w", err)
 		}
@@ -193,4 +204,13 @@ func lastLogLines(contents []byte, count int) []byte {
 		end = index
 	}
 	return contents
+}
+
+func logTailBytes(file *os.File, offset int64) []byte {
+	n := min(offset, 64)
+	buf := make([]byte, n)
+	if _, err := file.ReadAt(buf, offset-n); err != nil {
+		return nil
+	}
+	return buf
 }

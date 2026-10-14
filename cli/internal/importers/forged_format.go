@@ -47,6 +47,7 @@ func ParseForged(data []byte) ([]ImportedKey, error) {
 			Name:       SanitizeName(item.Name),
 			PrivateKey: item.SSHKey.PrivateKey,
 			PublicKey:  item.SSHKey.PublicKey,
+			Comment:    SanitizeName(item.SSHKey.Comment),
 		})
 	}
 	return keys, nil

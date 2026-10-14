@@ -128,6 +128,11 @@ func (a *app) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (a *app) update(msg tea.Msg) tea.Cmd {
 	switch msg := msg.(type) {
 	case tea.KeyPressMsg, tea.PasteMsg:
+		// Gate keys come back as messages after this refreshes the idle clock, so the first key on
+		// a gate past the deadline locks here before it can lead back to the dashboard.
+		if a.inGate && a.idleExpired() {
+			return a.lock()
+		}
 		return tea.Batch(a.input(msg), a.touchIdle())
 	case tea.BackgroundColorMsg:
 		ui.SetBackground(msg.Color, msg.IsDark())

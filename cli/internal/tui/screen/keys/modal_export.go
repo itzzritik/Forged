@@ -40,9 +40,10 @@ type exportPickMsg struct {
 }
 
 type exportWroteMsg struct {
-	id  core.ID
-	res actions.ExportResult
-	err error
+	id   core.ID
+	path string
+	res  actions.ExportResult
+	err  error
 }
 
 type exportModal struct {
@@ -57,6 +58,7 @@ type exportModal struct {
 	path    string
 	formW   int
 	res     actions.ExportResult
+	replace string
 	id      core.ID
 }
 
@@ -91,7 +93,7 @@ func (m *exportModal) begin(busy string) {
 
 func (m *exportModal) reset() {
 	m.sec.Wipe()
-	m.token, m.busy, m.writing, m.form, m.path = "", "", false, nil, ""
+	m.token, m.busy, m.writing, m.form, m.path, m.replace = "", "", false, nil, "", ""
 	m.id, m.step = core.NextID(), exportAuth
 }
 
@@ -127,8 +129,9 @@ func (m *exportModal) update(msg tea.Msg, st *core.State) tea.Cmd {
 			return nil
 		}
 		m.busy = ""
+		// The native save dialog already confirmed replacing an existing file.
 		if msg.err == nil && strings.TrimSpace(msg.path) != "" {
-			return m.write(st, strings.TrimSpace(msg.path))
+			return m.write(st, strings.TrimSpace(msg.path), true)
 		}
 		m.showPath()
 		switch {
@@ -142,6 +145,12 @@ func (m *exportModal) update(msg tea.Msg, st *core.State) tea.Cmd {
 		}
 	case exportWroteMsg:
 		if msg.id != m.id || !m.writing {
+			return nil
+		}
+		if errors.Is(msg.err, actions.ErrExportExists) {
+			m.busy, m.writing, m.replace = "", false, msg.path
+			m.showPath()
+			m.errMsg = "That file exists. Press enter again to replace it"
 			return nil
 		}
 		m.busy, m.writing, m.token = "", false, ""
@@ -218,7 +227,8 @@ func (m *exportModal) key(msg tea.KeyPressMsg, st *core.State) tea.Cmd {
 			if len(m.form.Errors()) > 0 {
 				return nil
 			}
-			return m.write(st, strings.TrimSpace(m.path))
+			path := strings.TrimSpace(m.path)
+			return m.write(st, path, path == m.replace)
 		default:
 			m.errMsg = ""
 			_, cmd := m.form.Update(msg)
@@ -256,16 +266,16 @@ func (m *exportModal) showPath() {
 	m.formW = 0
 }
 
-func (m *exportModal) write(st *core.State, path string) tea.Cmd {
+func (m *exportModal) write(st *core.State, path string, overwrite bool) tea.Cmd {
 	m.begin("Saving export")
 	m.writing = true
 	export, token, id := st.Deps.ExportVault, m.token, m.id
 	return func() tea.Msg {
-		res, err := export(path, token)
+		res, err := export(path, token, overwrite)
 		if err != nil {
 			err = fmt.Errorf("exporting vault: %w", err)
 		}
-		return exportWroteMsg{id: id, res: res, err: err}
+		return exportWroteMsg{id: id, path: path, res: res, err: err}
 	}
 }
 

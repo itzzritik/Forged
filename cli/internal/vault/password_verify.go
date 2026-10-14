@@ -20,7 +20,7 @@ func RecoverSymmetricKey(path string, password []byte) ([]byte, error) {
 		return nil, fmt.Errorf("Reading vault: %w", err)
 	}
 
-	header, _, err := UnmarshalVault(data)
+	header, ciphertext, err := UnmarshalVault(data)
 	if err != nil {
 		return nil, err
 	}
@@ -39,6 +39,9 @@ func RecoverSymmetricKey(path string, password []byte) ([]byte, error) {
 
 	symmetricKey, err := DecryptCombined(stretchedKey, header.ProtectedKey[:])
 	if err != nil {
+		if key, _ := pendingWrapKey(path, password, header, ciphertext); key != nil {
+			return key, nil
+		}
 		return nil, fmt.Errorf("Invalid master password")
 	}
 

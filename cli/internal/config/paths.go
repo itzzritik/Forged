@@ -106,7 +106,15 @@ func DefaultPaths() Paths {
 func defaultRuntimeDir(base string) string {
 	dir := filepath.Join(base, "runtime")
 	if runtime.GOOS == "linux" {
-		dir = filepath.Join(envOrDefault("XDG_RUNTIME_DIR", filepath.Join("/run", "user", uidStr())), "forged")
+		base := os.Getenv("XDG_RUNTIME_DIR")
+		if base == "" {
+			base = filepath.Join("/run", "user", uidStr())
+			// Without logind (WSL, containers, OpenRC) it never exists, and only root may create it.
+			if _, err := os.Stat(base); err != nil {
+				return filepath.Join("/tmp", "forged-"+uidStr())
+			}
+		}
+		dir = filepath.Join(base, "forged")
 	}
 	// sun_path holds 104 bytes on macOS; a longer socket path cannot bind at all.
 	if runtime.GOOS != "windows" && len(filepath.Join(dir, "agent.sock")) >= 104 {

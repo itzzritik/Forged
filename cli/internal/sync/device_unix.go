@@ -4,6 +4,7 @@ package sync
 
 import (
 	"os"
+	"os/exec"
 	"runtime"
 	"strings"
 )
@@ -31,4 +32,12 @@ func osVersion() string {
 		}
 	}
 	return ""
+}
+
+func commandOutput(name string, args ...string) string {
+	out, err := exec.Command(name, args...).Output()
+	if err != nil {
+		return ""
+	}
+	return strings.TrimSpace(string(out))
 }

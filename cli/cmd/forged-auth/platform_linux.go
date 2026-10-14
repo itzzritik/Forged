@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
@@ -77,16 +78,22 @@ func startLockLoop(ctx context.Context, onLock func()) {
 	if onLock == nil {
 		return
 	}
+	activated := func(line string) bool {
+		return strings.Contains(line, "activechanged") && strings.Contains(line, "true")
+	}
 	var watchers sync.WaitGroup
 	for _, monitor := range []struct {
 		args  []string
 		match func(string) bool
 	}{
 		{
-			args: []string{"--session", "--dest", "org.freedesktop.ScreenSaver", "--object-path", "/org/freedesktop/ScreenSaver"},
-			match: func(line string) bool {
-				return strings.Contains(line, "activechanged") && strings.Contains(line, "true")
-			},
+			args:  []string{"--session", "--dest", "org.freedesktop.ScreenSaver", "--object-path", "/org/freedesktop/ScreenSaver"},
+			match: activated,
+		},
+		// GNOME's org.freedesktop.ScreenSaver only handles inhibit; its lock signal is here.
+		{
+			args:  []string{"--session", "--dest", "org.gnome.ScreenSaver", "--object-path", "/org/gnome/ScreenSaver"},
+			match: activated,
 		},
 		{
 			args: []string{"--system", "--dest", "org.freedesktop.login1", "--object-path", "/org/freedesktop/login1"},
@@ -131,6 +138,8 @@ const maxMonitorBackoff = time.Minute
 
 func runLinuxMonitor(ctx context.Context, gdbusPath string, args []string, onLock func(), match func(string) bool) {
 	cmd := exec.CommandContext(ctx, gdbusPath, append([]string{"monitor"}, args...)...)
+	// The daemon kills a helper it gives up on; the kernel then ends its monitors too.
+	cmd.SysProcAttr = &syscall.SysProcAttr{Pdeathsig: syscall.SIGKILL}
 	stdout, err := cmd.StdoutPipe()
 	if err != nil {
 		return

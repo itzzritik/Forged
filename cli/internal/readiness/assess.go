@@ -117,6 +117,7 @@ func (e *Engine) Assess() (Snapshot, error) {
 	if owner, err := e.owner(e.Paths); err == nil {
 		snapshot.IdentityAgentOwner = owner
 	}
+	snapshot.SSHOverriddenHosts = config.SSHHostsOverriddenByForged(e.Paths)
 	snapshot.GitSSH = e.gitSSH()
 	snapshot.GitSigningStale = config.GitSigningProgramStale(daemon.InstalledBinary("forged-sign"))
 

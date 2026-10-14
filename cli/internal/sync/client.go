@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/vault"
@@ -20,12 +21,16 @@ type Client struct {
 	TokenSource func(context.Context) (string, error)
 	DeviceID    string
 	HTTPClient  *http.Client
+	// OnUnauthorized lets the token owner force a refresh after the server refuses a token.
+	OnUnauthorized func(token string)
 }
 
 var _ API = (*Client)(nil)
 
 var (
-	ErrNoRemoteVault     = errors.New("No vault on server")
+	ErrNoRemoteVault = errors.New("No vault on server")
+	// ErrRemoteKeyMismatch is a remote vault this device's vault key cannot open; retrying cannot fix it.
+	ErrRemoteKeyMismatch = errors.New("The vault saved in your account cannot be opened with this device's vault key")
 	ErrVersionConflict   = errors.New("Version conflict")
 	ErrStatusUnsupported = errors.New("Status unsupported")
 )
@@ -116,6 +121,17 @@ type kdfParamsJSON struct {
 	Parallelism uint8  `json:"parallelism"`
 }
 
+func (k kdfParamsJSON) params() (vault.KDFParams, error) {
+	var kdf vault.KDFParams
+	salt, err := base64.StdEncoding.DecodeString(k.Salt)
+	if err != nil || len(salt) != vault.SaltSize {
+		return kdf, fmt.Errorf("invalid remote KDF salt")
+	}
+	copy(kdf.Salt[:], salt)
+	kdf.TimeCost, kdf.MemoryCost, kdf.Parallelism = k.Time, k.Memory, k.Parallelism
+	return kdf, nil
+}
+
 func kdfToJSON(kdf vault.KDFParams) kdfParamsJSON {
 	return kdfParamsJSON{
 		Salt:        base64.StdEncoding.EncodeToString(kdf.Salt[:]),
@@ -151,7 +167,7 @@ func (c *Client) PushContext(ctx context.Context, blob []byte, kdf vault.KDFPara
 	req.Header.Set("Content-Type", "application/json")
 	c.setDeviceHeaders(req)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.do(req, token)
 	if err != nil {
 		return PushResult{}, fmt.Errorf("Push request failed: %w", err)
 	}
@@ -176,23 +192,27 @@ func (c *Client) PushContext(ctx context.Context, blob []byte, kdf vault.KDFPara
 }
 
 func (c *Client) Rekey(kdf vault.KDFParams, protectedKey string) error {
+	return c.RekeyContext(context.Background(), kdf, protectedKey)
+}
+
+func (c *Client) RekeyContext(ctx context.Context, kdf vault.KDFParams, protectedKey string) error {
 	body, _ := json.Marshal(map[string]any{
 		"kdf_params":              kdfToJSON(kdf),
 		"protected_symmetric_key": protectedKey,
 	})
 
-	req, err := http.NewRequest("POST", c.ServerURL+"/api/v1/vault/rekey", bytes.NewReader(body))
+	req, err := http.NewRequestWithContext(ctx, "POST", c.ServerURL+"/api/v1/vault/rekey", bytes.NewReader(body))
 	if err != nil {
 		return err
 	}
-	token, err := c.authToken(context.Background())
+	token, err := c.authToken(ctx)
 	if err != nil {
 		return err
 	}
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.do(req, token)
 	if err != nil {
 		return fmt.Errorf("Rekey request failed: %w", err)
 	}
@@ -228,14 +248,19 @@ func (c *Client) PullContext(ctx context.Context) (PullResult, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	c.setDeviceHeaders(req)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.do(req, token)
 	if err != nil {
 		return PullResult{}, fmt.Errorf("Pull request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode == http.StatusNotFound {
-		return PullResult{}, ErrNoRemoteVault
+		// Only the server's own answer means no vault; a proxy or a wrong server URL also says 404.
+		body := syncErrorBody(resp.Body)
+		if strings.Contains(strings.ToLower(body), "no vault") {
+			return PullResult{}, ErrNoRemoteVault
+		}
+		return PullResult{}, fmt.Errorf("Pull failed (404): %s", body)
 	}
 
 	if resp.StatusCode != http.StatusOK {
@@ -269,10 +294,11 @@ func (c *Client) PullContext(ctx context.Context) (PullResult, error) {
 }
 
 type StatusResult struct {
-	HasVault  bool           `json:"has_vault"`
-	Version   int64          `json:"version"`
-	UpdatedAt string         `json:"updated_at"`
-	KDFParams *kdfParamsJSON `json:"kdf_params,omitempty"`
+	HasVault              bool           `json:"has_vault"`
+	Version               int64          `json:"version"`
+	UpdatedAt             string         `json:"updated_at"`
+	KDFParams             *kdfParamsJSON `json:"kdf_params,omitempty"`
+	ProtectedSymmetricKey *string        `json:"protected_symmetric_key,omitempty"`
 }
 
 func (c *Client) Status() (StatusResult, error) {
@@ -292,7 +318,7 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 	req.Header.Set("Authorization", "Bearer "+token)
 	c.setDeviceHeaders(req)
 
-	resp, err := c.HTTPClient.Do(req)
+	resp, err := c.do(req, token)
 	if err != nil {
 		return StatusResult{}, fmt.Errorf("Status request failed: %w", err)
 	}
@@ -303,10 +329,11 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 	}
 
 	var jsonResp struct {
-		HasVault  *bool          `json:"has_vault"`
-		Version   int64          `json:"version"`
-		UpdatedAt string         `json:"updated_at"`
-		KDFParams *kdfParamsJSON `json:"kdf_params,omitempty"`
+		HasVault              *bool          `json:"has_vault"`
+		Version               int64          `json:"version"`
+		UpdatedAt             string         `json:"updated_at"`
+		KDFParams             *kdfParamsJSON `json:"kdf_params,omitempty"`
+		ProtectedSymmetricKey *string        `json:"protected_symmetric_key,omitempty"`
 	}
 	if err := decodeSyncResponse(resp.Body, maxSyncControlResponseBytes, &jsonResp); err != nil {
 		return StatusResult{}, fmt.Errorf("Parsing status response: %w", err)
@@ -315,10 +342,11 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 		return StatusResult{}, fmt.Errorf("Parsing status response: missing has_vault")
 	}
 	result := StatusResult{
-		HasVault:  *jsonResp.HasVault,
-		Version:   jsonResp.Version,
-		UpdatedAt: jsonResp.UpdatedAt,
-		KDFParams: jsonResp.KDFParams,
+		HasVault:              *jsonResp.HasVault,
+		Version:               jsonResp.Version,
+		UpdatedAt:             jsonResp.UpdatedAt,
+		KDFParams:             jsonResp.KDFParams,
+		ProtectedSymmetricKey: jsonResp.ProtectedSymmetricKey,
 	}
 	if result.HasVault {
 		if err := validateServerVersion("status", result.Version); err != nil {
@@ -328,6 +356,29 @@ func (c *Client) StatusContext(ctx context.Context) (StatusResult, error) {
 		return StatusResult{}, fmt.Errorf("Invalid status response version %d without a vault", result.Version)
 	}
 	return result, nil
+}
+
+// do sends req, and after a 401 has the token owner refresh once and retries: a slow local clock
+// or a rotated server key can invalidate a token the client still trusts.
+func (c *Client) do(req *http.Request, token string) (*http.Response, error) {
+	resp, err := c.HTTPClient.Do(req)
+	if err != nil || resp.StatusCode != http.StatusUnauthorized || c.OnUnauthorized == nil {
+		return resp, err
+	}
+	resp.Body.Close()
+	c.OnUnauthorized(token)
+	fresh, err := c.authToken(req.Context())
+	if err != nil {
+		return nil, err
+	}
+	retry := req.Clone(req.Context())
+	if req.GetBody != nil {
+		if retry.Body, err = req.GetBody(); err != nil {
+			return nil, err
+		}
+	}
+	retry.Header.Set("Authorization", "Bearer "+fresh)
+	return c.HTTPClient.Do(retry)
 }
 
 func (c *Client) authToken(ctx context.Context) (string, error) {

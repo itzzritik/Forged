@@ -258,7 +258,8 @@ export const useVault = (): UseVaultReturn => {
 			const res = await pushRaw(updatedData.raw, version);
 			if (res.status === 409) {
 				const remote = await fetchVault(key, deviceId);
-				const baseRaw = lastSyncedBaseRawRef.current ?? vaultData?.raw ?? updatedData.raw;
+				// A server version that went backwards means the vault was recreated, so the old base no longer applies.
+				const baseRaw = remote.version < version ? "{}" : (lastSyncedBaseRawRef.current ?? vaultData?.raw ?? updatedData.raw);
 				const mergedRaw = mergeThreeWayRaw(baseRaw, updatedData.raw, remote.data.raw, deviceId, remote.data.metadata.deviceId);
 				const mergedData = vaultDataFromRaw(mergedRaw);
 

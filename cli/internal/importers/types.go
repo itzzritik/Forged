@@ -10,6 +10,7 @@ type ImportedKey struct {
 	Name       string
 	PrivateKey string
 	PublicKey  string
+	Comment    string
 }
 
 const DefaultImportedName = "Imported"

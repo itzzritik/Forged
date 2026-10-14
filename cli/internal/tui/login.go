@@ -429,7 +429,7 @@ func (a *app) restored(msg restoreDoneMsg) tea.Cmd {
 		case errors.Is(msg.err, readiness.ErrNoRemoteLinkedVault):
 			text = "No linked vault was found for this account."
 		case errors.Is(msg.err, readiness.ErrRestoreTargetExists):
-			text = "A local vault was created while restoring. It was kept; reopen Forged."
+			return tea.Batch(a.notify("A local vault already exists on this device. Unlock it to continue.", ui.ToneWarn), a.restart())
 		}
 		a.gate.SetError(text)
 		return nil

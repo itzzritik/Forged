@@ -239,6 +239,39 @@ func shellFields(command string) []string {
 	return fields
 }
 
+// sshConfigDump reports `ssh -G`, which only prints its config and never connects or uses keys.
+func sshConfigDump(command string) bool {
+	fields := shellFields(command)
+	host := false
+	for i := 1; i < len(fields); i++ {
+		field := fields[i]
+		if field == "--" {
+			return false
+		}
+		// ssh reads options after the destination too, until the remote command starts.
+		if len(field) < 2 || field[0] != '-' {
+			if host {
+				return false
+			}
+			host = true
+			continue
+		}
+		for j := 1; j < len(field); j++ {
+			if field[j] == 'G' {
+				return true
+			}
+			// ssh options that take a value; the rest of this field, or the next one, is that value.
+			if strings.IndexByte("bceilmopBDEFIJLOPQRSwW", field[j]) >= 0 {
+				if j == len(field)-1 {
+					i++
+				}
+				break
+			}
+		}
+	}
+	return false
+}
+
 func processCommand(ctx context.Context, pid int) string {
 	if pid <= 0 || runtime.GOOS == "windows" {
 		return ""

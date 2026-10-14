@@ -1,10 +1,13 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os/exec"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/buildinfo"
@@ -40,6 +43,11 @@ func EnsureService(paths config.Paths, runtime RuntimeSpec) error {
 	runtime, err := normalizeRuntimeSpec(runtime)
 	if err != nil {
 		return err
+	}
+	// A slow or failed status call upstream must not restart a daemon that is already current;
+	// that drops the unlocked session and in-flight SSH signing.
+	if fresh, err := ServiceFresh(paths, runtime.BuildID); err == nil && fresh {
+		return nil
 	}
 	if err := RequireServiceOwnership(paths); err != nil {
 		return err
@@ -243,4 +251,27 @@ func WaitForServiceReady(paths config.Paths, expectedBuildID string, timeout tim
 		return fmt.Errorf("waiting for ready daemon build %s", expectedBuildID)
 	}
 	return fmt.Errorf("waiting for ready daemon service")
+}
+
+// serviceCommandTimeout bounds a service manager call, so a hung user bus or launchd never
+// freezes repair and the TUI launch with it; a restart that waits on a slow stop still fits.
+const serviceCommandTimeout = 2 * time.Minute
+
+var serviceManagerHungUntil atomic.Int64
+
+func serviceCommand(name string, args ...string) *exec.Cmd {
+	ctx, cancel := context.WithTimeout(context.Background(), serviceCommandTimeout)
+	time.AfterFunc(serviceCommandTimeout, cancel)
+	cmd := exec.CommandContext(ctx, name, args...)
+	// After one hung call, the rest of a repair fails at once instead of waiting on each call.
+	if time.Now().UnixNano() < serviceManagerHungUntil.Load() {
+		cmd.Err = fmt.Errorf("%s is not answering", name)
+		return cmd
+	}
+	cmd.Cancel = func() error {
+		serviceManagerHungUntil.Store(time.Now().Add(5 * time.Minute).UnixNano())
+		return cmd.Process.Kill()
+	}
+	cmd.WaitDelay = 5 * time.Second
+	return cmd
 }

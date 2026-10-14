@@ -99,6 +99,12 @@ func (c *HelperClient) Start(ctx context.Context, onLock, onExit func()) error {
 	return nil
 }
 
+func (c *HelperClient) running() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.stdin != nil
+}
+
 func (c *HelperClient) Close() error {
 	c.mu.Lock()
 	c.intentionalClose = true

@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/vault"
@@ -191,7 +192,8 @@ func ProbeSSHServer(ctx context.Context, target Target, candidate Candidate, key
 	if err != nil {
 		return ProbeResult{Status: ProbeSkipped, Fingerprint: candidate.Fingerprint, Message: err.Error()}
 	}
-	signer = sessionCheckedSigner(signer, withCurrentKeyStore)
+	var signed atomic.Bool
+	signer = sessionCheckedSigner(signer, withCurrentKeyStore, &signed)
 
 	port := target.Port
 	if port <= 0 {
@@ -233,6 +235,11 @@ func ProbeSSHServer(ctx context.Context, target Target, candidate Candidate, key
 		if isKnownHostsError(err) {
 			return ProbeResult{Status: ProbeSkipped, Fingerprint: candidate.Fingerprint, Message: "host key is not trusted"}
 		}
+		// The client signs only after the server accepts the key, so a failure after that
+		// (a second factor such as an OTP) still proves this key.
+		if signed.Load() {
+			return ProbeResult{Status: ProbeSuccess, Fingerprint: candidate.Fingerprint}
+		}
 		if perKeyCtx.Err() != nil || errors.Is(ctx.Err(), context.DeadlineExceeded) {
 			return ProbeResult{Status: ProbeInconclusive, Fingerprint: candidate.Fingerprint, Message: "probe timed out"}
 		}
@@ -249,6 +256,7 @@ func ProbeSSHServer(ctx context.Context, target Target, candidate Candidate, key
 type sessionSigner struct {
 	signer              ssh.Signer
 	withCurrentKeyStore func(func() error) error
+	signed              *atomic.Bool
 }
 
 func (s sessionSigner) PublicKey() ssh.PublicKey {
@@ -265,6 +273,7 @@ func (s sessionSigner) Sign(rand io.Reader, data []byte) (*ssh.Signature, error)
 	if err != nil {
 		return nil, err
 	}
+	s.signed.Store(true)
 	return signature, nil
 }
 
@@ -283,6 +292,7 @@ func (s sessionAlgorithmSigner) SignWithAlgorithm(rand io.Reader, data []byte, a
 	if err != nil {
 		return nil, err
 	}
+	s.signed.Store(true)
 	return signature, nil
 }
 
@@ -295,11 +305,11 @@ func (s sessionMultiAlgorithmSigner) Algorithms() []string {
 	return s.multiAlgorithmSigner.Algorithms()
 }
 
-func sessionCheckedSigner(signer ssh.Signer, withCurrentKeyStore func(func() error) error) ssh.Signer {
+func sessionCheckedSigner(signer ssh.Signer, withCurrentKeyStore func(func() error) error, signed *atomic.Bool) ssh.Signer {
 	if withCurrentKeyStore == nil {
-		return signer
+		withCurrentKeyStore = func(sign func() error) error { return sign() }
 	}
-	base := sessionSigner{signer: signer, withCurrentKeyStore: withCurrentKeyStore}
+	base := sessionSigner{signer: signer, withCurrentKeyStore: withCurrentKeyStore, signed: signed}
 	if multi, ok := signer.(ssh.MultiAlgorithmSigner); ok {
 		return sessionMultiAlgorithmSigner{
 			sessionAlgorithmSigner: sessionAlgorithmSigner{sessionSigner: base, algorithmSigner: multi},

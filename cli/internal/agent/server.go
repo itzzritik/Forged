@@ -5,6 +5,7 @@ import (
 	"errors"
 	"log/slog"
 	"net"
+	"runtime/debug"
 	"sync"
 	"syscall"
 	"time"
@@ -14,16 +15,17 @@ import (
 )
 
 type Server struct {
-	socketPath  string
-	agent       *ForgedAgent
-	lifecycleMu sync.Mutex
-	listener    net.Listener
-	connections map[net.Conn]struct{}
-	stopping    bool
-	stopCtx     context.Context
-	stopCancel  context.CancelFunc
-	logger      *slog.Logger
-	wg          sync.WaitGroup
+	socketPath      string
+	agent           *ForgedAgent
+	lifecycleMu     sync.Mutex
+	listener        net.Listener
+	connections     map[net.Conn]struct{}
+	stopping        bool
+	stopCtx         context.Context
+	stopCancel      context.CancelFunc
+	logger          *slog.Logger
+	wg              sync.WaitGroup
+	onAcceptFailure func(error)
 }
 
 func NewServer(socketPath string, a *ForgedAgent, logger *slog.Logger) *Server {
@@ -97,29 +99,40 @@ func (s *Server) Stop() {
 	s.Wait()
 }
 
+const maxAcceptFailures = 60
+
+// SetAcceptFailureHandler is called once when accepting fails for good.
+func (s *Server) SetAcceptFailureHandler(fn func(error)) {
+	s.onAcceptFailure = fn
+}
+
 func (s *Server) acceptLoop(listener net.Listener) {
 	var retryDelay time.Duration
+	failures := 0
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return
 			}
-			//lint:ignore SA1019 Listener implementations use Temporary to classify retriable accept failures.
-			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
-				if retryDelay == 0 {
-					retryDelay = 5 * time.Millisecond
-				} else {
-					retryDelay = min(2*retryDelay, time.Second)
+			failures++
+			if failures > maxAcceptFailures {
+				s.logger.Error("SSH agent accept loop stopped", "error", err)
+				if s.onAcceptFailure != nil {
+					s.onAcceptFailure(err)
 				}
-				s.logger.Warn("temporary SSH agent accept failure", "error", err, "retry_in", retryDelay)
-				time.Sleep(retryDelay)
-				continue
+				return
 			}
-			s.logger.Error("SSH agent accept loop stopped", "error", err)
-			return
+			if retryDelay == 0 {
+				retryDelay = 5 * time.Millisecond
+			} else {
+				retryDelay = min(2*retryDelay, time.Second)
+			}
+			s.logger.Warn("SSH agent accept failure", "error", err, "retry_in", retryDelay)
+			time.Sleep(retryDelay)
+			continue
 		}
-		retryDelay = 0
+		retryDelay, failures = 0, 0
 		if platform.ControlPeerCredentialsAvailable() {
 			if err := platform.VerifyCurrentUserPeer(conn); err != nil {
 				// Readiness probes connect and close before admission.
@@ -140,6 +153,7 @@ func (s *Server) acceptLoop(listener net.Listener) {
 			defer s.release(conn)
 			defer cancel()
 			defer conn.Close()
+			defer s.recoverConn()
 
 			var scoped agent.ExtendedAgent
 			release := func() {}
@@ -156,10 +170,16 @@ func (s *Server) acceptLoop(listener net.Listener) {
 				scoped, release = s.agent.ForClientProcessSessionContext(ctx, process.Instance)
 			}
 
-			if err := agent.ServeAgent(scoped, conn); err != nil {
-				s.logger.Debug("agent connection closed", "error", err)
-			}
+			err := agent.ServeAgent(scoped, writeDeadlineConn{conn})
+			s.logger.Debug("agent connection closed", "error", err)
 		}(conn, ctx, cancel)
+	}
+}
+
+// A panic in one client connection must not take down the agent for every other SSH session.
+func (s *Server) recoverConn() {
+	if r := recover(); r != nil {
+		s.logger.Error("ssh agent connection panicked", "panic", r, "stack", string(debug.Stack()))
 	}
 }
 
@@ -179,4 +199,15 @@ func (s *Server) release(conn net.Conn) {
 	s.lifecycleMu.Lock()
 	delete(s.connections, conn)
 	s.lifecycleMu.Unlock()
+}
+
+const agentWriteTimeout = 30 * time.Second
+
+// writeDeadlineConn bounds each reply: a client that stops reading would otherwise pin its
+// connection and route lease until shutdown. Reads stay unbounded; idle agent connections are normal.
+type writeDeadlineConn struct{ net.Conn }
+
+func (c writeDeadlineConn) Write(p []byte) (int, error) {
+	_ = c.Conn.SetWriteDeadline(time.Now().Add(agentWriteTimeout))
+	return c.Conn.Write(p)
 }

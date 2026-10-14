@@ -4,7 +4,6 @@ import (
 	"net/http"
 	"net/url"
 	"os"
-	"os/exec"
 	"runtime"
 	"strings"
 	"sync"
@@ -32,12 +31,4 @@ func (c *Client) setDeviceHeaders(req *http.Request) {
 	req.Header.Set("X-Device-OS", info.osVersion)
 	req.Header.Set("X-Device-Arch", runtime.GOARCH)
 	req.Header.Set("X-Forged-Version", buildinfo.Version)
-}
-
-func commandOutput(name string, args ...string) string {
-	out, err := exec.Command(name, args...).Output()
-	if err != nil {
-		return ""
-	}
-	return strings.TrimSpace(string(out))
 }

@@ -106,8 +106,11 @@ func runPickerCommandEnv(env []string, name string, args ...string) (string, err
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if errors.As(err, &exitErr) && pickerCanceled(name, exitErr) {
 			return "", ErrCanceled
+		}
+		if errors.As(err, &exitErr) {
+			return "", fmt.Errorf("%s: %s", name, strings.TrimSpace(string(exitErr.Stderr)))
 		}
 		return "", err
 	}
@@ -117,4 +120,17 @@ func runPickerCommandEnv(env []string, name string, args ...string) (string, err
 		return "", ErrCanceled
 	}
 	return selection, nil
+}
+
+// pickerCanceled tells a user cancel from a dialog that never showed (no GUI session, Automation
+// permission denied), which must not look like a cancel. PowerShell's dialog cancels with exit 0.
+func pickerCanceled(name string, exitErr *exec.ExitError) bool {
+	switch name {
+	case "osascript":
+		return strings.Contains(string(exitErr.Stderr), "(-128)")
+	case "zenity", "kdialog":
+		return exitErr.ExitCode() == 1
+	default:
+		return false
+	}
 }

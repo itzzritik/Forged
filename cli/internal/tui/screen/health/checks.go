@@ -31,6 +31,9 @@ func Checks(st *core.State, paths config.Paths) []Check {
 		out = append(out, c.serviceLifetime())
 	}
 	out = append(out, c.daemon(), c.ipcSocket(), c.agentSocket(), c.sshAgent(), c.sshConfig(), c.identityAgent())
+	if len(c.snap.SSHOverriddenHosts) > 0 && c.snap.SSHEnabled {
+		out = append(out, c.sshOverrides())
+	}
 	if c.snap.GitSSH.Applicable {
 		out = append(out, c.gitSSH())
 	}
@@ -295,6 +298,19 @@ func (c checker) identityAgent() Check {
 		}
 		return Check{"IdentityAgent", "Not Forged", name, ui.ToneBad}
 	}
+}
+
+func (c checker) sshOverrides() Check {
+	hosts := c.snap.SSHOverriddenHosts
+	names := make([]string, 0, 3)
+	for _, host := range hosts[:min(len(hosts), 3)] {
+		names = append(names, ui.Sanitize(host))
+	}
+	list := strings.Join(names, ", ")
+	if len(hosts) > 3 {
+		list += fmt.Sprintf(" and %d more", len(hosts)-3)
+	}
+	return Check{"Host overrides", "Ignored", "Forged's settings come first, so the agent or multiplexing set for " + list + " in ~/.ssh/config never applies. To keep them, move those blocks above the Forged include", ui.ToneWarn}
 }
 
 func (c checker) gitSSH() Check {

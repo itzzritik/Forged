@@ -62,6 +62,12 @@ func newRootCmd() *cobra.Command {
 		SilenceErrors: true,
 		Args:          cobra.NoArgs,
 		RunE:          runRootCommand,
+		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if rootInUserHome() && cmd != versionCmd && !versionOutput {
+				return fmt.Errorf("Run forged as your own user, not with sudo: as root it would leave root-owned files in your home")
+			}
+			return nil
+		},
 	}
 
 	installPersistentFlags(cmd)

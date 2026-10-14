@@ -86,3 +86,20 @@ func linuxProcessStart(instance ProcessInstance) (string, uint64, error) {
 	}
 	return bootID, ticks, nil
 }
+
+// ProcessInstances lists the processes alive right now.
+func ProcessInstances() (map[ProcessInstance]struct{}, error) {
+	entries, err := os.ReadDir("/proc")
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[ProcessInstance]struct{}, len(entries))
+	for _, entry := range entries {
+		if pid, err := strconv.Atoi(entry.Name()); err == nil && pid > 0 {
+			if info, err := ProcessInfoForPID(pid); err == nil {
+				out[info.Instance] = struct{}{}
+			}
+		}
+	}
+	return out, nil
+}

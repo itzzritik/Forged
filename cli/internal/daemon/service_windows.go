@@ -161,7 +161,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		return fmt.Errorf("closing task XML: %w", err)
 	}
 
-	cmd := exec.Command("schtasks", "/Create", "/TN", taskName(), "/XML", tmpFile, "/F")
+	cmd := serviceCommand("schtasks", "/Create", "/TN", taskName(), "/XML", tmpFile, "/F")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		// Keep the XML on failure so the user can reproduce the schtasks call
@@ -245,24 +245,12 @@ func lockStagedBinaries(root string) (func(), error) {
 	}, nil
 }
 
-// Copies are only ever completed by rename, so an existing one is whole.
+// A power loss can leave a right-sized file of zeros, so compare content, not size.
 func writeStagedFile(target string, data []byte) error {
-	if info, err := os.Stat(target); err == nil && info.Size() == int64(len(data)) {
+	if current, err := os.ReadFile(target); err == nil && bytes.Equal(current, data) {
 		return nil
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(target), ".stage-*.tmp")
-	if err != nil {
-		return err
-	}
-	defer os.Remove(tmp.Name())
-	if _, err := tmp.Write(data); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmp.Name(), target)
+	return platform.WriteFileDurable(target, data, 0o755)
 }
 
 // A copy a running daemon still holds fails to delete and is retried later.
@@ -273,9 +261,15 @@ func pruneStagedDaemonBinaries(root, keep string) {
 	}
 	for _, entry := range entries {
 		dir := filepath.Join(root, entry.Name())
-		if entry.IsDir() && !strings.EqualFold(dir, keep) {
-			_ = os.RemoveAll(dir)
+		if !entry.IsDir() || strings.EqualFold(dir, keep) {
+			continue
 		}
+		// Windows cannot delete a running image: a daemon still running from this copy keeps
+		// forged.exe locked, and then its forged-auth.exe must stay too.
+		if err := os.Remove(filepath.Join(dir, stagedDaemon)); err != nil && !os.IsNotExist(err) {
+			continue
+		}
+		_ = os.RemoveAll(dir)
 	}
 }
 
@@ -514,7 +508,7 @@ func waitForWindowsTaskStop(timeout time.Duration) error {
 }
 
 func runScheduledTaskCommand(action string, args ...string) error {
-	out, err := exec.Command("schtasks", args...).CombinedOutput()
+	out, err := serviceCommand("schtasks", args...).CombinedOutput()
 	if err == nil {
 		return nil
 	}

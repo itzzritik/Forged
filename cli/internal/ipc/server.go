@@ -8,7 +8,9 @@ import (
 	"log/slog"
 	"net"
 	"os"
+	"runtime/debug"
 	"sync"
+	"sync/atomic"
 	"syscall"
 	"time"
 
@@ -41,6 +43,7 @@ type Server struct {
 	connections         map[net.Conn]struct{}
 	stopping            bool
 	logger              *slog.Logger
+	onAcceptFailure     func(error)
 	wg                  sync.WaitGroup
 	syncBus             *forgedsync.Bus
 	syncError           string
@@ -186,29 +189,42 @@ func (s *Server) Stop() {
 	s.Wait()
 }
 
+const maxAcceptFailures = 60
+
+// SetAcceptFailureHandler is called once when accepting fails for good.
+func (s *Server) SetAcceptFailureHandler(fn func(error)) {
+	s.onAcceptFailure = fn
+}
+
 func (s *Server) acceptLoop(listener net.Listener) {
 	var retryDelay time.Duration
+	failures := 0
 	for {
 		conn, err := listener.Accept()
 		if err != nil {
 			if errors.Is(err, net.ErrClosed) {
 				return
 			}
-			//lint:ignore SA1019 Listener implementations use Temporary to classify retriable accept failures.
-			if netErr, ok := err.(net.Error); ok && netErr.Temporary() {
-				if retryDelay == 0 {
-					retryDelay = 5 * time.Millisecond
-				} else {
-					retryDelay = min(2*retryDelay, time.Second)
+			// Any accept error may be transient (ENOBUFS, ENOMEM); one that lasts about a minute
+			// stops the daemon so its service manager restarts it instead of leaving it dead.
+			failures++
+			if failures > maxAcceptFailures {
+				s.logger.Error("IPC accept loop stopped", "error", err)
+				if s.onAcceptFailure != nil {
+					s.onAcceptFailure(err)
 				}
-				s.logger.Warn("temporary IPC accept failure", "error", err, "retry_in", retryDelay)
-				time.Sleep(retryDelay)
-				continue
+				return
 			}
-			s.logger.Error("IPC accept loop stopped", "error", err)
-			return
+			if retryDelay == 0 {
+				retryDelay = 5 * time.Millisecond
+			} else {
+				retryDelay = min(2*retryDelay, time.Second)
+			}
+			s.logger.Warn("IPC accept failure", "error", err, "retry_in", retryDelay)
+			time.Sleep(retryDelay)
+			continue
 		}
-		retryDelay = 0
+		retryDelay, failures = 0, 0
 		peerPID := 0
 		if platform.ControlPeerCredentialsAvailable() {
 			if err := platform.VerifyCurrentUserPeer(conn); err != nil {
@@ -235,6 +251,7 @@ func (s *Server) acceptLoop(listener net.Listener) {
 			defer s.wg.Done()
 			defer s.release(conn)
 			defer conn.Close()
+			defer s.recoverRequest()
 			s.handleConn(conn, peerPID)
 		}(conn, peerPID)
 	}
@@ -284,7 +301,7 @@ func (s *Server) handleConn(conn net.Conn, peerPID int) {
 
 	s.logger.Debug("ipc request", "command", req.Command)
 
-	ctx, cancel, watchDone := requestContext(conn, deadline)
+	ctx, cancel, responding, watchDone := requestContext(conn, deadline)
 	defer func() {
 		cancel()
 		_ = conn.Close()
@@ -293,14 +310,16 @@ func (s *Server) handleConn(conn net.Conn, peerPID int) {
 
 	resp := s.dispatch(ctx, req, peerPID)
 	defer clear(resp.Data)
+	responding()
 	writeErr := WriteMessage(conn, resp, maxResponseMessageBytes)
 	if err := resp.finalizeDelivery(writeErr == nil && ctx.Err() == nil); err != nil && writeErr == nil {
 		s.logger.Debug("sensitive authorization not delivered", "error", err)
 	}
 }
 
-func requestContext(conn net.Conn, deadline time.Time) (context.Context, context.CancelFunc, <-chan struct{}) {
+func requestContext(conn net.Conn, deadline time.Time) (context.Context, context.CancelFunc, func(), <-chan struct{}) {
 	ctx, cancel := context.WithDeadline(context.Background(), deadline)
+	var responding atomic.Bool
 	done := make(chan struct{})
 	go func() {
 		defer close(done)
@@ -309,9 +328,19 @@ func requestContext(conn net.Conn, deadline time.Time) (context.Context, context
 		if netErr, ok := err.(net.Error); ok && netErr.Timeout() {
 			return
 		}
-		cancel()
+		// Once the response is written, a close means the client read it, not that it gave up.
+		if !responding.Load() {
+			cancel()
+		}
 	}()
-	return ctx, cancel, done
+	return ctx, cancel, func() { responding.Store(true) }, done
+}
+
+// A panic in one request must not take down the agent and every SSH session with it.
+func (s *Server) recoverRequest() {
+	if r := recover(); r != nil {
+		s.logger.Error("ipc request panicked", "panic", r, "stack", string(debug.Stack()))
+	}
 }
 
 func (s *Server) dispatch(ctx context.Context, req Request, peerPID int) Response {
@@ -408,14 +437,13 @@ func (s *Server) handleSSHRoutePrepare(deliveryCtx context.Context, raw json.Raw
 			if authErr != nil {
 				return ErrorResponse(authErr)
 			}
+			// The user approved; keep the unlock even if the retry runs out of time, so the next ssh needs no prompt.
+			if finalize != nil {
+				_ = finalize(true)
+			}
 			err = s.sshRoutes.PrepareContext(workCtx, req)
 			if err == nil {
-				resp := OkResponse(nil)
-				resp.finalize = finalize
-				return resp
-			}
-			if finalize != nil {
-				_ = finalize(false)
+				return OkResponse(nil)
 			}
 		}
 		return ErrorResponse(err)
@@ -571,6 +599,7 @@ func (s *Server) handleAdd(raw json.RawMessage) Response {
 	if err != nil {
 		return ErrorResponse(err)
 	}
+	s.markVaultDirty("key_added")
 	key, err := keyStore.Add(a.Name, []byte(a.PrivateKey), a.Comment)
 	if err != nil {
 		return ErrorResponse(err)
@@ -598,6 +627,7 @@ func (s *Server) handleGenerate(raw json.RawMessage) Response {
 	if err != nil {
 		return ErrorResponse(err)
 	}
+	s.markVaultDirty("key_generated")
 	key, err := keyStore.Generate(a.Name, a.Comment)
 	if err != nil {
 		return ErrorResponse(err)
@@ -626,6 +656,7 @@ func (s *Server) handleRemove(raw json.RawMessage) Response {
 	if err != nil {
 		return ErrorResponse(err)
 	}
+	s.markVaultDirty("key_removed")
 	if err := keyStore.Remove(a.Name, a.Fingerprint); err != nil {
 		return ErrorResponse(err)
 	}
@@ -652,6 +683,7 @@ func (s *Server) handleRename(raw json.RawMessage) Response {
 	if err != nil {
 		return ErrorResponse(err)
 	}
+	s.markVaultDirty("key_renamed")
 	if err := keyStore.Rename(resolvedOldName, a.NewName); err != nil {
 		return ErrorResponse(err)
 	}
@@ -1121,6 +1153,13 @@ func (s *Server) afterKeyMutation(reason string) {
 	if s.onKeyChange != nil {
 		s.onKeyChange()
 	}
+}
+
+// markVaultDirty records a pending sync before the vault changes, so a crash between the save and
+// afterKeyMutation cannot leave a change (such as a removed key) unsynced. A failed mutation costs
+// one redundant push.
+func (s *Server) markVaultDirty(reason string) {
+	s.afterVaultMutation(reason)
 }
 
 func (s *Server) afterVaultMutation(reason string) {

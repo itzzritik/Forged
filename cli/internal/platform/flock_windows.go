@@ -23,6 +23,11 @@ func LockFile(f *os.File) error {
 	return lockFile(f, lockfileExclusiveLock|lockfileFailImmediately)
 }
 
+// ERROR_LOCK_VIOLATION
+func lockBusy(err error) bool {
+	return err == syscall.Errno(33)
+}
+
 func LockFileWait(f *os.File) error {
 	return lockFile(f, lockfileExclusiveLock)
 }

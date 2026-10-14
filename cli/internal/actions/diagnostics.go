@@ -105,7 +105,8 @@ func appendTUILogLine(paths config.Paths, line string) error {
 	}
 	defer lockFile.Close()
 
-	if err := platform.LockFileWait(lockFile); err != nil {
+	// Called from the TUI's update loop: a stuck holder must cost one log line, never a frozen screen.
+	if err := platform.LockFileWithin(lockFile, time.Second); err != nil {
 		return fmt.Errorf("locking TUI log: %w", err)
 	}
 	defer platform.UnlockFile(lockFile)

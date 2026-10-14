@@ -19,6 +19,7 @@ import (
 )
 
 func main() {
+	platform.EnsureHome()
 	args := os.Args[1:]
 
 	if len(args) == 0 {
@@ -98,13 +99,9 @@ func signFile(keyFile, bufferFile, namespace string) error {
 
 	var signingPubKey ssh.PublicKey
 	if keyFile != "" {
-		keyData, err := os.ReadFile(keyFile)
+		pub, err := signingKeyFromFile(keyFile)
 		if err != nil {
-			return fmt.Errorf("Reading key file: %w", err)
-		}
-		pub, _, _, _, err := ssh.ParseAuthorizedKey(keyData)
-		if err != nil {
-			return fmt.Errorf("Parsing public key: %w", err)
+			return err
 		}
 		if !keytypes.SupportsSSHSigning(pub.Type()) {
 			return fmt.Errorf("SSH key type %q is not supported for Forged signing; choose an RSA, ECDSA, or Ed25519 key", pub.Type())
@@ -163,4 +160,31 @@ func signFile(keyFile, bufferFile, namespace string) error {
 
 	sigFile := bufferFile + ".sig"
 	return os.WriteFile(sigFile, sshsig.Armor(sig), 0600)
+}
+
+// signingKeyFromFile reads git's user.signingkey file. git also allows a private key path there;
+// its .pub sibling or the key itself (even passphrase-protected) names the public key.
+func signingKeyFromFile(path string) (ssh.PublicKey, error) {
+	data, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("Reading key file: %w", err)
+	}
+	defer clear(data)
+	if pub, _, _, _, err := ssh.ParseAuthorizedKey(data); err == nil {
+		return pub, nil
+	}
+	if pubData, err := os.ReadFile(path + ".pub"); err == nil {
+		if pub, _, _, _, err := ssh.ParseAuthorizedKey(pubData); err == nil {
+			return pub, nil
+		}
+	}
+	signer, err := ssh.ParsePrivateKey(data)
+	if err == nil {
+		return signer.PublicKey(), nil
+	}
+	var missing *ssh.PassphraseMissingError
+	if errors.As(err, &missing) && missing.PublicKey != nil {
+		return missing.PublicKey, nil
+	}
+	return nil, fmt.Errorf("Parsing signing key: %w", err)
 }

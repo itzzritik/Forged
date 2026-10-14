@@ -114,8 +114,8 @@ func runInteractiveIntent(intent tui.Intent) error {
 		},
 		DefaultExportPath: actions.DefaultExportPath,
 		AuthorizeExport:   func(pw []byte) (string, error) { return actions.AuthorizeExport(paths, pw) },
-		ExportVault: func(path, token string) (actions.ExportResult, error) {
-			return actions.ExportVaultWithToken(paths, path, token)
+		ExportVault: func(path, token string, overwrite bool) (actions.ExportResult, error) {
+			return actions.ExportVaultWithToken(paths, path, token, overwrite)
 		},
 		ChooseFile:        picker.ChooseFile,
 		ChooseSavePath:    picker.ChooseSavePath,

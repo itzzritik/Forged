@@ -3,8 +3,16 @@ package db
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
+
+	"github.com/jackc/pgx/v5"
+)
+
+var (
+	ErrVaultNotFound   = errors.New("vault not found")
+	ErrVersionConflict = errors.New("version conflict: vault has been updated by another device")
 )
 
 type Vault struct {
@@ -25,8 +33,11 @@ func (d *DB) GetVault(ctx context.Context, userID string) (Vault, error) {
 		 FROM vaults WHERE user_id = $1`,
 		userID,
 	).Scan(&v.ID, &v.UserID, &v.EncryptedBlob, &v.Version, &v.UpdatedAt, &v.UpdatedByDevice, &v.KDFParams, &v.ProtectedSymmetricKey)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return Vault{}, ErrVaultNotFound
+	}
 	if err != nil {
-		return Vault{}, fmt.Errorf("vault not found: %w", err)
+		return Vault{}, fmt.Errorf("reading vault: %w", err)
 	}
 	return v, nil
 }
@@ -53,26 +64,35 @@ func (d *DB) PushVault(ctx context.Context, userID string, blob []byte, expected
 			 RETURNING version`,
 			userID, blob, devID, kdfParams, protectedSymmetricKey,
 		).Scan(&newVersion)
+		// No row means a vault already exists with a version, so the create lost the race.
+		if errors.Is(err, pgx.ErrNoRows) {
+			return 0, ErrVersionConflict
+		}
 		if err != nil {
 			return 0, fmt.Errorf("creating vault: %w", err)
 		}
 		return newVersion, nil
 	}
 
+	// Only rekey changes the password wrap; a push from a device still holding the old wrap
+	// must not revert a password change. A push only fills a missing wrap.
 	err := d.Pool.QueryRow(ctx,
 		`UPDATE vaults SET
 		   encrypted_blob = $1,
 		   version = version + 1,
 		   updated_at = now(),
 		   updated_by_device = $2,
-		   kdf_params = $5,
-		   protected_symmetric_key = $6
+		   kdf_params = CASE WHEN COALESCE(protected_symmetric_key, '') = '' THEN $5 ELSE kdf_params END,
+		   protected_symmetric_key = CASE WHEN COALESCE(protected_symmetric_key, '') = '' THEN $6 ELSE protected_symmetric_key END
 		 WHERE user_id = $3 AND version = $4
 		 RETURNING version`,
 		blob, devID, userID, expectedVersion, kdfParams, protectedSymmetricKey,
 	).Scan(&newVersion)
+	if errors.Is(err, pgx.ErrNoRows) {
+		return 0, ErrVersionConflict
+	}
 	if err != nil {
-		return 0, fmt.Errorf("version conflict: vault has been updated by another device")
+		return 0, fmt.Errorf("updating vault: %w", err)
 	}
 	return newVersion, nil
 }

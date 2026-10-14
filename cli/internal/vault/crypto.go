@@ -5,6 +5,7 @@ import (
 	"crypto/cipher"
 	"crypto/rand"
 	"crypto/sha256"
+	"errors"
 	"fmt"
 
 	"golang.org/x/crypto/argon2"
@@ -100,6 +101,9 @@ func Encrypt(key, plaintext []byte) (nonce []byte, ciphertext []byte, err error)
 	return nonce, ciphertext, nil
 }
 
+// ErrDecrypt means the key cannot open the ciphertext: a wrong password or key, or corrupted data.
+var ErrDecrypt = errors.New("Decryption failed (wrong password or corrupted vault)")
+
 func Decrypt(key, nonce, ciphertext []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
@@ -113,7 +117,7 @@ func Decrypt(key, nonce, ciphertext []byte) ([]byte, error) {
 
 	plaintext, err := aead.Open(nil, nonce, ciphertext, nil)
 	if err != nil {
-		return nil, fmt.Errorf("Decryption failed (wrong password or corrupted vault): %w", err)
+		return nil, fmt.Errorf("%w: %w", ErrDecrypt, err)
 	}
 
 	return plaintext, nil

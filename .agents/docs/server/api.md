@@ -7,7 +7,7 @@ applies_to:
   - server/internal/middleware/**
 depends_on:
   - architecture/security-model.md
-last_verified: 2026-04-23
+last_verified: 2026-10-13
 stable: partial
 ---
 
@@ -24,7 +24,8 @@ stable: partial
   - rotating refresh token
   - server-side revoke on logout
 - Public auth-session endpoints are rate-limited. Protected routes require bearer auth.
-- Sync push uses optimistic locking and returns 409 on version mismatch. The client handles merge/retry.
+- Sync push uses optimistic locking and returns 409 on version mismatch. The client handles merge/retry. Only a missing vault row gives `has_vault:false` or a pull 404, and only a version mismatch gives 409; any other database error is a 500, so a database outage never looks like a missing vault to clients.
+- Push never replaces an existing password wrap (KDF params plus protected key); only `POST /api/v1/vault/rekey` does, so a device holding an old wrap cannot revert a password change.
 - `handleDevAuth` is still a real back door when `REDIRECT_BASE_URL` is unset. That must stay disabled in production.
 
 ## Decisions

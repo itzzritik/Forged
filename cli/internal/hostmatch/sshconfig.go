@@ -20,7 +20,8 @@ func ParseSSHConfig(path string) ([]SSHHostEntry, error) {
 	defer f.Close()
 
 	var entries []SSHHostEntry
-	var current *SSHHostEntry
+	// OpenSSH uses every IdentityFile line, including global ones before any Host.
+	host := "*"
 
 	scanner := bufio.NewScanner(f)
 	for scanner.Scan() {
@@ -30,23 +31,12 @@ func ParseSSHConfig(path string) ([]SSHHostEntry, error) {
 		}
 
 		key, value := splitDirective(line)
-		key = strings.ToLower(key)
-
-		switch key {
+		switch strings.ToLower(key) {
 		case "host":
-			if current != nil && current.IdentityFile != "" {
-				entries = append(entries, *current)
-			}
-			current = &SSHHostEntry{Host: value}
+			host = value
 		case "identityfile":
-			if current != nil {
-				current.IdentityFile = expandPath(value)
-			}
+			entries = append(entries, SSHHostEntry{Host: host, IdentityFile: expandPath(value)})
 		}
-	}
-
-	if current != nil && current.IdentityFile != "" {
-		entries = append(entries, *current)
 	}
 
 	return entries, scanner.Err()

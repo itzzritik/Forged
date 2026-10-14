@@ -49,7 +49,7 @@ type Deps struct {
 	ImportPreviews            func(string, int, []actions.ImportPreview) (actions.ImportResult, error)
 	DefaultExportPath         func() string
 	AuthorizeExport           func([]byte) (string, error)
-	ExportVault               func(path, token string) (actions.ExportResult, error)
+	ExportVault               func(path, token string, overwrite bool) (actions.ExportResult, error)
 	ChooseFile                func() (string, error)
 	ChooseSavePath            func(string) (string, error)
 	CopyText                  func(string) error

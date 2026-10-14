@@ -13,17 +13,27 @@ const idleAfter = 4 * time.Minute
 
 type idleMsg struct{}
 
-func (a *app) trackIdle() bool {
+// idleApplies reports an unlocked session the idle lock protects, including while a gate opened
+// from the dashboard (Login, repair) is showing.
+func (a *app) idleApplies() bool {
 	st := a.st
-	return a.life.booted && st.Snapshot.VaultExists && st.Status.SensitiveKnown && st.Status.Unlocked && !a.inGate && !st.Locked
+	return a.life.booted && st.Snapshot.VaultExists && st.Status.SensitiveKnown && st.Status.Unlocked && !st.Locked
+}
+
+func (a *app) idleExpired() bool {
+	return a.idleApplies() && !a.life.idleDeadline.IsZero() && time.Now().After(a.life.idleDeadline)
 }
 
 func (a *app) touchIdle() tea.Cmd {
-	if !a.trackIdle() {
+	if !a.idleApplies() {
 		a.life.idleDeadline = time.Time{}
 		return nil
 	}
 	a.life.idleDeadline = time.Now().Add(idleAfter)
+	// A gate never locks mid-flow (a login may be waiting on browser approval); leaving it does.
+	if a.inGate {
+		return nil
+	}
 	return a.armIdle()
 }
 
@@ -37,8 +47,11 @@ func (a *app) armIdle() tea.Cmd {
 
 func (a *app) idle() tea.Cmd {
 	a.life.idleArmed = false
-	if !a.trackIdle() || a.life.idleDeadline.IsZero() {
+	if !a.idleApplies() || a.life.idleDeadline.IsZero() {
 		a.life.idleDeadline = time.Time{}
+		return nil
+	}
+	if a.inGate {
 		return nil
 	}
 	if time.Until(a.life.idleDeadline) > 0 {

@@ -9,3 +9,7 @@ func ProcessInfoForPID(int) (ProcessInfo, error) {
 func ProcessStartedNoLaterThan(ProcessInstance, ProcessInstance) (bool, error) {
 	return false, ErrProcessIdentityUnavailable
 }
+
+func ProcessInstances() (map[ProcessInstance]struct{}, error) {
+	return nil, ErrProcessIdentityUnavailable
+}

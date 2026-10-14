@@ -32,6 +32,7 @@ import (
 )
 
 type Daemon struct {
+	signals chan os.Signal
 	// syncTransitionMu serializes account and local sync-state transitions.
 	// It is never held by link network work; workers take it before sessionMu.
 	syncTransitionMu        sync.Mutex
@@ -63,6 +64,7 @@ type Daemon struct {
 	logger                  *slog.Logger
 	stop                    chan struct{}
 	stopOnce                sync.Once
+	failErr                 error
 	shutdownOnce            sync.Once
 }
 
@@ -74,6 +76,11 @@ func New(paths config.Paths) *Daemon {
 }
 
 func (d *Daemon) Run(password []byte) error {
+	// Registered first: a signal mid-start, or SIGHUP from a closed terminal, still shuts down cleanly.
+	d.signals = make(chan os.Signal, 1)
+	signal.Notify(d.signals, syscall.SIGINT, syscall.SIGTERM, syscall.SIGHUP)
+	defer signal.Stop(d.signals)
+	trimStderrLog(d.paths.DaemonStderrLogFile())
 	defer zeroSecret(password)
 	executable := d.selfBinaryPath()
 	executableInfo, executableErr := os.Stat(executable)
@@ -134,10 +141,9 @@ func (d *Daemon) Run(password []byte) error {
 	d.activityLog = activity.NewActivityLog(1000)
 	d.sessionMu.Lock()
 	d.initSyncLocked()
-	err := d.refreshSSHRoutingLocked()
-	if err == nil {
-		err = d.startIPC()
-	}
+	// Already logged; a config or hint write failure must never keep the agent down.
+	_ = d.refreshSSHRoutingLocked()
+	err := d.startIPC()
 	if err == nil {
 		err = d.startAgentLocked()
 	}
@@ -159,15 +165,18 @@ func (d *Daemon) Run(password []byte) error {
 
 	// Windows upgrades go through the next forged launch. An installed copy
 	// follows the binary it was installed from, since upgrades replace that.
-	if executableErr == nil && runtime.GOOS != "windows" {
+	// Stopping for an upgrade relies on a supervisor restarting the daemon; systemd sets INVOCATION_ID.
+	supervised := runtime.GOOS != "linux" || os.Getenv("INVOCATION_ID") != ""
+	if executableErr == nil && runtime.GOOS != "windows" && supervised {
 		if source := recordedSource(executable); source == "" {
 			go d.watchInstalledBinary(executable, executableInfo, false, executable)
 		} else if info, err := os.Stat(source); err == nil {
 			go d.watchInstalledBinary(source, info, true, executable)
 		}
 	}
+	go d.keepPIDFile()
 	d.waitForSignal()
-	return nil
+	return d.failErr
 }
 
 func (d *Daemon) KeyStore() *vault.KeyStore {
@@ -178,6 +187,39 @@ func (d *Daemon) Stop() {
 	d.stopOnce.Do(func() {
 		close(d.stop)
 	})
+}
+
+// fail stops the daemon with an error, so it exits non-zero and every service manager
+// (including Task Scheduler, which restarts only failures) brings it back.
+func (d *Daemon) fail(err error) {
+	d.stopOnce.Do(func() {
+		d.failErr = err
+		close(d.stop)
+	})
+}
+
+// keepPIDFile restores the record every IPC client checks if something removes it (/tmp
+// cleaners, a user tidying the runtime dir), and touches it so cleaners never see it as old.
+func (d *Daemon) keepPIDFile() {
+	ticker := time.NewTicker(time.Minute)
+	defer ticker.Stop()
+	want := strconv.Itoa(os.Getpid())
+	for {
+		select {
+		case <-d.stop:
+			return
+		case now := <-ticker.C:
+			path := d.paths.PIDFile()
+			if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) == want {
+				_ = os.Chtimes(path, now, now)
+				continue
+			}
+			d.logger.Warn("daemon PID record missing or changed; restoring it")
+			if err := d.writePID(); err != nil {
+				d.logger.Warn("restoring daemon PID record failed", "error", err)
+			}
+		}
+	}
 }
 
 func (d *Daemon) helperBinaryPath() string {
@@ -248,7 +290,8 @@ func (d *Daemon) cleanStaleState() error {
 	if runtime.GOOS != "windows" {
 		if data, err := os.ReadFile(pidPath); err == nil {
 			if pid, err := strconv.Atoi(strings.TrimSpace(string(data))); err == nil {
-				if platform.ProcessAlive(pid) {
+				// After a crash the restarted daemon can get the old PID back (always PID 1 in a container).
+				if pid != os.Getpid() && platform.ProcessAlive(pid) {
 					if forgedDaemon, command, inspectErr := isForgedDaemonProcess(pid); inspectErr == nil {
 						if forgedDaemon {
 							return fmt.Errorf("Daemon already running (PID %d)", pid)
@@ -291,13 +334,14 @@ func (d *Daemon) writePID() error {
 	if err := os.MkdirAll(filepath.Dir(pidPath), 0700); err != nil {
 		return fmt.Errorf("Creating PID directory: %w", err)
 	}
-	return os.WriteFile(pidPath, []byte(strconv.Itoa(os.Getpid())), 0600)
+	return platform.WriteFileDurable(pidPath, []byte(strconv.Itoa(os.Getpid())), 0o600)
 }
 
 func (d *Daemon) startIPC() error {
 	ctlPath := d.paths.CtlSocket()
 
 	d.ipcServer = ipc.NewServer(ctlPath, d.vault, d.keyStore, d.activityLog, d.logger)
+	d.ipcServer.SetAcceptFailureHandler(func(err error) { d.fail(fmt.Errorf("IPC listener failed: %w", err)) })
 	d.ipcServer.SetSyncLinkHandler(d.handleSyncLink)
 	d.ipcServer.SetSyncUnlinkHandler(d.handleSyncUnlink)
 	d.ipcServer.SetAccountReplaceHandler(d.handleAccountReplace)
@@ -341,6 +385,7 @@ func (d *Daemon) startAgentLocked() error {
 	}
 	d.agent.SetSensitiveAuthorizer(d.authBroker)
 	d.agentServer = forgedagent.NewServer(agentPath, d.agent, d.logger)
+	d.agentServer.SetAcceptFailureHandler(func(err error) { d.fail(fmt.Errorf("SSH agent listener failed: %w", err)) })
 	if err := d.agentServer.Start(); err != nil {
 		return fmt.Errorf("Starting agent server: %w", err)
 	}
@@ -437,8 +482,9 @@ func (e *syncStateFileError) Unwrap() error {
 }
 
 const (
-	syncLinkTimeout       = 25 * time.Second
-	syncStateRecoveryHint = "Sync is paused because its local history needs recovery. Restore a verified sync-state.json backup before removing the recovery marker."
+	syncLinkTimeout           = 25 * time.Second
+	syncRemoteKeyMismatchHint = "Sync is paused because the vault saved in your account cannot be opened with this device's vault. Log out to keep using this vault on its own, or move it aside and log in again to restore your account's vault."
+	syncStateRecoveryHint     = "Sync is paused because its local history needs recovery. Restore a verified sync-state.json backup before removing the recovery marker."
 )
 
 func (d *Daemon) expireInitialLink(run *linkRun) {
@@ -515,6 +561,9 @@ func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials
 		if syncCredentialDiagnostic(credentialErr) != "" {
 			d.blockSyncForCredentialErrorLocked(credentialErr)
 			d.logger.Warn("sync paused because saved account credentials cannot be read", "error", credentialErr)
+		} else if !errors.Is(credentialErr, os.ErrNotExist) {
+			d.logger.Warn("reading account credentials for sync failed", "error", credentialErr)
+			d.scheduleSyncRetryLocked(run.generation)
 		}
 		if recoveryMarked {
 			d.setSyncStateRecoveryLocked()
@@ -589,6 +638,7 @@ func (d *Daemon) prepareSyncInit(run *syncInitRun, creds accountauth.Credentials
 		if err := d.markSyncDirtyLocked(); err != nil {
 			d.clearSyncInitRunLocked(run)
 			d.logger.Warn("initializing sync failed", "error", err)
+			d.scheduleSyncRetryLocked(run.generation)
 			d.sessionMu.Unlock()
 			return nil, false
 		}
@@ -707,6 +757,7 @@ func (d *Daemon) finishDirectSyncInit(run *syncInitRun, candidate *syncCandidate
 			return
 		}
 		d.logger.Warn("initializing sync failed", "error", identityErr)
+		d.scheduleSyncRetryLocked(run.generation)
 		d.sessionMu.Unlock()
 		return
 	}
@@ -723,6 +774,7 @@ func (d *Daemon) finishDirectSyncInit(run *syncInitRun, candidate *syncCandidate
 	if err != nil {
 		d.clearSyncInitRunLocked(run)
 		d.logger.Warn("initializing sync failed", "error", err)
+		d.scheduleSyncRetryLocked(run.generation)
 		d.sessionMu.Unlock()
 		return
 	}
@@ -738,6 +790,7 @@ func (d *Daemon) finishDirectSyncInit(run *syncInitRun, candidate *syncCandidate
 	d.clearSyncInitRunLocked(run)
 	if err != nil {
 		d.logger.Warn("initializing sync failed", "error", err)
+		d.scheduleSyncRetryLocked(run.generation)
 		d.sessionMu.Unlock()
 		return
 	}
@@ -850,6 +903,7 @@ func (d *Daemon) prepareSyncCandidate(v *vault.Vault, creds syncCredentials) (*s
 	state.ServerURL = creds.ServerURL
 
 	client := forgedsync.NewClientWithTokenSource(creds.ServerURL, state.DeviceID, d.syncTokenSource(0, creds.ServerURL, state.LinkedUserID))
+	client.OnUnauthorized = d.rejectSyncToken
 	if creds.Token != "" {
 		client = forgedsync.NewClient(creds.ServerURL, creds.Token, state.DeviceID)
 	}
@@ -1604,6 +1658,15 @@ func (d *Daemon) finishInitialSync(run *linkRun, userID string) {
 	d.syncPending = false
 	if err != nil {
 		d.logger.Warn("link reconcile failed", "error", err)
+		// Retrying cannot open a vault encrypted under another key; say so instead of retrying forever.
+		if errors.Is(err, forgedsync.ErrRemoteKeyMismatch) {
+			d.syncError = syncRemoteKeyMismatchHint
+			if d.ipcServer != nil {
+				d.ipcServer.SetSyncError(d.syncError)
+			}
+			d.sessionMu.Unlock()
+			return
+		}
 		d.scheduleSyncRetryLocked(candidate.generation)
 		d.sessionMu.Unlock()
 		return
@@ -1761,6 +1824,7 @@ func (d *Daemon) installSyncCandidateLocked(candidate *syncCandidate) (*forgedsy
 	}
 
 	client := forgedsync.NewClientWithTokenSource(candidate.serverURL, candidate.state.DeviceID, d.syncTokenSource(candidate.generation, candidate.serverURL, candidate.state.LinkedUserID))
+	client.OnUnauthorized = d.rejectSyncToken
 	applyGate := &syncApplyGate{}
 	engine := forgedsync.NewEngineWithVaultApply(candidate.vault, client, d.logger, func(ctx context.Context, update func(*vault.VaultData) error) error {
 		return d.applyActiveSyncUpdate(candidate, applyGate, ctx, update)
@@ -1862,6 +1926,10 @@ func (d *Daemon) syncTokenSource(generation uint64, serverURL, userID string) fu
 		}
 		return accountauth.CurrentToken(creds), nil
 	}
+}
+
+func (d *Daemon) rejectSyncToken(token string) {
+	accountauth.RejectAccessToken(d.paths, token)
 }
 
 // An expired login cannot recover by retrying, so it pauses sync like unreadable credentials.
@@ -2116,11 +2184,8 @@ func (d *Daemon) activeKeyCount() int {
 }
 
 func (d *Daemon) waitForSignal() {
-	sig := make(chan os.Signal, 1)
-	signal.Notify(sig, syscall.SIGINT, syscall.SIGTERM)
-
 	select {
-	case s := <-sig:
+	case s := <-d.signals:
 		d.logger.Info("received signal", "signal", s)
 	case <-d.stop:
 		d.logger.Info("stop requested")
@@ -2243,4 +2308,30 @@ func isForgedDaemonCommand(command, executable string) bool {
 		}
 	}
 	return false
+}
+
+const (
+	maxStderrLogBytes  = 10 << 20
+	keepStderrLogBytes = 256 << 10
+)
+
+// trimStderrLog keeps the newest part of the stderr log that launchd (or a background daemon)
+// appends to and nothing rotates; the end still explains the last crash.
+func trimStderrLog(path string) {
+	file, err := os.OpenFile(path, os.O_RDWR, 0)
+	if err != nil {
+		return
+	}
+	defer file.Close()
+	info, err := file.Stat()
+	if err != nil || info.Size() <= maxStderrLogBytes {
+		return
+	}
+	tail := make([]byte, keepStderrLogBytes)
+	if _, err := file.ReadAt(tail, info.Size()-keepStderrLogBytes); err != nil {
+		return
+	}
+	if file.Truncate(0) == nil {
+		_, _ = file.WriteAt(tail, 0)
+	}
 }

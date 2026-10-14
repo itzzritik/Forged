@@ -187,6 +187,9 @@ func signingCard(st *core.State) card {
 	switch st.Signing.Mode {
 	case actions.CommitSigningForged:
 		name := ui.Sanitize(st.Signing.KeyName)
+		if name == "" {
+			name = "Forged key"
+		}
 		return card{"On", "Signing with " + name, name, name, "Signing on", p.Good}
 	case actions.CommitSigningExternal:
 		who := "Another tool signs"
@@ -414,6 +417,8 @@ func (m *model) recentPanel(st *core.State, w, h int, now time.Time) []string {
 		body = append(body, "")
 	}
 	switch {
+	case !st.KeysLoaded && st.KeysErr != "":
+		body = append(body, "  "+ui.Paint("Couldn't load keys, retrying shortly", ui.P().Muted))
 	case !st.KeysLoaded:
 		body = append(body, "  "+ui.Paint("Loading keys", ui.P().Muted))
 	case len(st.Keys) == 0:

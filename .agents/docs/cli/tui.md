@@ -4,7 +4,7 @@ applies_to:
   - cli/internal/tui/**
 depends_on:
   - cli/ipc.md
-last_verified: 2026-10-09
+last_verified: 2026-10-13
 stable: yes
 ---
 
@@ -34,21 +34,27 @@ The TUI runs in the `forged` CLI process and is keyboard-only.
 - Paste-to-import keeps the key in a paste target and never renders it.
 - Over SSH with a 256-color `TERM` and no `COLORTERM`, the program assumes truecolor (SSH drops `COLORTERM`). Links open only with `$BROWSER` set or locally with a display; otherwise the login card copies on enter. VS Code's terminal ignores OSC 52, so there copying is reported unavailable and the login card offers no copy. The approval URL is an OSC 8 hyperlink so wrapped lines stay clickable.
 - Over SSH or on Linux without a display, plain copies go through the terminal (OSC 52) and private-key copy is refused: a secret never travels through the terminal, and a remote clipboard cannot be verified or cleared.
-- Private-key clipboard copy: 45-second countdown; clear only if the clipboard still holds the copy; failed clears toast once and retry (5s, 30s after 3 tries); esc invalidates a pending copy; a copy started while locked is cleared immediately; exit clears it. A normal copy drops the lease only if it started after that private copy (`CancelClipMsg.Since`). Input is blocked except esc while a clipboard write runs.
-- Idle lock (4 minutes) is one coalesced timer, moved by activity and re-armed on leaving the gate. It locks the view only; esc on the wall never reveals the previous screen.
+- Private-key clipboard copy: 45-second countdown; clear only if the clipboard still holds the copy; failed clears toast once and retry (5s, 30s after 3 tries); esc invalidates a pending copy, and a key whose decrypt finishes after esc is never written to the clipboard (clipboard history apps keep anything that lands there); a copy started while locked is cleared immediately; exit clears it. A normal copy drops the lease only if it started after that private copy (`CancelClipMsg.Since`). Input is blocked except esc while a clipboard write runs.
+- Idle lock (4 minutes) is one coalesced timer, moved by activity. It locks the view only; esc on the wall never reveals the previous screen.
+- A gate opened from the unlocked dashboard (Login, repair) keeps the idle clock running but never locks mid-gate, since a login may be waiting on browser approval. Once the deadline has passed, the first key on that gate (or the gate closing on its own) locks instead of returning to the dashboard. Gate keys come back as messages after the key has refreshed the clock, so expiry is checked when the key arrives.
 - The lock wall starts System Auth only on enter-with-empty-field or tab, never automatically while the user may be away.
 - Over SSH (`Deps.Remote`) the TUI never starts System Auth on any OS: no trust hint, the startup check shows "Unlocking Forged", and unlock requests carry `remote`.
 - The headless-unlock offer opens only right after a password unlock, after the gate closes and under any queued notice modal, and once per device (`security.headless_offered`).
 - Leaving recovery or finishing a login before the first unlock never reveals the dashboard: recovery exit restarts boot; a login runs post-login maintenance on the gate, then shows Unlock; a sync issue during a gate-started login cancels it and shows Unlock (or Welcome when there is no vault). Maintenance results while view-locked update state only.
-- Maintenance is single-flight; runtime and snapshot checks accept only their newest generation.
+- If setup created the vault but its repair failed, or restore finds a vault already there, the TUI boots again into Unlock. Retrying Create or Restore could only fail.
+- The key list reloads after a sync, when the daemon's `key_count` differs from what is shown, or after a failed load; the last two retry at most every 5 s and only while unlocked. A failed first load shows "Couldn't load keys", not "Loading keys" forever.
+- Maintenance is single-flight; runtime and snapshot checks accept only their newest generation. A snapshot without the vault ends the status poll, so a later snapshot that finds the vault again restarts it.
 - Quit is blocked while a password change runs, even on the lock wall. Ctrl+C otherwise always quits.
+- Closing the terminal (SIGHUP) quits normally so clipboard cleanup runs. However the program ends (SIGHUP, SIGTERM, a dead tty), `Run` waits for a running password change, which stops the daemon, to finish and restart it.
+- With the vault locked, Forged signing shows as on with a generic "Forged key" name instead of a signing issue; the name needs an unlocked vault.
 - Signing status loads are single-flight with a reload fence: an invalidation during a load queues one reload instead of accepting the stale result.
 - Manual sync is single-flight; a sync issue redirects to Health and a credential issue starts the login repair. A credential-store failure is distinct from logged out.
 - A daemon endpoint-identity failure blocks daemon and IPC work but not navigation; recovery exposes only SSH-integration removal and Health.
+- A Delete retry that finds a different key under the reviewed name closes with a notice instead of retargeting the delete.
 - Key mutations and signing changes hide route navigation once submitted; late results may refresh caches but never dismiss a newer auth wall.
-- Import never resubmits successful inputs. Export warns before and after writing plaintext private keys and writes via a private same-directory temp file.
+- Import never resubmits successful inputs. A key the preview cannot read is skipped and counted ("could not be read") instead of failing the whole file; a file with only unreadable keys shows the first reason. A name already in the vault or earlier in the file becomes "name (2)". Comments from a Forged export are kept; git-signing state is not imported, since turning it on changes git config. Export warns before and after writing plaintext private keys and writes via a private same-directory temp file. A typed path that already exists needs a second enter to replace it. The default folder is `~/Desktop` when it exists, else the home folder. A file picker that could not open (no GUI session, macOS Automation permission) shows an error instead of acting like a cancel. That check runs before the one-use export token is spent; the native save dialog confirms by itself.
 - `forged doctor` opens straight to Health and works with no vault. Disabled SSH integration is intentional and repair never restores it; `config.toml` parse errors are never overwritten; a live daemon not provably service-owned is never taken over. The copied report holds only version/platform/build metadata and check statuses.
-- Failed actions append throttled, redacted context to a size-capped TUI log (`forged logs tui`); never unlink its `.lock` sidecar.
+- Failed actions append throttled, redacted context to a size-capped TUI log (`forged logs tui`); never unlink its `.lock` sidecar. Appends run on the update loop, so the lock waits at most 1 second and a busy lock drops that line. While the TUI runs, library `slog` output goes to that log instead of over the screen.
 
 ## Decisions
 

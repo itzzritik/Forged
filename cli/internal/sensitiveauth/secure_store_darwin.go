@@ -107,3 +107,18 @@ func (s *darwinSecureStore) DeleteDeviceKey(ctx context.Context, installID, slot
 	}
 	return ErrSecureStoreBroken
 }
+
+func secureStoreDeviceKeyAccount(installID, slot string) (string, error) {
+	installID = strings.TrimSpace(installID)
+	if installID == "" {
+		return "", ErrSecureStoreBroken
+	}
+	switch slot {
+	case "":
+		return installID, nil // legacy single-key enrollment
+	case localEnrollmentDeviceKeySlotA, localEnrollmentDeviceKeySlotB:
+		return installID + ".v2." + slot, nil
+	default:
+		return "", ErrSecureStoreBroken
+	}
+}

@@ -35,6 +35,10 @@ type pullContextAPI interface {
 	PullContext(ctx context.Context) (PullResult, error)
 }
 
+type rekeyContextAPI interface {
+	RekeyContext(ctx context.Context, kdf vault.KDFParams, protectedKey string) error
+}
+
 type Engine struct {
 	vault      *vault.Vault
 	client     API
@@ -83,6 +87,7 @@ func (e *Engine) PushCurrent(ctx context.Context, state *SyncState) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	e.syncWrap(ctx, nil, nil)
 
 	blob, kdf, protectedKeyBytes, err := e.vault.ExportForSync()
 	if err != nil {
@@ -133,6 +138,9 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 	}
 
 	plaintext, err := e.vault.DecryptSyncBlob(result.Blob)
+	if errors.Is(err, vault.ErrDecrypt) {
+		err = fmt.Errorf("%w: %w", ErrRemoteKeyMismatch, err)
+	}
 	if err != nil {
 		return vault.VaultData{}, PullResult{}, err
 	}
@@ -142,11 +150,21 @@ func (e *Engine) PullLatest(ctx context.Context, state *SyncState) (vault.VaultD
 		return vault.VaultData{}, PullResult{}, err
 	}
 	state.RemoteMissing = false
+	e.syncWrap(ctx, result.KDFParams, result.ProtectedSymmetricKey)
 
 	now := time.Now().UTC()
 	if !state.Dirty {
+		// Merge against the last synced base: a plain union would bring back keys deleted
+		// elsewhere. A remote whose version went backwards was recreated, so its base no
+		// longer applies and missing keys there are not deletions.
+		base, baseErr := e.decodeBaseBlob(state.LastSyncedBaseBlob)
+		useBase := baseErr == nil && len(state.LastSyncedBaseBlob) > 0 && result.Version >= state.LastKnownServerVersion
 		if err := e.updateLocal(ctx, func(local *vault.VaultData) error {
-			*local = MergeVaults(*local, remote)
+			if useBase {
+				*local = MergeThreeWay(base, *local, remote, local.Metadata.DeviceID, remote.Metadata.DeviceID)
+			} else {
+				*local = MergeVaults(*local, remote)
+			}
 			return nil
 		}); err != nil {
 			return vault.VaultData{}, PullResult{}, err
@@ -184,6 +202,9 @@ func (e *Engine) MergeAndRetry(ctx context.Context, state *SyncState) error {
 	if err != nil {
 		return err
 	}
+	if result.Version < state.LastKnownServerVersion {
+		base = vault.VaultData{}
+	}
 
 	if err := e.updateLocal(ctx, func(local *vault.VaultData) error {
 		*local = MergeThreeWay(base, *local, remote, local.Metadata.DeviceID, remote.Metadata.DeviceID)
@@ -192,7 +213,11 @@ func (e *Engine) MergeAndRetry(ctx context.Context, state *SyncState) error {
 		return err
 	}
 
+	// The remote just merged is the base from now on, even if this push fails: keeping the older
+	// base would make the next merge see that remote's edits as this device's.
 	state.LastKnownServerVersion = result.Version
+	state.LastSyncedBaseBlob = append([]byte(nil), result.Blob...)
+	state.LastSyncedHash = hashBlob(result.Blob)
 	return e.PushCurrent(ctx, state)
 }
 
@@ -274,14 +299,58 @@ func (e *Engine) RemoteStatus(ctx context.Context, state *SyncState) (StatusResu
 	if state == nil {
 		return StatusResult{}, fmt.Errorf("Sync state required")
 	}
+	var status StatusResult
+	var err error
 	if checker, ok := e.client.(statusContextAPI); ok {
-		return checker.StatusContext(ctx)
+		status, err = checker.StatusContext(ctx)
+	} else if checker, ok := e.client.(statusAPI); ok {
+		status, err = checker.Status()
+	} else {
+		return StatusResult{}, ErrStatusUnsupported
 	}
-	if checker, ok := e.client.(statusAPI); ok {
-		_ = ctx
-		return checker.Status()
+	if err == nil && status.HasVault {
+		e.syncWrap(ctx, status.KDFParams, status.ProtectedSymmetricKey)
 	}
-	return StatusResult{}, ErrStatusUnsupported
+	return status, err
+}
+
+// syncWrap uploads this device's password change while it is still pending, otherwise stages a
+// different server wrap for adoption at the next password unlock. Pushes no longer carry the wrap.
+func (e *Engine) syncWrap(ctx context.Context, remoteKDF *kdfParamsJSON, remoteProtected *string) {
+	path := e.vault.Path()
+	if vault.RekeyPending(path) {
+		rekeyer, ok := e.client.(rekeyContextAPI)
+		if !ok {
+			return
+		}
+		protectedKey := base64.StdEncoding.EncodeToString(e.vault.ProtectedKeyBytes())
+		if err := rekeyer.RekeyContext(ctx, e.vault.KDFParams(), protectedKey); err != nil {
+			e.logWrap("retrying password change upload failed", err)
+			return
+		}
+		e.logWrap("clearing uploaded password change marker", vault.SetRekeyPending(path, false))
+		return
+	}
+	if remoteKDF == nil || remoteProtected == nil || *remoteProtected == "" {
+		return
+	}
+	kdf, err := remoteKDF.params()
+	if err != nil {
+		e.logWrap("ignoring remote wrap", err)
+		return
+	}
+	protectedKey, err := base64.StdEncoding.DecodeString(*remoteProtected)
+	if err != nil {
+		e.logWrap("ignoring remote wrap", err)
+		return
+	}
+	e.logWrap("staging remote wrap", e.vault.StagePendingWrap(kdf, protectedKey))
+}
+
+func (e *Engine) logWrap(msg string, err error) {
+	if err != nil && e.logger != nil {
+		e.logger.Warn(msg, "error", err)
+	}
 }
 
 func (e *Engine) decodeBaseBlob(blob []byte) (vault.VaultData, error) {
@@ -329,6 +398,9 @@ func (e *Engine) fetchRemote(ctx context.Context) (vault.VaultData, PullResult, 
 	}
 
 	plaintext, err := e.vault.DecryptSyncBlob(result.Blob)
+	if errors.Is(err, vault.ErrDecrypt) {
+		err = fmt.Errorf("%w: %w", ErrRemoteKeyMismatch, err)
+	}
 	if err != nil {
 		return vault.VaultData{}, PullResult{}, false, err
 	}

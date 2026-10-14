@@ -27,6 +27,7 @@ type Vault struct {
 	protectedKey [ProtectedKeySize]byte
 	data         VaultData
 	closed       bool
+	adoptedWrap  bool
 }
 
 type VaultData struct {
@@ -36,11 +37,13 @@ type VaultData struct {
 	Tombstones    []Tombstone      `json:"tombstones"`
 	KeyGeneration int              `json:"key_generation"`
 	SSH           SSHData          `json:"ssh,omitempty"`
+	Extra         Extra            `json:"-"`
 }
 
 type SSHData struct {
 	Routes     map[string]SSHRoute `json:"routes,omitempty"`
 	Tombstones []SSHRouteTombstone `json:"tombstones,omitempty"`
+	Extra      Extra               `json:"-"`
 }
 
 type SSHRoute struct {
@@ -51,12 +54,14 @@ type SSHRoute struct {
 	SuccessCount  int                  `json:"success_count,omitempty"`
 	LastSuccessAt *time.Time           `json:"last_success_at,omitempty"`
 	Attempts      map[string]time.Time `json:"attempts,omitempty"`
+	Extra         Extra                `json:"-"`
 }
 
 type SSHRouteTombstone struct {
 	Target          string    `json:"target"`
 	DeletedAt       time.Time `json:"deleted_at"`
 	DeletedByDevice string    `json:"deleted_by_device,omitempty"`
+	Extra           Extra     `json:"-"`
 }
 
 type Key struct {
@@ -76,18 +81,21 @@ type Key struct {
 	GitSigning          bool       `json:"git_signing"`
 	Version             int        `json:"version"`
 	DeviceOrigin        string     `json:"device_origin"`
+	Extra               Extra      `json:"-"`
 }
 
 type Metadata struct {
 	CreatedAt  time.Time `json:"created_at"`
 	DeviceID   string    `json:"device_id"`
 	DeviceName string    `json:"device_name"`
+	Extra      Extra     `json:"-"`
 }
 
 type Tombstone struct {
 	KeyID           string    `json:"key_id"`
 	DeletedAt       time.Time `json:"deleted_at"`
 	DeletedByDevice string    `json:"deleted_by_device"`
+	Extra           Extra     `json:"-"`
 }
 
 func Create(path string, password []byte) (*Vault, error) {
@@ -189,6 +197,11 @@ func Open(path string, password []byte) (*Vault, error) {
 		return nil, err
 	}
 	v.lockFile = lockFile
+	sweepTempFiles(path)
+	// A failed save keeps the pending file; the next save writes this header anyway.
+	if v.adoptedWrap && v.saveLocked() == nil {
+		_ = os.Remove(pendingWrapPath(path))
+	}
 	return v, nil
 }
 
@@ -212,6 +225,7 @@ func OpenWithSymmetricKey(path string, symmetricKey []byte) (*Vault, error) {
 		return nil, err
 	}
 	v.lockFile = lockFile
+	sweepTempFiles(path)
 	return v, nil
 }
 
@@ -240,6 +254,7 @@ func openVault(path string, password []byte) (*Vault, error) {
 	}
 
 	symmetricKey, err := DecryptCombined(stretchedKey, header.ProtectedKey[:])
+	var adopted *pendingWrap
 	if err != nil {
 		for i := range masterKey {
 			masterKey[i] = 0
@@ -247,7 +262,9 @@ func openVault(path string, password []byte) (*Vault, error) {
 		for i := range stretchedKey {
 			stretchedKey[i] = 0
 		}
-		return nil, fmt.Errorf("Decrypting protected key: %w", err)
+		if symmetricKey, adopted = pendingWrapKey(path, password, header, ciphertext); symmetricKey == nil {
+			return nil, fmt.Errorf("Decrypting protected key: %w", err)
+		}
 	}
 
 	// Zero master key and stretched key -- no longer needed
@@ -281,6 +298,9 @@ func openVault(path string, password []byte) (*Vault, error) {
 		key:          symmetricKey,
 		protectedKey: header.ProtectedKey,
 		data:         vd,
+	}
+	if adopted != nil {
+		v.adoptPendingWrap(adopted)
 	}
 
 	return v, nil
@@ -459,6 +479,7 @@ func (v *Vault) ChangePassword(newPassword []byte) error {
 		v.protectedKey = previousProtectedKey
 		return err
 	}
+	_ = os.Remove(pendingWrapPath(v.path))
 	return nil
 }
 
@@ -511,29 +532,6 @@ func (v *Vault) UpdateData(update func(*VaultData) error) error {
 	return nil
 }
 
-func (v *Vault) ImportFromSync(data []byte) error {
-	v.mu.Lock()
-	defer v.mu.Unlock()
-	if err := v.ensureOpenLocked(); err != nil {
-		return err
-	}
-
-	plaintext, err := DecryptCombined(v.key, data)
-	if err != nil {
-		return err
-	}
-	var vd VaultData
-	if err := json.Unmarshal(plaintext, &vd); err != nil {
-		return fmt.Errorf("Parsing synced vault: %w", err)
-	}
-	normalizeVaultKeyTypes(&vd)
-	if err := v.saveDataLocked(&vd); err != nil {
-		return err
-	}
-	v.data = vd
-	return nil
-}
-
 func (v *Vault) ensureOpenLocked() error {
 	if v.closed || len(v.key) != KeySize {
 		return fmt.Errorf("Vault is closed")
@@ -554,36 +552,21 @@ func cloneVaultData(data VaultData) (VaultData, error) {
 }
 
 func atomicWrite(path string, data []byte) error {
-	dir := filepath.Dir(path)
-	tmp, err := os.CreateTemp(dir, ".vault-*.tmp")
-	if err != nil {
-		return fmt.Errorf("Creating temp file: %w", err)
-	}
-	tmpPath := tmp.Name()
+	return platform.WriteFileDurable(path, data, 0o600)
+}
 
-	defer func() {
-		tmp.Close()
-		os.Remove(tmpPath)
-	}()
-
-	if _, err := tmp.Write(data); err != nil {
-		return fmt.Errorf("Writing temp file: %w", err)
+// A crash mid-save leaves temp files; only the lock holder writes them, so sweep once locked.
+func sweepTempFiles(path string) {
+	if real, err := platform.ResolveWritePath(path); err == nil {
+		path = real
 	}
-	if err := tmp.Sync(); err != nil {
-		return fmt.Errorf("Syncing temp file: %w", err)
+	dir, base := filepath.Dir(path), filepath.Base(path)
+	for _, pattern := range []string{"." + base + ".tmp-*", ".vault-*.tmp"} {
+		stale, _ := filepath.Glob(filepath.Join(dir, pattern))
+		for _, file := range stale {
+			_ = os.Remove(file)
+		}
 	}
-	if err := tmp.Close(); err != nil {
-		return fmt.Errorf("Closing temp file: %w", err)
-	}
-
-	if err := os.Chmod(tmpPath, 0600); err != nil {
-		return fmt.Errorf("Setting permissions: %w", err)
-	}
-	if err := os.Rename(tmpPath, path); err != nil {
-		return fmt.Errorf("Renaming vault file: %w", err)
-	}
-
-	return nil
 }
 
 func (v *Vault) acquireLock() error {
@@ -627,7 +610,10 @@ func acquireVaultLock(path string) (*os.File, error) {
 
 	if err := platform.LockFile(f); err != nil {
 		f.Close()
-		return nil, ErrVaultLocked
+		if platform.LockBusy(err) {
+			return nil, ErrVaultLocked
+		}
+		return nil, fmt.Errorf("Locking vault (the file system may not support locks): %w", err)
 	}
 
 	return f, nil

@@ -63,16 +63,12 @@ func renderRouteHooks(paths config.Paths, selfPath string) string {
 		"--port", shellQuote("%p"),
 		"--user", shellQuote("%r"),
 		"--original-host", shellQuote("%n"),
-	}, " ")
-	success := strings.Join([]string{
-		"exec",
-		shellQuote(selfPath),
-		"__ssh-route-success",
-		"--attempt", shellQuote("%C"),
+		"--socket", shellQuote(paths.CtlSocket()),
 	}, " ")
 	return strings.Join([]string{
-		fmt.Sprintf("Match final exec %s", sshConfigQuote(prepare)),
-		fmt.Sprintf("    LocalCommand %s", success),
+		// OpenSSH before 9.6 expands %h/%r/%n raw, so a ' in them would escape the shell quoting;
+		// a failed earlier criterion skips the exec.
+		fmt.Sprintf(`Match final !host "*'*" !originalhost "*'*" !user "*'*" exec %s`, sshConfigQuote(prepare)),
 		renderRouteIdentitySlotHooks(paths, selfPath),
 	}, "\n")
 }
@@ -87,6 +83,7 @@ func renderRouteIdentitySlotHooks(paths config.Paths, selfPath string) string {
 			"__ssh-route-slot",
 			"--attempt", shellQuote("%C"),
 			"--slot", strconv.Itoa(slot),
+			"--socket", shellQuote(paths.CtlSocket()),
 		}, " ")
 		lines = append(lines,
 			fmt.Sprintf("Match final exec %s", sshConfigQuote(check)),

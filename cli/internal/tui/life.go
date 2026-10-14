@@ -40,7 +40,7 @@ type life struct {
 	loginFailed, loginFromDash                 bool
 	loginCode, loginURL                        string
 	restorePW                                  *pwBuffer
-	idleDeadline                               time.Time
+	idleDeadline, keysRetryAt                  time.Time
 	idleArmed                                  bool
 	clipRetries                                int
 }
@@ -51,6 +51,7 @@ type maintenanceDoneMsg struct {
 	result                 readiness.RunResult
 	err, unlockErr         error
 	passwordUsed, unlocked bool
+	created                bool
 }
 
 type unlockDoneMsg struct {
@@ -76,6 +77,9 @@ func (a *app) showGate(k gate.Kind) {
 }
 
 func (a *app) leaveGate() tea.Cmd {
+	if a.idleExpired() {
+		return a.lock()
+	}
 	a.inGate, a.frameOn = false, false
 	a.frameGen++
 	a.gate.Wipe()
@@ -180,6 +184,7 @@ func (a *app) startMaintenance(trigger string, pw []byte, createFirst bool, titl
 				msg.err = fmt.Errorf("creating vault: %w", err)
 				return msg
 			}
+			msg.created = true
 		}
 		opts := readiness.RunOptions{Mode: mode}
 		if len(pwCopy) > 0 {
@@ -268,6 +273,9 @@ func (a *app) maintained(msg maintenanceDoneMsg) tea.Cmd {
 func (a *app) maintenanceFailed(msg maintenanceDoneMsg, errText string) tea.Cmd {
 	st := a.st
 	switch {
+	case msg.created:
+		// The vault exists now, so retrying Create can only fail; boot again into Unlock.
+		return tea.Batch(a.notify(errText, ui.ToneBad), a.restart())
 	case a.inGate && (msg.trigger == trigSetup || msg.passwordUsed):
 		a.gate.SetError(errText)
 	case msg.trigger == trigBoot && st.Snapshot.VaultExists && a.life.unlockPending:

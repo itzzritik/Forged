@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -20,8 +21,9 @@ const (
 	routeIdentitySlotCount = 6
 	routeStateFilename     = ".route-state.json"
 	routeStateMaxBytes     = 1 << 20
-	routeStateMaxAttempts  = 256
+	routeStateMaxAttempts  = 1024
 	unverifiedRouteTTL     = 10 * time.Minute
+	rejectedKeyTTL         = 30 * time.Minute
 )
 
 type routeStateFile struct {
@@ -128,27 +130,73 @@ func WriteRouteSnippet(dir, attempt string, refs []KeyRef) error {
 	return atomicWriteFile(routeReadyPath(dir, attempt), []byte("ready\n"), 0o600)
 }
 
+// writeRouteIdentitySlots keeps every still-needed key in its slot and puts new keys in free ones.
+// OpenSSH checks a slot while parsing config but reads its file only after connecting, so a
+// concurrent ssh to the same host must never move another process's key to a different slot.
 func writeRouteIdentitySlots(dir, attempt string, refs []KeyRef) error {
 	attemptDir := filepath.Join(dir, attempt)
 	if err := os.MkdirAll(attemptDir, 0o700); err != nil {
 		return fmt.Errorf("Creating SSH route identity slots: %w", err)
 	}
 
+	byFingerprint := map[string]KeyRef{}
+	for _, ref := range refs {
+		if strings.TrimSpace(ref.PublicKey) != "" {
+			byFingerprint[ref.Fingerprint] = ref
+		}
+	}
+	layout := make([]string, routeIdentitySlotCount)
+	placed := map[string]bool{}
+	for slot := 1; slot <= routeIdentitySlotCount; slot++ {
+		fingerprint := routeIdentitySlotFingerprint(dir, attempt, slot)
+		if _, needed := byFingerprint[fingerprint]; needed && !placed[fingerprint] {
+			layout[slot-1] = fingerprint
+			placed[fingerprint] = true
+		}
+	}
+	for _, ref := range refs {
+		if _, ok := byFingerprint[ref.Fingerprint]; !ok || placed[ref.Fingerprint] {
+			continue
+		}
+		for i := range layout {
+			if layout[i] == "" {
+				layout[i] = ref.Fingerprint
+				placed[ref.Fingerprint] = true
+				break
+			}
+		}
+	}
+
 	for slot := 1; slot <= routeIdentitySlotCount; slot++ {
 		path := routeIdentitySlotPath(dir, attempt, slot)
-		index := slot - 1
-		if index >= len(refs) || strings.TrimSpace(refs[index].PublicKey) == "" {
+		fingerprint := layout[slot-1]
+		if fingerprint == "" {
 			if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
 				return fmt.Errorf("Removing stale SSH route identity slot: %w", err)
 			}
 			continue
 		}
-		content := strings.TrimSpace(refs[index].PublicKey) + "\n"
+		if routeIdentitySlotFingerprint(dir, attempt, slot) == fingerprint {
+			continue
+		}
+		content := strings.TrimSpace(byFingerprint[fingerprint].PublicKey) + "\n"
 		if err := atomicWriteFile(path, []byte(content), 0o600); err != nil {
 			return fmt.Errorf("Writing SSH route identity slot: %w", err)
 		}
 	}
 	return nil
+}
+
+func routeIdentitySlotFingerprint(dir, attempt string, slot int) string {
+	data, err := os.ReadFile(routeIdentitySlotPath(dir, attempt, slot))
+	if err != nil {
+		return ""
+	}
+	key, _, _, _, err := ssh.ParseAuthorizedKey(data)
+	if err != nil {
+		return ""
+	}
+	return ssh.FingerprintSHA256(key)
 }
 
 func routeIdentitySlotPattern(dir string, slot int) string {
@@ -286,11 +334,12 @@ func (s *Service) resetRouteRuntimeLocked(discardAttempts bool) error {
 	if s.startupIdentityUnavailable {
 		return fmt.Errorf("daemon process identity is unavailable")
 	}
-	s.runtimeUntrusted = true
-	s.runtimeWriteFailed = true
+	// Refusing must not touch the guard: a recoverable write failure would become a permanent deny.
 	if len(s.unscoped) > 0 || (!discardAttempts && len(s.attempts) > 0) {
 		return fmt.Errorf("close active SSH sessions before resetting route runtime")
 	}
+	s.runtimeUntrusted = true
+	s.runtimeWriteFailed = true
 	if err := os.RemoveAll(s.paths.SSHRouteRuntimeDir()); err != nil {
 		return fmt.Errorf("removing SSH route runtime: %w", err)
 	}
@@ -413,20 +462,19 @@ func routeIdentitySlotsMatch(dir, attempt string, candidates []string) bool {
 	if err != nil || !slots.IsDir() {
 		return false
 	}
+	found := map[string]bool{}
 	for slot := 1; slot <= routeIdentitySlotCount; slot++ {
 		path := routeIdentitySlotPath(dir, attempt, slot)
-		index := slot - 1
-		if index >= len(candidates) {
-			if _, err := os.Lstat(path); err == nil || !os.IsNotExist(err) {
-				return false
-			}
+		if _, err := os.Lstat(path); os.IsNotExist(err) {
 			continue
 		}
-		if !routeIdentitySlotMatches(dir, attempt, slot, candidates[index]) {
+		fingerprint := routeIdentitySlotFingerprint(dir, attempt, slot)
+		if fingerprint == "" || found[fingerprint] || !slices.Contains(candidates, fingerprint) {
 			return false
 		}
+		found[fingerprint] = true
 	}
-	return true
+	return len(found) == len(candidates)
 }
 
 func routeIdentitySlotMatches(dir, attempt string, slot int, fingerprint string) bool {

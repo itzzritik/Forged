@@ -2,6 +2,7 @@ package actions
 
 import (
 	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
@@ -9,10 +10,12 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/itzzritik/forged/cli/internal/keytypes"
+	"github.com/itzzritik/forged/cli/internal/platform"
 	"golang.org/x/crypto/ssh"
 )
 
@@ -72,6 +75,11 @@ func LoadCommitSigningStatus(paths config.Paths) (CommitSigningStatus, error) {
 	}
 
 	match, err := matchForgedSigningKey(paths, signingKey)
+	if err != nil && strings.Contains(strings.ToLower(err.Error()), "vault is locked") {
+		// Signing is set up; only the key's name needs an unlocked vault.
+		status.Mode = CommitSigningForged
+		return status, nil
+	}
 	if err != nil {
 		return status, err
 	}
@@ -89,7 +97,12 @@ func LoadCommitSigningStatus(paths config.Paths) (CommitSigningStatus, error) {
 	return status, nil
 }
 
+// signingMu runs one signing change at a time: two would race on git's config lock and the saved setup.
+var signingMu sync.Mutex
+
 func EnableCommitSigning(paths config.Paths, keyName string) (CommitSigningStatus, error) {
+	signingMu.Lock()
+	defer signingMu.Unlock()
 	exported, err := ExportPublicKey(paths, keyName)
 	if err != nil {
 		return CommitSigningStatus{}, err
@@ -110,7 +123,7 @@ func EnableCommitSigning(paths config.Paths, keyName string) (CommitSigningStatu
 	if err != nil {
 		return CommitSigningStatus{}, err
 	}
-	if err := applyGitSigningConfig(exported.PublicKey, signPath, allowedSignersFile); err != nil {
+	if err := applyGitSigningConfig(paths, exported.PublicKey, signPath, allowedSignersFile); err != nil {
 		return CommitSigningStatus{}, err
 	}
 
@@ -118,6 +131,13 @@ func EnableCommitSigning(paths config.Paths, keyName string) (CommitSigningStatu
 }
 
 func DisableCommitSigning(paths config.Paths) (CommitSigningStatus, error) {
+	signingMu.Lock()
+	defer signingMu.Unlock()
+	if restored, err := restoreGitSigningConfig(paths); err != nil {
+		return CommitSigningStatus{}, err
+	} else if restored {
+		return LoadCommitSigningStatus(paths)
+	}
 	cmd := exec.Command("git", "config", "--global", "--replace-all", "commit.gpgsign", "false")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		detail := strings.TrimSpace(string(out))
@@ -288,16 +308,13 @@ func findSignBinary() (string, error) {
 }
 
 func writeAllowedSigners(publicKey string) (string, error) {
-	home, err := os.UserHomeDir()
+	signerFile, err := allowedSignersPath()
 	if err != nil {
 		return "", err
 	}
-
-	signerFile := filepath.Join(home, ".ssh", "allowed_signers")
-	if data, err := os.ReadFile(signerFile); err == nil {
-		if strings.Contains(string(data), publicKey) {
-			return signerFile, nil
-		}
+	data, err := os.ReadFile(signerFile)
+	if err == nil && strings.Contains(string(data), publicKey) {
+		return signerFile, nil
 	}
 
 	if err := os.MkdirAll(filepath.Dir(signerFile), 0o700); err != nil {
@@ -310,10 +327,28 @@ func writeAllowedSigners(publicKey string) (string, error) {
 	}
 	defer file.Close()
 
-	if _, err := fmt.Fprintf(file, "* %s\n", publicKey); err != nil {
+	line := "* " + publicKey + "\n"
+	if len(data) > 0 && data[len(data)-1] != '\n' {
+		line = "\n" + line
+	}
+	if _, err := file.WriteString(line); err != nil {
 		return "", err
 	}
 	return signerFile, nil
+}
+
+// allowedSignersPath keeps a signers file the user already configured, so Forged adds its key
+// there instead of pointing git away from everyone else's.
+func allowedSignersPath() (string, error) {
+	out, err := exec.Command("git", "config", "--global", "--path", "--get", "gpg.ssh.allowedSignersFile").Output()
+	if path := strings.TrimSpace(string(out)); err == nil && filepath.IsAbs(path) {
+		return path, nil
+	}
+	home, err := os.UserHomeDir()
+	if err != nil {
+		return "", err
+	}
+	return filepath.Join(home, ".ssh", "allowed_signers"), nil
 }
 
 func validateAllowedSignersFile(path, publicKey string) error {
@@ -341,21 +376,89 @@ func validateAllowedSignersFile(path, publicKey string) error {
 	return nil
 }
 
-func applyGitSigningConfig(publicKey, signPath, allowedSignersFile string) error {
+var gitSigningKeys = []string{"user.signingkey", "gpg.format", "gpg.ssh.program", "gpg.ssh.allowedSignersFile", "commit.gpgsign"}
+
+func applyGitSigningConfig(paths config.Paths, publicKey, signPath, allowedSignersFile string) error {
 	if strings.TrimSpace(allowedSignersFile) == "" {
 		return fmt.Errorf("allowed signers file is required")
 	}
-	for _, args := range [][]string{
-		{"git", "config", "--global", "user.signingkey", publicKey},
-		{"git", "config", "--global", "gpg.format", "ssh"},
-		{"git", "config", "--global", "gpg.ssh.program", signPath},
-		{"git", "config", "--global", "gpg.ssh.allowedSignersFile", allowedSignersFile},
-		{"git", "config", "--global", "commit.gpgsign", "true"},
-	} {
-		cmd := exec.Command(args[0], args[1:]...)
-		if out, err := cmd.CombinedOutput(); err != nil {
-			return fmt.Errorf("Running %v: %s: %w", args, string(out), err)
+	previous := map[string]*string{}
+	for _, key := range gitSigningKeys {
+		previous[key] = globalGitConfig(key)
+	}
+	// Keep the user's own signing setup (e.g. GPG) once, so turning Forged signing off restores it;
+	// re-enabling must not overwrite that copy with Forged's values.
+	if program := previous["gpg.ssh.program"]; program == nil || !config.IsForgedSignProgram(*program) {
+		data, err := json.Marshal(previous)
+		if err != nil {
+			return err
 		}
+		if err := platform.WriteFileDurable(gitSigningBackupFile(paths), data, 0o600); err != nil {
+			return fmt.Errorf("Saving the current git signing setup: %w", err)
+		}
+	}
+	values := []string{publicKey, "ssh", signPath, allowedSignersFile, "true"}
+	for i, key := range gitSigningKeys {
+		if err := setGlobalGitConfig(key, &values[i]); err != nil {
+			// A half-applied setup signs with the wrong program or key; put back what was there.
+			for _, key := range gitSigningKeys {
+				_ = setGlobalGitConfig(key, previous[key])
+			}
+			return err
+		}
+	}
+	return nil
+}
+
+// restoreGitSigningConfig puts back the setup saved when Forged signing was turned on, if Forged's
+// signing is still the one configured.
+func restoreGitSigningConfig(paths config.Paths) (bool, error) {
+	data, err := os.ReadFile(gitSigningBackupFile(paths))
+	if err != nil {
+		return false, nil
+	}
+	if program := globalGitConfig("gpg.ssh.program"); program == nil || !config.IsForgedSignProgram(*program) {
+		return false, nil
+	}
+	var previous map[string]*string
+	if err := json.Unmarshal(data, &previous); err != nil {
+		return false, nil
+	}
+	for _, key := range gitSigningKeys {
+		if err := setGlobalGitConfig(key, previous[key]); err != nil {
+			return false, err
+		}
+	}
+	_ = os.Remove(gitSigningBackupFile(paths))
+	return true, nil
+}
+
+func gitSigningBackupFile(paths config.Paths) string {
+	return filepath.Join(paths.ConfigDir, "git-signing-backup.json")
+}
+
+func globalGitConfig(key string) *string {
+	out, err := exec.Command("git", "config", "--global", "--get", key).Output()
+	if err != nil {
+		return nil
+	}
+	value := strings.TrimRight(string(out), "\r\n")
+	return &value
+}
+
+func setGlobalGitConfig(key string, value *string) error {
+	args := []string{"config", "--global", "--unset-all", key}
+	if value != nil {
+		args = []string{"config", "--global", "--replace-all", key, *value}
+	}
+	out, err := exec.Command("git", args...).CombinedOutput()
+	var exit *exec.ExitError
+	// git exits 5 when unsetting a key that is not set.
+	if value == nil && errors.As(err, &exit) && exit.ExitCode() == 5 {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("Running git %s: %s: %w", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

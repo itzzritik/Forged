@@ -75,6 +75,20 @@ func IsCredentialDiagnostic(diagnostic string) bool {
 	}
 }
 
+// rejectedAccess holds, per credentials file, an access token the server refused.
+var rejectedAccess sync.Map
+
+// RejectAccessToken makes the next EnsureFresh refresh even though the local clock still trusts
+// this token.
+func RejectAccessToken(paths config.Paths, token string) {
+	rejectedAccess.Store(CredentialsPath(paths), token)
+}
+
+func accessRejected(paths config.Paths, creds Credentials) bool {
+	token, ok := rejectedAccess.Load(CredentialsPath(paths))
+	return ok && token == CurrentToken(creds)
+}
+
 // refreshMu serializes the load → refresh → save sequence in EnsureFresh so
 // two callers in the same process never present the same refresh token to the
 // server. The server has a 30s grace window for honest replays, but
@@ -210,6 +224,10 @@ func loadCredentialsWithCache(paths config.Paths, useCache bool) (Credentials, e
 		return Credentials{}, fmt.Errorf("Account credential secret is missing: %w", ErrCredentialStoreBroken)
 	}
 	if err != nil {
+		// A slow store (securityd after wake) is temporary; calling it broken pauses sync until unlock.
+		if ctx.Err() != nil {
+			return Credentials{}, fmt.Errorf("Loading account secret timed out: %w", ctx.Err())
+		}
 		if !IsCredentialLoadFailure(err) {
 			err = errors.Join(ErrCredentialStoreBroken, err)
 		}
@@ -243,6 +261,10 @@ func loadCredentialsWithCache(paths config.Paths, useCache bool) (Credentials, e
 	if CurrentToken(creds) == "" && !CanRefresh(creds, time.Now()) {
 		return Credentials{}, fmt.Errorf("Account credentials are missing a usable token: %w", ErrCredentialStoreBroken)
 	}
+	if useCache {
+		// Cached against this exact record, so later reads skip the OS store until it changes.
+		cacheCredentials(paths, creds, metadata.UpdatedAt)
+	}
 	return creds, nil
 }
 
@@ -260,7 +282,7 @@ func credsAreFresher(cached cachedCredentials, metadata accountMetadata) bool {
 	if creds.ChangeID != metadata.ChangeID {
 		return false
 	}
-	return cached.UpdatedAt.After(metadata.UpdatedAt) || creds.RefreshExpiresAt.After(metadata.RefreshExpiresAt)
+	return !cached.UpdatedAt.Before(metadata.UpdatedAt) || creds.RefreshExpiresAt.After(metadata.RefreshExpiresAt)
 }
 
 func Save(paths config.Paths, creds Credentials) error {
@@ -437,13 +459,16 @@ func ensureFreshLocked(ctx context.Context, paths config.Paths) (Credentials, er
 	if err != nil {
 		return Credentials{}, err
 	}
-	if !NeedsRefresh(creds, time.Now()) {
+	if !NeedsRefresh(creds, time.Now()) && !accessRejected(paths, creds) {
 		return creds, nil
 	}
 	if !CanRefresh(creds, time.Now()) {
 		return Credentials{}, ErrLoginRequired
 	}
 
+	// The server rotates the refresh token on receipt, so a caller giving up must not lose the
+	// new pair; the HTTP client timeout still bounds this.
+	ctx = context.WithoutCancel(ctx)
 	refreshed, err := refresh(ctx, creds)
 	if errors.Is(err, ErrLoginRequired) {
 		// One retry: a 401 here can mean an in-flight rotation whose
@@ -463,6 +488,7 @@ func ensureFreshLocked(ctx context.Context, paths config.Paths) (Credentials, er
 	// server has already committed the rotation by this point; the new
 	// tokens are the only ones that work.
 	cacheCredentials(paths, refreshed, time.Now().UTC())
+	rejectedAccess.Delete(CredentialsPath(paths))
 
 	if err := saveCredentials(paths, refreshed); errors.Is(err, ErrCredentialSecretCleanupPending) {
 		slog.Warn("retired account credential cleanup pending after refresh")
@@ -729,25 +755,7 @@ func writePrivateFile(path string, body []byte) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
 		return err
 	}
-	tmp, err := os.CreateTemp(filepath.Dir(path), filepath.Base(path)+".*.tmp")
-	if err != nil {
-		return err
-	}
-	tmpPath := tmp.Name()
-	defer os.Remove(tmpPath)
-
-	if _, err := tmp.Write(body); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Chmod(0o600); err != nil {
-		tmp.Close()
-		return err
-	}
-	if err := tmp.Close(); err != nil {
-		return err
-	}
-	return os.Rename(tmpPath, path)
+	return platform.WriteFileDurable(path, body, 0o600)
 }
 
 func refresh(ctx context.Context, creds Credentials) (Credentials, error) {

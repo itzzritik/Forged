@@ -56,7 +56,10 @@ func InstalledBinary(name string) string {
 
 // InInstallDir reports whether path is inside InstallDir.
 func InInstallDir(path string) bool {
-	root := InstallDir()
+	return inDir(InstallDir(), path)
+}
+
+func inDir(root, path string) bool {
 	if root == "" || strings.TrimSpace(path) == "" {
 		return false
 	}
@@ -68,7 +71,12 @@ func InInstallDir(path string) bool {
 // forged-auth beside it into InstallDir/bin, rewriting only files that
 // changed, and records source so the daemon can follow its upgrades.
 func InstallBinaries(source string) error {
-	root := InstallDir()
+	return installBinariesInto(InstallDir(), source)
+}
+
+// installBinariesInto lets the daemon refresh the folder it runs from: its environment
+// (e.g. systemd without XDG_DATA_HOME) can name a different InstallDir than the installing CLI's.
+func installBinariesInto(root, source string) error {
 	if root == "" {
 		return errors.New("no per-user install folder")
 	}
@@ -76,7 +84,7 @@ func InstallBinaries(source string) error {
 	if err != nil {
 		return err
 	}
-	if InInstallDir(source) {
+	if inDir(root, source) {
 		return nil
 	}
 	if strings.TrimSuffix(filepath.Base(source), ".exe") != "forged" {
@@ -104,11 +112,11 @@ func InstallBinaries(source string) error {
 		if err != nil {
 			return fmt.Errorf("reading %s: %w", name, err)
 		}
-		if err := replaceBinary(InstalledBinary(name), data); err != nil {
+		if err := replaceBinary(filepath.Join(bin, filepath.Base(InstalledBinary(name))), data); err != nil {
 			return fmt.Errorf("installing %s: %w", name, err)
 		}
 	}
-	return os.WriteFile(installSourceFile(), []byte(source), 0o600)
+	return platform.WriteFileDurable(filepath.Join(root, "source"), []byte(source), 0o600)
 }
 
 // recordedSource is the binary an installed copy at exe came from, if any.
@@ -124,10 +132,6 @@ func recordedSource(exe string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
-}
-
-func installSourceFile() string {
-	return filepath.Join(InstallDir(), "source")
 }
 
 func lockInstallDir(root string) (func(), error) {
@@ -168,6 +172,10 @@ func replaceBinary(target string, data []byte) error {
 		tmp.Close()
 		return err
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return err
+	}
 	if err := tmp.Close(); err != nil {
 		return err
 	}
@@ -182,5 +190,8 @@ func replaceBinary(target string, data []byte) error {
 			}
 		}
 	}
-	return os.Rename(tmp.Name(), target)
+	if err := os.Rename(tmp.Name(), target); err != nil {
+		return err
+	}
+	return platform.SyncDir(dir)
 }

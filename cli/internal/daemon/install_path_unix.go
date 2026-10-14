@@ -59,7 +59,7 @@ func EnsureOnPath() (bool, error) {
 			errs = append(errs, fmt.Errorf("reading %s: %w", target.file, err))
 			continue
 		}
-		if strings.Contains(string(data), target.block) {
+		if hasPathBlock(data) {
 			continue
 		}
 		if err := appendShellBlock(target.file, data, target.block); err != nil {
@@ -69,6 +69,17 @@ func EnsureOnPath() (bool, error) {
 		changed = true
 	}
 	return changed, errors.Join(errs...)
+}
+
+// hasPathBlock matches the marker line, not the exact block: a CRLF file, a reformatted block or
+// another install path must not add one more block on every launch.
+func hasPathBlock(data []byte) bool {
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimSpace(line) == pathComment {
+			return true
+		}
+	}
+	return false
 }
 
 func appendShellBlock(path string, existing []byte, block string) error {

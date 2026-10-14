@@ -84,6 +84,7 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 	symmetricKey := check.Key()
 	expectedKDF := check.KDFParams()
 	expectedProtectedKey := check.ProtectedKeyBytes()
+	checkAdopted := check.PendingWrapAdopted()
 	check.Close()
 	defer clear(symmetricKey)
 	defer clear(expectedProtectedKey)
@@ -142,7 +143,8 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		}
 	}()
 	actualProtectedKey := v.ProtectedKeyBytes()
-	headerMatches := v.KDFParams() == expectedKDF && bytes.Equal(actualProtectedKey, expectedProtectedKey)
+	// A check that opened with another device's newer password saw a wrap this file does not hold yet.
+	headerMatches := checkAdopted || (v.KDFParams() == expectedKDF && bytes.Equal(actualProtectedKey, expectedProtectedKey))
 	clear(actualProtectedKey)
 	clear(expectedProtectedKey)
 	if !headerMatches {
@@ -151,6 +153,10 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 
 	if err := sensitiveauth.InvalidateLocalEnrollment(paths); err != nil {
 		return ChangePasswordResult{}, fmt.Errorf("Could not revoke local unlock trust; password was not changed: %w", err)
+	}
+	// Pushes no longer carry the wrap, so sync retries the upload until the server has it.
+	if err := vault.SetRekeyPending(paths.VaultFile(), true); err != nil {
+		return ChangePasswordResult{}, fmt.Errorf("Recording pending password upload: %w", err)
 	}
 	if err := v.ChangePassword(newPassword); err != nil {
 		return ChangePasswordResult{}, fmt.Errorf("Changing password: %w", err)
@@ -204,6 +210,7 @@ func ChangePassword(paths config.Paths, currentPassword []byte, newPassword []by
 		return result, nil
 	}
 
+	_ = vault.SetRekeyPending(paths.VaultFile(), false)
 	result = ChangePasswordResult{
 		Detail: "Local vault and remote recovery were updated.",
 		Synced: true,
@@ -228,8 +235,9 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 		return false, err
 	}
 
+	// Once a stop is issued the service may already be down, so the caller must restart it.
 	if err := daemon.StopService(); err != nil {
-		return false, fmt.Errorf("Stopping local service: %w", err)
+		return true, fmt.Errorf("Stopping local service: %w", err)
 	}
 
 	deadline := time.Now().Add(5 * time.Second)
@@ -240,7 +248,7 @@ func stopDaemonForPasswordChange(paths config.Paths) (bool, error) {
 		time.Sleep(100 * time.Millisecond)
 	}
 
-	return false, fmt.Errorf("Waiting for local service to stop")
+	return true, fmt.Errorf("Waiting for local service to stop")
 }
 
 func applyEnrollmentDetail(result *ChangePasswordResult, enrollment sensitiveauth.EnrollmentResult, err error) {

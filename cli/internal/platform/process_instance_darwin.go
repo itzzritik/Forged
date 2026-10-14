@@ -76,3 +76,18 @@ func darwinProcessStart(instance ProcessInstance) (int64, int64, error) {
 	}
 	return seconds, micros, nil
 }
+
+// ProcessInstances lists the processes alive right now.
+func ProcessInstances() (map[ProcessInstance]struct{}, error) {
+	procs, err := unix.SysctlKinfoProcSlice("kern.proc.all")
+	if err != nil {
+		return nil, err
+	}
+	out := make(map[ProcessInstance]struct{}, len(procs))
+	for _, proc := range procs {
+		if info, err := ProcessInfoForPID(int(proc.Proc.P_pid)); err == nil {
+			out[info.Instance] = struct{}{}
+		}
+	}
+	return out, nil
+}

@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
@@ -12,7 +13,10 @@ import (
 	"golang.org/x/term"
 )
 
-const maxStartupPasswordBytes = 64 * 1024
+const (
+	maxStartupPasswordBytes = 64 * 1024
+	startupPasswordWait     = 5 * time.Second
+)
 
 var daemonCmd = &cobra.Command{
 	Use:   "daemon",
@@ -51,7 +55,24 @@ func getStartupPassword() ([]byte, error) {
 		return nil, nil
 	}
 
-	data, err := io.ReadAll(io.LimitReader(os.Stdin, maxStartupPasswordBytes+1))
+	type read struct {
+		data []byte
+		err  error
+	}
+	done := make(chan read, 1)
+	go func() {
+		data, err := io.ReadAll(io.LimitReader(os.Stdin, maxStartupPasswordBytes+1))
+		done <- read{data, err}
+	}()
+	var result read
+	select {
+	case result = <-done:
+	case <-time.After(startupPasswordWait):
+		// A parent that keeps stdin open without writing must not stop the daemon from starting.
+		go func() { clearStartupPassword((<-done).data) }()
+		return nil, nil
+	}
+	data, err := result.data, result.err
 	if err != nil {
 		clearStartupPassword(data)
 		return nil, fmt.Errorf("Reading password from stdin: %w", err)

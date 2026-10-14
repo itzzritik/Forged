@@ -19,6 +19,7 @@ type RuntimeStatus struct {
 	SensitiveKnown       bool
 	SensitiveReported    bool
 	Error                string
+	KeyCount             int
 }
 
 func LoadRuntimeStatus(paths config.Paths) (RuntimeStatus, error) {
@@ -28,6 +29,7 @@ func LoadRuntimeStatus(paths config.Paths) (RuntimeStatus, error) {
 	}
 
 	var status struct {
+		KeyCount  *int `json:"key_count"`
 		Sensitive *struct {
 			Unlocked *bool `json:"unlocked"`
 		} `json:"sensitive"`
@@ -52,6 +54,10 @@ func LoadRuntimeStatus(paths config.Paths) (RuntimeStatus, error) {
 		LastSuccessfulPushAt: status.Sync.LastSuccessfulPushAt,
 		Error:                status.Sync.LastErr,
 		SensitiveReported:    status.Sensitive != nil && status.Sensitive.Unlocked != nil,
+		KeyCount:             -1,
+	}
+	if status.KeyCount != nil {
+		result.KeyCount = *status.KeyCount
 	}
 	if result.SensitiveReported {
 		result.Unlocked = *status.Sensitive.Unlocked

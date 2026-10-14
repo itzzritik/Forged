@@ -388,6 +388,8 @@ func emptyState(st *core.State, iw, n int, searching bool) []string {
 	p := ui.P()
 	var block []string
 	switch {
+	case !st.KeysLoaded && st.KeysErr != "":
+		block = []string{ui.Paint("Couldn't load keys", p.Text), ui.Paint("Retrying shortly", p.Muted)}
 	case !st.KeysLoaded:
 		block = []string{ui.Paint("Loading keys", p.Muted)}
 	case searching:

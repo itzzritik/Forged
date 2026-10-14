@@ -283,6 +283,9 @@ func (m *Model) signingValue(st *core.State) string {
 	}
 	switch st.Signing.Mode {
 	case actions.CommitSigningForged:
+		if st.Signing.KeyName == "" {
+			return "Forged key"
+		}
 		return ui.Sanitize(st.Signing.KeyName)
 	case actions.CommitSigningExternal:
 		if p := strings.TrimSpace(st.Signing.Program); p != "" {

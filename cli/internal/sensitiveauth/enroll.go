@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"errors"
 	"fmt"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -151,7 +152,10 @@ func refreshSecureStoreLocalEnrollmentLocked(paths config.Paths, symmetricKey []
 		}
 	}
 
-	previous, _ := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+	previous, err := previousLocalEnrollment(paths)
+	if err != nil {
+		return EnrollmentResult{Capability: capability, Reason: err.Error()}
+	}
 	slot := nextLocalEnrollmentDeviceKeySlot(previous)
 	enrollment := LocalEnrollment{
 		Version:                  LocalEnrollmentVersion,
@@ -274,7 +278,10 @@ func refreshHeadlessLocalEnrollmentLocked(paths config.Paths, symmetricKey []byt
 		}
 	}
 
-	previous, _ := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+	previous, err := previousLocalEnrollment(paths)
+	if err != nil {
+		return EnrollmentResult{Capability: capability, Reason: err.Error()}
+	}
 	slot := nextLocalEnrollmentDeviceKeySlot(previous)
 	path, err := headlessUnlockKeyFile(paths, slot)
 	if err != nil {
@@ -394,6 +401,10 @@ func enrollmentExpired(paths config.Paths, enrollment *LocalEnrollment) bool {
 	}
 
 	now := time.Now().UTC()
+	// A time from the future (the clock was ahead when it was written) would keep it alive until then.
+	if enrollment.CreatedAt.After(now.Add(time.Hour)) || enrollment.LastUsedAt.After(now.Add(time.Hour)) {
+		return true
+	}
 	interval := config.MasterPasswordIntervalDuration(loadMasterPasswordInterval(paths))
 
 	// Absolute cap since the last master-password entry (CreatedAt). Guard so a
@@ -606,4 +617,15 @@ func zeroSensitiveBytes(b []byte) {
 	for i := range b {
 		b[i] = 0
 	}
+}
+
+// previousLocalEnrollment names the slot in use. A file that exists but cannot be read may still
+// point at slot A, so refresh must not guess and overwrite the live key; a malformed file names nothing.
+func previousLocalEnrollment(paths config.Paths) (*LocalEnrollment, error) {
+	previous, err := ReadLocalEnrollment(paths.LocalUnlockBlobFile())
+	var pathErr *fs.PathError
+	if err != nil && !errors.Is(err, os.ErrNotExist) && errors.As(err, &pathErr) {
+		return nil, fmt.Errorf("reading current local enrollment: %w", err)
+	}
+	return previous, nil
 }

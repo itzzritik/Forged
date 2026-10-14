@@ -51,6 +51,7 @@ type ImportPreviewResult struct {
 	Discovered int
 	Duplicates int
 	Previews   []ImportPreview
+	Unreadable []ImportFailure
 }
 
 func ImportSourceLabel(source string) string {
@@ -99,16 +100,11 @@ func previewImportedKeys(paths config.Paths, source string, keys []importers.Imp
 	if len(keys) == 0 {
 		return result, nil
 	}
-	existingFingerprints, err := loadExistingVaultFingerprints(paths)
+	existingFingerprints, existingNames, err := loadExistingVaultKeys(paths)
 	if err != nil {
 		return ImportPreviewResult{}, err
 	}
-	previews, duplicates, err := buildImportPreview(keys, existingFingerprints)
-	if err != nil {
-		return ImportPreviewResult{}, err
-	}
-	result.Duplicates = duplicates
-	result.Previews = previews
+	result.Previews, result.Duplicates, result.Unreadable = buildImportPreview(keys, existingFingerprints, existingNames)
 	return result, nil
 }
 
@@ -136,7 +132,7 @@ func importKeys(paths config.Paths, result ImportResult, previews []ImportPrevie
 		resp, err := client.Call(ipc.CmdAdd, map[string]string{
 			"name":        key.Name,
 			"private_key": key.PrivateKey,
-			"comment":     "",
+			"comment":     key.Comment,
 		})
 		if err != nil {
 			result.Skipped++
@@ -209,14 +205,21 @@ func sanitizeImportFailureText(value string, maxRunes int) string {
 	return value
 }
 
-func buildImportPreview(keys []importers.ImportedKey, existingFingerprints map[string]struct{}) ([]ImportPreview, int, error) {
+// buildImportPreview skips keys it cannot read instead of failing the whole file, and numbers a
+// name already taken ("github (2)") so a second item with the same name still imports.
+func buildImportPreview(keys []importers.ImportedKey, existingFingerprints, usedNames map[string]struct{}) ([]ImportPreview, int, []ImportFailure) {
 	previews := make([]ImportPreview, 0, len(keys))
 	seenFingerprints := make(map[string]struct{}, len(keys))
 	duplicates := 0
+	var unreadable []ImportFailure
 	for _, key := range keys {
 		preview, err := previewImportedKey(key)
 		if err != nil {
-			return nil, 0, fmt.Errorf("%s: %w", key.Name, err)
+			failure := importFailureForPreview(ImportPreview{Key: key}, nil)
+			// Parse errors are fixed user-facing text; the log redactor would cut the hint after a colon.
+			failure.Reason = sanitizeImportFailureText(err.Error(), 0)
+			unreadable = append(unreadable, failure)
+			continue
 		}
 		if containsFingerprint(existingFingerprints, preview.Fingerprint) {
 			duplicates++
@@ -227,10 +230,22 @@ func buildImportPreview(keys []importers.ImportedKey, existingFingerprints map[s
 			continue
 		}
 		preview.Selected = true
+		preview.Key.Name = uniqueImportName(preview.Key.Name, usedNames)
 		seenFingerprints[preview.Fingerprint] = struct{}{}
 		previews = append(previews, preview)
 	}
-	return previews, duplicates, nil
+	return previews, duplicates, unreadable
+}
+
+func uniqueImportName(name string, used map[string]struct{}) string {
+	candidate := name
+	for n := 2; ; n++ {
+		if _, taken := used[candidate]; !taken {
+			used[candidate] = struct{}{}
+			return candidate
+		}
+		candidate = fmt.Sprintf("%s (%d)", name, n)
+	}
 }
 
 func previewImportedKey(key importers.ImportedKey) (ImportPreview, error) {
@@ -254,7 +269,7 @@ func formatPrivateKeyImportError(err error) error {
 		return fmt.Errorf("Key is passphrase-protected. Remove the passphrase first with: ssh-keygen -p -f <file>")
 	}
 
-	msg := err.Error()
+	msg := strings.ToLower(err.Error())
 	switch {
 	case strings.Contains(msg, "private key is empty"):
 		return fmt.Errorf("Private key is empty")
@@ -391,28 +406,31 @@ func expandUserPath(path string) string {
 	return path
 }
 
-func loadExistingVaultFingerprints(paths config.Paths) (map[string]struct{}, error) {
+func loadExistingVaultKeys(paths config.Paths) (map[string]struct{}, map[string]struct{}, error) {
 	resp, err := ipc.NewClient(paths.CtlSocket()).Call(ipc.CmdList, nil)
 	if err != nil {
-		return nil, fmt.Errorf("Loading existing keys: %w", err)
+		return nil, nil, fmt.Errorf("Loading existing keys: %w", err)
 	}
 
 	var result struct {
 		Keys []struct {
+			Name        string `json:"name"`
 			Fingerprint string `json:"fingerprint"`
 		} `json:"keys"`
 	}
 	if err := json.Unmarshal(resp.Data, &result); err != nil {
-		return nil, fmt.Errorf("Parsing existing keys: %w", err)
+		return nil, nil, fmt.Errorf("Parsing existing keys: %w", err)
 	}
 
 	seen := make(map[string]struct{}, len(result.Keys))
+	names := make(map[string]struct{}, len(result.Keys))
 	for _, key := range result.Keys {
 		if strings.TrimSpace(key.Fingerprint) != "" {
 			seen[key.Fingerprint] = struct{}{}
 		}
+		names[key.Name] = struct{}{}
 	}
-	return seen, nil
+	return seen, names, nil
 }
 
 func containsFingerprint(fingerprints map[string]struct{}, fingerprint string) bool {

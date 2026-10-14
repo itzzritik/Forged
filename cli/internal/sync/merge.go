@@ -9,8 +9,6 @@ import (
 	"github.com/itzzritik/forged/cli/internal/vault"
 )
 
-const tombstoneTTL = 90 * 24 * time.Hour
-
 func MergeVaults(local, remote vault.VaultData) vault.VaultData {
 	return MergeThreeWay(vault.VaultData{}, local, remote, local.Metadata.DeviceID, remote.Metadata.DeviceID)
 }
@@ -20,6 +18,7 @@ func MergeThreeWay(base, local, remote vault.VaultData, localDeviceID, remoteDev
 		Metadata:      mergeMetadata(base.Metadata, local.Metadata, remote.Metadata),
 		KeyGeneration: maxInt(base.KeyGeneration, local.KeyGeneration, remote.KeyGeneration),
 		SSH:           mergeSSHData(base.SSH, local.SSH, remote.SSH),
+		Extra:         vault.MergeExtra(remote.Extra, local.Extra),
 	}
 
 	merged.VersionVector = mergeVersionVectors(base.VersionVector, local.VersionVector, remote.VersionVector)
@@ -62,13 +61,15 @@ func MergeThreeWay(base, local, remote vault.VaultData, localDeviceID, remoteDev
 			} else {
 				merged.Keys = append(merged.Keys, mergeKey(nil, &localKey, &remoteKey, localDeviceID, remoteDeviceID))
 			}
-		case hasLocal:
+		// A key in the base that one side no longer has was deleted there, even without a tombstone.
+		case hasLocal && !hasBase:
 			merged.Keys = append(merged.Keys, cloneKey(localKey))
-		case hasRemote:
+		case hasRemote && !hasBase:
 			merged.Keys = append(merged.Keys, cloneKey(remoteKey))
 		}
 	}
 
+	merged.Keys = dedupeKeyFingerprints(merged.Keys)
 	merged.Keys = enforceGitSigningInvariant(merged.Keys, localDeviceID, remoteDeviceID)
 	sortKeys(merged.Keys)
 	dedupeKeyNames(merged.Keys)
@@ -82,6 +83,7 @@ func BootstrapMerge(local, remote vault.VaultData, localDeviceID, remoteDeviceID
 		VersionVector: mergeVersionVectors(local.VersionVector, remote.VersionVector),
 		Tombstones:    mergeTombstones(local.Tombstones, remote.Tombstones),
 		SSH:           mergeSSHData(vault.SSHData{}, local.SSH, remote.SSH),
+		Extra:         vault.MergeExtra(remote.Extra, local.Extra),
 	}
 
 	tombstoneSet := make(map[string]struct{}, len(merged.Tombstones))
@@ -118,6 +120,7 @@ func BootstrapMerge(local, remote vault.VaultData, localDeviceID, remoteDeviceID
 		merged.Keys = append(merged.Keys, cloneKey(remoteKey))
 	}
 
+	merged.Keys = dedupeKeyFingerprints(merged.Keys)
 	merged.Keys = enforceGitSigningInvariant(merged.Keys, localDeviceID, remoteDeviceID)
 	sortKeys(merged.Keys)
 	dedupeKeyNames(merged.Keys)
@@ -133,6 +136,7 @@ func mergeMetadata(base, local, remote vault.Metadata) vault.Metadata {
 		merged.DeviceName = firstNonEmpty(remote.DeviceName, base.DeviceName)
 	}
 	merged.CreatedAt = earliestTime(base.CreatedAt, local.CreatedAt, remote.CreatedAt)
+	merged.Extra = vault.MergeExtra(remote.Extra, local.Extra)
 	return merged
 }
 
@@ -149,15 +153,13 @@ func mergeVersionVectors(vectors ...map[string]int64) map[string]int64 {
 }
 
 func mergeTombstones(sets ...[]vault.Tombstone) []vault.Tombstone {
+	// Tombstones never expire: a device offline past any cutoff, or with a skewed clock, would
+	// otherwise bring deleted keys back.
 	seen := make(map[string]vault.Tombstone)
-	cutoff := time.Now().UTC().Add(-tombstoneTTL)
-
 	for _, tombstones := range sets {
 		for _, tombstone := range tombstones {
-			if tombstone.DeletedAt.After(cutoff) {
-				if existing, ok := seen[tombstone.KeyID]; !ok || tombstone.DeletedAt.After(existing.DeletedAt) {
-					seen[tombstone.KeyID] = tombstone
-				}
+			if existing, ok := seen[tombstone.KeyID]; !ok || tombstone.DeletedAt.After(existing.DeletedAt) {
+				seen[tombstone.KeyID] = tombstone
 			}
 		}
 	}
@@ -177,11 +179,9 @@ func mergeTombstones(sets ...[]vault.Tombstone) []vault.Tombstone {
 
 func mergeSSHRouteTombstones(sets ...[]vault.SSHRouteTombstone) []vault.SSHRouteTombstone {
 	seen := make(map[string]vault.SSHRouteTombstone)
-	cutoff := time.Now().UTC().Add(-tombstoneTTL)
-
 	for _, tombstones := range sets {
 		for _, tombstone := range tombstones {
-			if tombstone.Target == "" || !tombstone.DeletedAt.After(cutoff) {
+			if tombstone.Target == "" {
 				continue
 			}
 			if existing, ok := seen[tombstone.Target]; !ok || tombstone.DeletedAt.After(existing.DeletedAt) {
@@ -215,14 +215,31 @@ func keysByID(keys []vault.Key) map[string]vault.Key {
 }
 
 func mergeKey(base, local, remote *vault.Key, localDeviceID, remoteDeviceID string) vault.Key {
-	winner, loser := chooseWinner(local, remote, localDeviceID, remoteDeviceID)
+	winner, other := chooseWinner(local, remote, localDeviceID, remoteDeviceID)
 	merged := cloneKey(*winner)
+	merged.Extra = vault.MergeExtra(winner.Extra, other.Extra)
+	if base != nil {
+		// A field only one side changed since the last sync keeps that change; the newer record
+		// decides only real conflicts, so a skewed clock cannot revert the other side's edit.
+		merged.Name = mergeKeyField(base.Name, local.Name, remote.Name, winner.Name)
+		merged.Comment = mergeKeyField(base.Comment, local.Comment, remote.Comment, winner.Comment)
+		merged.GitSigning = mergeKeyField(base.GitSigning, local.GitSigning, remote.GitSigning, winner.GitSigning)
+	}
 	merged.CreatedAt = earliestTime(keyTime(base, func(k *vault.Key) time.Time { return k.CreatedAt }), local.CreatedAt, remote.CreatedAt)
 	merged.Version = maxInt(keyVersion(base), local.Version, remote.Version)
 	merged.DeviceOrigin = firstNonEmpty(merged.DeviceOrigin, local.DeviceOrigin, remote.DeviceOrigin)
 	merged.Tags = mergeStringSet(keyTags(base), local.Tags, remote.Tags)
-	_ = loser
 	return merged
+}
+
+func mergeKeyField[T comparable](base, local, remote, winner T) T {
+	switch {
+	case local == base:
+		return remote
+	case remote == base:
+		return local
+	}
+	return winner
 }
 
 func chooseWinner(local, remote *vault.Key, localDeviceID, remoteDeviceID string) (*vault.Key, *vault.Key) {
@@ -289,6 +306,29 @@ func cloneKey(key vault.Key) vault.Key {
 		cloned.LastUsedAt = &lastUsedAt
 	}
 	return cloned
+}
+
+// dedupeKeyFingerprints keeps one record when two devices added the same key. The smallest ID
+// survives so every device picks the same one; the other record then reads as deleted.
+func dedupeKeyFingerprints(keys []vault.Key) []vault.Key {
+	index := map[string]int{}
+	out := keys[:0]
+	for _, key := range keys {
+		i, seen := index[key.Fingerprint]
+		if key.Fingerprint == "" || !seen {
+			if key.Fingerprint != "" {
+				index[key.Fingerprint] = len(out)
+			}
+			out = append(out, key)
+			continue
+		}
+		signing := out[i].GitSigning || key.GitSigning
+		if key.ID < out[i].ID {
+			out[i] = key
+		}
+		out[i].GitSigning = signing
+	}
+	return out
 }
 
 func enforceGitSigningInvariant(keys []vault.Key, localDeviceID, remoteDeviceID string) []vault.Key {
@@ -430,6 +470,7 @@ func mergeSSHData(base, local, remote vault.SSHData) vault.SSHData {
 	return vault.SSHData{
 		Routes:     routes,
 		Tombstones: tombstones,
+		Extra:      vault.MergeExtra(remote.Extra, local.Extra),
 	}
 }
 
@@ -546,6 +587,7 @@ func newestRoute(local, remote, base vault.SSHRoute, localMissing, remoteMissing
 	if attempts := mergeRouteAttempts(base.Attempts, local.Attempts, remote.Attempts); attempts != nil {
 		newest.Attempts = attempts
 	}
+	newest.Extra = vault.MergeExtra(newest.Extra, local.Extra, remote.Extra)
 	return newest, true
 }
 

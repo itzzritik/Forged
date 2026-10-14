@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-	"runtime"
+	"strconv"
 	"strings"
 	"time"
 
@@ -162,8 +162,58 @@ func updateConfig(paths Paths, update func(*Config)) error {
 			return err
 		}
 		update(&cfg)
+		normalizeConfig(&cfg)
+		// Only Forged's own lines change, so comments and keys a newer release added survive.
+		if data, err := os.ReadFile(path); err == nil && strings.TrimSpace(string(data)) != "" {
+			edited := setTOMLValue(string(data), "agent", "disabled", strconv.FormatBool(cfg.Agent.Disabled))
+			edited = setTOMLValue(edited, "security", "master_password_interval", strconv.Quote(cfg.Security.MasterPasswordInterval))
+			edited = setTOMLValue(edited, "security", "headless_unlock", strconv.FormatBool(cfg.Security.HeadlessUnlock))
+			edited = setTOMLValue(edited, "security", "headless_offered", strconv.FormatBool(cfg.Security.HeadlessOffered))
+			var check Config
+			if _, err := toml.Decode(edited, &check); err == nil {
+				normalizeConfig(&check)
+				if check == cfg {
+					return writePrivateFileAtomic(path, []byte(edited))
+				}
+			}
+		}
 		return saveConfigLocked(path, cfg)
 	})
+}
+
+// setTOMLValue sets key in [section], adding the key or the section when missing.
+func setTOMLValue(content, section, key, value string) string {
+	lines := strings.Split(content, "\n")
+	inSection, insertAt := false, -1
+	for i, line := range lines {
+		trimmed := strings.TrimSpace(line)
+		if strings.HasPrefix(trimmed, "[") {
+			if inSection {
+				break
+			}
+			inSection = strings.Join(strings.Fields(trimmed), "") == "["+section+"]"
+			if inSection {
+				insertAt = i + 1
+			}
+			continue
+		}
+		if !inSection || trimmed == "" || strings.HasPrefix(trimmed, "#") {
+			continue
+		}
+		if name, rest, ok := strings.Cut(trimmed, "="); ok && strings.TrimSpace(name) == key {
+			if current, _, _ := strings.Cut(rest, "#"); strings.TrimSpace(current) == value {
+				return content
+			}
+			lines[i] = key + " = " + value
+			return strings.Join(lines, "\n")
+		}
+		insertAt = i + 1
+	}
+	if insertAt < 0 {
+		return strings.TrimRight(content, "\n") + "\n\n[" + section + "]\n" + key + " = " + value + "\n"
+	}
+	lines = append(lines[:insertAt], append([]string{key + " = " + value}, lines[insertAt:]...)...)
+	return strings.Join(lines, "\n")
 }
 
 func withConfigLock(path string, fn func() error) error {
@@ -191,7 +241,7 @@ func writePrivateFileAtomicDurable(path string, data []byte) error {
 }
 
 func writePrivateFile(path string, data []byte, durable bool) error {
-	target, err := resolveWritePath(path)
+	target, err := platform.ResolveWritePath(path)
 	if err != nil {
 		return err
 	}
@@ -217,42 +267,12 @@ func writePrivateFile(path string, data []byte, durable bool) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("Closing temporary file: %w", err)
 	}
-	if err := replacePrivateFile(tmpPath, target, durable); err != nil {
+	replace := os.Rename
+	if durable {
+		replace = platform.ReplaceFile
+	}
+	if err := replace(tmpPath, target); err != nil {
 		return fmt.Errorf("Replacing %s: %w", target, err)
 	}
-	if durable && runtime.GOOS != "windows" {
-		dir, err := os.Open(filepath.Dir(target))
-		if err != nil {
-			return fmt.Errorf("Opening private file directory: %w", err)
-		}
-		defer dir.Close()
-		if err := dir.Sync(); err != nil {
-			return fmt.Errorf("Syncing private file directory: %w", err)
-		}
-	}
 	return nil
-}
-
-func resolveWritePath(path string) (string, error) {
-	for range 32 {
-		info, err := os.Lstat(path)
-		if os.IsNotExist(err) {
-			return path, nil
-		}
-		if err != nil {
-			return "", fmt.Errorf("Inspecting %s: %w", path, err)
-		}
-		if info.Mode()&os.ModeSymlink == 0 {
-			return path, nil
-		}
-		target, err := os.Readlink(path)
-		if err != nil {
-			return "", fmt.Errorf("Reading symlink %s: %w", path, err)
-		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(filepath.Dir(path), target)
-		}
-		path = filepath.Clean(target)
-	}
-	return "", fmt.Errorf("Too many config symlinks")
 }

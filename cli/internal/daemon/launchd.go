@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 const launchdLabel = "me.ritik.forged.daemon"
@@ -136,6 +137,10 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		tmp.Close()
 		return fmt.Errorf("Writing plist: %w", err)
 	}
+	if err := tmp.Sync(); err != nil {
+		tmp.Close()
+		return fmt.Errorf("Syncing plist: %w", err)
+	}
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("Closing plist: %w", err)
 	}
@@ -144,7 +149,7 @@ func InstallService(paths config.Paths, runtime RuntimeSpec) error {
 		return err
 	}
 
-	if err := os.Rename(tmp.Name(), plist); err != nil {
+	if err := platform.ReplaceFile(tmp.Name(), plist); err != nil {
 		return fmt.Errorf("Installing plist: %w", err)
 	}
 
@@ -162,13 +167,14 @@ func StartService() error {
 	if err := removeLegacyLaunchdPlists(); err != nil {
 		return err
 	}
-	if err := bootstrapLaunchdService(); err != nil {
-		return err
-	}
+	// launchd refuses to bootstrap a disabled label (I/O error 5), so enable comes first.
 	if err := launchctlRun(
 		[]string{"enable", launchdServiceTarget()},
 		[]string{"already enabled"},
 	); err != nil {
+		return err
+	}
+	if err := bootstrapLaunchdService(); err != nil {
 		return err
 	}
 	if err := launchctlRun(
@@ -280,7 +286,7 @@ func InspectService(paths config.Paths) (ServiceStatus, error) {
 	}
 
 	for _, service := range services {
-		out, err := exec.Command("launchctl", "print", launchdServiceTargetForLabel(service.Label)).CombinedOutput()
+		out, err := serviceCommand("launchctl", "print", launchdServiceTargetForLabel(service.Label)).CombinedOutput()
 		if err != nil {
 			message := strings.TrimSpace(string(out))
 			if message == "" {
@@ -349,7 +355,7 @@ func findBinary() (string, error) {
 }
 
 func launchctlRun(args []string, ignorable []string) error {
-	cmd := exec.Command("launchctl", args...)
+	cmd := serviceCommand("launchctl", args...)
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	err := cmd.Run()
