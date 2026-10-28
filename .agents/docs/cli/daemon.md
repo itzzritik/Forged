@@ -9,7 +9,7 @@ applies_to:
 depends_on:
   - architecture/security-model.md
   - cli/ipc.md
-last_verified: 2026-10-13
+last_verified: 2026-10-29
 stable: partial
 ---
 
@@ -44,7 +44,7 @@ The daemon is the long-running per-user process behind SSH agent access, IPC, sy
 - If post-logout retirement cannot remove an old credential secret or related local artifact, the daemon preserves the committed local logout, reports a separate cleanup-pending result, and never auto-retries against reusable credential slots.
 - Refreshing credentials for the same account and server retains its validated sync history; only a different-account transition stages that history away before linking. Windows stages or restores that same-directory state with a no-replace write-through move; native power-loss validation remains required because Windows cannot flush the parent directory portably.
 - Logout commits local credentials and sync-state removal outside the live-session lock, then releases the credential lock before the bounded remote token revocation.
-- A sent credential refresh always finishes and saves, bounded by its HTTP timeout, even when the caller gives up: the server rotates the refresh token on receipt, so a dropped reply would make the next refresh a replay that revokes the login.
+- A sent credential refresh always finishes and saves, bounded by its HTTP timeout, even when the caller gives up: the server rotates the refresh token on receipt, and only recovers a dropped reply while the new token is unused.
 - While sync is active, learned SSH route proofs mark the vault dirty and the sync bus also runs low-frequency status checks. Route preparation expires a stale broker session before work and rechecks it before any private probe, direct-probe signature, or learned-proof write; locked sessions retain only public cached candidates.
 - Readiness repair holds `~/.config/forged/.repair.lock` (waits up to a minute): two launches at once would each restart the service, dropping the session the first one unlocked.
 - `systemctl`, `launchctl` and `schtasks` calls time out after 2 minutes; after one hangs, that process's later calls fail at once for 5 minutes, so a wedged manager costs a repair one timeout, not one per call. A `systemctl --user` that hangs still counts as a systemd user manager; starting a background daemon beside it would race the unit's.
