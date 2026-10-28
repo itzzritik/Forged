@@ -82,6 +82,18 @@ func (d *DB) RotateRefreshSession(ctx context.Context, sessionID string, present
 		if subtle.ConstantTimeCompare(session.SecretHash, presentedSecretHash) == 1 &&
 			session.RevokeReason != nil &&
 			(*session.RevokeReason == "rotated" || *session.RevokeReason == "replayed") {
+			if *session.RevokeReason == "rotated" {
+				next, err := reissueUnusedSuccessor(ctx, tx, session, newSecretHash, newExpiresAt)
+				if err == nil {
+					if err := tx.Commit(ctx); err != nil {
+						return RefreshSession{}, User{}, fmt.Errorf("Committing refresh reissue: %w", err)
+					}
+					return next, user, nil
+				}
+				if !errors.Is(err, pgx.ErrNoRows) {
+					return RefreshSession{}, User{}, err
+				}
+			}
 			if err := revokeRefreshFamily(ctx, tx, session.FamilyID, "replayed"); err != nil {
 				return RefreshSession{}, User{}, err
 			}
@@ -114,26 +126,9 @@ func (d *DB) RotateRefreshSession(ctx context.Context, sessionID string, present
 		return RefreshSession{}, User{}, ErrRefreshSessionInvalid
 	}
 
-	var next RefreshSession
-	err = tx.QueryRow(ctx,
-		`INSERT INTO refresh_sessions (user_id, family_id, secret_hash, expires_at, rotated_from)
-		 VALUES ($1, $2::uuid, $3, $4, $5::uuid)
-		 RETURNING id, user_id, family_id, secret_hash, created_at, last_used_at, expires_at, rotated_from, revoked_at, revoke_reason`,
-		session.UserID, session.FamilyID, newSecretHash, newExpiresAt, session.ID,
-	).Scan(
-		&next.ID,
-		&next.UserID,
-		&next.FamilyID,
-		&next.SecretHash,
-		&next.CreatedAt,
-		&next.LastUsedAt,
-		&next.ExpiresAt,
-		&next.RotatedFrom,
-		&next.RevokedAt,
-		&next.RevokeReason,
-	)
+	next, err := insertRotatedRefreshSession(ctx, tx, session, newSecretHash, newExpiresAt)
 	if err != nil {
-		return RefreshSession{}, User{}, fmt.Errorf("Creating rotated refresh session: %w", err)
+		return RefreshSession{}, User{}, err
 	}
 
 	if _, err := tx.Exec(ctx,
@@ -152,6 +147,56 @@ func (d *DB) RotateRefreshSession(ctx context.Context, sessionID string, present
 	}
 
 	return next, user, nil
+}
+
+// An unused successor means the client never got the rotation reply; a later use of the replaced successor is still a replay.
+func reissueUnusedSuccessor(ctx context.Context, tx pgx.Tx, session RefreshSession, newSecretHash []byte, newExpiresAt time.Time) (RefreshSession, error) {
+	var successorID string
+	if err := tx.QueryRow(ctx,
+		`SELECT id FROM refresh_sessions
+		 WHERE rotated_from = $1::uuid AND revoked_at IS NULL AND expires_at > now()
+		 FOR UPDATE`,
+		session.ID,
+	).Scan(&successorID); err != nil {
+		return RefreshSession{}, fmt.Errorf("Loading unused refresh successor: %w", err)
+	}
+
+	if _, err := tx.Exec(ctx,
+		`UPDATE refresh_sessions
+		 SET revoked_at = now(),
+		     revoke_reason = 'rotated'
+		 WHERE id = $1`,
+		successorID,
+	); err != nil {
+		return RefreshSession{}, fmt.Errorf("Replacing unused refresh successor: %w", err)
+	}
+
+	return insertRotatedRefreshSession(ctx, tx, session, newSecretHash, newExpiresAt)
+}
+
+func insertRotatedRefreshSession(ctx context.Context, tx pgx.Tx, from RefreshSession, newSecretHash []byte, newExpiresAt time.Time) (RefreshSession, error) {
+	var next RefreshSession
+	err := tx.QueryRow(ctx,
+		`INSERT INTO refresh_sessions (user_id, family_id, secret_hash, expires_at, rotated_from)
+		 VALUES ($1, $2::uuid, $3, $4, $5::uuid)
+		 RETURNING id, user_id, family_id, secret_hash, created_at, last_used_at, expires_at, rotated_from, revoked_at, revoke_reason`,
+		from.UserID, from.FamilyID, newSecretHash, newExpiresAt, from.ID,
+	).Scan(
+		&next.ID,
+		&next.UserID,
+		&next.FamilyID,
+		&next.SecretHash,
+		&next.CreatedAt,
+		&next.LastUsedAt,
+		&next.ExpiresAt,
+		&next.RotatedFrom,
+		&next.RevokedAt,
+		&next.RevokeReason,
+	)
+	if err != nil {
+		return RefreshSession{}, fmt.Errorf("Creating rotated refresh session: %w", err)
+	}
+	return next, nil
 }
 
 func (d *DB) RevokeRefreshSession(ctx context.Context, sessionID string, presentedSecretHash []byte, reason string) error {
@@ -196,9 +241,13 @@ func (d *DB) RevokeRefreshSession(ctx context.Context, sessionID string, present
 
 func (d *DB) CleanupRefreshSessions(ctx context.Context) (int64, error) {
 	tag, err := d.Pool.Exec(ctx,
-		`DELETE FROM refresh_sessions
-		 WHERE expires_at < now() - interval '7 days'
-		    OR (revoked_at IS NOT NULL AND revoked_at < now() - interval '7 days')`,
+		`DELETE FROM refresh_sessions rs
+		 WHERE rs.expires_at < now() - interval '7 days'
+		    OR (rs.revoked_at IS NOT NULL AND rs.revoked_at < now() - interval '7 days'
+		        AND NOT EXISTS (
+		          SELECT 1 FROM refresh_sessions s
+		          WHERE s.rotated_from = rs.id AND s.revoked_at IS NULL
+		        ))`,
 	)
 	if err != nil {
 		return 0, fmt.Errorf("Cleaning refresh sessions: %w", err)

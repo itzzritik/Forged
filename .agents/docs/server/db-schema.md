@@ -4,7 +4,7 @@ applies_to:
   - server/internal/db/**
   - server/migrations/**
   - server/cmd/migrate/**
-last_verified: 2026-04-23
+last_verified: 2026-10-29
 stable: yes
 ---
 
@@ -19,6 +19,7 @@ Postgres stores users, vault blobs, devices, audit rows, short-lived auth sessio
 - `vaults.version` is the optimistic-lock column for sync.
 - `auth_sessions` are short-lived browser/CLI handoff rows.
 - `refresh_sessions` are the real long-lived login state. Rotation and revoke act on these rows.
+- Presenting a rotated refresh token whose successor is still unused means the reply was lost: the successor is replaced, not the family revoked. Using a replaced successor is a replay. Cleanup keeps a rotated row while its successor is live.
 - Migrations are forward-only and run in lexical order.
 
 ## Decisions
