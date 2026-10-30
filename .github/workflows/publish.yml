@@ -187,7 +187,7 @@ jobs:
 
             - env:
                   NEW_VERSION: ${{ needs.version.outputs.version }}
-              run: npm view "forgedssh@$NEW_VERSION" version >/dev/null 2>&1 || npm publish --access public --provenance dist/npm
+              run: npm view "forgedssh@$NEW_VERSION" version >/dev/null 2>&1 || npm publish --access public --provenance ./dist/npm
 
             - env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
