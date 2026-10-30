@@ -123,7 +123,7 @@ function Hero() {
 							</GlitchButton>
 							<div className="group flex h-12 items-center border border-[#27272a] bg-[#09090b] transition-colors hover:border-[#a1a1aa]/30">
 								<span className="mx-3 select-none font-mono text-[#27272a] text-lg">$</span>
-								<code className="pr-4 font-mono text-sm text-white tracking-wide">brew install forged</code>
+								<code className="pr-4 font-mono text-sm text-white tracking-wide">npm i -g forgedssh</code>
 								<div
 									className="flex h-full w-12 cursor-pointer items-center justify-center border-[#27272a] border-l transition-colors group-hover:bg-white/5"
 									title="Copy"

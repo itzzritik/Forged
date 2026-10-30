@@ -150,8 +150,7 @@ export default function DocsPage() {
 
 					<Section id="installation" title="Installation">
 						<p>Forged is distributed as a single ~13MB binary compiled purely in Go with zero external CGO dependencies.</p>
-						<CodeBlock title="macOS">brew install forged</CodeBlock>
-						<CodeBlock title="Linux / macOS (BASH)">{"curl -fsSL https://forged.ritik.me/install.sh | sh"}</CodeBlock>
+						<CodeBlock title="macOS, Linux, Windows">npm i -g forgedssh</CodeBlock>
 						<CodeBlock title="Compile locally">{"git clone https://github.com/itzzritik/forged\ncd forged\njust build-cli\n./bin/forged setup"}</CodeBlock>
 					</Section>
 

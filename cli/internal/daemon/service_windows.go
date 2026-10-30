@@ -368,6 +368,16 @@ func UninstallService() error {
 	return nil
 }
 
+// uninstallServiceSelf deletes the task without ending it: the running daemon
+// still has to clean up and exit on its own.
+func uninstallServiceSelf() error {
+	_, installed, err := queryWindowsTaskState()
+	if err != nil || !installed {
+		return err
+	}
+	return runScheduledTaskCommand("delete", "/Delete", "/TN", taskName(), "/F")
+}
+
 func ServiceInstalled() (bool, error) {
 	_, installed, err := queryWindowsTask()
 	return installed, err

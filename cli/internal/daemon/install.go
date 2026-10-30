@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
@@ -132,6 +133,27 @@ func recordedSource(exe string) string {
 		return ""
 	}
 	return strings.TrimSpace(string(data))
+}
+
+// LockRepair serializes readiness repair with other repairs and with uninstall,
+// so a launch never reinstalls the service while it is being removed.
+func LockRepair(paths config.Paths) func() {
+	if err := os.MkdirAll(paths.ConfigDir, 0o700); err != nil {
+		return func() {}
+	}
+	lock, err := os.OpenFile(filepath.Join(paths.ConfigDir, ".repair.lock"), os.O_CREATE|os.O_RDWR, 0o600)
+	if err != nil {
+		return func() {}
+	}
+	// A repair holder that never finishes must not block every later launch for good.
+	if err := platform.LockFileWithin(lock, time.Minute); err != nil {
+		lock.Close()
+		return func() {}
+	}
+	return func() {
+		_ = platform.UnlockFile(lock)
+		_ = lock.Close()
+	}
 }
 
 func lockInstallDir(root string) (func(), error) {

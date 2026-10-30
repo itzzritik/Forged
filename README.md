@@ -22,11 +22,7 @@ Forged fixes all of this in a single binary.
 ## Install
 
 ```bash
-brew install forged
-```
-
-```bash
-npm i -g @getforged/cli
+npm i -g forgedssh
 ```
 
 ## Quick start

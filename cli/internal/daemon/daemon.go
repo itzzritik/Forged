@@ -174,6 +174,9 @@ func (d *Daemon) Run(password []byte) error {
 			go d.watchInstalledBinary(source, info, true, executable)
 		}
 	}
+	if executableErr == nil {
+		go d.watchNPMUninstall(executable)
+	}
 	go d.keepPIDFile()
 	d.waitForSignal()
 	return d.failErr

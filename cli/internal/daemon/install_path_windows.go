@@ -43,10 +43,51 @@ func EnsureOnPath() (bool, error) {
 	if err := key.SetExpandStringValue("Path", current+bin); err != nil {
 		return false, fmt.Errorf("writing user PATH: %w", err)
 	}
+	broadcastEnvironmentChange()
+	return true, nil
+}
 
-	// New terminals started from Explorer only see the change after this broadcast.
+// RemoveFromPath drops the install folder's bin from the user PATH.
+func RemoveFromPath() error {
+	bin := filepath.Join(InstallDir(), "bin")
+	key, err := registry.OpenKey(registry.CURRENT_USER, "Environment", registry.QUERY_VALUE|registry.SET_VALUE)
+	if err != nil {
+		return fmt.Errorf("opening user environment: %w", err)
+	}
+	defer key.Close()
+
+	current, _, err := key.GetStringValue("Path")
+	if errors.Is(err, registry.ErrNotExist) {
+		return nil
+	}
+	if err != nil {
+		return fmt.Errorf("reading user PATH: %w", err)
+	}
+	var kept []string
+	for _, dir := range strings.Split(current, ";") {
+		check := dir
+		if expanded, err := registry.ExpandString(dir); err == nil {
+			check = expanded
+		}
+		if strings.TrimSpace(check) != "" && strings.EqualFold(filepath.Clean(check), filepath.Clean(bin)) {
+			continue
+		}
+		kept = append(kept, dir)
+	}
+	next := strings.Join(kept, ";")
+	if next == current {
+		return nil
+	}
+	if err := key.SetExpandStringValue("Path", next); err != nil {
+		return fmt.Errorf("writing user PATH: %w", err)
+	}
+	broadcastEnvironmentChange()
+	return nil
+}
+
+// New terminals started from Explorer only see a PATH change after this broadcast.
+func broadcastEnvironmentChange() {
 	env, _ := windows.UTF16PtrFromString("Environment")
 	const hwndBroadcast, wmSettingChange, smtoAbortIfHung = 0xffff, 0x001A, 0x0002
 	procSendMessageTimeout.Call(hwndBroadcast, wmSettingChange, 0, uintptr(unsafe.Pointer(env)), smtoAbortIfHung, 5000, 0)
-	return true, nil
 }

@@ -14,9 +14,8 @@ import (
 	"github.com/itzzritik/forged/cli/internal/daemon"
 )
 
-// TestNPMInstallFlow installs the npm wrapper and the win32-x64 package the
-// way a release lays them out, runs first launch through the forged.cmd
-// shim, then upgrades over the running daemon. Opt-in (needs npm); run it
+// TestNPMInstallFlow installs the forgedssh package, runs first launch
+// through the forged.cmd shim, then upgrades over the running daemon. Opt-in (needs npm); run it
 // alone because it needs a fresh profile:
 //
 //	FORGED_E2E_NPM=1 go test -tags e2e ./e2e -run TestNPMInstallFlow -v
@@ -31,7 +30,7 @@ func TestNPMInstallFlow(t *testing.T) {
 	prefix := filepath.Join(h.root, "npm-prefix")
 	shim := filepath.Join(prefix, "forged.cmd")
 
-	v1 := npmPackages(t, "0.0.0-e2e.1", h.bin)
+	v1 := npmPackage(t, "0.0.0-e2e.1", h.bin)
 	if out, err := h.run(t, h.root, "npm", "install", "-g", "--prefix", prefix, "--no-audit", "--no-fund", v1); err != nil {
 		t.Fatalf("npm install: %v\n%s", err, out)
 	}
@@ -63,7 +62,7 @@ func TestNPMInstallFlow(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	v2 := npmPackages(t, "0.0.0-e2e.2", nextBin)
+	v2 := npmPackage(t, "0.0.0-e2e.2", nextBin)
 	out, err := h.run(t, h.root, "npm", "install", "-g", "--prefix", prefix, "--no-audit", "--no-fund", v2)
 	if err != nil || strings.Contains(out, "warn") {
 		t.Fatalf("npm upgrade while the daemon runs: %v\n%s", err, out)
@@ -82,44 +81,28 @@ func TestNPMInstallFlow(t *testing.T) {
 	assertServiceOwned(t, s)
 }
 
-// npmPackages packs the win32-x64 platform package and the wrapper, with the
-// wrapper's optional dependency pointing at the local platform tarball so
-// npm installs and orders it exactly like a published dependency.
-func npmPackages(t *testing.T, version, bin string) string {
+// npmPackage packs forgedssh with the binaries and their .version marker
+// already in bin/, so the launcher runs them without downloading.
+func npmPackage(t *testing.T, version, bin string) string {
 	t.Helper()
 	work := filepath.Join(h.root, "npm-"+version)
-	platform := filepath.Join(work, "platform")
-	wrapper := filepath.Join(work, "cli")
+	pkgDir := filepath.Join(work, "forgedssh")
 	repo := filepath.Dir(moduleRoot())
-	for _, dir := range []string{filepath.Join(platform, "bin"), filepath.Join(wrapper, "bin")} {
-		if err := os.MkdirAll(dir, 0o700); err != nil {
-			t.Fatal(err)
-		}
+	if err := os.MkdirAll(filepath.Join(pkgDir, "bin"), 0o700); err != nil {
+		t.Fatal(err)
 	}
 	for _, name := range []string{"forged.exe", "forged-sign.exe", "forged-auth.exe"} {
-		if err := copyFile(filepath.Join(bin, name), filepath.Join(platform, "bin", name)); err != nil {
+		if err := copyFile(filepath.Join(bin, name), filepath.Join(pkgDir, "bin", name)); err != nil {
 			t.Fatal(err)
 		}
 	}
-	template, err := os.ReadFile(filepath.Join(repo, "npm", "platform", "package.template.json"))
-	if err != nil {
+	if err := copyFile(filepath.Join(repo, "npm", "bin", "forged.js"), filepath.Join(pkgDir, "bin", "forged.js")); err != nil {
 		t.Fatal(err)
 	}
-	manifest := strings.NewReplacer(
-		"__NAME__", "@getforged/cli-win32-x64", "__VERSION__", version, "__OS__", "windows",
-		"__ARCH__", "amd64", "__NPM_OS__", "win32", "__NPM_CPU__", "x64",
-	).Replace(string(template))
-	if err := os.WriteFile(filepath.Join(platform, "package.json"), []byte(manifest), 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(pkgDir, "bin", ".version"), []byte(version), 0o600); err != nil {
 		t.Fatal(err)
 	}
-	platformTgz := npmPack(t, platform, work)
-
-	for _, name := range []string{"forged.js"} {
-		if err := copyFile(filepath.Join(repo, "npm", "cli", "bin", name), filepath.Join(wrapper, "bin", name)); err != nil {
-			t.Fatal(err)
-		}
-	}
-	raw, err := os.ReadFile(filepath.Join(repo, "npm", "cli", "package.json"))
+	raw, err := os.ReadFile(filepath.Join(repo, "npm", "package.json"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -128,12 +111,13 @@ func npmPackages(t *testing.T, version, bin string) string {
 		t.Fatal(err)
 	}
 	pkg["version"] = version
-	pkg["optionalDependencies"] = map[string]string{"@getforged/cli-win32-x64": "file:" + filepath.ToSlash(platformTgz)}
+	unused := map[string]string{"url": "https://127.0.0.1:9/unused.zip", "sha256": "0"}
+	pkg["forged"] = map[string]any{"archives": map[string]any{"win32-x64": unused, "win32-arm64": unused}}
 	raw, _ = json.MarshalIndent(pkg, "", "  ")
-	if err := os.WriteFile(filepath.Join(wrapper, "package.json"), raw, 0o600); err != nil {
+	if err := os.WriteFile(filepath.Join(pkgDir, "package.json"), raw, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	return npmPack(t, wrapper, work)
+	return npmPack(t, pkgDir, work)
 }
 
 func npmPack(t *testing.T, dir, dest string) string {

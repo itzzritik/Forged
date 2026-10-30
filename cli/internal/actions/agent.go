@@ -133,7 +133,7 @@ func EnableCommitSigning(paths config.Paths, keyName string) (CommitSigningStatu
 func DisableCommitSigning(paths config.Paths) (CommitSigningStatus, error) {
 	signingMu.Lock()
 	defer signingMu.Unlock()
-	if restored, err := restoreGitSigningConfig(paths); err != nil {
+	if restored, err := config.RestoreGitSigning(paths); err != nil {
 		return CommitSigningStatus{}, err
 	} else if restored {
 		return LoadCommitSigningStatus(paths)
@@ -376,15 +376,13 @@ func validateAllowedSignersFile(path, publicKey string) error {
 	return nil
 }
 
-var gitSigningKeys = []string{"user.signingkey", "gpg.format", "gpg.ssh.program", "gpg.ssh.allowedSignersFile", "commit.gpgsign"}
-
 func applyGitSigningConfig(paths config.Paths, publicKey, signPath, allowedSignersFile string) error {
 	if strings.TrimSpace(allowedSignersFile) == "" {
 		return fmt.Errorf("allowed signers file is required")
 	}
 	previous := map[string]*string{}
-	for _, key := range gitSigningKeys {
-		previous[key] = globalGitConfig(key)
+	for _, key := range config.GitSigningKeys {
+		previous[key] = config.GlobalGitConfigValue(key)
 	}
 	// Keep the user's own signing setup (e.g. GPG) once, so turning Forged signing off restores it;
 	// re-enabling must not overwrite that copy with Forged's values.
@@ -393,16 +391,16 @@ func applyGitSigningConfig(paths config.Paths, publicKey, signPath, allowedSigne
 		if err != nil {
 			return err
 		}
-		if err := platform.WriteFileDurable(gitSigningBackupFile(paths), data, 0o600); err != nil {
+		if err := platform.WriteFileDurable(paths.GitSigningBackupFile(), data, 0o600); err != nil {
 			return fmt.Errorf("Saving the current git signing setup: %w", err)
 		}
 	}
 	values := []string{publicKey, "ssh", signPath, allowedSignersFile, "true"}
-	for i, key := range gitSigningKeys {
-		if err := setGlobalGitConfig(key, &values[i]); err != nil {
+	for i, key := range config.GitSigningKeys {
+		if err := config.SetGlobalGitConfig(key, &values[i]); err != nil {
 			// A half-applied setup signs with the wrong program or key; put back what was there.
-			for _, key := range gitSigningKeys {
-				_ = setGlobalGitConfig(key, previous[key])
+			for _, key := range config.GitSigningKeys {
+				_ = config.SetGlobalGitConfig(key, previous[key])
 			}
 			return err
 		}
@@ -410,55 +408,3 @@ func applyGitSigningConfig(paths config.Paths, publicKey, signPath, allowedSigne
 	return nil
 }
 
-// restoreGitSigningConfig puts back the setup saved when Forged signing was turned on, if Forged's
-// signing is still the one configured.
-func restoreGitSigningConfig(paths config.Paths) (bool, error) {
-	data, err := os.ReadFile(gitSigningBackupFile(paths))
-	if err != nil {
-		return false, nil
-	}
-	if program := globalGitConfig("gpg.ssh.program"); program == nil || !config.IsForgedSignProgram(*program) {
-		return false, nil
-	}
-	var previous map[string]*string
-	if err := json.Unmarshal(data, &previous); err != nil {
-		return false, nil
-	}
-	for _, key := range gitSigningKeys {
-		if err := setGlobalGitConfig(key, previous[key]); err != nil {
-			return false, err
-		}
-	}
-	_ = os.Remove(gitSigningBackupFile(paths))
-	return true, nil
-}
-
-func gitSigningBackupFile(paths config.Paths) string {
-	return filepath.Join(paths.ConfigDir, "git-signing-backup.json")
-}
-
-func globalGitConfig(key string) *string {
-	out, err := exec.Command("git", "config", "--global", "--get", key).Output()
-	if err != nil {
-		return nil
-	}
-	value := strings.TrimRight(string(out), "\r\n")
-	return &value
-}
-
-func setGlobalGitConfig(key string, value *string) error {
-	args := []string{"config", "--global", "--unset-all", key}
-	if value != nil {
-		args = []string{"config", "--global", "--replace-all", key, *value}
-	}
-	out, err := exec.Command("git", args...).CombinedOutput()
-	var exit *exec.ExitError
-	// git exits 5 when unsetting a key that is not set.
-	if value == nil && errors.As(err, &exit) && exit.ExitCode() == 5 {
-		return nil
-	}
-	if err != nil {
-		return fmt.Errorf("Running git %s: %s: %w", strings.Join(args, " "), strings.TrimSpace(string(out)), err)
-	}
-	return nil
-}

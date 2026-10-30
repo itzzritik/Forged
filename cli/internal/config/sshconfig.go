@@ -197,6 +197,42 @@ func DisableSSHAgent(paths Paths) error {
 	})
 }
 
+// RemoveSSHIntegration takes every Forged line out of ~/.ssh/config for uninstall,
+// unlike DisableSSHAgent, which leaves a commented Include to re-enable later.
+func RemoveSSHIntegration(paths Paths) error {
+	err := withSSHConfigLock(paths, func() error {
+		configPath := paths.SSHUserConfig()
+		content, err := readConfigFile(configPath)
+		if err != nil {
+			return fmt.Errorf("Reading SSH config: %w", err)
+		}
+		cleaned, err := removeLegacyForgedBlock(content, paths)
+		if err != nil {
+			return fmt.Errorf("Removing legacy SSH config: %w", err)
+		}
+		cleaned = strings.TrimLeft(removeForgedIncludes(cleaned, paths), "\r\n")
+		if cleaned == content {
+			return nil
+		}
+		if cleaned != "" {
+			eol := "\n"
+			if strings.Contains(content, "\r\n") {
+				eol = "\r\n"
+			}
+			cleaned = strings.TrimRight(cleaned, "\r\n") + eol
+		}
+		if err := writeSSHFileAtomic(configPath, []byte(cleaned)); err != nil {
+			return fmt.Errorf("Writing SSH config: %w", err)
+		}
+		return nil
+	})
+	if err != nil {
+		return err
+	}
+	_ = os.Remove(paths.SSHUserConfig() + ".forged-backup")
+	return os.RemoveAll(paths.LegacySSHManagedDir())
+}
+
 func includeLine(path string) string {
 	path = filepath.ToSlash(path)
 	path = strings.ReplaceAll(path, "%", "%%")
