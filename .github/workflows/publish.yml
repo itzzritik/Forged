@@ -12,11 +12,6 @@ on:
                     - patch
                     - minor
                     - major
-            promote:
-                description: Internal. Publish the @getforged/cli wrapper for this already released version
-                required: false
-                default: ''
-                type: string
     # push:
     #     branches:
     #         - main
@@ -31,7 +26,6 @@ on:
 permissions:
     contents: write
     id-token: write
-    actions: write
 
 # Queue, never cancel: a canceled run can leave a partial npm/GitHub release.
 concurrency:
@@ -40,7 +34,7 @@ concurrency:
 
 jobs:
     version:
-        if: github.actor != 'github-actions[bot]' && inputs.promote == ''
+        if: github.actor != 'github-actions[bot]'
         name: Compute version
         runs-on: ubuntu-latest
         outputs:
@@ -57,7 +51,7 @@ jobs:
               env:
                   RELEASE_TYPE: ${{ inputs.version }}
               run: |
-                  TAG="$(npm version "$RELEASE_TYPE" --prefix npm/cli --no-git-tag-version)"
+                  TAG="$(npm version "$RELEASE_TYPE" --prefix npm --no-git-tag-version)"
                   echo "tag=$TAG" >> "$GITHUB_OUTPUT"
                   echo "version=${TAG#v}" >> "$GITHUB_OUTPUT"
 
@@ -103,7 +97,7 @@ jobs:
         needs: [version, swift-helpers]
         # swift-helpers is skipped when its build is already cached.
         if: ${{ !cancelled() && needs.version.result == 'success' && (needs.swift-helpers.result == 'success' || needs.swift-helpers.result == 'skipped') }}
-        name: Publish ${{ needs.version.outputs.tag }} to npm + GitHub Releases
+        name: Publish ${{ needs.version.outputs.tag }} to GitHub Releases + npm
         runs-on: ubuntu-latest
         steps:
             - uses: actions/checkout@v7
@@ -150,22 +144,12 @@ jobs:
 
             - env:
                   NEW_VERSION: ${{ needs.version.outputs.version }}
-              run: |
-                  npm version "$NEW_VERSION" --prefix npm/cli --no-git-tag-version
-                  node - <<'NODE' "npm/cli/package.json"
-                  const fs = require("node:fs");
-                  const [path] = process.argv.slice(2);
-                  const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-                  for (const dependency of Object.keys(pkg.optionalDependencies || {})) {
-                    pkg.optionalDependencies[dependency] = pkg.version;
-                  }
-                  fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
-                  NODE
+              run: npm version "$NEW_VERSION" --prefix npm --no-git-tag-version
 
             - env:
                   NEW_TAG: ${{ needs.version.outputs.tag }}
               run: |
-                  git add npm/cli/package.json
+                  git add npm/package.json
                   git commit -m "publish $NEW_TAG"
                   git tag -a "$NEW_TAG" -m "Release $NEW_TAG"
 
@@ -192,37 +176,19 @@ jobs:
                       exit "$status"
                   fi
 
-            - run: ./scripts/deploy/build-npm-packages.sh "${{ needs.version.outputs.version }}"
-
-            - run: ./scripts/deploy/publish-npm-packages.sh platforms "${{ needs.version.outputs.version }}"
-
             - run: git push --follow-tags origin HEAD:main
 
             - env:
                   GH_TOKEN: ${{ secrets.JARVIS_GH_PAT }}
               run: ./scripts/deploy/create-github-release.sh "${{ needs.version.outputs.tag }}"
 
+            # npm goes last: the package points at release files that must already be downloadable.
+            - run: ./scripts/deploy/build-npm-packages.sh "${{ needs.version.outputs.version }}" dist/checksums.txt
+
+            - env:
+                  NEW_VERSION: ${{ needs.version.outputs.version }}
+              run: npm view "forgedssh@$NEW_VERSION" version >/dev/null 2>&1 || npm publish --access public --provenance dist/npm
+
             - env:
                   GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
               run: ./scripts/deploy/prune-orphan-tags.sh
-
-            # The wrapper ships from a follow-up run once npm serves every platform package, so no install can miss its binary.
-            - env:
-                  GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-              run: gh workflow run publish.yml --ref main -f promote="${{ needs.version.outputs.version }}"
-
-    promote:
-        if: inputs.promote != ''
-        name: Publish @getforged/cli ${{ inputs.promote }}
-        runs-on: ubuntu-latest
-        steps:
-            - uses: actions/checkout@v7
-              with:
-                  ref: v${{ inputs.promote }}
-                  fetch-depth: 1
-
-            - uses: actions/setup-node@v7
-              with:
-                  node-version: 24
-
-            - run: ./scripts/deploy/publish-npm-packages.sh wrapper "${{ inputs.promote }}" npm/cli

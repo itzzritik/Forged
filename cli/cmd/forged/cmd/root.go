@@ -8,6 +8,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/config"
+	"github.com/itzzritik/forged/cli/internal/daemon"
 	"github.com/spf13/cobra"
 )
 
@@ -63,8 +64,14 @@ func newRootCmd() *cobra.Command {
 		Args:          cobra.NoArgs,
 		RunE:          runRootCommand,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
-			if rootInUserHome() && cmd != versionCmd && !versionOutput {
-				return fmt.Errorf("Run forged as your own user, not with sudo: as root it would leave root-owned files in your home")
+			if rootInUserHome() {
+				if cmd != versionCmd && !versionOutput {
+					return fmt.Errorf("Run forged as your own user, not with sudo: as root it would leave root-owned files in your home")
+				}
+				return nil
+			}
+			if dir := os.Getenv("FORGED_NPM_PACKAGE_DIR"); dir != "" {
+				_ = daemon.RecordNPMInstall(config.DefaultPaths(), dir)
 			}
 			return nil
 		},

@@ -2,14 +2,11 @@ package readiness
 
 import (
 	"errors"
-	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
-	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 type repairState struct {
@@ -19,7 +16,7 @@ type repairState struct {
 func (e *Engine) Run(opts RunOptions) (RunResult, error) {
 	if opts.Mode != ModeAssessOnly {
 		// Two launches at once would both restart the service, dropping the session the first unlocked.
-		defer lockRepair(e.Paths)()
+		defer daemon.LockRepair(e.Paths)()
 	}
 	snapshot, err := e.Assess()
 	if err != nil {
@@ -348,23 +345,4 @@ func (e *Engine) refreshSnapshot(state *repairState) error {
 	}
 	state.result.Snapshot = updated
 	return nil
-}
-
-func lockRepair(paths config.Paths) func() {
-	if err := os.MkdirAll(paths.ConfigDir, 0o700); err != nil {
-		return func() {}
-	}
-	lock, err := os.OpenFile(filepath.Join(paths.ConfigDir, ".repair.lock"), os.O_CREATE|os.O_RDWR, 0o600)
-	if err != nil {
-		return func() {}
-	}
-	// A repair holder that never finishes must not block every later launch for good.
-	if err := platform.LockFileWithin(lock, time.Minute); err != nil {
-		lock.Close()
-		return func() {}
-	}
-	return func() {
-		_ = platform.UnlockFile(lock)
-		_ = lock.Close()
-	}
 }

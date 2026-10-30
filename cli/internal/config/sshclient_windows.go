@@ -49,12 +49,33 @@ func EnsureGitUsesNativeSSH() error {
 	if !status.NeedsFix() {
 		return nil
 	}
+	if out, err := exec.Command(git, "config", "--global", "core.sshCommand", nativeSSHCommand()).CombinedOutput(); err != nil {
+		return fmt.Errorf("setting git core.sshCommand: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
+}
+
+func nativeSSHCommand() string {
 	value := filepath.ToSlash(sshClientPath())
 	if strings.ContainsAny(value, " \t") {
 		value = `"` + value + `"`
 	}
-	if out, err := exec.Command(git, "config", "--global", "core.sshCommand", value).CombinedOutput(); err != nil {
-		return fmt.Errorf("setting git core.sshCommand: %s: %w", strings.TrimSpace(string(out)), err)
+	return value
+}
+
+// RemoveGitNativeSSH undoes EnsureGitUsesNativeSSH for uninstall. Forged never recorded
+// what it wrote, so only the exact value it would write now is removed.
+func RemoveGitNativeSSH() error {
+	git, err := exec.LookPath("git")
+	if err != nil {
+		return nil
+	}
+	out, err := exec.Command(git, "config", "--global", "--get", "core.sshCommand").Output()
+	if err != nil || strings.TrimSpace(string(out)) != nativeSSHCommand() {
+		return nil
+	}
+	if out, err := exec.Command(git, "config", "--global", "--unset-all", "core.sshCommand").CombinedOutput(); err != nil {
+		return fmt.Errorf("unsetting git core.sshCommand: %s: %w", strings.TrimSpace(string(out)), err)
 	}
 	return nil
 }

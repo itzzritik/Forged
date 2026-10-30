@@ -28,6 +28,10 @@ func (p Paths) AccountSecretKeyFile() string {
 }
 func (p Paths) SyncStateFile() string { return filepath.Join(p.DataDir, "sync-state.json") }
 func (p Paths) SyncDirtyFile() string { return filepath.Join(p.DataDir, "sync.dirty") }
+func (p Paths) NPMInstallsFile() string { return filepath.Join(p.ConfigDir, "npm-installs") }
+func (p Paths) GitSigningBackupFile() string {
+	return filepath.Join(p.ConfigDir, "git-signing-backup.json")
+}
 func (p Paths) LocalUnlockBlobFile() string {
 	return filepath.Join(p.AuthDir(), "local-unlock.json")
 }

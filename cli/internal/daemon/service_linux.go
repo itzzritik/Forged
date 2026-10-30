@@ -4,6 +4,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -176,6 +177,26 @@ func UninstallService() error {
 	systemctlUser("daemon-reload").Run()
 	_ = os.RemoveAll(filepath.Join(InstallDir(), "bin"))
 	return nil
+}
+
+// uninstallServiceSelf removes the service from inside the daemon. Stopping the
+// unit ends this process, so that comes last; without systemd the caller just exits.
+func uninstallServiceSelf() error {
+	if !systemdUserManager() {
+		return nil
+	}
+	systemctlUser("disable", serviceName).Run()
+	if err := os.Remove(unitPath()); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("removing systemd unit: %w", err)
+	}
+	systemctlUser("daemon-reload").Run()
+	err := systemctlUser("--no-block", "stop", serviceName).Run()
+	// This systemctl runs inside the unit, so a working stop can kill it before it exits.
+	var exit *exec.ExitError
+	if errors.As(err, &exit) && !exit.Exited() {
+		return nil
+	}
+	return err
 }
 
 func ServiceInstalled() (bool, error) {

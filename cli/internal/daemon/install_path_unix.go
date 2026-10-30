@@ -14,10 +14,16 @@ const pathComment = "# Forged CLI"
 
 // EnsureOnPath appends the install folder's bin to the user's shell PATH.
 // Appended, so a package manager's forged still wins while it exists.
-func EnsureOnPath() (bool, error) {
+type pathTarget struct {
+	file   string
+	block  string
+	create bool
+}
+
+func pathTargets() ([]pathTarget, error) {
 	home, err := os.UserHomeDir()
 	if err != nil {
-		return false, err
+		return nil, err
 	}
 	bin := filepath.Join(InstallDir(), "bin")
 	sh := "'" + strings.ReplaceAll(bin, "'", `'\''`) + "'"
@@ -36,18 +42,20 @@ func EnsureOnPath() (bool, error) {
 	shell := filepath.Base(os.Getenv("SHELL"))
 	_, fishErr := os.Stat(filepath.Join(xdgConfig, "fish"))
 
-	targets := []struct {
-		file   string
-		block  string
-		create bool
-	}{
+	return []pathTarget{
 		{filepath.Join(zdot, ".zshrc"), posixBlock, shell == "zsh"},
 		{filepath.Join(home, ".bashrc"), posixBlock, shell == "bash"},
 		{filepath.Join(home, ".bash_profile"), posixBlock, false},
 		{filepath.Join(home, ".profile"), posixBlock, shell != "zsh" && shell != "bash" && shell != "fish"},
 		{filepath.Join(xdgConfig, "fish", "conf.d", "forged.fish"), fishBlock, fishErr == nil},
-	}
+	}, nil
+}
 
+func EnsureOnPath() (bool, error) {
+	targets, err := pathTargets()
+	if err != nil {
+		return false, err
+	}
 	changed := false
 	var errs []error
 	for _, target := range targets {
@@ -69,6 +77,54 @@ func EnsureOnPath() (bool, error) {
 		changed = true
 	}
 	return changed, errors.Join(errs...)
+}
+
+// RemoveFromPath takes the block EnsureOnPath added out of every shell rc file.
+// It writes in place, so a symlinked rc file (dotfiles) stays a link.
+func RemoveFromPath() error {
+	targets, err := pathTargets()
+	if err != nil {
+		return err
+	}
+	var errs []error
+	for _, target := range targets {
+		data, err := os.ReadFile(target.file)
+		if errors.Is(err, os.ErrNotExist) || (err == nil && !hasPathBlock(data)) {
+			continue
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("reading %s: %w", target.file, err))
+			continue
+		}
+		cleaned := removePathBlock(string(data))
+		if filepath.Base(target.file) == "forged.fish" && strings.TrimSpace(cleaned) == "" {
+			err = os.Remove(target.file)
+		} else {
+			err = os.WriteFile(target.file, []byte(cleaned), 0o644)
+		}
+		if err != nil {
+			errs = append(errs, fmt.Errorf("updating %s: %w", target.file, err))
+		}
+	}
+	return errors.Join(errs...)
+}
+
+// removePathBlock drops each marker, the PATH line after it, and the blank
+// line appendShellBlock put before it.
+func removePathBlock(content string) string {
+	lines := strings.Split(content, "\n")
+	kept := make([]string, 0, len(lines))
+	for i := 0; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) != pathComment {
+			kept = append(kept, lines[i])
+			continue
+		}
+		if n := len(kept); n > 0 && strings.TrimSpace(kept[n-1]) == "" {
+			kept = kept[:n-1]
+		}
+		i++
+	}
+	return strings.Join(kept, "\n")
 }
 
 // hasPathBlock matches the marker line, not the exact block: a CRLF file, a reformatted block or

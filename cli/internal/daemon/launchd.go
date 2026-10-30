@@ -241,6 +241,21 @@ func UninstallService() error {
 	return nil
 }
 
+// uninstallServiceSelf removes the service from inside the daemon. Booting out
+// its own label ends this process, so that comes last.
+func uninstallServiceSelf() error {
+	for _, path := range append([]string{plistPath()}, legacyPlistPaths()...) {
+		if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+			return fmt.Errorf("Removing launchd service %s: %w", path, err)
+		}
+	}
+	ignorable := []string{"could not find service", "service is disabled", "not found", "no such process", "input/output error"}
+	for _, label := range legacyLaunchdLabels {
+		_ = launchctlIgnore([]string{"bootout", launchdServiceTargetForLabel(label)}, ignorable)
+	}
+	return launchctlIgnore([]string{"bootout", launchdServiceTargetForLabel(launchdLabel)}, ignorable)
+}
+
 func ServiceInstalled() (bool, error) {
 	paths := append([]string{plistPath()}, legacyPlistPaths()...)
 	for _, path := range paths {

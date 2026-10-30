@@ -2,93 +2,40 @@
 set -euo pipefail
 
 root="$(cd "$(dirname "$0")/../.." && pwd)"
-dist="$root/dist"
-out="$dist/npm"
-template="$root/npm/platform/package.template.json"
-wrapper="$root/npm/cli"
-: "${1:?usage: $0 <version>}"
-version="${1#v}"
-
-find_archive() {
-  node - "$dist/artifacts.json" "$root" "$dist" "$1" "$2" "$3" <<'NODE'
-const fs = require("node:fs");
-const path = require("node:path");
-
-const [file, root, dist, os, arch, format] = process.argv.slice(2);
-const data = JSON.parse(fs.readFileSync(file, "utf8"));
-const artifacts = Array.isArray(data) ? data : data.artifacts || [];
-const ext = format === "zip" ? ".zip" : ".tar.gz";
-const match = artifacts.find(a =>
-  String(a.type || "").toLowerCase() === "archive" &&
-  a.goos === os &&
-  a.goarch === arch &&
-  (a.path || a.name || "").endsWith(ext)
-);
-if (!match) { console.error(`no archive for ${os}/${arch}`); process.exit(1); }
-
-const archive = match.path || match.name;
-if (path.isAbsolute(archive)) {
-  process.stdout.write(archive);
-} else if (archive.includes("/") || archive.includes("\\")) {
-  process.stdout.write(path.resolve(root, archive));
-} else {
-  process.stdout.write(path.join(dist, archive));
-}
-NODE
-}
-
-copy_platform() {
-  local os="$1" arch="$2" npm_os="$3" npm_cpu="$4" pkg="$5"
-  local format="tar.gz" ext=""
-  if [[ "$os" == "windows" ]]; then format="zip"; ext=".exe"; fi
-
-  local archive pkg_dir extract_dir
-  archive="$(find_archive "$os" "$arch" "$format")"
-  pkg_dir="$out/$pkg"
-  extract_dir="$(mktemp -d)"
-
-  mkdir -p "$pkg_dir/bin"
-  if [[ "$format" == "zip" ]]; then
-    unzip -qq "$archive" -d "$extract_dir"
-  else
-    tar -xzf "$archive" -C "$extract_dir"
-  fi
-
-  for bin in forged forged-sign forged-auth; do
-    local src
-    src="$(find "$extract_dir" -type f -name "${bin}${ext}" | head -n1)"
-    [[ -n "$src" ]] || { echo "missing ${bin}${ext} in $archive" >&2; exit 1; }
-    cp "$src" "$pkg_dir/bin/${bin}${ext}"
-  done
-
-  sed \
-    -e "s|__NAME__|$pkg|g" \
-    -e "s|__VERSION__|$version|g" \
-    -e "s|__OS__|$os|g" \
-    -e "s|__ARCH__|$arch|g" \
-    -e "s|__NPM_OS__|$npm_os|g" \
-    -e "s|__NPM_CPU__|$npm_cpu|g" \
-    "$template" >"$pkg_dir/package.json"
-
-  rm -rf "$extract_dir"
-}
+out="$root/dist/npm"
+version="${1:?usage: $0 <version> <checksums.txt>}"
+version="${version#v}"
+checksums="${2:?usage: $0 <version> <checksums.txt>}"
+repo="${GITHUB_REPOSITORY:-itzzritik/Forged}"
 
 rm -rf "$out"
 mkdir -p "$out"
+cp -R "$root/npm/." "$out/"
+cp "$root/README.md" "$root/LICENSE" "$out/"
 
-copy_platform darwin  amd64 darwin x64   @getforged/cli-darwin-x64
-copy_platform darwin  arm64 darwin arm64 @getforged/cli-darwin-arm64
-copy_platform linux   amd64 linux  x64   @getforged/cli-linux-x64
-copy_platform linux   arm64 linux  arm64 @getforged/cli-linux-arm64
-copy_platform windows amd64 win32  x64   @getforged/cli-win32-x64
-copy_platform windows arm64 win32  arm64 @getforged/cli-win32-arm64
-
-cp -R "$wrapper/." "$out/cli/"
-node - "$out/cli/package.json" "$version" <<'NODE'
+node - "$out/package.json" "$version" "$checksums" "$repo" <<'NODE'
 const fs = require("node:fs");
-const [path, v] = process.argv.slice(2);
+const [path, version, checksums, repo] = process.argv.slice(2);
+const platforms = { darwin: "darwin", linux: "linux", windows: "win32" };
+const arches = { amd64: "x64", arm64: "arm64" };
+const base = `https://github.com/${repo}/releases/download/v${version}/`;
+
+const archives = {};
+for (const line of fs.readFileSync(checksums, "utf8").split("\n")) {
+  const [sha256, file] = line.trim().split(/\s+/);
+  const match = /^forged_(.+)_([a-z]+)_([a-z0-9]+)\.(tar\.gz|zip)$/.exec(file || "");
+  if (!match || match[1] !== version || !platforms[match[2]] || !arches[match[3]]) continue;
+  archives[`${platforms[match[2]]}-${arches[match[3]]}`] = { url: base + file, sha256 };
+}
+
+const missing = Object.values(platforms).flatMap(p => Object.values(arches).map(a => `${p}-${a}`)).filter(k => !archives[k]);
+if (missing.length) {
+  console.error(`missing release archives for: ${missing.join(", ")}`);
+  process.exit(1);
+}
+
 const pkg = JSON.parse(fs.readFileSync(path, "utf8"));
-pkg.version = v;
-for (const d of Object.keys(pkg.optionalDependencies)) pkg.optionalDependencies[d] = v;
+pkg.version = version;
+pkg.forged = { archives };
 fs.writeFileSync(path, JSON.stringify(pkg, null, 2) + "\n");
 NODE

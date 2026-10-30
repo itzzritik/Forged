@@ -11,6 +11,7 @@ import (
 	"io"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -548,6 +549,34 @@ func RevokeRemoteSession(ctx context.Context, creds Credentials) error {
 	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
 		return fmt.Errorf("Revoking remote session failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// DeleteRemoteDevice removes deviceID from the account's device list.
+func DeleteRemoteDevice(ctx context.Context, creds Credentials, deviceID string) error {
+	token := CurrentToken(creds)
+	if strings.TrimSpace(creds.ServerURL) == "" || token == "" || strings.TrimSpace(deviceID) == "" {
+		return nil
+	}
+	endpoint := strings.TrimRight(creds.ServerURL, "/") + "/api/v1/devices/" + url.PathEscape(deviceID)
+	req, err := http.NewRequestWithContext(ctx, http.MethodDelete, endpoint, nil)
+	if err != nil {
+		return fmt.Errorf("Creating device delete request: %w", err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	resp, err := (&http.Client{Timeout: 15 * time.Second}).Do(req)
+	if err != nil {
+		return fmt.Errorf("Deleting device: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode == http.StatusNotFound {
+		return nil
+	}
+	if resp.StatusCode < http.StatusOK || resp.StatusCode >= http.StatusMultipleChoices {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		return fmt.Errorf("Deleting device failed (%d): %s", resp.StatusCode, strings.TrimSpace(string(body)))
 	}
 	_, _ = io.Copy(io.Discard, resp.Body)
 	return nil
