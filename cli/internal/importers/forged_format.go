@@ -6,27 +6,27 @@ import (
 )
 
 type ForgedExport struct {
-	Format     string        `json:"format"`
-	Version    int           `json:"version"`
-	ExportedAt string        `json:"exported_at"`
-	Items      []ForgedItem  `json:"items"`
+	Format     string       `json:"format"`
+	Version    int          `json:"version"`
+	ExportedAt string       `json:"exported_at"`
+	Items      []ForgedItem `json:"items"`
 }
 
 type ForgedItem struct {
-	Type   string         `json:"type"`
-	Name   string         `json:"name"`
-	SSHKey *ForgedSSHKey  `json:"ssh_key,omitempty"`
-	CreatedAt string      `json:"created_at,omitempty"`
-	UpdatedAt string      `json:"updated_at,omitempty"`
+	Type      string        `json:"type"`
+	Name      string        `json:"name"`
+	SSHKey    *ForgedSSHKey `json:"ssh_key,omitempty"`
+	CreatedAt string        `json:"created_at,omitempty"`
+	UpdatedAt string        `json:"updated_at,omitempty"`
 }
 
 type ForgedSSHKey struct {
-	PrivateKey  string   `json:"private_key"`
-	PublicKey   string   `json:"public_key"`
-	Fingerprint string   `json:"fingerprint"`
-	KeyType     string   `json:"key_type"`
-	Comment     string   `json:"comment"`
-	GitSigning bool `json:"git_signing"`
+	PrivateKey  string `json:"private_key"`
+	PublicKey   string `json:"public_key"`
+	Fingerprint string `json:"fingerprint"`
+	KeyType     string `json:"key_type"`
+	Comment     string `json:"comment"`
+	GitSigning  bool   `json:"git_signing"`
 }
 
 func ParseForged(data []byte) ([]ImportedKey, error) {
