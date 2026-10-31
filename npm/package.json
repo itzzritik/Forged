@@ -1,6 +1,6 @@
 {
   "name": "forgedssh",
-  "version": "0.1.48",
+  "version": "0.1.49",
   "description": "Forge your keys. Take them anywhere. Standalone SSH key manager that encrypts your keys and syncs them across machines.",
   "license": "MIT",
   "repository": {
