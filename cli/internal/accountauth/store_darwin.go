@@ -90,3 +90,8 @@ func darwinCredentialError(out []byte) error {
 		return ErrCredentialStoreBroken
 	}
 }
+
+// PurgeCredentialStore deletes every Forged account item, including ones older installs left.
+func PurgeCredentialStore(ctx context.Context) error {
+	return platform.SecurityDeleteAllGenericPasswords(ctx, darwinCredentialService)
+}

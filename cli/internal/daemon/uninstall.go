@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -83,6 +84,11 @@ func (d *Daemon) uninstall(executable string) {
 		{"git ssh command", config.RemoveGitNativeSSH},
 		{"path", RemoveFromPath},
 		{"local unlock", func() error { return sensitiveauth.InvalidateLocalEnrollment(d.paths) }},
+		{"keychain", func() error {
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			return errors.Join(accountauth.PurgeCredentialStore(ctx), sensitiveauth.PurgeSecureStore(ctx))
+		}},
 	}
 	for _, step := range steps {
 		if err := step.run(); err != nil {

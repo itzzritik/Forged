@@ -122,3 +122,8 @@ func secureStoreDeviceKeyAccount(installID, slot string) (string, error) {
 		return "", ErrSecureStoreBroken
 	}
 }
+
+// PurgeSecureStore deletes every local unlock key, including ones older installs left.
+func PurgeSecureStore(ctx context.Context) error {
+	return platform.SecurityDeleteAllGenericPasswords(ctx, darwinSecureStoreService)
+}

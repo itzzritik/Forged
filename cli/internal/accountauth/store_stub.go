@@ -29,3 +29,5 @@ func (s unavailableCredentialStore) Load(context.Context, string) (credentialSec
 func (s unavailableCredentialStore) Delete(context.Context, string) error {
 	return nil
 }
+
+func PurgeCredentialStore(context.Context) error { return nil }

@@ -29,3 +29,5 @@ func (s *stubSecureStore) LoadDeviceKey(context.Context, string, string) ([]byte
 func (s *stubSecureStore) DeleteDeviceKey(context.Context, string, string) error {
 	return ErrSecureStoreUnavailable
 }
+
+func PurgeSecureStore(context.Context) error { return nil }

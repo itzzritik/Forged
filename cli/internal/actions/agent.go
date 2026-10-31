@@ -407,4 +407,3 @@ func applyGitSigningConfig(paths config.Paths, publicKey, signPath, allowedSigne
 	}
 	return nil
 }
-

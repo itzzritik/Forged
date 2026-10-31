@@ -178,3 +178,6 @@ func readWindowsCredentialBlob(path string) ([]byte, error) {
 	}
 	return data, nil
 }
+
+// PurgeCredentialStore is a no-op: Windows keeps account secrets as DPAPI files under the config folder.
+func PurgeCredentialStore(context.Context) error { return nil }

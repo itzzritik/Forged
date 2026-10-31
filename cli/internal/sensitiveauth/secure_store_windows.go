@@ -244,3 +244,6 @@ func readWindowsDeviceKey(path string) ([]byte, error) {
 	}
 	return data, nil
 }
+
+// PurgeSecureStore is a no-op: Windows keeps local unlock keys as DPAPI files under the config folder.
+func PurgeSecureStore(context.Context) error { return nil }
