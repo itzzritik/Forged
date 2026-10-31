@@ -42,6 +42,7 @@ The TUI runs in the `forged` CLI process and is keyboard-only.
 - The headless-unlock offer opens only right after a password unlock, after the gate closes and under any queued notice modal, and once per device (`security.headless_offered`).
 - Leaving recovery or finishing a login before the first unlock never reveals the dashboard: recovery exit restarts boot; a login runs post-login maintenance on the gate, then shows Unlock; a sync issue during a gate-started login cancels it and shows Unlock (or Welcome when there is no vault). Maintenance results while view-locked update state only.
 - If setup created the vault but its repair failed, or restore finds a vault already there, the TUI boots again into Unlock. Retrying Create or Restore could only fail.
+- If the launch repair fails and the daemon is unreachable, Unlock shows the repair error behind the repair wall (the password repairs again before unlocking) instead of trying unlock, which could only report "Daemon is not running".
 - The key list reloads after a sync, when the daemon's `key_count` differs from what is shown, or after a failed load; the last two retry at most every 5 s and only while unlocked. A failed first load shows "Couldn't load keys", not "Loading keys" forever.
 - Maintenance is single-flight; runtime and snapshot checks accept only their newest generation. A snapshot without the vault ends the status poll, so a later snapshot that finds the vault again restarts it.
 - Quit is blocked while a password change runs, even on the lock wall. Ctrl+C otherwise always quits.

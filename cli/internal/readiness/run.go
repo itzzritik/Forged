@@ -2,6 +2,7 @@ package readiness
 
 import (
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 
@@ -300,7 +301,11 @@ func (e *Engine) ensureServiceStage(state *repairState, opts RunOptions) error {
 		return nil
 	}
 	e.markFailed(&state.result.Summary, "service")
-	return nil
+	// Without this, launch goes on to unlock and reports only "Daemon is not running".
+	if reason := strings.TrimSpace(updated.Service.StartFailure); reason != "" {
+		return fmt.Errorf("the Forged service failed to start: %s", reason)
+	}
+	return errors.New("the Forged service did not become ready")
 }
 
 func (e *Engine) blockServiceOwnership(state *repairState, err error) bool {

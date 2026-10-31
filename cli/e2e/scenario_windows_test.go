@@ -53,6 +53,7 @@ func TestWindowsScenario(t *testing.T) {
 		{"lapsed device unlock prompts for the master password", stepPasswordPopup},
 		{"daemon restart at logon keeps working", stepDaemonRestart},
 		{"upgraded binary refreshes the running daemon", stepUpgrade},
+		{"a daemon that cannot start shows the repair error", stepServiceStartFailure},
 		{"doctor --fix repairs a broken install", stepDoctorFix},
 		{"disable and re-enable SSH integration", stepToggleSSH},
 		{"forged logs follows the live daemon log", stepLogs},
@@ -319,6 +320,38 @@ func stepUpgrade(t *testing.T, s *scenario) {
 	if out, err := s.sshEventually(t, 20*time.Second); err != nil {
 		t.Fatalf("ssh after upgrade: %v\n%s", err, out)
 	}
+}
+
+// Launch must show why the service did not start, not unlock's "Daemon is not running".
+func stepServiceStartFailure(t *testing.T, s *scenario) {
+	if out, err := h.run(t, h.home, "schtasks", "/End", "/TN", s.taskName); err != nil {
+		t.Fatalf("end task: %v\n%s", err, out)
+	}
+	waitPipes(t, s, false)
+	// While the suite holds daemon.lock every daemon start fails, like one racing a dying daemon.
+	lock, err := os.OpenFile(filepath.Join(s.paths.RuntimeDir, "daemon.lock"), os.O_RDWR, 0o600)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer lock.Close()
+	for deadline := time.Now().Add(10 * time.Second); platform.LockFile(lock) != nil; time.Sleep(50 * time.Millisecond) {
+		if time.Now().After(deadline) {
+			t.Fatal("daemon.lock still held after the daemon stopped")
+		}
+	}
+
+	p := h.forged(t)
+	mustSee(t, p, 40*time.Second, "Unlock Forged", "Repairing this machine")
+	if text := p.Text(); strings.Contains(text, "Daemon is not running") {
+		t.Fatalf("gate shows the IPC error instead of the repair error:\n%s", text)
+	}
+	_ = platform.UnlockFile(lock)
+	// Behind the repair wall, the password repairs again before it unlocks.
+	_ = p.Type(e2ePassword)
+	_ = p.Send("\r")
+	mustSee(t, p, 40*time.Second, "Overview")
+	quitTUI(t, p)
+	assertServiceOwned(t, s)
 }
 
 func stepDoctorFix(t *testing.T, s *scenario) {

@@ -16,6 +16,7 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
+	"time"
 	"unicode/utf16"
 
 	"github.com/itzzritik/forged/cli/internal/platform"
@@ -112,8 +113,22 @@ func schtasks(dir string, args []string) int {
 			fmt.Fprintf(os.Stderr, "ERROR: The scheduled task %q is not currently running.\n", tn)
 			return 1
 		}
-		terminate(pid)
+		// Like Task Scheduler: the task reads Ready at once, and the process dies about a second later.
 		_ = os.Remove(pidPath)
+		self, _ := os.Executable()
+		killer := exec.Command(self, "/EndLater", strconv.Itoa(pid))
+		killer.SysProcAttr = &syscall.SysProcAttr{CreationFlags: windows.CREATE_NEW_PROCESS_GROUP | windows.DETACHED_PROCESS}
+		if err := killer.Start(); err != nil {
+			terminate(pid)
+			return 0
+		}
+		_ = killer.Process.Release()
+		return 0
+	case has(args, "/EndLater"):
+		pid, _ := flag(args, "/EndLater")
+		n, _ := strconv.Atoi(pid)
+		time.Sleep(time.Second)
+		terminate(n)
 		return 0
 	case has(args, "/Delete"):
 		if _, err := os.Stat(xmlPath); err != nil {

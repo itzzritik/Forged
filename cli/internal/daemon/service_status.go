@@ -12,6 +12,8 @@ type ServiceStatus struct {
 	Detail           string
 	BinaryPath       string
 	BinaryMissing    bool
+	// StartFailure says why the last start failed, when the platform reports it (Windows only).
+	StartFailure string
 }
 
 type LingerState struct {

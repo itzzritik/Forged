@@ -13,6 +13,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
+	"github.com/itzzritik/forged/cli/internal/platform"
 )
 
 // TestRealTaskScheduler exercises the product's Task Scheduler code against
@@ -103,6 +104,11 @@ func TestRealTaskScheduler(t *testing.T) {
 
 	if err := daemon.StopService(); err != nil {
 		t.Fatalf("StopService: %v", err)
+	}
+	// The task reads Ready about a second before Task Scheduler kills the process; a restart
+	// in that window starts a daemon that finds daemon.lock still held.
+	if platform.ProcessAlive(launched.PID) {
+		t.Fatalf("stand-in %d still running after StopService returned", launched.PID)
 	}
 	if status, err = daemon.InspectService(paths); err != nil || status.Running {
 		t.Fatalf("inspect after stop: %+v err=%v", status, err)

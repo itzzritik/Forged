@@ -279,6 +279,12 @@ func (a *app) maintenanceFailed(msg maintenanceDoneMsg, errText string) tea.Cmd 
 		return tea.Batch(a.notify(errText, ui.ToneBad), a.restart())
 	case a.inGate && (msg.trigger == trigSetup || msg.passwordUsed):
 		a.gate.SetError(errText)
+	case msg.trigger == trigBoot && st.Snapshot.VaultExists && a.life.unlockPending && !st.Snapshot.IPCSocketReady:
+		// Unlock needs the daemon, so trying it would only replace this error with "Daemon is not
+		// running"; behind the repair wall, submitting the password repairs again first.
+		a.showGate(gate.Unlock)
+		a.life.repairWall = true
+		a.gate.SetError(errText)
 	case msg.trigger == trigBoot && st.Snapshot.VaultExists && a.life.unlockPending:
 		return tea.Batch(a.notify(errText, ui.ToneBad), a.startStartupUnlock())
 	case msg.trigger == trigBoot:

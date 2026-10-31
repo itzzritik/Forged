@@ -16,6 +16,7 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -314,27 +315,30 @@ func StartService() error {
 }
 
 func StopService() error {
-	state, installed, err := queryWindowsTaskState()
+	task, installed, err := queryWindowsTask()
 	if err != nil {
 		return err
 	}
 	if !installed {
 		return nil
 	}
-	if !windowsTaskStateActive(state) {
+	if !windowsTaskStateActive(task.State) {
 		return nil
 	}
 	if err := runScheduledTaskCommand("stop", "/End", "/TN", taskName()); err != nil {
 		state, installed, queryErr := queryWindowsTaskState()
 		if queryErr == nil && (!installed || !windowsTaskStateActive(state)) {
-			return nil
+			return waitForProcessExit(task.PIDs, 5*time.Second)
 		}
 		if queryErr != nil {
 			return errors.Join(err, fmt.Errorf("rechecking scheduled task state: %w", queryErr))
 		}
 		return err
 	}
-	return waitForWindowsTaskStop(5 * time.Second)
+	if err := waitForWindowsTaskStop(5 * time.Second); err != nil {
+		return err
+	}
+	return waitForProcessExit(task.PIDs, 5*time.Second)
 }
 
 func RestartService() error {
@@ -431,16 +435,33 @@ func InspectService(_ config.Paths) (ServiceStatus, error) {
 	case windowsTaskStateRunning:
 		status.Detail = "running"
 	}
+	if !status.Running {
+		status.StartFailure = windowsTaskFailure(task.LastResult)
+	}
 
 	return status, nil
+}
+
+// Task Scheduler drops the daemon's stderr, and a launch Windows blocks (Defender, Smart App
+// Control) never reaches the daemon log, so the task's last result is the only trace of either.
+func windowsTaskFailure(result int32) string {
+	code := uint32(result)
+	switch {
+	case code == 0, code >= 0x41300 && code <= 0x4131f: // success and SCHED_S_* statuses
+		return ""
+	case code&0xffff0000 == 0x80070000: // a Win32 error from starting the process
+		return syscall.Errno(code & 0xffff).Error()
+	}
+	return fmt.Sprintf("it exited with code %d", result)
 }
 
 const windowsTaskActionExec = 0
 
 type windowsTask struct {
-	State   int                 `json:"state"`
-	Actions []windowsTaskAction `json:"actions"`
-	PIDs    []int               `json:"pids"`
+	State      int                 `json:"state"`
+	Actions    []windowsTaskAction `json:"actions"`
+	PIDs       []int               `json:"pids"`
+	LastResult int32               `json:"lastResult"`
 }
 
 type windowsTaskAction struct {
@@ -517,6 +538,21 @@ func waitForWindowsTaskStop(timeout time.Duration) error {
 	}
 }
 
+// The task reads Ready as soon as /End returns, but Task Scheduler ends the daemon a second or two
+// later; a daemon started before then finds daemon.lock held and exits, and nothing restarts it.
+func waitForProcessExit(pids []int, timeout time.Duration) error {
+	deadline := time.Now().Add(timeout)
+	for _, pid := range pids {
+		for platform.ProcessAlive(pid) {
+			if !time.Now().Before(deadline) {
+				return fmt.Errorf("stopping scheduled task: daemon PID %d still running after %s", pid, timeout)
+			}
+			time.Sleep(50 * time.Millisecond)
+		}
+	}
+	return nil
+}
+
 func runScheduledTaskCommand(action string, args ...string) error {
 	out, err := serviceCommand("schtasks", args...).CombinedOutput()
 	if err == nil {
@@ -552,7 +588,7 @@ try {
     }
   })
   $pids = @(foreach ($instance in $task.GetInstances(0)) { [int]$instance.EnginePID })
-  $json = ConvertTo-Json -Compress -Depth 4 -InputObject @{ state = [int]$task.State; actions = $actions; pids = $pids }
+  $json = ConvertTo-Json -Compress -Depth 4 -InputObject @{ state = [int]$task.State; actions = $actions; pids = $pids; lastResult = [int]$task.LastTaskResult }
   $json = [regex]::Replace($json, '[^\x00-\x7F]', { param($m) '\u{0:x4}' -f [int][char]$m.Value })
   [Console]::Out.Write($json)
   exit 0
