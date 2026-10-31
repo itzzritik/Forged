@@ -10,8 +10,8 @@ import (
 
 func TestNPMRoot(t *testing.T) {
 	cases := map[string]string{
-		"/usr/local/lib/node_modules/forgedssh":                                                "/usr/local/lib/node_modules",
-		"/x/lib/node_modules/@getforged/cli/node_modules/forgedssh":                            "/x/lib/node_modules",
+		"/usr/local/lib/node_modules/forgedssh":                                               "/usr/local/lib/node_modules",
+		"/x/lib/node_modules/@getforged/cli/node_modules/forgedssh":                           "/x/lib/node_modules",
 		"/h/Library/pnpm/global/5/node_modules/.pnpm/forgedssh@0.1.42/node_modules/forgedssh": "/h/Library/pnpm/global/5/node_modules",
 	}
 	for in, want := range cases {

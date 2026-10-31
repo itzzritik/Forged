@@ -126,7 +126,7 @@ async function main() {
 	if (!dir) {
 		dir = writable(dirs[0]) ? dirs[0] : dirs[1];
 		fs.mkdirSync(dir, { recursive: true });
-		process.stderr.write(`forged: downloading v${pkg.version} (one time)...\n`);
+		process.stderr.write(`forged: downloading v${pkg.version}...\n`);
 		try {
 			await install(dir, archive);
 		} catch (err) {

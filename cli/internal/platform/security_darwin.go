@@ -4,6 +4,7 @@ package platform
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -34,6 +35,23 @@ func SecurityAddGenericPassword(ctx context.Context, service, account, password 
 	cmd := exec.CommandContext(ctx, "security", "-i")
 	cmd.Stdin = strings.NewReader(line)
 	return cmd.CombinedOutput()
+}
+
+// SecurityDeleteAllGenericPasswords deletes every item for service, including
+// ones that older installs (other install ids) left behind.
+func SecurityDeleteAllGenericPasswords(ctx context.Context, service string) error {
+	// security deletes one match per call and exits 44 once none is left.
+	for range 1000 {
+		out, err := exec.CommandContext(ctx, "security", "delete-generic-password", "-s", service).CombinedOutput()
+		var exit *exec.ExitError
+		if errors.As(err, &exit) && exit.ExitCode() == 44 {
+			return nil
+		}
+		if err != nil {
+			return fmt.Errorf("deleting keychain items for %s: %s: %w", service, strings.TrimSpace(string(out)), err)
+		}
+	}
+	return fmt.Errorf("deleting keychain items for %s: too many items", service)
 }
 
 func quoteSecurityInteractiveArg(value string) (string, error) {

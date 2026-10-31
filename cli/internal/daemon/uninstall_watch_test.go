@@ -92,7 +92,7 @@ func TestNPMSourceGuard(t *testing.T) {
 	cache := filepath.FromSlash("/home/r/.cache/forged")
 	cases := map[string]bool{
 		filepath.FromSlash("/g/node_modules/forgedssh/bin/forged"): true,
-		filepath.Join(cache, "0.1.42", "forged"):                    true,
+		filepath.Join(cache, "0.1.42", "forged"):                   true,
 		filepath.FromSlash("/Users/r/forged/bin/forged"):           false,
 		"": false,
 	}

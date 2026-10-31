@@ -7,6 +7,7 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"os"
 	"os/exec"
 	"strings"
@@ -98,4 +99,15 @@ func linuxCredentialError(out []byte) error {
 	default:
 		return ErrCredentialStoreBroken
 	}
+}
+
+// PurgeCredentialStore deletes every Forged account item, including ones older installs left.
+func PurgeCredentialStore(ctx context.Context) error {
+	if _, err := exec.LookPath("secret-tool"); err != nil {
+		return nil
+	}
+	if out, err := exec.CommandContext(ctx, "secret-tool", "clear", "application", "forged", "kind", "account").CombinedOutput(); err != nil {
+		return fmt.Errorf("clearing Secret Service items: %s: %w", strings.TrimSpace(string(out)), err)
+	}
+	return nil
 }
