@@ -33,7 +33,10 @@ func SpinnerGlyph(frame int) string {
 	return Paint(G.Spinner[frame%len(G.Spinner)], c)
 }
 
-type Hint struct{ Key, Label string }
+type Hint struct {
+	Key, Label string
+	Accent     bool
+}
 
 type Chip struct {
 	Glyph, Label string
@@ -69,9 +72,13 @@ func Hints(h []Hint, labels bool) string {
 				b.WriteString("  ")
 			}
 		}
-		b.WriteString(Fg(P().Text).Bold(true).Background(P().Cap).Render(" " + x.Key + " "))
+		key, label := Fg(P().Text).Background(P().Cap), P().Muted
+		if x.Accent {
+			key, label = Fg(P().OnAccent).Background(P().Accent), P().Accent
+		}
+		b.WriteString(key.Bold(true).Render(" " + x.Key + " "))
 		if labels {
-			b.WriteString(" " + Paint(x.Label, P().Muted))
+			b.WriteString(" " + Paint(x.Label, label))
 		}
 	}
 	return b.String()
@@ -81,7 +88,12 @@ func Footer(w int, left, right []Hint) string {
 	avail := w - 4
 	more := right
 	if len(more) > 1 {
-		more = right[:1]
+		more = []Hint{right[0]}
+		for _, h := range right[1:] {
+			if h.Accent {
+				more = append(more, h)
+			}
+		}
 	}
 	first := func(n int) []Hint { return left[:min(n, len(left))] }
 	cands := []struct {

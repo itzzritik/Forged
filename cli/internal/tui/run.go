@@ -68,6 +68,8 @@ func Run(intent Intent, deps Deps) error {
 	if err != nil {
 		err = fmt.Errorf("running TUI: %w", err)
 		a.st.Reporter.Report("app", "tui.run", err)
+	} else if a.updateRequested {
+		err = ErrUpdateRequested
 	}
 	if cerr := deps.CloseClipboard(); cerr != nil {
 		cerr = fmt.Errorf("closing clipboard: %w", cerr)

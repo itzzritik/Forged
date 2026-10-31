@@ -7,11 +7,16 @@ const fs = require('node:fs');
 const https = require('node:https');
 const os = require('node:os');
 const path = require('node:path');
+const readline = require('node:readline');
 
 const pkgDir = path.join(__dirname, '..');
 const pkg = require('../package.json');
-const exe = process.platform === 'win32' ? '.exe' : '';
+const win32 = process.platform === 'win32';
+const exe = win32 ? '.exe' : '';
 const binaries = ['forged', 'forged-sign', 'forged-auth'].map((name) => name + exe);
+// Must match cmd.ExitCode in the Go CLI.
+const UPDATE_EXIT = 85;
+const REGISTRY = 'https://registry.npmjs.org/forgedssh/latest';
 
 function fail(message) {
 	console.error(message);
@@ -20,7 +25,7 @@ function fail(message) {
 
 function cacheRoot() {
 	const home = os.homedir();
-	if (process.platform === 'win32') {
+	if (win32) {
 		return path.join(process.env.LOCALAPPDATA || path.join(home, 'AppData', 'Local'), 'forged', 'cache');
 	}
 	if (process.platform === 'darwin') return path.join(home, 'Library', 'Caches', 'forged');
@@ -75,6 +80,123 @@ function download(url, dest, redirects = 5) {
 	});
 }
 
+function getJSON(url) {
+	return new Promise((resolve, reject) => {
+		const req = https.get(url, { headers: { 'User-Agent': `forgedssh/${pkg.version}`, Accept: 'application/json' } }, (res) => {
+			if (res.statusCode !== 200) {
+				res.resume();
+				reject(new Error(`HTTP ${res.statusCode}`));
+				return;
+			}
+			let body = '';
+			res.setEncoding('utf8');
+			res.on('data', (chunk) => {
+				body += chunk;
+				if (body.length > 1 << 20) req.destroy(new Error('reply too large'));
+			});
+			res.on('end', () => {
+				try {
+					resolve(JSON.parse(body));
+				} catch (err) {
+					reject(err);
+				}
+			});
+			res.on('error', reject);
+		});
+		req.setTimeout(10000, () => req.destroy(new Error('timed out')));
+		req.on('error', reject);
+	});
+}
+
+function parseVersion(version) {
+	const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(typeof version === 'string' ? version : '');
+	return m && m.slice(1).map(Number);
+}
+
+function newer(latest, current) {
+	const l = parseVersion(latest);
+	const c = parseVersion(current);
+	if (!l || !c) return false;
+	const i = l.findIndex((n, k) => n !== c[k]);
+	return i >= 0 && l[i] > c[i];
+}
+
+// Mirrors forged's own guard: real root (HOME=/root) may update, sudo from a user's shell may not.
+function sudoInUserHome() {
+	try {
+		return process.getuid?.() === 0 && fs.statSync(os.homedir()).uid !== 0;
+	} catch {
+		return false;
+	}
+}
+
+function confirm(question) {
+	return new Promise((resolve) => {
+		const rl = readline.createInterface({ input: process.stdin, output: process.stderr });
+		rl.question(question, (answer) => {
+			rl.close();
+			resolve(/^y(es)?$/i.test(answer.trim()));
+		});
+	});
+}
+
+// Runs here, not in forged: Windows can't replace a folder whose exe is running, and npm must replace this one.
+async function update(reopen) {
+	if (sudoInUserHome()) {
+		console.error('Run forged update as your own user, not with sudo');
+		return 1;
+	}
+	let latest;
+	try {
+		latest = (await getJSON(REGISTRY)).version;
+		if (!parseVersion(latest)) throw new Error('the npm registry sent an invalid version');
+	} catch (err) {
+		console.error(`forged: couldn't check for updates: ${err.message}`);
+		return 1;
+	}
+	if (!newer(latest, pkg.version)) {
+		console.log(`forged is up to date (${pkg.version})`);
+		return 0;
+	}
+	if (pkgDir.split(path.sep).includes('@getforged')) {
+		console.error('Move to the new package: npm rm -g @getforged/cli && npm i -g forgedssh');
+		return 1;
+	}
+	// The npm beside this Node, run as a script: no PATH lookup or .cmd shim, and the same under sudo.
+	let npm = '';
+	let root = '';
+	try {
+		npm = fs.realpathSync(path.join(path.dirname(process.execPath), ...(win32 ? ['node_modules', 'npm', 'bin', 'npm-cli.js'] : ['npm'])));
+		const res = spawnSync(process.execPath, [npm, 'root', '-g'], { encoding: 'utf8' });
+		if (res.status === 0 && res.stdout.trim()) root = fs.realpathSync(res.stdout.trim());
+	} catch {}
+	if (!root || path.relative(root, pkgDir) !== 'forgedssh') {
+		console.error('Update with the package manager you installed forged with (npm: npm i -g forgedssh@latest)');
+		return 1;
+	}
+	const args = [npm, 'install', '-g', 'forgedssh@latest'];
+	process.stderr.write(`forged: updating to v${latest}...\n`);
+	const first = spawnSync(process.execPath, args, { stdio: ['inherit', 'inherit', 'pipe'], encoding: 'utf8', maxBuffer: 16 << 20 });
+	let code = first.status;
+	const denied = code !== 0 && !win32 && /EACCES|EPERM/.test(first.stderr || '');
+	// A permission error gets the sudo offer instead of npm's wall of text.
+	if (code !== 0 && !denied) process.stderr.write(first.stderr || '');
+	if (denied && process.stdin.isTTY && (await confirm('npm needs admin rights. Run it with sudo? [y/N] '))) {
+		code = spawnSync('sudo', ['-H', process.execPath, ...args], { stdio: 'inherit' }).status;
+	}
+	if (code !== 0) {
+		console.error(`Update failed. Run it yourself: ${denied ? 'sudo ' : ''}npm i -g forgedssh@latest`);
+		return 1;
+	}
+	const fresh = spawnSync(process.execPath, [path.join(pkgDir, 'bin', 'forged.js'), '__daemon-freshen', '--quiet'], { stdio: 'inherit' });
+	if (fresh.status !== 0) {
+		console.error(`Updated to ${latest}, but forged couldn't restart itself. Run forged to finish.`);
+		return 1;
+	}
+	console.log(`Updated forged ${pkg.version} → ${latest}.${reopen ? '' : ' Run forged to unlock again.'}`);
+	return 0;
+}
+
 async function install(target, archive) {
 	const tmp = fs.mkdtempSync(path.join(target, '.download-'));
 	try {
@@ -88,9 +210,9 @@ async function install(target, archive) {
 			throw new Error(`checksum mismatch for ${archive.url}`);
 		}
 		// System32 tar reads zip; a Git Bash GNU tar earlier on PATH cannot.
-		const tar = process.platform === 'win32' ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
+		const tar = win32 ? path.join(process.env.SystemRoot || 'C:\\Windows', 'System32', 'tar.exe') : 'tar';
 		// Run as root, tar would keep the archive's CI owner (uid 1001) on the binaries.
-		const extracted = spawnSync(tar, [process.platform === 'win32' ? '-xf' : '-xzf', file, '--no-same-owner', '-C', tmp], {
+		const extracted = spawnSync(tar, [win32 ? '-xf' : '-xzf', file, '--no-same-owner', '-C', tmp], {
 			stdio: 'ignore',
 		});
 		if (extracted.status !== 0) throw new Error(`could not extract ${archive.url}`);
@@ -116,6 +238,7 @@ function pruneCache(keep) {
 }
 
 async function main() {
+	if (process.argv.length === 3 && process.argv[2] === 'update') process.exit(await update(false));
 	const archives = pkg.forged && pkg.forged.archives;
 	if (!archives) fail('forged: this package has no release binaries');
 	const archive = archives[`${process.platform}-${process.arch}`];
@@ -141,6 +264,11 @@ async function main() {
 		env: { ...process.env, FORGED_NPM_PACKAGE_DIR: pkgDir },
 	});
 	if (result.error) fail(`Error: failed to execute forged binary: ${result.error.message}`);
+	if (result.status === UPDATE_EXIT) {
+		const code = await update(true);
+		if (code !== 0) process.exit(code);
+		process.exit(spawnSync(process.execPath, [path.join(pkgDir, 'bin', 'forged.js')], { stdio: 'inherit' }).status ?? 1);
+	}
 	process.exit(result.status ?? 1);
 }
 

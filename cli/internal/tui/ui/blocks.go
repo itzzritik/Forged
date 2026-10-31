@@ -91,6 +91,10 @@ func Button(label string, kind ButtonKind) string {
 	return On(s, P().Text, P().Cap)
 }
 
+func VersionStep(from, to string) string {
+	return Paint(Sanitize(from), P().Text) + Paint(" "+G.Next+" ", P().Muted) + Fg(P().Accent).Bold(true).Render(Sanitize(to))
+}
+
 func Banner(w, h int, tone Tone, text, key, action string) string {
 	bg := P().WarnBg
 	glyph := G.Warn

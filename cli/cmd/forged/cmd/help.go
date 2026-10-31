@@ -42,6 +42,7 @@ func renderRootHelp(w io.Writer) {
 			Entries: []helpEntry{
 				{Name: "doctor", Description: "diagnose and repair this device"},
 				{Name: "logs", Description: "follow daemon logs"},
+				{Name: "update", Description: "update forged to the latest version"},
 			},
 		},
 		{

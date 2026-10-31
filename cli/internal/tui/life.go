@@ -34,6 +34,7 @@ type life struct {
 	signingLoading, signingPending             bool
 	statusFailures                             int
 	refreshAfterUnlock, offerHeadless          bool
+	updateOffered                              bool
 	unlockCancel, loginCancel                  context.CancelFunc
 	loginProgress                              <-chan actions.LoginProgress
 	loginCommitting, loginCopying              bool

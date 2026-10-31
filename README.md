@@ -25,6 +25,8 @@ Forged fixes all of this in a single binary.
 npm i -g forgedssh
 ```
 
+Forged tells you when a new version is out. Update with `forged update`, or press `u` in `forged`.
+
 ## Quick start
 
 ```bash

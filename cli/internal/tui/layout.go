@@ -83,6 +83,9 @@ func (a *app) footer(w int) string {
 	if !open && !a.capturing() && (dash || len(acts) > len(left) || ui.HintsWidth(left, true) > w-4) {
 		right = append(right, ui.Hint{Key: "m", Label: "More"})
 	}
+	if dash && !a.capturing() && a.st.UpdateReady() {
+		right = append(right, ui.Hint{Key: "u", Label: "Update", Accent: true})
+	}
 	if dash && !a.capturing() {
 		right = append(right, ui.Hint{Key: "q", Label: "Quit"})
 	}
