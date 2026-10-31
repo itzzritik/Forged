@@ -5,6 +5,7 @@ import (
 
 	"github.com/itzzritik/forged/cli/internal/actions"
 	"github.com/itzzritik/forged/cli/internal/readiness"
+	"github.com/itzzritik/forged/cli/internal/update"
 )
 
 type Health int
@@ -46,7 +47,10 @@ type State struct {
 	Clip           *Clip
 	ProblemCount   int
 	SpinFrame      int
+	LatestVersion  string
 }
+
+func (s *State) UpdateReady() bool { return update.Available(s.Deps.AppVersion, s.LatestVersion) }
 
 type Clip struct {
 	ID       ID

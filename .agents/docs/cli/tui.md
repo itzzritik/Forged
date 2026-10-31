@@ -4,7 +4,7 @@ applies_to:
   - cli/internal/tui/**
 depends_on:
   - cli/ipc.md
-last_verified: 2026-10-13
+last_verified: 2026-10-31
 stable: yes
 ---
 
@@ -45,6 +45,7 @@ The TUI runs in the `forged` CLI process and is keyboard-only.
 - The key list reloads after a sync, when the daemon's `key_count` differs from what is shown, or after a failed load; the last two retry at most every 5 s and only while unlocked. A failed first load shows "Couldn't load keys", not "Loading keys" forever.
 - Maintenance is single-flight; runtime and snapshot checks accept only their newest generation. A snapshot without the vault ends the status poll, so a later snapshot that finds the vault again restarts it.
 - Quit is blocked while a password change runs, even on the lock wall. Ctrl+C otherwise always quits.
+- A newer version opens the update modal once per launch, never on the gate or lock wall. `u` reopens it from dashboard tabs only. Update quits through the normal quit path (blocked during a password change) and `Run` returns `ErrUpdateRequested`, which the CLI turns into exit code 85 for the npm launcher.
 - Closing the terminal (SIGHUP) quits normally so clipboard cleanup runs. However the program ends (SIGHUP, SIGTERM, a dead tty), `Run` waits for a running password change, which stops the daemon, to finish and restart it.
 - With the vault locked, Forged signing shows as on with a generic "Forged key" name instead of a signing issue; the name needs an unlocked vault.
 - Signing status loads are single-flight with a reload fence: an invalidation during a load queues one reload instead of accepting the stale result.

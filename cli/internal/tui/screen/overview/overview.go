@@ -400,7 +400,11 @@ func devicePanel(st *core.State, host string, w, h int) string {
 	rows := [][2]string{{"Name", host}, {"Version", st.Deps.AppVersion}, {"Unlock", unlock}, {"Password", interval}}
 	body := []string{""}
 	for _, r := range rows {
-		body = append(body, "  "+ui.Paint(ui.Pad(r[0], 10), ui.P().Muted)+ui.Paint(ui.Trunc(ui.Sanitize(r[1]), w-16), ui.P().Text))
+		value := ui.Paint(ui.Trunc(ui.Sanitize(r[1]), w-16), ui.P().Text)
+		if r[0] == "Version" && st.UpdateReady() && ui.Width(st.Deps.AppVersion+" "+ui.G.Next+" "+st.LatestVersion) <= w-16 {
+			value = ui.VersionStep(st.Deps.AppVersion, st.LatestVersion)
+		}
+		body = append(body, "  "+ui.Paint(ui.Pad(r[0], 10), ui.P().Muted)+value)
 	}
 	return ui.Panel(w, h, "This device", "", false, body)
 }

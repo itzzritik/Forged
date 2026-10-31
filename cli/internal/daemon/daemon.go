@@ -21,6 +21,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/accountauth"
 	"github.com/itzzritik/forged/cli/internal/activity"
 	forgedagent "github.com/itzzritik/forged/cli/internal/agent"
+	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/ipc"
 	"github.com/itzzritik/forged/cli/internal/platform"
@@ -176,6 +177,9 @@ func (d *Daemon) Run(password []byte) error {
 	}
 	if executableErr == nil {
 		go d.watchNPMUninstall(executable)
+	}
+	if buildinfo.Version != "dev" {
+		go d.watchLatestVersion()
 	}
 	go d.keepPIDFile()
 	d.waitForSignal()

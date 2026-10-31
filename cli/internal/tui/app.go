@@ -79,8 +79,9 @@ type app struct {
 	spinGen     int
 	spinOn      bool
 
-	life          life
-	pendingSelect string
+	life            life
+	pendingSelect   string
+	updateRequested bool
 }
 
 func newApp(intent Intent, deps Deps, paths config.Paths) *app {
@@ -157,6 +158,8 @@ func (a *app) update(msg tea.Msg) tea.Cmd {
 		return a.spin(msg)
 	case toastMsg:
 		return a.expireToast()
+	case updateRequestedMsg:
+		return a.requestUpdate()
 	case core.OpenOverlayMsg:
 		if !a.inGate {
 			a.overlays = append(a.overlays, msg)
@@ -296,6 +299,11 @@ func (a *app) input(msg tea.Msg) tea.Cmd {
 		return nil
 	case "l":
 		return core.Send(core.RequestLockMsg{})
+	case "u":
+		if a.st.UpdateReady() {
+			a.openUnder(&updateModal{})
+			return nil
+		}
 	case "q":
 		return a.quit()
 	}

@@ -21,6 +21,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/readiness"
 	"github.com/itzzritik/forged/cli/internal/sensitiveauth"
 	"github.com/itzzritik/forged/cli/internal/tui"
+	"github.com/itzzritik/forged/cli/internal/update"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -126,6 +127,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 		LogError: func(event actions.DiagnosticErrorEvent) {
 			_ = actions.AppendDiagnosticError(paths, event)
 		},
+		LatestVersion:     func() string { return update.Load(paths) },
 		DefaultServer:     ipc.DefaultAPIServer,
 		AppVersion:        buildinfo.Version,
 		TerminalClipboard: clipboard.terminal,
@@ -133,6 +135,7 @@ func runInteractiveIntent(intent tui.Intent) error {
 		CanOpenLinks:      os.Getenv("BROWSER") != "" || !remote && (runtime.GOOS != "linux" || platform.HasDisplay()),
 		CanPickFiles:      picker.Available(),
 		Remote:            remote,
+		ViaLauncher:       os.Getenv("FORGED_NPM_PACKAGE_DIR") != "",
 	})
 }
 

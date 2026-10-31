@@ -56,7 +56,7 @@ func (a *app) pollStatus(delay time.Duration) tea.Cmd {
 	if !st.Snapshot.VaultExists || st.Recovery() {
 		return nil
 	}
-	id, load := core.NextID(), st.Deps.LoadStatus
+	id, load, latest := core.NextID(), st.Deps.LoadStatus, st.Deps.LatestVersion
 	a.life.statusID = id
 	if delay <= 0 {
 		delay = 50 * time.Millisecond
@@ -66,7 +66,7 @@ func (a *app) pollStatus(delay time.Duration) tea.Cmd {
 		if err != nil {
 			err = fmt.Errorf("loading daemon status: %w", err)
 		}
-		return core.StatusMsg{ID: id, Status: status, Err: err}
+		return core.StatusMsg{ID: id, Status: status, Latest: latest(), Err: err}
 	})
 }
 
@@ -182,6 +182,8 @@ func (a *app) status(msg core.StatusMsg) (tea.Cmd, bool) {
 		return nil, true
 	}
 	st := a.st
+	st.LatestVersion = msg.Latest
+	a.offerUpdate()
 	wasUnlocked := st.Status.SensitiveKnown && st.Status.Unlocked
 	wasPending, had := st.SyncPending(), st.StatusLoaded
 	pull, push := st.Status.LastSuccessfulPullAt, st.Status.LastSuccessfulPushAt

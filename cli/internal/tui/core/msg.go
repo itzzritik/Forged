@@ -77,6 +77,7 @@ type SecurityMsg struct {
 type StatusMsg struct {
 	ID     ID
 	Status actions.RuntimeStatus
+	Latest string
 	Err    error
 }
 

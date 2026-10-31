@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"strings"
@@ -9,6 +10,7 @@ import (
 	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/config"
 	"github.com/itzzritik/forged/cli/internal/daemon"
+	"github.com/itzzritik/forged/cli/internal/tui"
 	"github.com/spf13/cobra"
 )
 
@@ -47,11 +49,22 @@ func Execute() error {
 	cobra.MousetrapHelpText = ""
 	cmd := newRootCmd()
 	if err := cmd.Execute(); err != nil {
+		if errors.Is(err, tui.ErrUpdateRequested) {
+			return err
+		}
 		err = rewriteCLIError(err)
 		fmt.Fprintln(os.Stderr, "Error:", err)
 		return err
 	}
 	return nil
+}
+
+// ExitCode 85 tells the npm launcher to update forged and reopen it.
+func ExitCode(err error) int {
+	if errors.Is(err, tui.ErrUpdateRequested) {
+		return 85
+	}
+	return 1
 }
 
 func newRootCmd() *cobra.Command {
@@ -75,6 +88,7 @@ func newRootCmd() *cobra.Command {
 			}
 			return nil
 		},
+		PersistentPostRun: func(cmd *cobra.Command, args []string) { printUpdateHint(cmd) },
 	}
 
 	installPersistentFlags(cmd)
@@ -114,6 +128,7 @@ func installRootSubcommands(cmd *cobra.Command) {
 		versionCmd,
 		logsCmd,
 		doctorCmd,
+		updateCmd,
 		daemonFreshenCmd,
 		sshRoutePrepareCmd,
 		sshRouteSuccessCmd,

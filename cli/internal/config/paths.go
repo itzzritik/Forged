@@ -29,6 +29,10 @@ func (p Paths) AccountSecretKeyFile() string {
 func (p Paths) SyncStateFile() string   { return filepath.Join(p.DataDir, "sync-state.json") }
 func (p Paths) SyncDirtyFile() string   { return filepath.Join(p.DataDir, "sync.dirty") }
 func (p Paths) NPMInstallsFile() string { return filepath.Join(p.ConfigDir, "npm-installs") }
+func (p Paths) LatestVersionFile() string {
+	return filepath.Join(p.ConfigDir, "latest-version")
+}
+func (p Paths) UpdateHintFile() string { return filepath.Join(p.ConfigDir, "update-hint") }
 func (p Paths) GitSigningBackupFile() string {
 	return filepath.Join(p.ConfigDir, "git-signing-backup.json")
 }

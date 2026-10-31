@@ -32,7 +32,7 @@ function Version({ device, latest }: { device: Device; latest: string | null }) 
 					<TooltipTrigger aria-label={`Update available: ${latest}`} className="flex cursor-default text-warning" render={<button type="button" />}>
 						<CircleArrowUpIcon className="size-3.5" />
 					</TooltipTrigger>
-					<TooltipContent>Update available: {latest}</TooltipContent>
+					<TooltipContent>Update available: {latest}. Run npm i -g forgedssh@latest</TooltipContent>
 				</Tooltip>
 			)}
 		</span>

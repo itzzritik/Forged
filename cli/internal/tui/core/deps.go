@@ -58,12 +58,14 @@ type Deps struct {
 	OpenLink                  func(string) error
 	LogError                  func(actions.DiagnosticErrorEvent)
 	DefaultServer             string
+	LatestVersion             func() string
 	AppVersion                string
 	TerminalClipboard         bool
 	CanOpenLinks              bool
 	CanCopy                   bool
 	CanPickFiles              bool
 	Remote                    bool
+	ViaLauncher               bool
 }
 
 func (d Deps) Validate() error {
