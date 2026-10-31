@@ -46,6 +46,9 @@ func runInteractiveIntent(intent tui.Intent) error {
 	remote := platform.OverSSH()
 	terminal := remote || runtime.GOOS == "linux" && !platform.HasDisplay()
 	clipboard := &clipboardManager{terminal: terminal, unavailable: terminal && os.Getenv("TERM_PROGRAM") == "vscode"}
+	if buildinfo.Version != "dev" {
+		go update.Refresh(paths)
+	}
 
 	return tui.Run(intent, tui.Deps{
 		Repair:      engine.Run,

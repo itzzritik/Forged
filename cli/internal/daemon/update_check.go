@@ -1,7 +1,6 @@
 package daemon
 
 import (
-	"context"
 	"time"
 
 	"github.com/itzzritik/forged/cli/internal/update"
@@ -9,8 +8,7 @@ import (
 
 const (
 	latestCheckDelay    = time.Minute
-	latestCheckInterval = 6 * time.Hour
-	latestCheckTimeout  = 10 * time.Second
+	latestCheckInterval = time.Hour
 )
 
 func (d *Daemon) watchLatestVersion() {
@@ -28,13 +26,7 @@ func (d *Daemon) watchLatestVersion() {
 }
 
 func (d *Daemon) checkLatestVersion() {
-	ctx, cancel := context.WithTimeout(context.Background(), latestCheckTimeout)
-	defer cancel()
-	version, err := update.Latest(ctx)
-	if err == nil {
-		err = update.Save(d.paths, version)
-	}
-	if err != nil {
+	if err := update.Refresh(d.paths); err != nil {
 		d.logger.Debug("checking for a newer forged failed", "error", err)
 	}
 }
