@@ -10,6 +10,7 @@ import (
 	"regexp"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/itzzritik/forged/cli/internal/buildinfo"
 	"github.com/itzzritik/forged/cli/internal/config"
@@ -75,6 +76,16 @@ func Latest(ctx context.Context) (string, error) {
 		return "", fmt.Errorf("npm registry sent an invalid version")
 	}
 	return body.Version, nil
+}
+
+func Refresh(paths config.Paths) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	version, err := Latest(ctx)
+	if err != nil {
+		return err
+	}
+	return Save(paths, version)
 }
 
 func Load(paths config.Paths) string {
